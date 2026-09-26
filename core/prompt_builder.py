@@ -29,7 +29,7 @@ def _format_speaker_tag(nickname: str | None, user_id: str) -> str:
     """渲染对话行的 speaker 标签。
 
     - 有真实昵称(且不与 user_id 相同) → `[user=Nick id=ID]`,LLM 可用 ID
-      去匹配 SOUL.md / 系统设定里的稳定身份信息(主人、白名单等)。
+      去匹配 SOUL.md / 系统设定里的稳定身份信息(维护者、白名单等)。
     - 昵称缺失或退回成 user_id → `[user=ID]`,避免 `[user=12345 id=12345]`
       这种字段重复噪音。
     """
@@ -182,7 +182,7 @@ def _render_runtime_state(
         f"group_id: {group_id}",
     ]
     # `you` 是模型判「这条是不是冲我说的」的唯一锚点:At 段在 plain text 里回填成
-    # 裸 `@<id>`,persona/记忆侧通常只写了主人的 id,不写这行模型就只能把自己的 id
+    # 裸 `@<id>`,persona/记忆侧通常只写了维护者的 id,不写这行模型就只能把自己的 id
     # 当陌生账号,把 @ 自己判成 @ 别人。用 speaker 标签同一格式,好和 @、[bot] 行对齐。
     if self_id:
         lines.append(f"you: {_format_speaker_tag(self_nickname, self_id)}")

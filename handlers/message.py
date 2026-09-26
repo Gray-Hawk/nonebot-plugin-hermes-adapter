@@ -299,37 +299,6 @@ async def _ack_scope(
                             )
 
 
-async def _emit_busy_notice(
-    bot: Bot,
-    adapter_name: str,
-    original_msg_id: str | int | None,
-) -> None:
-    """Depth-cap 触顶丢 explicit pending 时, 在原消息上贴 busy emoji, 不撤销。
-
-    限制:
-      - adapter 非 onebotv11 / msg_id 缺失 → no-op + WARN 日志
-      - emoji API 报错 → swallow + DEBUG 日志, 不文本兜底
-
-    与 _ack_scope 的区别: ack 走"工作中→撤销"两阶段,busy 是"工作不下去→留印记"一次性,
-    生命周期不耦合, emoji_id 也不同 (busy 默认 hermes_busy_emoji_id = 97 /擦汗,
-    ack 默认 341 /打招呼)。
-    """
-    if adapter_name != "onebotv11" or original_msg_id is None:
-        logger.warning(
-            f"[HERMES busy_notice] no-op: adapter={adapter_name} "
-            f"msg_id={original_msg_id} (only onebotv11 group supports emoji notice)"
-        )
-        return
-    try:
-        await bot.call_api(
-            "set_msg_emoji_like",
-            message_id=original_msg_id,
-            emoji_id=plugin_config.hermes_busy_emoji_id,
-        )
-    except Exception as e:
-        logger.debug(f"[HERMES busy_notice] emit failed (msg_id={original_msg_id}): {e}")
-
-
 async def _extract_image_urls(uni_msg: alconna.UniMessage, bot: Bot, adapter_name: str) -> list[str]:
     """从 UniMessage 中抽出图片 URL 列表(可直接 HTTP GET 拿字节的那种)。
 
@@ -1315,7 +1284,20 @@ async def _run_reactive_turn(
     # 裸 `@<id>` 和 [bot] 历史行绑回自己。取值走进程内缓存,首轮一次 RPC。
     self_nickname = await get_bot_nickname(bot)
     # 见 _run_passive_turn 同名调用注释:出站一律内联,不发平台 URL。
-    inlined = await inline_image_urls(image_urls)
+    # 本部署补丁: 图片内联按 addressed_to_bot 门控——
+    # 只有真 @bot/引用 bot/唤起词 的消息才抓图内联;其余群消息只留 [图片] 占位符,
+    # 模型需要时自行用 get_message_images 按 m:id 拉字节,省多模态 token。
+    # 门控不能用 is_explicit_trigger:trigger=all 下它恒真(L867),or 上去等于没门控。
+    # 插件升级会冲掉此改动,详见 项目文档库。
+    if addressed_to_bot:
+        inlined = await inline_image_urls(image_urls)
+    else:
+        inlined = []
+        # 文本+图的消息 text 里原本没有 [图片] 标记(占位符只在 perception buffer 和
+        # 纯图兜底里加),不内联时必须补一个,否则模型不知道这张图的存在。
+        # 纯图消息 text 为空,下游 current_text=text or "[图片]" 兜底,这里幂等。
+        if image_urls and "[图片]" not in text:
+            text = (text + " [图片]").strip() if text else "[图片]"
     user_content = build_reactive_user_content(
         adapter=adapter_name,
         group_id=group_id,
@@ -1436,12 +1418,13 @@ async def _run_reactive_turn(
             cleaned_text, extracted_media_urls = extract_response_media(fallback_text)
             media_urls = list(result.media_urls) + [u for u in extracted_media_urls if u not in result.media_urls]
             # 群里明确说话给某人 → at;主动插话(散文兜底)→ 不 at,与成功回复路径同口径
+            # 本部署补丁: 同成功路径,判据换成 addressed_to_bot。
             await send_text_with_media(
                 bot=bot,
                 target=target,
                 text=cleaned_text,
                 media_urls=media_urls,
-                at_user_id=user_id if is_explicit_trigger else None,
+                at_user_id=user_id if addressed_to_bot else None,
                 adapter_name=adapter_name,
             )
         return result
@@ -1540,7 +1523,10 @@ async def _run_reactive_turn(
         return result
 
     # 群里明确说话给某人 → at;主动插话 → 不 at
-    at_user = user_id if is_explicit_trigger else None
+    # 本部署补丁: 判据从 is_explicit_trigger 换成 addressed_to_bot。
+    # trigger=all 下每条消息都是 explicit,原判据导致条条回复都 @;改为只有真 @bot/引用
+    # bot 的消息才 @。插件升级会冲掉此改动,详见项目文档库。
+    at_user = user_id if addressed_to_bot else None
     sent = await send_text_with_media(
         bot=bot,
         target=target,
@@ -1809,13 +1795,6 @@ async def _handle_reactive_path(
             f"[HERMES reactive] queued behind in-flight turn "
             f"(group={group_id} user={user_id} explicit={is_explicit_trigger} result={inflight_result})"
         )
-        # pending_set + explicit:在用户的原消息上贴 busy emoji,告知 bot 在排队。
-        # 之前只有 _refire 深度上限才贴 busy,首次撞 inflight 的 explicit @
-        # 拿不到任何提示 —— ack 闪一下被 _ack_scope finally 撤掉就没了。
-        # pending_kept(已有 explicit pending,新到 bystander 被挡)不贴 —— 那个
-        # 已被保护的 explicit 进 pending 时已贴过 busy,bystander 自己不期待反馈。
-        if inflight_result == "pending_set" and is_explicit_trigger:
-            await _emit_busy_notice(bot, adapter_name, event_msg_id)
         return
 
     # should_refire_pending=False 仅在 _run_reactive_turn 抛异常时:那是 plugin
@@ -1892,14 +1871,7 @@ async def _refire(
 
     if depth > MAX_REFIRE_DEPTH:
         _mcp.inflight.exit(key)  # release slot first to avoid race with concurrent arrivals
-        if is_explicit_trigger:
-            logger.warning(
-                f"[HERMES] refire depth cap reached for explicit @ "
-                f"(key={key} depth={depth} msg_id={original_msg_id}); emitting busy notice"
-            )
-            await _emit_busy_notice(bot, adapter_name, original_msg_id)
-        else:
-            logger.warning(f"[HERMES] refire depth exceeded ({depth}); dropping pending {key}")
+        logger.warning(f"[HERMES] refire depth exceeded ({depth}); dropping pending {key}")
         return
 
     # now_ms 用 wall-clock 而不是 trigger_msg.ts:_run_*_turn 内部用它做
