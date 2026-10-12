@@ -98,6 +98,9 @@ _DECISION_HINT = (
     "  should_exit_active (boolean, optional)\n"
     "  at_user (boolean, optional — true to @-mention the triggering user as a "
     "strong notification; omit/false for ordinary in-conversation replies)\n"
+    "  at_user_id (string, optional — @ a specific speaker from recent_messages "
+    "by user_id; use when the person you answer is NOT the trigger. Invalid/absent "
+    "falls back to the at_user boolean behavior)\n"
     "  release_anchor (string, optional — commissioner user_id or \"all\" to unpin "
     "finished task anchors from <pinned_tasks>)\n"
     "Output ONLY the JSON object, no preamble, no postscript, no markdown fences.\n"
@@ -646,11 +649,18 @@ class InterimSegmenter:
             if isinstance(payload, dict) and payload.get("status") == "running":
                 return self._pop_segment()
             return None
-        # 普通 chat.completion.chunk: 只取 content delta, reasoning 等丢弃
-        choices = payload.get("choices") if isinstance(payload, dict) else None
-        if not choices:
+        if event:
+            # 其余带名事件帧(approval.request / hermes.status 等)一律不消费。
+            # approval.request 的 payload 带 choices=["once","session",...](list[str]),
+            # 漏到下方会被当 chat chunk 解析, choices[0].get 抛 AttributeError
+            # ('str' object has no attribute 'get'), 2026-10-12 实证炸断 SSE。
             return None
-        piece = (choices[0].get("delta") or {}).get("content")
+        # 普通 chat.completion.chunk(无 event 名): 只取 content delta, reasoning 等丢弃
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        if not choices or not isinstance(choices[0], dict):
+            return None
+        delta = choices[0].get("delta")
+        piece = delta.get("content") if isinstance(delta, dict) else None
         if piece:
             self._seg.append(piece)
         return None

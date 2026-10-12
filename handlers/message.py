@@ -1096,19 +1096,22 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         # 按双槽规则钉锚(维护者槽无条件/客人槽三条件,见 pin_anchor)。锚是「任务来源
         # 指针」:续发轮裁剪掉原始委托后,靠它找回任务。文本在钉入时截一道,
         # 渲染端还有一道 sanitize。纯 @ 无文本也钉(委托可能跟在图里/下一条)。
-        _mcp.active_sessions.pin_anchor(
-            sess,
-            AnchorRecord(
-                commissioner_id=user_id,
-                commissioner_nickname=nickname,
-                msg_id=getattr(event, "message_id", None),
-                text=msg_text[:200],
-                ts=now,
-            ),
-            master_ids=set(plugin_config.hermes_admin_users),
-            max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
-            now_ms=now,
-        )
+        # 锚优化短期项A(2026-10-12,维护者拍板):已知 bot(hermes_known_bots)的发言
+        # 永不钉锚——bot 的 quote 接话不是委托,钉上只会挤占锚位、刷新锚龄。
+        if user_id not in set(plugin_config.hermes_known_bots):
+            _mcp.active_sessions.pin_anchor(
+                sess,
+                AnchorRecord(
+                    commissioner_id=user_id,
+                    commissioner_nickname=nickname,
+                    msg_id=getattr(event, "message_id", None),
+                    text=msg_text[:200],
+                    ts=now,
+                ),
+                master_ids=set(plugin_config.hermes_admin_users),
+                max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
+                now_ms=now,
+            )
 
     if not target.private:
         logger.info(
@@ -1970,7 +1973,16 @@ async def _run_reactive_turn(
     # 带 at_user 键时以模型为准(@ 是强提醒,模型最清楚该不该);缺省维持
     # addressed_to_bot 口径。散文兜底路径(L1595 附近)无决策信封,维持原判据不动。
     _decision_at = decision.get("at_user")
-    if _decision_at is None:
+    # 锚优化短期项B(2026-10-12,维护者拍板):at_user_id 让模型指定 @ 谁——
+    # 多方混聊里「回谁的话」与「谁触发的」常不一致,布尔口径只会 @ 触发者,
+    # 已实战连犯 @ 错人。合法(at_user_id 落在本 turn recent 窗口发言者内)
+    # 优先;非法/缺省回落原布尔口径(不放大成 @ 不在场的人)。
+    _decision_at_id = decision.get("at_user_id")
+    if _decision_at_id is not None and str(_decision_at_id) in {
+        str(m.user_id) for m in recent
+    }:
+        at_user: str | None = str(_decision_at_id)
+    elif _decision_at is None:
         at_user = user_id if addressed_to_bot else None
     else:
         at_user = user_id if _decision_at else None

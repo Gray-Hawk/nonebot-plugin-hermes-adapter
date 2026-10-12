@@ -315,6 +315,13 @@ class Config(BaseModel):
     与活跃窗口寿命取 min(窗口死锚随窗死,无需额外处理)。建议 120-180,
     短于 hermes_active_session_ttl_sec。"""
 
+    hermes_known_bots: list[str] = []
+    """已知 bot 账号表(本部署补丁:锚优化短期项A,维护者拍板)。
+    名单账号的消息不钉委托锚——bot 的 quote 接话不是委托,钉上只会挤占锚位、
+    刷新锚龄。语义与 hermes_blacklist 不同:黑名单=不响应;known_bots 仍可
+    被正常响应(人类委托「去跟 X 说」),只是其发言永远不成锚。全局生效
+    (不分群),.env 写 JSON 数组,如 HERMES_KNOWN_BOTS=["1000000003"]"""
+
     # --- 激活体系改造:隐性激活 + T1/T5 + T2 定时激活(本部署新增) ---
 
     hermes_keyword_soft_context: int = 10

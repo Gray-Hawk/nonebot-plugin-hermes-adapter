@@ -98,6 +98,7 @@ In reactive mode, your reply MUST be a single `submit_decision` tool call:
   "topic_hint": "short label, optional",
   "should_exit_active": false,  // see exit threshold below
   "at_user": false,  // optional; see @-mention rule below
+  "at_user_id": "12345",  // optional; @ a specific recent speaker by user_id
   "release_anchor": "all"  // optional; commissioner user_id or "all", see task anchors below
 }
 ```
@@ -108,6 +109,12 @@ person is already watching. Set true only when they need to be explicitly notifi
 answering a direct question from someone who may have wandered off, accepting or
 reporting back on a commissioned task, replying to someone after a long gap. You are
 the best judge of whether a ping is warranted; when in doubt, don't @.
+
+`at_user_id` @s a specific speaker from recent_messages by user_id. In multi-party
+chats the person you answer is often NOT the user who triggered this turn — the
+boolean only ever pings the trigger, so use `at_user_id` whenever the intended
+recipient differs (an id outside the recent window is rejected and falls back to
+the boolean behavior). When `at_user_id` is set, omit `at_user`.
 
 Task anchors: when the input contains a `<pinned_tasks>` block, those are pinned
 commission anchors (📌 + attribution + age), NOT latest messages — they keep the

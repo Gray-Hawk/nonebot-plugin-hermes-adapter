@@ -57,6 +57,10 @@ _DECISION_PROTOCOL_BLOCK = (
     "    省略或 false = 不 @。只有对方需要被明确通知时才 true:点名提问的回答、\n"
     "    委托受理/完成的回执、许久未发言者的应答。热聊中的即时接话不 @\n"
     "    (对方正在看,@ 是打扰)。你最清楚该不该 @,自己判断\n"
+    "  at_user_id (string) — 指定 @ 谁(recent_messages 里某位发言者的 user_id)。\n"
+    "    多方混聊里「你回的人」常不是「触发本轮的人」,布尔 at_user 只会 @ 触发者;\n"
+    "    需要 @ 的人不是触发者时改用本字段。id 不在 recent 窗口内会被拒,\n"
+    "    回落布尔口径。给了 at_user_id 就不用再给 at_user\n"
     "  release_anchor (string) — 松锚:值为委托人的 user_id 或 \"all\"。\n"
     "    看到 <pinned_tasks> 里的锚已完结(任务办完/话题已漂)时设置,见下方任务锚节\n"
     "\n"
@@ -488,7 +492,7 @@ def build_reactive_user_content(
     # 必须紧贴 current_message,才能在每个 turn 都重新"撞"一次模型。
     reminder = (
         "\n\n请用 submit_decision JSON 对象回复(字段:should_reply / reply_text / "
-        "topic_hint / should_exit_active / at_user / release_anchor),不要直接说话或扮演动作。"
+        "topic_hint / should_exit_active / at_user / at_user_id / release_anchor),不要直接说话或扮演动作。"
     )
 
     text_block = runtime_block + "\n\n"
