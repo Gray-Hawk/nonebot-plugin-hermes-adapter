@@ -53,11 +53,19 @@ _DECISION_PROTOCOL_BLOCK = (
     "  reply_text (string) — should_reply=true 时必填,留空表示静默\n"
     "  topic_hint (string) — 简短话题标记(中文 OK),将带入下一轮 runtime_state\n"
     "  should_exit_active (boolean) — 谨慎使用,见下方退出门槛\n"
+    "  at_user (boolean) — 是否在回复里 @ 触发者(@ 是强提醒,会弹通知)。\n"
+    "    省略或 false = 不 @。只有对方需要被明确通知时才 true:点名提问的回答、\n"
+    "    委托受理/完成的回执、许久未发言者的应答。热聊中的即时接话不 @\n"
+    "    (对方正在看,@ 是打扰)。你最清楚该不该 @,自己判断\n"
+    "  release_anchor (string) — 松锚:值为委托人的 user_id 或 \"all\"。\n"
+    "    看到 <pinned_tasks> 里的锚已完结(任务办完/话题已漂)时设置,见下方任务锚节\n"
     "\n"
     "对象归属(先决定这条是不是冲你说的,再走插话原则;命中一条「归你」就停,不再下挪):\n"
     "  - runtime_state 里有 `addressed_to_you: true` → 平台层面已经确认这条是冲你说的\n"
-    "    (真 @ 了你 / 私聊 / 用了唤起词),归属到此为止,直接走插话原则。此时不得再以\n"
-    "    「可能在叫别人」「不确定是否针对你」「归属模糊」为理由 should_reply=false\n"
+    "    (真 @ 了你 / 私聊),归属判断到此为止,直接走插话原则——不得再以\n"
+    "    「可能在叫别人」「不确定是否针对你」「归属模糊」为理由 should_reply=false。\n"
+    "    但注意:addressed 只确认归属,不构成回复义务——消息无实质内容\n"
+    "    (纯表情、灌水、无意义整活)时仍应 should_reply=false\n"
     "  - 当前消息明确 @ 你(@ 后面跟 runtime_state.you 的 id 就是 @ 你;即使同时 @ 了别人,\n"
     "    只要 @ 列表里有你就算) → 归你,继续走后面的插话原则\n"
     "  - 当前消息 reply/quote 指向 recent_messages 里 [bot] 你自己的一条 → 归你\n"
@@ -71,6 +79,22 @@ _DECISION_PROTOCOL_BLOCK = (
     "    · 其它情况(窗口里只有你一个 bot,泛指代词大概率冲你来的)\n"
     "      → 走插话原则正常判断\n"
     "  - 模糊归属下宁可静默观察,也不要抢答别人收到的评价\n"
+    "\n"
+    "黑名单(runtime_state 有 `sender_blacklisted: true` 时生效):\n"
+    "  - 当前发言者在黑名单里:默认 should_reply=false,即使它 @ 了你。\n"
+    "  - 唯一例外:当前 <pinned_tasks> 锚或近期人类消息明确委托了你与该账号互动\n"
+    "    (如「你去跟它说 X」)——委托存续期间正常接续,委托完结后即恢复默认。\n"
+    "\n"
+    "主人指令优先:\n"
+    "  - 会话内主人已给出的明确指令(如「闭嘴」「别说了」「不用回了」)优先于任何\n"
+    "    新点名的回复压力:指令生效期间被其他人 @ 不能打断它,主人本人发新指令\n"
+    "    才算变更。(谁是主人按 id= 匹配你的系统设定/记忆,不认昵称。)\n"
+    "\n"
+    "任务锚(输入里出现 <pinned_tasks> 块时):\n"
+    "  - 里面是进行中的委托钉锚(📌 + 归属 + 年龄),不是最新消息——上下文裁剪后\n"
+    "    靠它定位任务来源;围绕委托的追问(「结果呢」「好了吗」)参照锚判断在问谁的事\n"
+    "  - 锚已完结(任务办完/话题已漂)时带 release_anchor 松掉它:值 = 委托人的\n"
+    "    user_id 或 \"all\"。锚是帮你记任务的,不是义务;你最清楚任务状态,该松就松\n"
     "\n"
     "插话原则(决定 should_reply):\n"
     "  - 与你之前的发言或被 @ 的话题强相关 → true\n"
@@ -107,6 +131,7 @@ _DECISION_PROTOCOL_BLOCK = (
     "  - 不脑补归因:在 recent_messages 里直接读不到「X: ...Y...」原话时,\n"
     "    禁止在 reply_text 里写「X 让我做 Y」「X 问了 Y」这种叙述,\n"
     "    宁可只就当前消息字面回应,不要给原始请求脑补来源\n"
+    "    (有 <pinned_tasks> 锚时,锚行本身就是可引用的委托原话)\n"
     "  - 自我归因校验:当前消息是对「你做过的事」的评价(批评/感谢/纠正/追问/\n"
     "    求解释)时,必须能在 recent_messages 里 [bot] 你自己的行里定位到\n"
     "    被评价的具体内容(字面或语义上能对应到你说过的某句/某个动作),\n"
@@ -152,6 +177,21 @@ _DECISION_PROTOCOL_BLOCK = (
     "</decision_protocol>"
 )
 
+# 本部署补丁(凌晨批项2): 私聊版决策协议。私聊没有活跃窗/
+# 退场/@归属那套群聊概念,协议刻意从简:私聊是显式对话,默认该回,只为
+# 无实质内容的消息留沉默口。解析失败时插件侧回 raw_text(私聊静默更像故障)。
+_PRIVATE_DECISION_PROTOCOL_BLOCK = (
+    "<decision_protocol>\n"
+    "你处于私聊对话。对方在等你回应,默认 should_reply=true。\n"
+    "仅在消息完全没有可回应内容时(纯表情轰炸、无意义刷屏)才 false。\n"
+    "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
+    "  should_reply (boolean, required) — 是否要回复\n"
+    "  reply_text (string) — should_reply=true 时必填\n"
+    "最终输出必须是该 JSON 对象,不要在 JSON 外面再包文字;\n"
+    "即使想用角色口吻说话,也必须把那段话放进 reply_text 字段里。\n"
+    "</decision_protocol>"
+)
+
 # 表情包/收藏表情的口径：进 vision 只为情绪与语气，不把梗图本身当分析对象。
 _STICKER_MOOD_NOTE = (
     "\n[表情包] 仅作情绪/语气信号：可用来判断用户心情；不要描述画面、不要考据梗图、"
@@ -179,6 +219,7 @@ def _render_runtime_state(
     triggered_by: str,
     triggered_by_nickname: str | None,
     topic_hint: str | None,
+    sender_blacklisted: bool = False,
 ) -> str:
     nick = f" ({triggered_by_nickname})" if triggered_by_nickname else ""
     lines = [
@@ -196,6 +237,11 @@ def _render_runtime_state(
     # 只在为真时渲染:缺这行 = 「归属未知,自己判」,不是「确定不是冲你说的」。
     if addressed_to_bot:
         lines.append("addressed_to_you: true")
+    # 本部署补丁(凌晨批项3): 黑名单标记。名单账号的 @
+    # 在入口层已降级(不置 addressed),这行告诉模型「当前发言者在名单里」,
+    # 按协议条款默认静默、有委托例外。
+    if sender_blacklisted:
+        lines.append("sender_blacklisted: true")
     lines.append(f"triggered_by: {triggered_by}{nick}")
     if topic_hint:
         lines.append(f"topic_hint: {topic_hint}")
@@ -294,20 +340,36 @@ def _render_recent_messages_block(recent_messages: Sequence[BufferedMessage]) ->
 def select_followup_window(
     recent_messages: Sequence[BufferedMessage],
     limit: int,
+    *,
+    now_ms: int = 0,
+    time_sec: float = 0,
 ) -> list[BufferedMessage]:
     """裁剪 reactive 续发轮的窗口。输入输出均为新→旧顺序的子序列。
 
-    保留最新 limit 条,外加 [bot] 自己最近的一条(不在尾部内时追加到末尾,
-    即最旧位置)—— decision_protocol 的防连发/防重复规则要求模型看得见
-    自己的上一次发言,活跃群里它容易被新消息冲出尾部。
+    本部署补丁(凌晨批项5): 纯条数闸改「条数 OR 时间」双闸——
+    消息满足「在最新 limit 条内」或「年龄 <= time_sec 秒」之一即保留。
+    2026-10-11 三群全量回测:纯条数闸误伤热群(消息密,相关上下文新但深),
+    纯时间闸误伤冷群(消息稀,相关上下文旧但浅),OR 混合两头兼顾
+    (热群覆盖率 17%→68%,冷群 53%→92%)。time_sec=0 退回纯条数旧行为。
 
-    limit <= 0 或 >= 长度时不裁剪(配置回退开关)。引用对象无需钉住:
+    另保留钉住 [bot] 自己最近一条发言的旧规则(decision_protocol 的防连发/
+    防重复规则要求模型看得见自己的上一次发言),锚系统落地后它降权为副锚。
+
+    limit <= 0 且 time_sec <= 0 时不裁剪(配置回退开关)。引用对象无需钉住:
     引用内容在 handlers 侧已内联进 current_message 文本。
     """
     msgs = list(recent_messages)
-    if limit <= 0 or limit >= len(msgs):
+    if limit <= 0 and time_sec <= 0:
         return msgs
-    keep = msgs[:limit]
+    cutoff_ms = now_ms - int(time_sec * 1000) if (time_sec > 0 and now_ms) else None
+    keep = [
+        m
+        for i, m in enumerate(msgs)
+        if (limit > 0 and i < limit) or (cutoff_ms is not None and m.ts >= cutoff_ms)
+    ]
+    if not keep and msgs:
+        # 双闸全空兜底(纯时间闸 + 全部超龄):至少留最新一条,不给模型空窗口
+        keep = msgs[:1]
     last_bot = next((m for m in msgs if m.is_bot), None)
     if last_bot is not None and last_bot not in keep:
         keep.append(last_bot)
@@ -320,6 +382,7 @@ def build_passive_system_prompt(
     is_private: bool,
     user_id: str,
     group_id: str | None,
+    private_decision: bool = False,
 ) -> str:
     """passive 路径的 system prompt:仅 Message Context 头。
 
@@ -328,6 +391,9 @@ def build_passive_system_prompt(
 
     历史块(0.1.6 群聊旁观注入)已搬到 user content(见 build_passive_user_content):
     1:1 私聊也走相同接口,recent=[] 时 user content 退化为纯文本/多模态 parts。
+
+    private_decision(本部署补丁:凌晨批项2): 私聊挂决策信封时
+    在 Message Context 头后追加私聊版决策协议块(字节稳定 per session,缓存友好)。
     """
     ctx_lines = [f"Platform: {adapter or 'unknown'}"]
     ctx_lines.append("Chat Type: " + ("Private" if is_private else "Group"))
@@ -335,7 +401,37 @@ def build_passive_system_prompt(
         ctx_lines.append(f"User ID: {user_id}")
     if not is_private and group_id:
         ctx_lines.append(f"Group ID: {group_id}")
-    return "Message Context:\n" + "\n".join(ctx_lines)
+    head = "Message Context:\n" + "\n".join(ctx_lines)
+    if private_decision:
+        head += "\n\n" + _PRIVATE_DECISION_PROTOCOL_BLOCK
+    return head
+
+
+# 锚行文本渲染上限:锚只是「任务来源指针」,够模型认出是哪件事即可。
+_MAX_ANCHOR_TEXT_CHARS = 120
+
+
+def _render_pinned_tasks_block(anchors: Sequence[Any], *, now_ms: int) -> str:
+    """渲染 <pinned_tasks> 委托锚块(本部署补丁:凌晨批项4)。
+
+    每行:📌 [user=昵称 id=QQ] (年龄): 委托文本摘要。年龄给模型「新鲜度」
+    直读量,自行降权;块与 <recent_messages> 正文视觉隔开,防止锚被误读成
+    最新消息。输入记录只需有 commissioner_id/commissioner_nickname/text/ts
+    四个属性(AnchorRecord),用 Any 标注避免 prompt_builder 反向依赖
+    active_session。
+    """
+    lines = [
+        "<pinned_tasks>",
+        "(进行中的委托锚,不是最新消息;锚龄过长说明任务可能已漂,可自行判断降权)",
+    ]
+    for rec in anchors:
+        age_sec = max(0, (now_ms - rec.ts) // 1000)
+        age = f"{age_sec}秒前" if age_sec < 60 else f"{age_sec // 60}分钟前"
+        tag = _format_speaker_tag(rec.commissioner_nickname, rec.commissioner_id)
+        text = _sanitize_history_content(rec.text, max_chars=_MAX_ANCHOR_TEXT_CHARS)
+        lines.append(f"📌 {tag} ({age}): {text}")
+    lines.append("</pinned_tasks>")
+    return "\n".join(lines)
 
 
 def build_reactive_user_content(
@@ -354,11 +450,16 @@ def build_reactive_user_content(
     current_text: str,
     current_image_urls: Sequence[str],
     current_sticker_urls: Sequence[str] = (),
+    sender_blacklisted: bool = False,
+    pinned_anchors: Sequence[Any] = (),
+    now_ms: int = 0,
 ) -> UserContent:
-    """reactive user content: <runtime_state> + <recent_messages> + <current_message>。
+    """reactive user content: <runtime_state> + [pinned_tasks] + <recent_messages> + <current_message>。
 
     runtime_state 从 system 搬到 user content 顶端,system 端只剩 byte-stable 的
     decision_protocol。per-turn 变化字段(triggered_by/topic_hint)集中在 user 这一侧。
+    pinned_anchors(凌晨批项4):在钉的委托锚,非空时渲染独立 <pinned_tasks> 块,
+    不参与 recent_messages 的裁剪。
     """
     runtime_block = _render_runtime_state(
         adapter=adapter,
@@ -369,8 +470,12 @@ def build_reactive_user_content(
         triggered_by=triggered_by,
         triggered_by_nickname=triggered_by_nickname,
         topic_hint=topic_hint,
+        sender_blacklisted=sender_blacklisted,
     )
     history_block = _render_recent_messages_block(recent_messages)
+    pinned_block = (
+        _render_pinned_tasks_block(pinned_anchors, now_ms=now_ms) if pinned_anchors else ""
+    )
 
     current_tag = _format_speaker_tag(current_nickname, current_user_id)
     current_block_text = f"<current_message>\n{current_tag}: {current_text}\n</current_message>"
@@ -383,10 +488,13 @@ def build_reactive_user_content(
     # 必须紧贴 current_message,才能在每个 turn 都重新"撞"一次模型。
     reminder = (
         "\n\n请用 submit_decision JSON 对象回复(字段:should_reply / reply_text / "
-        "topic_hint / should_exit_active),不要直接说话或扮演动作。"
+        "topic_hint / should_exit_active / at_user / release_anchor),不要直接说话或扮演动作。"
     )
 
-    text_block = runtime_block + "\n\n" + history_block + "\n\n" + current_block_text + reminder
+    text_block = runtime_block + "\n\n"
+    if pinned_block:
+        text_block += pinned_block + "\n\n"
+    text_block += history_block + "\n\n" + current_block_text + reminder
 
     sticker_urls = list(current_sticker_urls or [])
     if not current_image_urls and not sticker_urls:

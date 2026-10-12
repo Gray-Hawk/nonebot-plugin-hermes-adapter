@@ -96,6 +96,10 @@ _DECISION_HINT = (
     "  reply_text (string, optional, required when should_reply=true)\n"
     "  topic_hint (string, optional)\n"
     "  should_exit_active (boolean, optional)\n"
+    "  at_user (boolean, optional — true to @-mention the triggering user as a "
+    "strong notification; omit/false for ordinary in-conversation replies)\n"
+    "  release_anchor (string, optional — commissioner user_id or \"all\" to unpin "
+    "finished task anchors from <pinned_tasks>)\n"
     "Output ONLY the JSON object, no preamble, no postscript, no markdown fences.\n"
     "All string values MUST be single-line; escape line breaks inside strings as \\n (no raw newlines)."
 )
@@ -529,6 +533,26 @@ _PROVIDER_AUTH_COPY_RE = re.compile(
     r"rejected your (?:API key|sign-in), so the model can't be reached", re.IGNORECASE
 )
 
+# 本部署补丁: 上游 turn_failure_copy 的「重试耗尽/暂不可用」
+# 引导文案家族 (exhausted_copy 全部 lead + reset 变体 + nous_rate_limit):
+#   "{label} didn't respond in time on any of {n} attempts — it looks temporarily
+#    unavailable. Wait a minute and send /retry, or switch models with /model.
+#    To avoid this in future, add a backup provider with `hermes fallback add`.
+#    \n\nProvider said: Connection error."
+# 认 CLI 指令残片而非 lead 句(lead 带 {label}/{attempts} 模板参数且上游会演进):
+# 面向 QQ 的正常回复绝不会教用户敲 hermes CLI。非重试家族(model_not_found /
+# format_error / ssl / policy_blocked 等)刻意不覆盖——它们语义不同,维护者未拍板。
+_PROVIDER_OUTAGE_COPY_RE = re.compile(
+    r"hermes\s+fallback\s+add"
+    r"|send\s+/retry[^\n]{0,80}?switch\s+models\s+with\s+/model",
+    re.IGNORECASE,
+)
+
+
+def is_provider_outage_text(text: str) -> bool:
+    """检测回复是否为上游「provider 暂不可用/重试耗尽」引导文案(200 外壳)。"""
+    return bool(text) and bool(_PROVIDER_OUTAGE_COPY_RE.search(text))
+
 
 def is_provider_error_text(text: str) -> bool:
     """检测回复内容是否为上游透传的 provider 报错(200 外壳 + 错误正文)。
@@ -536,10 +560,13 @@ def is_provider_error_text(text: str) -> bool:
     老形态:前缀与特征词必须同时命中:只认前缀会把正经聊到状态码的回复误伤,只认特征词会把
     讨论报错本身的对话误伤 —— 而误伤的代价是把用户想要的回答换成一句兜底。
     新形态(鉴权引导文案):固定句式直接命中,不再要求特征词。
+    本部署补丁(2026-10-11): 暂不可用引导文案家族同理会骗过前两道,直接认 CLI 残片。
     """
     if not text:
         return False
     if _PROVIDER_AUTH_COPY_RE.search(text):
+        return True
+    if is_provider_outage_text(text):
         return True
     if not _PROVIDER_ERROR_PREFIX_RE.match(text):
         return False
@@ -695,6 +722,15 @@ class ChatResult:
     handler 层对此标记一律静默(不发 fallback、不发 raw_text),不依赖
     hermes_transport_error_fallback_text 配置——403 是运维事件(key/额度),
     群里通知无意义,上游持续故障时每条触发一条通知就是刷屏。
+    """
+
+    is_outage_error: bool = False
+    """本部署补丁: provider 暂不可用/重试耗尽硬标记。
+
+    来源:200 包裹的上游 exhausted_copy 引导文案("didn't respond in time ...
+    Provider said: Connection error." 等家族)。与 is_forbidden_error 同系统:
+    handler 层一律静默——provider 暂时挂了是运维事件,群里发英文 CLI 引导文案
+    无意义,故障期每条触发刷一条就是刷屏。
     """
 
     is_persistence_error: bool = False
@@ -966,9 +1002,13 @@ class HermesClient:
                 re.match(r"^\s*HTTP\s+403\b", raw_text, re.IGNORECASE)
                 or re.search(r"\bHTTP\s+403\b", raw_text, re.IGNORECASE)
             )
+            # 本部署补丁(2026-10-11): 暂不可用引导文案家族打独立硬标记,
+            # handler 与 403 同口径硬静默。
+            outage = is_provider_outage_text(raw_text)
             return _out(ChatResult(
                 raw_text=raw_text, parse_failed=True, is_transport_error=True,
                 is_forbidden_error=forbidden,
+                is_outage_error=outage,
             ))
 
         # 路径 B:从 raw_text 提取首个 {...} JSON5 块

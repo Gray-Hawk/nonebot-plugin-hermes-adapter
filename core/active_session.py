@@ -15,6 +15,21 @@ _TURN_END_GRACE_MS = 10_000
 
 
 @dataclass
+class AnchorRecord:
+    """委托锚(本部署补丁:凌晨批项4):一条被钉住的 addressed
+    委托消息,随窗口存活,渲染进 <pinned_tasks> 块供续发轮定位任务来源。"""
+
+    commissioner_id: str
+    commissioner_nickname: str | None
+    msg_id: str | int | None
+    text: str  # 钉入时已截断(渲染端还会再过一道 sanitize)
+    ts: int  # ms
+    answered: bool = False
+    """bot 在锚钉入后是否已发言过(mark_bot_replied 置位)。客人槽顶锚规则的
+    「旧锚任务已应答」判据——旧委托已拿到答案,锚剩余价值低,可被顶。"""
+
+
+@dataclass
 class ActiveSession:
     adapter: str
     group_id: str
@@ -41,6 +56,14 @@ class ActiveSession:
     """最后一次实质激活的 ms 时间戳:显式触发(trigger)或 bot 发言(mark_bot_replied)。
     T5 判据:窗口仅靠隐式 touch 续期时,now - 本字段 > T5 即在读路径视为不活跃。
     0 = 本窗口期无实质激活(不可能——trigger 建窗时即赋值,防御用)。"""
+
+    # 本部署补丁(凌晨批项4): 委托锚双槽。维护者槽
+    # (commissioner ∈ hermes_admin_users)只被维护者自己的新委托顶;客人槽全客人
+    # 共享,顶锚需满足三条件之一(旧锚已应答/超龄/已被 release,见 pin_anchor)。
+    # 窗口死(TTL/T5/should_exit_active)= session 实例销毁,锚随窗死;
+    # trigger() 换实例时两槽随记录carry-over(answered 标记骑在记录上,不丢)。
+    anchor_master: AnchorRecord | None = None
+    anchor_guest: AnchorRecord | None = None
 
     # 本部署补丁: 租约计数从实例级移到 key 级(管理器
     # _leases 字典),实例上不再有 inflight_turns 字段。旧设计里 trigger() 换新实例
@@ -108,6 +131,14 @@ class ActiveSessionManager:
             topic_hint=topic_hint,
             last_strong_activation_at=now_ms,
         )
+        # 本部署补丁(凌晨批项4): trigger 换实例时委托锚
+        # carry-over——否则客人的每条 @ 都借「换实例」顶掉维护者槽,双槽规则形同虚设。
+        # answered 标记骑在 AnchorRecord 上,不依赖旧实例的 last_bot_reply_at
+        # (后者按既有设计随换实例清零,供 cooldown 用,不动)。
+        old = self._sessions.get((adapter, group_id))
+        if old is not None:
+            s.anchor_master = old.anchor_master
+            s.anchor_guest = old.anchor_guest
         self._sessions[(adapter, group_id)] = s
         return s
 
@@ -173,7 +204,90 @@ class ActiveSessionManager:
         s.last_bot_reply_media = media_count
         s.last_bot_reply_text = text
         s.last_strong_activation_at = now_ms  # bot 发言 = 实质激活,T5 重新起算
+        # 本部署补丁(凌晨批项4): bot 发言后,所有早于本次
+        # 发言的委托锚标记「已应答」(客人槽顶锚规则的条件 a)。应答 ≠ 松锚——
+        # 应答后线程阶段的追问仍需要锚,锚继续钉到窗口死/超龄/模型 release。
+        for rec in (s.anchor_master, s.anchor_guest):
+            if rec is not None and rec.ts <= now_ms:
+                rec.answered = True
         return True
+
+    def pin_anchor(
+        self,
+        session: ActiveSession,
+        record: AnchorRecord,
+        *,
+        master_ids: set[str],
+        max_age_ms: int,
+        now_ms: int,
+    ) -> bool:
+        """钉委托锚(本部署补丁:凌晨批项4)。返回是否钉上。
+
+        双槽规则(设计见 项目文档库 锚系统各节):
+        - 委托人 ∈ master_ids → 维护者槽,无条件顶自己的旧锚;
+        - 否则客人槽:空槽直接钉;旧锚「已应答 / 超龄」才可顶,都不满足则不顶
+          (旧锚 open 且新鲜 = 正在给 A 干活,B 的委托轮本身是 addressed 全量轮
+          不亏上下文,代价不对称,不为 1-2% 的交错形态硬顶)。
+          「不顶就是不顶」——待提升补位为设计可选件,本期未做。
+        直接操作传入的 session 实例(trigger() 返回的那个),不按 key 查。
+        """
+        if record.commissioner_id in master_ids:
+            session.anchor_master = record
+            return True
+        old = session.anchor_guest
+        if (
+            old is None
+            or old.answered
+            or (max_age_ms > 0 and now_ms - old.ts > max_age_ms)
+        ):
+            session.anchor_guest = record
+            return True
+        return False
+
+    def release_anchor(self, adapter: str, group_id: str, who: str) -> int:
+        """松锚(who=委托人 user_id 或 "all"),返回松掉的条数。无窗口/无匹配 = 0。
+
+        模型的 release_anchor 决策字段经 handlers 到这里;who 是模型给的字符串,
+        不匹配任何在钉锚的 commissioner 时安全 no-op。
+        """
+        s = self._sessions.get((adapter, group_id))
+        if s is None:
+            return 0
+        released = 0
+        for slot in ("anchor_master", "anchor_guest"):
+            rec = getattr(s, slot)
+            if rec is not None and (who == "all" or rec.commissioner_id == who):
+                setattr(s, slot, None)
+                released += 1
+        return released
+
+    def get_anchors(
+        self,
+        adapter: str,
+        group_id: str,
+        now_ms: int,
+        *,
+        max_age_ms: int,
+    ) -> builtins.list[AnchorRecord]:
+        """取本群当前在钉的委托锚(维护者槽在前),懒式超龄剔除(硬寿命上限)。
+
+        只读活跃窗口:get_if_active 口径,过期/T5 封顶的窗口视为无锚。
+        超龄剔除是原地写(槽位置 None),与「窗口死锚随窗死」互补:
+        前者管「窗口还活着但锚太旧」,后者管「窗口没了」。
+        """
+        s = self.get_if_active(adapter, group_id, now_ms)
+        if s is None:
+            return []
+        out: builtins.list[AnchorRecord] = []
+        for slot in ("anchor_master", "anchor_guest"):
+            rec = getattr(s, slot)
+            if rec is None:
+                continue
+            if max_age_ms > 0 and now_ms - rec.ts > max_age_ms:
+                setattr(s, slot, None)
+                continue
+            out.append(rec)
+        return out
 
     def lease_count(self, adapter: str, group_id: str) -> int:
         """该群当前在跑的 turn 租约数(本部署补丁 2026-10-02, key 级)。"""

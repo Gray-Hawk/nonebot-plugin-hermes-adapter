@@ -87,15 +87,16 @@ class Config(BaseModel):
     """
 
     # --- 触发模式 ---
-    hermes_group_trigger: str = "at"
-    """群聊触发方式: at / all / keyword / keyword-soft
-
-    keyword-soft(本部署新增): 显式激活只剩真 @bot / 引用 bot 消息;关键词改为
-    全文匹配的隐式激活(不点名、不开窗只续期,窗口外跑临时 turn),推最近
-    hermes_keyword_soft_context(N1) 条消息给 LLM 自判是否发言。"""
+    hermes_group_trigger: str = "keyword-soft"
+    """群聊触发方式(本部署补丁:凌晨批项2 全隐式化):
+    at / all / keyword 三模式已作废,收敛为 keyword-soft 单路径——
+    真 @bot / 引用 bot = 寻址事实(addressed_to_bot,开窗 + 进决策,不再强制回复);
+    关键词全文命中 = 隐式激活(不点名、不开窗只续期,窗口外跑临时 turn),推最近
+    hermes_keyword_soft_context(N1) 条消息给 LLM 自判是否发言。
+    配置其它值时按 keyword-soft 处理并 WARN 一次。字段保留仅为 .env 兼容。"""
 
     hermes_keywords: set[str] = {"/ai"}
-    """keyword 模式下的触发关键词"""
+    """keyword-soft 隐式激活的关键词集合(全文匹配,命中即隐式激活推 N1 条上下文)"""
 
     hermes_private_trigger: str = "all"
     """私聊触发方式: all / allowlist"""
@@ -178,16 +179,33 @@ class Config(BaseModel):
     hermes_perception_text_length: int = 200
     """被动感知单条历史消息最大长度(超出截断)"""
 
-    hermes_reactive_followup_window: int = 4
-    """reactive 续发轮 <recent_messages> 尾部保留条数(另加 bot 自己最近一条)。
+    hermes_reactive_followup_window: int = 6
+    """reactive 续发轮 <recent_messages> 的条数闸(OR 双闸之一,另加 bot 自己最近一条)。
 
-    explicit 触发轮不受影响,始终全量。设 0(或 ≥ hermes_perception_buffer)
-    关闭裁剪,行为与旧版一致 —— 这就是回退开关。
+    本部署补丁(凌晨批项5): 语义从「纯条数裁剪」改为
+    「条数 OR 时间」双闸的条数侧——消息在最最新 N 条内 *或* 年龄在
+    hermes_reactive_followup_time_sec 内即保留(2026-10-11 三群全量回测:
+    纯条数误伤热群、纯时间误伤冷群,OR 混合两头兼顾)。默认值 4 → 6;
+    热群建议 .env 里调到 8-12(本部署即用 12)。
+
+    explicit 触发轮不受影响,始终全量。设 0 且 time_sec=0 时关闭裁剪,
+    行为与旧版一致 —— 这就是回退开关。
 
     尾部条数包含当前消息自身(perception 先于主 handler 入库,`get_recent` 会取到它)。
     裁剪的前提是「被裁掉的行已经出现在会话记录里」——per-user session
     (`HERMES_SESSION_SHARE_GROUP=false`)与在途合并重发的消息不完全满足该前提,
     介意时调大窗口或设 0。"""
+
+    hermes_reactive_followup_time_sec: int = 180
+    """reactive 续发轮的时间闸(OR 双闸之二,秒):年龄不超过 N 秒的消息即使超出
+    条数闸也保留。0 = 退回纯条数旧行为。冷群消息稀、相关上下文「旧但浅」,
+    靠条数闸兜底;热群消息密、相关上下文「新但深」,靠本闸兜底。"""
+
+    hermes_reactive_followup_fetch_limit: int = 24
+    """reactive 续发轮的拉取深度上限(条):时间闸需要看到比条数闸更深的历史
+    才有料可裁,续发轮按 max(hermes_perception_buffer, 本值) 深取后再过双闸,
+    本值同时硬性封顶 OR 合并后的最大体积(防热群爆量轮 token 失控)。
+    explicit 轮与 keyword-soft 轮的拉取深度不受本项影响。"""
 
     hermes_perception_image_mode: str = "placeholder"
     """历史记录中的图片处理模式:
@@ -262,6 +280,40 @@ class Config(BaseModel):
     """reactive 模式下,bot 刚回复完群里 N 秒内,非显式 @ 触发的新消息直接静默。
     用来阻断「我刚说完别人接话→我又凑一句」类型的过触发。
     0 = 关闭(回退到旧行为)。显式 @bot 不受影响,任何时候都会立刻进入决策。"""
+
+    # --- 应答防抖(本部署补丁:凌晨批项6,维护者拍板) ---
+
+    hermes_reply_debounce_group_sec: float = 3.5
+    """应答防抖(群聊,秒):消息触发后不立即起 turn,先等 N 秒合并连发碎片——
+    QQ 用户「[图片]→3→哦那不怪你」式一秒一条的连发,原来每条各烧一轮 turn,
+    防抖后合并成一轮,且 LLM 能看到完整想法再开口。期内新消息以最新触发为准
+    并顺延截止时间(受 max_wait 硬上限约束)。0 = 关闭(回退旧行为:立即起跑)。
+    防抖期间不占 inflight slot;ack emoji 仍在首条消息到达时秒贴。"""
+
+    hermes_reply_debounce_private_sec: float = 2.5
+    """应答防抖(私聊,秒),语义同 hermes_reply_debounce_group_sec。私聊碎片连发同样
+    普遍,默认值略短于群聊。0 = 私聊不防抖。"""
+
+    hermes_reply_debounce_max_wait_sec: float = 8.0
+    """防抖顺延硬上限(秒):自首条消息起算最多等待这么久,防止活跃群里截止时间
+    被新消息永远顺延、bot 永远不开口。0 = 无上限(不推荐)。"""
+
+    # --- 黑名单(本部署补丁:凌晨批项3,维护者拍板) ---
+
+    hermes_blacklist: dict[str, list[str]] = {}
+    """黑名单:{群号: [账号QQ, ...]}。名单账号的消息不置 explicit/addressed——
+    它们的 @ 降级为普通隐式信号,从入口消解 AI 互聊循环的燃料;消息照常入
+    buffer、窗口内跟帖照常可见(人类委托「去跟 X 说」的会话能继续)。
+    「软」语义在协议层:模型按锚/任务上下文自决是否与名单账号对话(默认不),
+    代码不硬断。仅群聊生效;私聊不受名单影响。.env 写 JSON,如
+    HERMES_BLACKLIST={"2000000001": ["1000000002"]}"""
+
+    # --- 委托锚(本部署补丁:凌晨批项4,维护者拍板) ---
+
+    hermes_anchor_max_age_sec: int = 150
+    """委托锚的硬寿命上限(秒):锚龄超过即自动松掉,防「模型一直忘了松」。
+    与活跃窗口寿命取 min(窗口死锚随窗死,无需额外处理)。建议 120-180,
+    短于 hermes_active_session_ttl_sec。"""
 
     # --- 激活体系改造:隐性激活 + T1/T5 + T2 定时激活(本部署新增) ---
 

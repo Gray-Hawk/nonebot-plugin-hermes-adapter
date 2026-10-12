@@ -20,7 +20,7 @@ from nonebot.rule import Rule
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
-from ..core.active_session import ActiveSession
+from ..core.active_session import ActiveSession, AnchorRecord
 from ..core.hermes_client import (
     ChatResult,
     extract_response_media,
@@ -115,6 +115,22 @@ def _msg_at_only_other_users(uni_msg: alconna.UniMessage, bot_self_id: str) -> b
     if not uni_msg.has(alconna.At):
         return False
     return not _is_bot_at(uni_msg, bot_self_id)
+
+
+# 本部署补丁(凌晨批项2): hermes_group_trigger 作废模式的
+# 告警去重(每模式只 WARN 一次,重启清空)。
+_TRIGGER_MODE_DEPRECATED_WARNED: set[str] = set()
+
+
+def _is_blacklisted(group_id: str | None, user_id: str) -> bool:
+    """黑名单判定(本部署补丁:凌晨批项3)。
+
+    仅群聊生效(名单按群分组);私聊不受名单影响——私聊是显式对话,
+    「不主动对话」语义不适用。
+    """
+    if not group_id:
+        return False
+    return user_id in plugin_config.hermes_blacklist.get(group_id, ())
 
 
 # 单条昵称在 prompt 里的最大字符数。
@@ -772,6 +788,130 @@ async def handle_perception(bot: Bot, event: Event):
     )
 
 
+# 本部署补丁: 应答防抖(凌晨批项6,维护者拍板)。
+# 设计见 项目文档库「方案:应答防抖」。
+# 要点:perception 在 priority=1 无条件写 buffer,turn 上下文从 buffer 拉,
+# 所以延迟起跑的 turn 自动看到防抖期内到达的所有碎片,触发载荷只需管归属。
+class _DebounceState:
+    """per-target 防抖状态。首条消息的 handler 常驻(睡满防抖窗口后 dispatch),
+    期内后续消息只更新本状态并立即返回——合并语义靠「载荷替换 + 截止顺延」。"""
+
+    __slots__ = ("first_mono", "deadline_mono", "payload", "merged")
+
+    def __init__(self, first_mono: float, deadline_mono: float, payload: dict):
+        self.first_mono = first_mono          # 首条消息到达时刻(monotonic),硬上限基准
+        self.deadline_mono = deadline_mono    # 当前截止时间,期内新消息可顺延
+        self.payload = payload                # 最新触发的 dispatch 载荷(kwargs)
+        self.merged = 0                       # 被合并掉的碎片条数(观测用)
+
+
+_debounce_states: dict[tuple[str, str], _DebounceState] = {}
+
+
+def _debounce_arrive(
+    key: tuple[str, str],
+    payload: dict,
+    *,
+    debounce_sec: float,
+    max_wait_sec: float,
+    now_mono: float,
+    replaceable: bool = True,
+) -> tuple[_DebounceState, bool]:
+    """一条触发到达防抖闸。返回 (state, is_new)。
+
+    is_new=True: 调用方是首条触发,负责睡满窗口后 dispatch(state.payload)。
+    is_new=False: 本条被合并——载荷按 replaceable 替换、截止时间顺延(受
+    first+max_wait 硬上限),调用方应立即返回。
+    replaceable=False 用于「纯图非显式碎片」:顺延但不替换载荷(该形态会在
+    reactive 图片门控被整 turn 吞掉,替换会弄丢先前的文本触发载荷)。
+    get-or-create 与状态更新之间无 await,asyncio 单线程下原子。
+    """
+    st = _debounce_states.get(key)
+    if st is None:
+        st = _DebounceState(
+            first_mono=now_mono,
+            deadline_mono=now_mono + debounce_sec,
+            payload=payload,
+        )
+        _debounce_states[key] = st
+        return st, True
+    if replaceable:
+        st.payload = payload
+    st.merged += 1
+    new_deadline = now_mono + debounce_sec
+    if max_wait_sec > 0:
+        new_deadline = min(new_deadline, st.first_mono + max_wait_sec)
+    st.deadline_mono = max(st.deadline_mono, new_deadline)
+    return st, False
+
+
+async def _dispatch_chat(
+    *,
+    bot: Bot,
+    event: Event,
+    target,
+    adapter_name: str,
+    user_id: str,
+    nickname: str | None,
+    group_id: str | None,
+    msg_text: str,
+    image_urls: list[str],
+    sticker_urls: list[str],
+    is_explicit_trigger: bool,
+    addressed_to_bot: bool,
+    now_ms: int,
+    ephemeral: bool = False,
+    context_limit: int | None = None,
+):
+    """ack scope + passive/reactive 分叉(原 handle_message 末段,防抖批抽出以便
+    防抖到期后与防抖关闭路径共用同一 dispatch)。"""
+    async with _ack_scope(
+        bot,
+        event,
+        adapter_name=adapter_name,
+        is_explicit_trigger=is_explicit_trigger,
+        is_private=target.private,
+    ):
+        if target.private or not plugin_config.hermes_active_session_enabled:
+            # 原 v0.1.6 等价路径:passive 模式,raw_text 直接当回复
+            await _handle_passive_path(
+                bot=bot,
+                target=target,
+                adapter_name=adapter_name,
+                user_id=user_id,
+                nickname=nickname,
+                group_id=group_id,
+                text=msg_text,
+                image_urls=image_urls,
+                sticker_urls=sticker_urls,
+                is_private=target.private,
+                now_ms=now_ms,
+                event_msg_id=getattr(event, "message_id", None),
+            )
+            return
+
+        # 群聊 + 活跃态启用 → reactive 决策
+        await _handle_reactive_path(
+            bot=bot,
+            target=target,
+            adapter_name=adapter_name,
+            user_id=user_id,
+            nickname=nickname,
+            group_id=group_id,
+            text=msg_text,
+            image_urls=image_urls,
+            sticker_urls=sticker_urls,
+            is_explicit_trigger=is_explicit_trigger,
+            addressed_to_bot=addressed_to_bot,
+            now_ms=now_ms,
+            event_msg_id=getattr(event, "message_id", None),
+            # keyword-soft 窗口外命中:跑无窗口临时 turn(不开窗);窗口内则正常跑,
+            # 两种都推 N1 条上下文(不用续发轮裁剪)。
+            ephemeral=ephemeral,
+            context_limit=context_limit,
+        )
+
+
 @receive_message.handle()
 async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     if _mcp.message_buffer is None or _mcp.active_sessions is None:
@@ -877,12 +1017,22 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
 
     # --- 触发判断 ---
     # addressed_to_bot 是与触发正交的寻址事实:平台确认「这条冲 bot 说的」
-    # (真 @ / 引用 bot 的消息 / 唤起词命中)。它随消息进 prompt 的 runtime_state,
-    # 让归属判断不必从回填的裸 `@<id>` 去猜。与 trigger 模式无关:`all` 下泛聊天
-    # explicit 但不寻址,真 @bot 则照样寻址。
+    # (真 @ / 引用 bot 的消息)。它随消息进 prompt 的 runtime_state,
+    # 让归属判断不必从回填的裸 `@<id>` 去猜。
+    #
+    # 本部署补丁(凌晨批项2 全隐式化): hermes_group_trigger 的
+    # at/all/keyword 三模式作废,收敛为 keyword-soft 单路径;群聊侧
+    # is_explicit_trigger 重定义 = addressed_to_bot——下游所有 explicit 挂点
+    # (开窗 / ack emoji / 解析兜底转发 / 图片门控旁路 / cooldown 旁路 / 裁剪豁免)
+    # 随之整体 rekey 到 addressed,「显式激活」不再是独立概念,@ 只是寻址事实
+    # + 隐式激活信号。私聊维持恒 explicit(私聊决策信封内自决,见 _run_passive_turn)。
     is_explicit_trigger = False
     addressed_to_bot = False
-    keyword_soft_hit = False  # keyword-soft 模式全文命中(隐式激活)
+    keyword_soft_hit = False  # keyword-soft 全文命中(隐式激活)
+    # 凌晨批项3 黑名单:名单账号(按群配置)的消息不置 explicit/addressed——
+    # 它们的 @ 降级为普通隐式信号,从入口消解 AI 互聊循环的燃料;消息照常入
+    # buffer、窗口内跟帖照常可见(人类委托「去跟 X 说」的会话能继续)。
+    sender_blacklisted = _is_blacklisted(group_id, user_id)
     if target.private:
         is_explicit_trigger = True
     else:
@@ -895,30 +1045,21 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         # _msg_at_only_other_users=True 触发 quoted-only 抑制,完全不响应(连 emoji 都没)。
         has_bot_at = _is_bot_at(uni_msg, str(bot.self_id)) or _has_at_bot_in_original(event, str(bot.self_id))
         is_mentioned = has_bot_at or (event.is_tome() and not _msg_at_only_other_users(uni_msg, str(bot.self_id)))
-        addressed_to_bot = is_mentioned
         trigger_mode = plugin_config.hermes_group_trigger
-        if trigger_mode == "at":
-            is_explicit_trigger = is_mentioned
-        elif trigger_mode == "all":
-            is_explicit_trigger = True
-        elif trigger_mode == "keyword-soft":
-            # 本部署新增:显式只剩真 @/引用;关键词全文命中 = 隐式激活,
-            # 不剥前缀、不升级 addressed_to_bot,由 LLM 拿 N1 条上下文自判是否点名。
-            for kw in plugin_config.hermes_keywords:
-                if kw and kw in msg_text:
-                    keyword_soft_hit = True
-                    break
-            if is_mentioned:
-                is_explicit_trigger = True
-        elif trigger_mode == "keyword":
-            for kw in plugin_config.hermes_keywords:
-                if msg_text.startswith(kw):
-                    msg_text = msg_text[len(kw) :].strip()
-                    is_explicit_trigger = True
-                    addressed_to_bot = True  # 唤起词就是点名
-                    break
-            if not is_explicit_trigger and is_mentioned:
-                is_explicit_trigger = True
+        if trigger_mode != "keyword-soft" and trigger_mode not in _TRIGGER_MODE_DEPRECATED_WARNED:
+            _TRIGGER_MODE_DEPRECATED_WARNED.add(trigger_mode)
+            logger.warning(
+                f"[HERMES] hermes_group_trigger={trigger_mode!r} 已作废(凌晨批项2 全隐式化,"
+                "收敛 keyword-soft 单路径):@/引用 只作寻址与开窗信号,不再强制回复"
+            )
+        addressed_to_bot = is_mentioned and not sender_blacklisted
+        is_explicit_trigger = addressed_to_bot
+        # keyword-soft 单路径:关键词全文命中 = 隐式激活,不剥前缀、不升级
+        # addressed_to_bot,由 LLM 拿 N1 条上下文自判是否点名。
+        for kw in plugin_config.hermes_keywords:
+            if kw and kw in msg_text:
+                keyword_soft_hit = True
+                break
 
     # --- M1 核心:活跃态分支 ---
     in_active_window = (
@@ -947,10 +1088,27 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         )
         matcher.skip()
 
-    # 显式触发:进入 / 续期活跃态(群聊场景)
+    # 显式触发(全隐式化后 = addressed):进入 / 续期活跃态(群聊场景)
     if is_explicit_trigger and not target.private and group_id and plugin_config.hermes_active_session_enabled:
-        _mcp.active_sessions.trigger(adapter_name, group_id, user_id, now_ms=now)
+        sess = _mcp.active_sessions.trigger(adapter_name, group_id, user_id, now_ms=now)
         logger.info(f"[HERMES] active_session triggered/renewed: {adapter_name}/{group_id} by {user_id}")
+        # 本部署补丁(凌晨批项4 委托锚): addressed 消息 = 委托轮,
+        # 按双槽规则钉锚(维护者槽无条件/客人槽三条件,见 pin_anchor)。锚是「任务来源
+        # 指针」:续发轮裁剪掉原始委托后,靠它找回任务。文本在钉入时截一道,
+        # 渲染端还有一道 sanitize。纯 @ 无文本也钉(委托可能跟在图里/下一条)。
+        _mcp.active_sessions.pin_anchor(
+            sess,
+            AnchorRecord(
+                commissioner_id=user_id,
+                commissioner_nickname=nickname,
+                msg_id=getattr(event, "message_id", None),
+                text=msg_text[:200],
+                ts=now,
+            ),
+            master_ids=set(plugin_config.hermes_admin_users),
+            max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
+            now_ms=now,
+        )
 
     if not target.private:
         logger.info(
@@ -959,52 +1117,99 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             f"{'reactive' if plugin_config.hermes_active_session_enabled else 'passive'}"
         )
 
-    # --- 调用 Hermes (用 _ack_scope 包住, 显式触发会在用户消息上贴 emoji 回执) ---
-    async with _ack_scope(
-        bot,
-        event,
-        adapter_name=adapter_name,
-        is_explicit_trigger=is_explicit_trigger,
-        is_private=target.private,
-    ):
-        if target.private or not plugin_config.hermes_active_session_enabled:
-            # 原 v0.1.6 等价路径:passive 模式,raw_text 直接当回复
-            await _handle_passive_path(
-                bot=bot,
-                target=target,
-                adapter_name=adapter_name,
-                user_id=user_id,
-                nickname=nickname,
-                group_id=group_id,
-                text=msg_text,
-                image_urls=image_urls,
-                sticker_urls=sticker_urls,
-                is_private=target.private,
-                now_ms=now,
-                event_msg_id=getattr(event, "message_id", None),
-            )
-            return
-
-        # 群聊 + 活跃态启用 → reactive 决策
-        await _handle_reactive_path(
+    # --- 应答防抖(本部署补丁:凌晨批项6) ---
+    # 首条触发:登记状态 → 进 ack scope 秒贴 emoji → 睡满防抖窗 → 拿最新载荷 dispatch。
+    # 期内碎片:替换载荷 + 顺延截止(受 max_wait 硬上限)后立即返回,不另起 turn。
+    # 防抖期间不占 inflight slot;T2 定时/投递轮询不经过本 handler,天然不防抖。
+    # 显式/隐式一视同仁(@ 委托同样防抖,几秒等待对委托无感)。
+    debounce_sec = (
+        plugin_config.hermes_reply_debounce_private_sec
+        if target.private
+        else plugin_config.hermes_reply_debounce_group_sec
+    )
+    if debounce_sec > 0:
+        scope_id = user_id if target.private else (group_id or "")
+        debounce_key = (adapter_name, f"{'private' if target.private else 'group'}:{scope_id}")
+        payload = dict(
             bot=bot,
+            event=event,
             target=target,
             adapter_name=adapter_name,
             user_id=user_id,
             nickname=nickname,
             group_id=group_id,
-            text=msg_text,
+            msg_text=msg_text,
             image_urls=image_urls,
             sticker_urls=sticker_urls,
             is_explicit_trigger=is_explicit_trigger,
             addressed_to_bot=addressed_to_bot,
             now_ms=now,
-            event_msg_id=getattr(event, "message_id", None),
-            # keyword-soft 窗口外命中:跑无窗口临时 turn(不开窗);窗口内则正常跑,
-            # 两种都推 N1 条上下文(不用续发轮裁剪)。
             ephemeral=keyword_soft_hit and not in_active_window,
             context_limit=plugin_config.hermes_keyword_soft_context if keyword_soft_hit else None,
         )
+        # get-or-create 与状态更新之间无 await,asyncio 单线程下原子。
+        loop = asyncio.get_running_loop()
+        # 纯图非显式碎片不替换载荷:它是 reactive 图片门控会整 turn 吞掉的形态,
+        # 替换会把先前的文本触发载荷弄丢;但仍顺延截止(图已在 buffer 里,
+        # 最终 turn 看得到)。私聊恒 explicit,不受此保护影响(与旧行为一致)。
+        image_only = bool(image_urls) and not msg_text.strip()
+        st, is_new = _debounce_arrive(
+            debounce_key,
+            payload,
+            debounce_sec=debounce_sec,
+            max_wait_sec=plugin_config.hermes_reply_debounce_max_wait_sec,
+            now_mono=loop.time(),
+            replaceable=not (image_only and not is_explicit_trigger),
+        )
+        if not is_new:
+            logger.debug(
+                f"[HERMES debounce] merged fragment (key={debounce_key} user={user_id} "
+                f"merged={st.merged} fire_in={st.deadline_mono - loop.time():.1f}s)"
+            )
+            return
+        try:
+            # ack scope 在睡前进入:首条消息秒贴 emoji,emoji 覆盖防抖+turn 全程。
+            # 注意:ack 用首条消息的 event/explicit 判定;期内碎片(含 explicit)
+            # 不另贴 emoji——它们的 handler 更新状态后即返回。
+            async with _ack_scope(
+                bot,
+                event,
+                adapter_name=adapter_name,
+                is_explicit_trigger=is_explicit_trigger,
+                is_private=target.private,
+            ):
+                while True:
+                    remaining = st.deadline_mono - loop.time()
+                    if remaining <= 0:
+                        break
+                    await asyncio.sleep(min(remaining, 0.5))
+                logger.debug(
+                    f"[HERMES debounce] fire (key={debounce_key} merged={st.merged} "
+                    f"waited={loop.time() - st.first_mono:.1f}s)"
+                )
+                await _dispatch_chat(**st.payload)
+        finally:
+            _debounce_states.pop(debounce_key, None)
+        return
+
+    # --- 调用 Hermes (防抖关闭时走原路径直发) ---
+    await _dispatch_chat(
+        bot=bot,
+        event=event,
+        target=target,
+        adapter_name=adapter_name,
+        user_id=user_id,
+        nickname=nickname,
+        group_id=group_id,
+        msg_text=msg_text,
+        image_urls=image_urls,
+        sticker_urls=sticker_urls,
+        is_explicit_trigger=is_explicit_trigger,
+        addressed_to_bot=addressed_to_bot,
+        now_ms=now,
+        ephemeral=keyword_soft_hit and not in_active_window,
+        context_limit=plugin_config.hermes_keyword_soft_context if keyword_soft_hit else None,
+    )
 
 
 # 上游 locked 类持久化失败 = 别的 Hermes 进程正在写 state.db,上游要求「过一会再发一次」。
@@ -1206,11 +1411,16 @@ async def _run_passive_turn(
             )
         )
 
+    # 本部署补丁(凌晨批项2): 私聊挂 submit_decision 决策信封
+    # (全隐式化:私聊不再「硬必回」,模型按私聊版协议自决,无实质内容可静默)。
+    # 群聊 passive(active_session=off 的旧部署形态)维持 raw_text 直发不动。
+    use_private_decision = is_private
     system_prompt = build_passive_system_prompt(
         adapter=adapter_name,
         is_private=is_private,
         user_id=user_id,
         group_id=group_id,
+        private_decision=use_private_decision,
     )
     # 图片内联成 data: URL 再出站:上游对 http(s) URL 是纯透传,交出去就把可达性
     # 赌在 provider 出网与 URL 时效上,且部分 provider 形态会静默丢图。
@@ -1256,7 +1466,8 @@ async def _run_passive_turn(
         adapter_name=adapter_name,
         is_private=is_private,
         mode="passive",
-        expect_structured=False,
+        expect_structured=use_private_decision,
+        structured_tool_name="submit_decision" if use_private_decision else None,
         system_prompt=system_prompt,
         user_content_override=user_content,
         target=hermes_target,
@@ -1266,10 +1477,15 @@ async def _run_passive_turn(
     # 本部署补丁: 403 鉴权类错误硬静默——不发 fallback、
     # 不发 raw_text,不依赖 fallback 配置。403 是运维事件(key/额度),群里通知无意义,
     # 上游持续故障时每条触发一条通知就是刷屏。记 error 级日志让运维能看见。
-    if result.is_forbidden_error:
+    # 2026-10-11 扩展: provider 暂不可用/重试耗尽引导文案同口径静默。
+    if result.is_forbidden_error or result.is_outage_error:
+        _silence_kind = (
+            "403 鉴权类错误" if result.is_forbidden_error
+            else "provider 暂不可用(重试耗尽)引导文案"
+        )
         logger.error(
-            f"[HERMES passive] 403 鉴权类错误,已静默丢弃 (group={group_id} is_private={is_private})"
-            "——检查接入点 key / provider 额度"
+            f"[HERMES passive] {_silence_kind},已静默丢弃 (group={group_id} is_private={is_private})"
+            "——检查接入点 key / provider 额度与可用性"
         )
         return result
 
@@ -1295,16 +1511,25 @@ async def _run_passive_turn(
             )
         return result
 
-    # 防御:同一 Hermes session 之前跑过 reactive 时学到 submit_decision 契约,
-    # 切回 passive 后仍可能吐 JSON。检测并抠 reply_text;不命中则用原 raw_text。
-    reply_text = result.raw_text
-    extracted = maybe_extract_decision_reply_text(reply_text)
-    if extracted is not None:
-        if extracted == "":
-            logger.info(f"[HERMES passive] LLM 返回 should_reply=false 结构,静默(group={group_id})")
+    # 本部署补丁(凌晨批项2): 私聊决策信封解析成功时按信封走——
+    # should_reply=false 即静默(私聊不再硬必回)。解析失败回 raw_text:私聊是显式
+    # 对话,静默更像故障;并保留既有防御性抠取(模型可能吐了破信封)。
+    if use_private_decision and result.structured is not None and not result.parse_failed:
+        if not result.structured.get("should_reply"):
+            logger.info(f"[HERMES passive] 私聊自决静默 (user={user_id})")
             return result
-        logger.warning(f"[HERMES passive] 检测到 submit_decision 形 JSON 残留,抠 reply_text 后发送(group={group_id})")
-        reply_text = extracted
+        reply_text = str(result.structured.get("reply_text") or "").strip()
+    else:
+        # 防御:同一 Hermes session 之前跑过 reactive 时学到 submit_decision 契约,
+        # 切回 passive 后仍可能吐 JSON。检测并抠 reply_text;不命中则用原 raw_text。
+        reply_text = result.raw_text
+        extracted = maybe_extract_decision_reply_text(reply_text)
+        if extracted is not None:
+            if extracted == "":
+                logger.info(f"[HERMES passive] LLM 返回 should_reply=false 结构,静默(group={group_id})")
+                return result
+            logger.warning(f"[HERMES passive] 检测到 submit_decision 形 JSON 残留,抠 reply_text 后发送(group={group_id})")
+            reply_text = extracted
 
     cleaned_text, extracted_media_urls, extracted_files = extract_response_media(reply_text)
     media_urls = list(result.media_urls) + [u for u in extracted_media_urls if u not in result.media_urls]
@@ -1396,10 +1621,17 @@ async def _run_reactive_turn(
         recent_full = recent_override
         recent = recent_override
     else:
+        # 本部署补丁(凌晨批项5): 续发轮(非显式、无 N1 指定)
+        # 按 followup_fetch_limit 深取——时间闸需要比条数闸更深的历史才有料可裁,
+        # 深度上限同时硬性封顶 OR 双闸合并后的最大体积。explicit/keyword-soft 轮不变。
+        is_followup_turn = not is_explicit_trigger and context_limit is None
+        fetch_limit = plugin_config.hermes_perception_buffer
+        if is_followup_turn:
+            fetch_limit = max(fetch_limit, plugin_config.hermes_reactive_followup_fetch_limit)
         recent_full = _mcp.message_buffer.get_recent(
             adapter=adapter_name,
             group_id=group_id,
-            limit=context_limit or plugin_config.hermes_perception_buffer,
+            limit=context_limit or fetch_limit,
         )
         # 续发轮裁剪:归属判定主要依赖窗口尾部与 bot 自己的上一条发言,
         # 全量窗口只在 explicit 触发轮保留(裁剪函数内含回退开关语义)。
@@ -1407,10 +1639,35 @@ async def _run_reactive_turn(
         recent = (
             recent_full
             if is_explicit_trigger or context_limit is not None
-            else select_followup_window(recent_full, plugin_config.hermes_reactive_followup_window)
+            else select_followup_window(
+                recent_full,
+                plugin_config.hermes_reactive_followup_window,
+                now_ms=now_ms,
+                time_sec=plugin_config.hermes_reactive_followup_time_sec,
+            )
         )
 
     system_prompt = build_reactive_system_prompt()
+    # 本部署补丁(凌晨批项3): 黑名单标记进 runtime_state。
+    # 在 turn 内按 (group_id, user_id) 重算而非从 handler 透传——refire/pending
+    # 接力链不用为此加字段。
+    sender_blacklisted = _is_blacklisted(group_id, user_id)
+    # 本部署补丁(凌晨批项4): 取在钉委托锚(懒式超龄剔除)。
+    # ephemeral 临时 session 不注册进管理器,天然无锚。本 turn 触发消息自己钉的
+    # 锚(ts 与 commissioner 都和当前消息相同)不渲染——它就是 current_message,
+    # 再进 <pinned_tasks> 是冗余。
+    pinned_anchors: list[AnchorRecord] = []
+    if not ephemeral:
+        pinned_anchors = [
+            a
+            for a in _mcp.active_sessions.get_anchors(
+                adapter_name,
+                group_id,
+                now_ms,
+                max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
+            )
+            if not (a.ts == now_ms and a.commissioner_id == user_id)
+        ]
     # 平台账号名 + self_id 一起进 prompt:模型判归属只能靠这两样把消息里回填的
     # 裸 `@<id>` 和 [bot] 历史行绑回自己。取值走进程内缓存,首轮一次 RPC。
     self_nickname = await get_bot_nickname(bot)
@@ -1449,6 +1706,9 @@ async def _run_reactive_turn(
         current_text=text or "[图片]",
         current_image_urls=inlined,
         current_sticker_urls=sticker_inlined,
+        sender_blacklisted=sender_blacklisted,
+        pinned_anchors=pinned_anchors,
+        now_ms=now_ms,
     )
 
     # 出站 prompt 体量:模型在 explicit @ 下静默时,第一件要排除的就是「上下文被
@@ -1520,10 +1780,15 @@ async def _run_reactive_turn(
 
     if result.parse_failed or result.structured is None:
         # 本部署补丁: 403 鉴权类错误硬静默(同 passive 路径注释)。
-        if result.is_forbidden_error:
+        # 2026-10-11 扩展: provider 暂不可用/重试耗尽引导文案同口径静默。
+        if result.is_forbidden_error or result.is_outage_error:
+            _silence_kind = (
+                "403 鉴权类错误" if result.is_forbidden_error
+                else "provider 暂不可用(重试耗尽)引导文案"
+            )
             logger.error(
-                f"[HERMES reactive] 403 鉴权类错误,已静默丢弃 (group={group_id})"
-                "——检查接入点 key / provider 额度"
+                f"[HERMES reactive] {_silence_kind},已静默丢弃 (group={group_id})"
+                "——检查接入点 key / provider 额度与可用性"
             )
             return result
         # 上游 transport_error(5xx / 网络断 / 流被掐):raw_text 是服务端错误信息原文
@@ -1610,6 +1875,17 @@ async def _run_reactive_turn(
     decision = result.structured
     if decision.get("topic_hint"):
         _mcp.active_sessions.update_topic(adapter_name, group_id, str(decision["topic_hint"]))
+    # 本部署补丁(凌晨批项4): 模型可控松锚。值=委托人
+    # user_id 或 "all"(bool true 宽容视同 all)。ephemeral 无注册窗口,
+    # release 按 key 查管理器,自然 no-op。
+    release_anchor = decision.get("release_anchor")
+    if release_anchor:
+        who = "all" if release_anchor is True else str(release_anchor)
+        released = _mcp.active_sessions.release_anchor(adapter_name, group_id, who)
+        if released:
+            logger.info(
+                f"[HERMES reactive] anchor released: who={who} count={released} (group={group_id})"
+            )
     if decision.get("should_exit_active") and not _mcp.active_sessions.end_if_current(session):
         # 收窗只对本 turn 谈的那个窗口生效:期间若有别人 @bot 建了新窗口,那条 @ 正排在
         # pending 里等 refire,把它的窗口一起弹掉就等于把它静默吞掉。
@@ -1690,7 +1966,14 @@ async def _run_reactive_turn(
     # 本部署补丁: 判据从 is_explicit_trigger 换成 addressed_to_bot。
     # trigger=all 下每条消息都是 explicit,原判据导致条条回复都 @;改为只有真 @bot/引用
     # bot 的消息才 @。插件升级会冲掉此改动,详见项目文档库。
-    at_user = user_id if addressed_to_bot else None
+    # 本部署补丁: @ 自决(方案 A,维护者拍板)——submit_decision
+    # 带 at_user 键时以模型为准(@ 是强提醒,模型最清楚该不该);缺省维持
+    # addressed_to_bot 口径。散文兜底路径(L1595 附近)无决策信封,维持原判据不动。
+    _decision_at = decision.get("at_user")
+    if _decision_at is None:
+        at_user = user_id if addressed_to_bot else None
+    else:
+        at_user = user_id if _decision_at else None
     sent = await send_text_with_media(
         bot=bot,
         target=target,
