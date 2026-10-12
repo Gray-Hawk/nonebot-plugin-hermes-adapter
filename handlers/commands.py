@@ -50,6 +50,45 @@ async def handle_clear(bot: Bot, event: Event, matcher: Matcher):
     await reply.send(target=target, bot=bot)
 
 
+# --- /delay、/resume(T1 空闲重置超控,本部署新增) ---
+delay_command = on_command("delay", force_whitespace=True, priority=88, block=True)
+resume_command = on_command("resume", force_whitespace=True, priority=88, block=True)
+
+
+@delay_command.handle()
+async def handle_delay(bot: Bot, event: Event, matcher: Matcher):
+    """暂停当前会话的 T1 空闲自动重置"""
+    target = alconna.get_target()
+    if not check_isolation(event, target):
+        matcher.skip()
+
+    if plugin_config.hermes_session_idle_reset_sec <= 0:
+        await alconna.UniMessage("ℹ️ 空闲自动重置(T1)当前未启用。").send(target=target, bot=bot)
+        return
+
+    adapter_name = get_adapter_name(target)
+    user_id = event.get_user_id() or "user"
+    group_id = None if target.private else target.id
+    internal_id = session_manager.set_idle_paused(adapter_name, target.private, user_id, group_id, True)
+    logger.info(f"[HERMES] /delay: T1 计时已暂停 ({internal_id})")
+    await alconna.UniMessage("⏸️ 已暂停本会话的空闲自动重置,/resume 恢复。").send(target=target, bot=bot)
+
+
+@resume_command.handle()
+async def handle_resume(bot: Bot, event: Event, matcher: Matcher):
+    """恢复当前会话的 T1 空闲自动重置,并重置计时"""
+    target = alconna.get_target()
+    if not check_isolation(event, target):
+        matcher.skip()
+
+    adapter_name = get_adapter_name(target)
+    user_id = event.get_user_id() or "user"
+    group_id = None if target.private else target.id
+    internal_id = session_manager.set_idle_paused(adapter_name, target.private, user_id, group_id, False)
+    logger.info(f"[HERMES] /resume: T1 计时已恢复并重置 ({internal_id})")
+    await alconna.UniMessage("▶️ 已恢复空闲自动重置,计时重新开始。").send(target=target, bot=bot)
+
+
 # --- /ping ---
 ping_command = on_command("ping", force_whitespace=True, priority=88, block=True)
 
@@ -118,6 +157,10 @@ async def handle_help(bot: Bot, event: Event, matcher: Matcher):
         "/ping - 检查连接状态",
         "/help - 显示本帮助",
     ]
+    if plugin_config.hermes_session_idle_reset_sec > 0:
+        # T1 启用时才暴露超控命令,免得用户对着不存在的功能打命令
+        lines.append("/delay - 暂停空闲自动重置")
+        lines.append("/resume - 恢复空闲自动重置")
     if is_admin:
         # 管理员才看见运行时状态命令,普通用户视角下此命令"不存在"
         lines.append("/hermes-status - 查看插件运行时状态(管理员)")
@@ -178,14 +221,15 @@ def build_status_lines(now_ms: int) -> list[str]:
     active_details: list[str] = []
     if _mcp.active_sessions is not None:
         for s in _mcp.active_sessions.list():
-            # 按 is_alive 而非 ttl_left>0:正在跑长 turn 的群带着租约,窗口虽已过 TTL
-            # 但仍在监听 —— 诊断命令把它藏起来,恰好藏掉了最需要看见的那一个。
-            if not s.is_alive(now_ms):
+            # 按管理器 is_alive(TTL + key 级租约)而非 ttl_left>0:正在跑长 turn 的群
+            # 带着租约,窗口虽已过 TTL 但仍在监听 —— 诊断命令把它藏起来,恰好藏掉了
+            # 最需要看见的那一个。(本部署补丁 2026-10-02: 租约改 key 级)
+            if not _mcp.active_sessions.is_alive(s.adapter, s.group_id, now_ms):
                 continue
             active_count += 1
             ttl_left = max(0, (s.expires_at - now_ms) // 1000)
             topic = f" topic={s.topic_hint}" if s.topic_hint else ""
-            held = " in-flight" if s.inflight_turns else ""
+            held = " in-flight" if _mcp.active_sessions.lease_count(s.adapter, s.group_id) else ""
             active_details.append(f"  - {s.adapter}/{s.group_id} by {s.triggered_by} ttl={ttl_left}s{held}{topic}")
 
     # MessageBuffer:按 scope 统计消息数(数据在 SQLite 里,不是内存桶)

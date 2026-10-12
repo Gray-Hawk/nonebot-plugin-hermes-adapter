@@ -42,6 +42,7 @@ _SCHEMA_STATEMENTS = [
         url          TEXT    NOT NULL,
         sha256       TEXT,
         mime_type    TEXT,
+        kind         TEXT    NOT NULL DEFAULT 'image',
         PRIMARY KEY (message_id, idx)
     )
     """,
@@ -71,7 +72,18 @@ class MessageStore:
         self._conn.row_factory = sqlite3.Row
         for stmt in _SCHEMA_STATEMENTS:
             self._conn.execute(stmt)
+        self._migrate()
         self._closed = False
+
+    def _migrate(self) -> None:
+        """老库就地升级。新增列一律带默认值,存量行自动落到正确语义。
+
+        - message_images.kind:2026-10-09 前只有普通图片,存量行补 'image' 即正确。
+        """
+        img_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(message_images)")}
+        if "kind" not in img_cols:
+            self._conn.execute("ALTER TABLE message_images ADD COLUMN kind TEXT NOT NULL DEFAULT 'image'")
+            logger.info("[message_store] migrated: message_images +kind column")
 
     def close(self) -> None:
         if self._closed:
@@ -101,10 +113,18 @@ class MessageStore:
                 ),
             )
             msg_id = cur.lastrowid
+            # 普通图与收藏表情共用一张表、同一段连续 idx 编号(普通图在前),
+            # kind 列区分语义。PK 是 (message_id, idx),idx 必须全局唯一,
+            # 所以 sticker 的 idx 从 len(image_urls) 起排。
             for i, url in enumerate(msg.image_urls):
                 self._conn.execute(
-                    "INSERT INTO message_images (message_id, idx, url, sha256, mime_type) VALUES (?, ?, ?, NULL, NULL)",
+                    "INSERT INTO message_images (message_id, idx, url, sha256, mime_type, kind) VALUES (?, ?, ?, NULL, NULL, 'image')",
                     (msg_id, i, url),
+                )
+            for j, url in enumerate(msg.sticker_urls):
+                self._conn.execute(
+                    "INSERT INTO message_images (message_id, idx, url, sha256, mime_type, kind) VALUES (?, ?, ?, NULL, NULL, 'sticker')",
+                    (msg_id, len(msg.image_urls) + j, url),
                 )
             if msg.forward_content:
                 self._conn.execute(
@@ -150,13 +170,17 @@ class MessageStore:
         ids = [r["id"] for r in rows]
         placeholders = ",".join("?" for _ in ids)
         img_rows = self._conn.execute(
-            "SELECT message_id, idx, url FROM message_images "
+            "SELECT message_id, idx, url, kind FROM message_images "
             f"WHERE message_id IN ({placeholders}) ORDER BY message_id, idx",
             ids,
         ).fetchall()
         urls_by_msg: dict[int, list[str]] = defaultdict(list)
+        stickers_by_msg: dict[int, list[str]] = defaultdict(list)
         for ir in img_rows:
-            urls_by_msg[ir["message_id"]].append(ir["url"])
+            if ir["kind"] == "sticker":
+                stickers_by_msg[ir["message_id"]].append(ir["url"])
+            else:
+                urls_by_msg[ir["message_id"]].append(ir["url"])
         fwd_rows = self._conn.execute(
             f"SELECT message_id, content FROM message_forwards WHERE message_id IN ({placeholders})",
             ids,
@@ -171,6 +195,7 @@ class MessageStore:
                 nickname=r["nickname"],
                 content=r["content"],
                 image_urls=urls_by_msg.get(r["id"], []),
+                sticker_urls=stickers_by_msg.get(r["id"], []),
                 reply_to_ts=r["reply_to_ts"],
                 is_bot=bool(r["is_bot"]),
                 id=r["id"],
@@ -180,7 +205,7 @@ class MessageStore:
         ]
 
     def get_message_images_meta(self, message_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
-        """按 message_id 拉对应的 image 元数据(url + sha256 + mime)。
+        """按 message_id 拉对应的 image 元数据(url + sha256 + mime + kind)。
 
         未找到的 message_id 不出现在返回 dict 里(不是 KeyError)。
         """
@@ -188,7 +213,7 @@ class MessageStore:
             return {}
         placeholders = ",".join("?" for _ in message_ids)
         rows = self._conn.execute(
-            "SELECT message_id, idx, url, sha256, mime_type FROM message_images "
+            "SELECT message_id, idx, url, sha256, mime_type, kind FROM message_images "
             f"WHERE message_id IN ({placeholders}) ORDER BY message_id, idx",
             message_ids,
         ).fetchall()
@@ -200,6 +225,7 @@ class MessageStore:
                     "url": r["url"],
                     "sha256": r["sha256"],
                     "mime_type": r["mime_type"],
+                    "kind": r["kind"],
                 }
             )
         return dict(out)

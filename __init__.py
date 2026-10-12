@@ -60,7 +60,13 @@ async def _hermes_m1_startup():
         stop_mcp_server,
         stop_storage,
     )
-    from .tasks import register_expire_active_sessions, register_storage_vacuum
+    from .tasks import (
+        register_delivery_poll,
+        register_expire_active_sessions,
+        register_proactive_activation,
+        register_session_idle_reset,
+        register_storage_vacuum,
+    )
 
     init_runtime_state()
     await start_storage()
@@ -69,6 +75,27 @@ async def _hermes_m1_startup():
     _driver.on_shutdown(stop_storage)
     register_expire_active_sessions()
     register_storage_vacuum()
+    register_session_idle_reset()
+    register_proactive_activation()
+    register_delivery_poll()
+
+    # 投递轮询间隔过小只会白增本地请求与日志噪音,任务完成汇报的时效收益可忽略
+    if 0 < plugin_config.hermes_delivery_poll_interval_sec < 10:
+        logger.warning(
+            f"[HERMES] HERMES_DELIVERY_POLL_INTERVAL_SEC({plugin_config.hermes_delivery_poll_interval_sec}) "
+            "小于 10s:汇报时效收益可忽略,只会白增轮询开销;若这是本意可忽略本警告"
+        )
+
+    # T5 应大于 TTL,配反了等效于「窗口只能活 T5」——能跑但多半不是本意
+    if (
+        0 < plugin_config.hermes_active_session_t5_sec
+        <= plugin_config.hermes_active_session_ttl_sec
+    ):
+        logger.warning(
+            f"[HERMES] HERMES_ACTIVE_SESSION_T5_SEC({plugin_config.hermes_active_session_t5_sec}) "
+            f"<= TTL({plugin_config.hermes_active_session_ttl_sec}):窗口实际只能活 T5 秒,"
+            "隐式续期完全失效;若这是本意可忽略本警告"
+        )
 
     if os.environ.get("HERMES_PERCEPTION_IMAGE_MODE"):
         logger.warning(

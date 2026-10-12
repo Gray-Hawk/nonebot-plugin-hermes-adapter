@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -16,6 +17,7 @@ import httpx
 import json5  # type: ignore[import-untyped]
 from nonebot import logger
 
+from .media_whitelist import inline_local_media_images
 from .routing import HermesTarget, default_target
 
 # user_content_override 期望形态:纯文本 或 OpenAI 多模态 parts 列表
@@ -221,6 +223,24 @@ def _summarize_error_body(body: str) -> tuple[str, int | None]:
     return msg[:300], inner_status
 
 
+def _transport_failure(status: int, body: str) -> "ChatResult":
+    """非 200 响应的统一归纳(本部署补丁 2026-10-08 抽出, 非流式/流式分支共用)。
+
+    403 识别:外层 HTTP 状态或 502 包裹的内层 status 任一为 403 即打
+    is_forbidden_error 硬标记,handler 层据此硬静默(防 key 失效/额度耗尽时
+    每条触发刷一条「AI 服务异常」)。
+    """
+    reason, inner_status = _summarize_error_body(body)
+    inner_tag = f" inner={inner_status}" if inner_status else ""
+    logger.error(f"[HERMES] upstream HTTP {status}{inner_tag}: {reason}")
+    return ChatResult(
+        raw_text=_user_facing_error(reason),
+        parse_failed=True,
+        is_transport_error=True,
+        is_forbidden_error=(status == 403 or inner_status == 403),
+    )
+
+
 def preview_raw(text: str, *, head: int = 220, tail: int = 220) -> str:
     """给日志用的回复预览:**头尾都取**,中间省略。
 
@@ -263,15 +283,17 @@ def _media_basename(ref: str) -> str:
     return ref.rsplit("/", 1)[-1] or ref
 
 
-def extract_response_media(text: str) -> tuple[str, list[str]]:
-    """从 Hermes 回复中提取 markdown 图片 / MEDIA: 标签 URL,返回 (清洗后文本, URL 列表)。
+def extract_response_media(text: str) -> tuple[str, list[str], list[str]]:
+    """从 Hermes 回复中提取 markdown 图片 / MEDIA: 标签 URL,返回 (清洗后文本, URL 列表, 本地文件路径列表)。
 
     两种标签同一套分流规则:http(s) 与 data:image/…;base64 进媒体列表;
-    其余是 Hermes 主机上的本地文件路径(音频/视频/超限图片/路径校验失败,
-    api_server 不做内联改写),bot 侧无法抓取,原位替换为 [生成了文件: 文件名]
-    占位——静默删掉会让用户只看到「画好啦」却没有图。
+    主机本地路径(本部署补丁 2026-10-08 起)进 file_paths 供 send_local_files
+    上传文件本体(白名单判定在发送侧), 文本原位仍留 [生成了文件: 文件名]
+    占位——上传被白名单拒绝时用户仍能看到提示, 上传成功时占位符即说明文字;
+    其余 data: 非图片 payload 直接去掉。
     """
     media_urls: list[str] = []
+    file_paths: list[str] = []
 
     def _collect(ref: str) -> str | None:
         """进媒体列表返回 None;否则返回该原位替换成的占位文本。"""
@@ -284,6 +306,7 @@ def extract_response_media(text: str) -> tuple[str, list[str]]:
             # 非图片 data URL(text/plain 等):既不是可投递媒体也不是文件,直接去掉,
             # 不能按路径切 basename——那会把 payload 本身当文件名贴到群里。
             return ""
+        file_paths.append(ref)
         return f"[生成了文件: {_media_basename(ref)}]"
 
     def _md_image_repl(m: re.Match) -> str:
@@ -296,7 +319,7 @@ def extract_response_media(text: str) -> tuple[str, list[str]]:
     cleaned = _MEDIA_TAG_PATTERN.sub(_media_tag_repl, cleaned)
     cleaned = _TRUNCATED_MD_IMAGE_PATTERN.sub(_TRUNCATED_IMAGE_PLACEHOLDER, cleaned)
 
-    return cleaned.strip(), media_urls
+    return cleaned.strip(), media_urls, file_paths
 
 
 _SALVAGE_SHOULD_REPLY_RE = re.compile(r'"should_reply"\s*:\s*(true|false)', re.IGNORECASE)
@@ -498,15 +521,26 @@ _PROVIDER_ERROR_MARKERS = (
     "invalid_request_error",
 )
 
+# 上游 turn_failure_copy 的鉴权失败引导文案 (2026-10-09 实测线上模型 5h 额度 403):
+#   "{label} rejected your API key, so the model can't be reached. ...\n\nProvider said: HTTP 403: ..."
+# "HTTP 403" 被挪到第二段,老前缀正则失配,报错被当正常回复发进群。
+# 认完整固定句式而非锚定开头:该句式只由上游失败路径生成,模型正常回复不会逐字产出。
+_PROVIDER_AUTH_COPY_RE = re.compile(
+    r"rejected your (?:API key|sign-in), so the model can't be reached", re.IGNORECASE
+)
+
 
 def is_provider_error_text(text: str) -> bool:
     """检测回复内容是否为上游透传的 provider 报错(200 外壳 + 错误正文)。
 
-    前缀与特征词必须同时命中:只认前缀会把正经聊到状态码的回复误伤,只认特征词会把
+    老形态:前缀与特征词必须同时命中:只认前缀会把正经聊到状态码的回复误伤,只认特征词会把
     讨论报错本身的对话误伤 —— 而误伤的代价是把用户想要的回答换成一句兜底。
+    新形态(鉴权引导文案):固定句式直接命中,不再要求特征词。
     """
     if not text:
         return False
+    if _PROVIDER_AUTH_COPY_RE.search(text):
+        return True
     if not _PROVIDER_ERROR_PREFIX_RE.match(text):
         return False
     lower = text.lower()
@@ -541,6 +575,81 @@ def rotated_session_key(header_value: str | None, sent_key: str) -> str | None:
     return value
 
 
+# --- 本部署补丁: SSE 流式 + 中间旁白切分 ---
+
+# 旁白段最小长度:低于这个长度不值得发一条群消息(空白/单标点段)。
+_INTERIM_MIN_CHARS = 2
+
+
+class InterimSegmenter:
+    """SSE 行流 → 旁白段切分 + 最终回复累积。纯逻辑无网络依赖,可单测。
+
+    实测时序(2026-10-08 对生产 api_server 探测): agent 每轮工具调用前的旁白
+    content delta 完整流出之后, 该轮的 hermes.tool.progress(status=running) 帧
+    才到达。因此以 running 帧为段界: 帧到时把累积缓冲作为一段旁白吐出; EOS 时
+    剩余缓冲即最终回复。无工具的 turn 没有 running 帧, 整段=最终回复,
+    与非流式语义一致。
+
+    reasoning_content / hermes.status / approval.request 帧一律不消费;
+    tool.progress 的 completed 帧不切分(段在 running 时已吐, completed 时缓冲为空)。
+    """
+
+    def __init__(self) -> None:
+        self._seg: list[str] = []
+        self._event = ""
+
+    def feed(self, line: str) -> str | None:
+        """喂一行 SSE 原始行。返回切出的旁白段(strip 后, 达最小长度),否则 None。"""
+        if not line or line.startswith(":"):  # 空行(帧界)与 keepalive
+            return None
+        if line.startswith("event:"):
+            self._event = line[6:].strip()
+            return None
+        if not line.startswith("data:"):
+            return None
+        data_str = line[5:].strip()
+        if data_str == "[DONE]":
+            return None
+        event, self._event = self._event, ""
+        try:
+            payload = json.loads(data_str)
+        except ValueError:
+            return None
+        if event == "hermes.tool.progress":
+            if isinstance(payload, dict) and payload.get("status") == "running":
+                return self._pop_segment()
+            return None
+        # 普通 chat.completion.chunk: 只取 content delta, reasoning 等丢弃
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        if not choices:
+            return None
+        piece = (choices[0].get("delta") or {}).get("content")
+        if piece:
+            self._seg.append(piece)
+        return None
+
+    def _pop_segment(self) -> str | None:
+        text = "".join(self._seg).strip()
+        self._seg.clear()
+        return text if len(text) >= _INTERIM_MIN_CHARS else None
+
+    def final_text(self) -> str:
+        """EOS 时调用: 剩余缓冲 = 最终回复段(送原解析管线的 raw_text)。"""
+        return "".join(self._seg)
+
+
+class StreamHttpError(Exception):
+    """流式分支的非 200 响应;携带 status 与 body 让主流程走统一错误归纳。"""
+
+    def __init__(self, status: int, body: str) -> None:
+        super().__init__(f"stream HTTP {status}")
+        self.status = status
+        self.body = body
+
+
+InterimCallback = Callable[[str], Awaitable[None]]
+
+
 def is_persistence_error_text(text: str) -> bool:
     """检测回复内容是否为 Hermes 上游 SQLite session 持久化失败引发的中断报错文本。"""
     if not text:
@@ -564,6 +673,9 @@ class ChatResult:
     raw_text: str
     structured: dict[str, Any] | None = None
     media_urls: list[str] = field(default_factory=list)
+    file_paths: list[str] = field(default_factory=list)
+    """本部署补丁(2026-10-08): 回复里引用到的本地文件路径(MEDIA:/path 等),
+    供 handler 层 send_local_files 上传文件本体。白名单判定在发送侧。"""
     parse_failed: bool = False
     """期望结构化输出但解析失败(JSON 提取不到 / json5 解析报错 / 非 dict 类型)。"""
 
@@ -573,6 +685,16 @@ class ChatResult:
     handler 据此决定:transport_error → 可重试或对用户报错;parse_failed →
     通常静默降级(模型回了不可解析的内容);两者**不互斥**(transport_error
     场景下 parse_failed 也设 True 以阻止 caller 误把 raw_text 当模型有效输出)。
+    """
+
+    is_forbidden_error: bool = False
+    """本部署补丁: 403 鉴权类错误硬标记。
+
+    覆盖三种来源:api_server HTTP 403(key 无效/缺失)、502 包裹的内层 403
+    (provider 侧 403 经上游包装)、200 包裹的 provider 报错文本含 HTTP 403。
+    handler 层对此标记一律静默(不发 fallback、不发 raw_text),不依赖
+    hermes_transport_error_fallback_text 配置——403 是运维事件(key/额度),
+    群里通知无意义,上游持续故障时每条触发一条通知就是刷屏。
     """
 
     is_persistence_error: bool = False
@@ -684,6 +806,7 @@ class HermesClient:
         system_prompt: str | None = None,
         user_content_override: UserContent | None = None,
         target: HermesTarget | None = None,
+        interim_callback: InterimCallback | None = None,
     ) -> ChatResult:
         """调用 Hermes,返回 ChatResult。
 
@@ -702,6 +825,9 @@ class HermesClient:
           按群路由时由 handler 经 routing.resolve_target() 解析后传入。
         - mode 字段当前为路由元数据,chat() 内部不分支判断;Task 15 handler 据此决定
           如何呈现结果(reactive 走 structured 流,passive 走 raw_text)。
+        - interim_callback(本部署补丁): 非 None 时改走 SSE 流式,
+          agent 每轮工具调用前的旁白段实时回调给它(发送失败仅记日志,不影响主 turn);
+          raw_text 只含最终回复段。None = 旧行为(一次性非流式)。
         """
         tgt = target or default_target()
         url = f"{tgt.base_url}/v1/chat/completions"
@@ -738,25 +864,36 @@ class HermesClient:
         payload: dict[str, Any] = {
             "model": "hermes-agent",
             "messages": messages,
-            "stream": False,
+            "stream": interim_callback is not None,
         }
         # 路径 B:不发 tools / tool_choice(Hermes 透传不可靠,P0-spike 已验)
 
         headers = self.get_headers(session_key, memory_key, api_key=tgt.api_key)
         try:
-            async with httpx.AsyncClient(timeout=tgt.timeout) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                if resp.status_code != 200:
-                    reason, inner_status = _summarize_error_body(resp.text)
-                    inner_tag = f" inner={inner_status}" if inner_status else ""
-                    logger.error(f"[HERMES] upstream HTTP {resp.status_code}{inner_tag}: {reason}")
+            if interim_callback is not None:
+                # 本部署补丁: SSE 流式读取,旁白段实时回调,
+                # raw_text 只取最终回复段(旁白不进原解析管线)。
+                raw_text, rotated = await self._stream_chat(
+                    url, payload, headers, tgt.timeout, session_key, interim_callback
+                )
+            else:
+                async with httpx.AsyncClient(timeout=tgt.timeout) as client:
+                    resp = await client.post(url, json=payload, headers=headers)
+                    if resp.status_code != 200:
+                        return _transport_failure(resp.status_code, resp.text)
+                    data = resp.json()
+                    rotated = rotated_session_key(resp.headers.get("X-Hermes-Session-Id"), session_key)
+                if not (data.get("choices") or []):
+                    # 期望结构化但响应空:这是结构性失败而非"模型选择不回复"
                     return ChatResult(
-                        raw_text=_user_facing_error(reason),
-                        parse_failed=True,
-                        is_transport_error=True,
+                        raw_text="", parse_failed=expect_structured,
+                        effective_session_key=rotated,
                     )
-                data = resp.json()
-                rotated = rotated_session_key(resp.headers.get("X-Hermes-Session-Id"), session_key)
+                msg = (data.get("choices") or [{}])[0].get("message") or {}
+                raw_text = msg.get("content") or ""
+        except StreamHttpError as exc:
+            # 流式分支的非 200:与非流式同一套归纳(含 403 硬标记),保证错误面一致。
+            return _transport_failure(exc.status, exc.body)
         except httpx.TimeoutException:
             logger.error(f"[HERMES] API 请求超时 ({tgt.timeout}s, target={tgt.label})")
             return ChatResult(
@@ -783,14 +920,6 @@ class HermesClient:
             """给本轮所有出口统一挂上有效 session id(轮换才有值)。"""
             result.effective_session_key = rotated
             return result
-
-        choices = data.get("choices") or []
-        if not choices:
-            # 期望结构化但响应空:这是结构性失败而非"模型选择不回复"
-            return _out(ChatResult(raw_text="", parse_failed=expect_structured))
-
-        msg = choices[0].get("message") or {}
-        raw_text = msg.get("content") or ""
 
         # 检查是否为上游持久化失败错误(Hermes 返回 200 但 content 为 Session DB 错误提示)
         if is_persistence_error_text(raw_text):
@@ -829,7 +958,18 @@ class HermesClient:
             logger.warning(
                 f"[HERMES] 上游以 200 返回了 provider 报错,按传输失败处理 (raw_len={len(raw_text)} preview={preview!r})"
             )
-            return _out(ChatResult(raw_text=raw_text, parse_failed=True, is_transport_error=True))
+            # 本部署补丁(2026-10-08): 文本形态 "HTTP 403: ..." 的 provider 鉴权错误
+            # 同样打硬标记,handler 硬静默。
+            # 2026-10-09 扩展:引导文案形态 ("...rejected your API key... Provider said: HTTP 403: ...")
+            # 的 403 不在开头,此处已认定是 provider 报错,全文搜 "HTTP 403" 即可,无误伤面。
+            forbidden = bool(
+                re.match(r"^\s*HTTP\s+403\b", raw_text, re.IGNORECASE)
+                or re.search(r"\bHTTP\s+403\b", raw_text, re.IGNORECASE)
+            )
+            return _out(ChatResult(
+                raw_text=raw_text, parse_failed=True, is_transport_error=True,
+                is_forbidden_error=forbidden,
+            ))
 
         # 路径 B:从 raw_text 提取首个 {...} JSON5 块
         if expect_structured and structured_tool_name == "submit_decision":
@@ -843,8 +983,47 @@ class HermesClient:
             return _out(ChatResult(raw_text=raw_text, structured=structured))
 
         # 普通文本路径(passive 或未要求结构化)
-        cleaned, media_urls = extract_response_media(raw_text)
-        return _out(ChatResult(raw_text=cleaned, media_urls=media_urls))
+        cleaned, media_urls, file_paths = extract_response_media(raw_text)
+        return _out(ChatResult(raw_text=cleaned, media_urls=media_urls, file_paths=file_paths))
+
+    async def _stream_chat(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        timeout: int,
+        session_key: str,
+        interim_callback: InterimCallback,
+    ) -> tuple[str, str | None]:
+        """SSE 流式读取(本部署补丁)。返回 (最终回复段, rotated_session_key)。
+
+        旁白段经 InterimSegmenter 切出后逐段 await interim_callback;回调失败仅记
+        WARNING(旁白是附属输出,发不出去不能搞砸主 turn)。
+
+        错误面与 chat() 非流式分支对齐:非 200 抛 StreamHttpError(由调用方归纳),
+        超时/连接/其他异常原样向上抛(chat() 的 except 链统一接管)。
+        SSE keepalive 帧保证长 turn 中 read timeout 不会误杀(上游按
+        CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS 周期发 `: keepalive`)。
+        """
+        seg = InterimSegmenter()
+        rotated: str | None = None
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                if resp.status_code != 200:
+                    body = (await resp.aread()).decode("utf-8", "replace")
+                    raise StreamHttpError(resp.status_code, body)
+                rotated = rotated_session_key(resp.headers.get("X-Hermes-Session-Id"), session_key)
+                async for line in resp.aiter_lines():
+                    interim = seg.feed(line)
+                    if interim is None:
+                        continue
+                    try:
+                        await interim_callback(interim)
+                    except Exception:
+                        logger.warning("[HERMES] 旁白转发失败(不影响主 turn)", exc_info=True)
+        # 流式下上游不做 _resolve_media_to_data_urls(只在非流式响应路径),
+        # 本地图片在这里按插件白名单补内联, 让 raw_text 形态与非流式一致(2026-10-08 补丁)。
+        return inline_local_media_images(seg.final_text()), rotated
 
     async def fetch_capabilities(self) -> dict[str, Any]:
         """取 /v1/capabilities;任何失败都返回空 dict —— 探测不能阻塞启动。"""

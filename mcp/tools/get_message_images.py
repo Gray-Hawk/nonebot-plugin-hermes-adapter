@@ -5,11 +5,14 @@
 会把 ImageContent 块缓存为 MEDIA:<path> 并注入下一轮 LLM 调用。
 
 返回结构示例:
-  [0] TextContent({"results": [...每张图的元数据列表...]})
+  [0] TextContent({"results": [...每张图的元数据列表(含 kind)...]})
   [1] TextContent("[image for m:1234 idx=0]")
   [2] ImageContent(data="<base64>", mimeType="image/jpeg")
-  [3] TextContent("[image for m:1234 idx=1]")
+  [3] TextContent("[sticker for m:1234 idx=1]")
   [4] ImageContent(...)
+
+kind 取值:image = 普通图片;sticker = QQ 收藏/自定义表情。marker 文本
+按 kind 前缀,模型据以区分「画面内容」与「情绪信号」两种解读口径。
 """
 
 from __future__ import annotations
@@ -89,11 +92,13 @@ async def get_message_images_impl(
             continue
         for meta in metas[message_id]:
             idx = meta["idx"]
+            kind = meta.get("kind") or "image"
             if cap_exceeded_remaining:
                 results.append(
                     {
                         "message_id": message_id,
                         "image_idx": idx,
+                        "kind": kind,
                         "available": False,
                         "reason": "cap_exceeded",
                     }
@@ -106,6 +111,7 @@ async def get_message_images_impl(
                     {
                         "message_id": message_id,
                         "image_idx": idx,
+                        "kind": kind,
                         "available": False,
                         "reason": "cache_miss",
                     }
@@ -117,6 +123,7 @@ async def get_message_images_impl(
                     {
                         "message_id": message_id,
                         "image_idx": idx,
+                        "kind": kind,
                         "available": False,
                         "reason": "cache_miss",
                     }
@@ -128,6 +135,7 @@ async def get_message_images_impl(
                     {
                         "message_id": message_id,
                         "image_idx": idx,
+                        "kind": kind,
                         "available": False,
                         "reason": "too_large",
                         "byte_size": len(bytes_),
@@ -140,19 +148,23 @@ async def get_message_images_impl(
                     {
                         "message_id": message_id,
                         "image_idx": idx,
+                        "kind": kind,
                         "available": False,
                         "reason": "cap_exceeded",
                     }
                 )
                 continue
             b64 = base64.b64encode(bytes_).decode("ascii")
-            content_blocks.append(TextContent(type="text", text=f"[image for m:{message_id} idx={idx}]"))
+            # marker 按 kind 区分:表情包和普通照片/截图语义不同,模型看到
+            # "[sticker for ...]" 就知道该按情绪信号解读而非画面内容。
+            content_blocks.append(TextContent(type="text", text=f"[{kind} for m:{message_id} idx={idx}]"))
             content_blocks.append(ImageContent(type="image", data=b64, mimeType=mime or real_mime))
             total_bytes += len(bytes_)
             results.append(
                 {
                     "message_id": message_id,
                     "image_idx": idx,
+                    "kind": kind,
                     "available": True,
                     "mime": mime or real_mime,
                     "byte_size": len(bytes_),

@@ -20,6 +20,7 @@ from nonebot.rule import Rule
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
+from ..core.active_session import ActiveSession
 from ..core.hermes_client import (
     ChatResult,
     extract_response_media,
@@ -29,7 +30,7 @@ from ..core.hermes_client import (
 )
 from ..core.image_inline import inline_image_urls
 from ..core.message_buffer import BufferedMessage
-from ..core.outbound import get_bot_nickname, send_text_with_media
+from ..core.outbound import get_bot_nickname, send_local_files, send_text_with_media
 from ..core.prompt_builder import (
     build_passive_system_prompt,
     build_passive_user_content,
@@ -299,8 +300,8 @@ async def _ack_scope(
                             )
 
 
-async def _extract_image_urls(uni_msg: alconna.UniMessage, bot: Bot, adapter_name: str) -> list[str]:
-    """从 UniMessage 中抽出图片 URL 列表(可直接 HTTP GET 拿字节的那种)。
+async def _resolve_image_segment_url(img, bot: Bot, adapter_name: str) -> str | None:
+    """把单个 alconna.Image 段解析成可 HTTP GET 拿字节的 URL;解析不了返回 None。
 
     多 adapter 行为不一致:
     - OneBot v11 / QQ Official / Discord 等:alconna 直接在 Image 段上填好 `.url`,
@@ -311,33 +312,56 @@ async def _extract_image_urls(uni_msg: alconna.UniMessage, bot: Bot, adapter_nam
       和 DB 都本地,落地可接受;且 file_path 只有 ~1h 有效,异步 fetcher 必须
       及时抓字节进 ImageCache,后面 MCP 工具读 cache 不再依赖 URL
     - 其他 adapter:只看 `.url`,没的话就放弃这张图(不抛、不 fail bot)
+    """
+    adapter_lc = (adapter_name or "").lower()
+    url = getattr(img, "url", None)
+    if url and isinstance(url, str) and url.startswith(("http://", "https://")):
+        return url
+    file_id = getattr(img, "id", None)
+    if not file_id:
+        return None
+    if "telegram" in adapter_lc:
+        return await _resolve_telegram_file_url(bot, file_id)
+    # 其他 adapter 但 Image 没 .url 的情况:debug 一行,不当错误处理
+    logger.debug(
+        f"[image] skipped image segment with no resolvable URL (adapter={adapter_lc} id={file_id[:24]}...)"
+    )
+    return None
 
-    本函数是 async 因为 telegram 分支要 await bot.get_file。
+
+async def _extract_image_urls(uni_msg: alconna.UniMessage, bot: Bot, adapter_name: str) -> list[str]:
+    """抽出普通图片 URL 列表(可直接 HTTP GET 拿字节的那种)。
+
+    QQ 大表情包(Image.sticker=True)不进本列表,由 _extract_sticker_urls 单独抽;
+    是否喂给模型见 config.hermes_sticker_vision_enabled。
     """
     urls: list[str] = []
     if not uni_msg.has(alconna.Image):
         return urls
-    adapter_lc = (adapter_name or "").lower()
     for img in uni_msg[alconna.Image]:
-        # B-0: QQ 大表情包不进 vision URL list (语义价值极低、白烧 vision token)
+        # B-0: QQ 大表情包不进普通 vision URL list,避免和正常图片混同语义
         if getattr(img, "sticker", False):
             continue
-        url = getattr(img, "url", None)
-        if url and isinstance(url, str) and url.startswith(("http://", "https://")):
+        url = await _resolve_image_segment_url(img, bot, adapter_name)
+        if url:
             urls.append(url)
+    return urls
+
+
+async def _extract_sticker_urls(uni_msg: alconna.UniMessage, bot: Bot, adapter_name: str) -> list[str]:
+    """抽出 QQ 大表情包(Image.sticker=True)URL 列表,与普通图片分开。
+
+    本函数只负责解析;是否内联喂模型由调用方按 hermes_sticker_vision_enabled 门控。
+    """
+    urls: list[str] = []
+    if not uni_msg.has(alconna.Image):
+        return urls
+    for img in uni_msg[alconna.Image]:
+        if not getattr(img, "sticker", False):
             continue
-        file_id = getattr(img, "id", None)
-        if not file_id:
-            continue
-        if "telegram" in adapter_lc:
-            resolved = await _resolve_telegram_file_url(bot, file_id)
-            if resolved:
-                urls.append(resolved)
-                continue
-        # 其他 adapter 但 Image 没 .url 的情况:debug 一行,不当错误处理
-        logger.debug(
-            f"[image] skipped image segment with no resolvable URL (adapter={adapter_lc} id={file_id[:24]}...)"
-        )
+        url = await _resolve_image_segment_url(img, bot, adapter_name)
+        if url:
+            urls.append(url)
     return urls
 
 
@@ -672,6 +696,10 @@ async def handle_perception(bot: Bot, event: Event):
 
     msg_text = uni_msg.extract_plain_text().strip()
     image_urls = await _extract_image_urls(uni_msg, bot, adapter_name)
+    # 收藏表情也入库(kind='sticker'):看过即焚会让历史里的 [表情包] 占位
+    # 永远无法召回字节。是否当轮喂模型仍由 hermes_sticker_vision_enabled 门控,
+    # 入库与内联是两件独立的事。
+    sticker_urls = await _extract_sticker_urls(uni_msg, bot, adapter_name)
     nickname = _extract_sender_nickname(event, adapter_name) or user_id
 
     # 文本太长截断
@@ -719,6 +747,7 @@ async def handle_perception(bot: Bot, event: Event):
                 nickname=nickname,
                 content=msg_text,
                 image_urls=image_urls,
+                sticker_urls=sticker_urls,
                 is_bot=False,
                 forward_content=_forward_full_for_store(forward_full),
             )
@@ -798,6 +827,8 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
 
     image_urls = await _extract_image_urls(uni_msg, bot, adapter_name)
     image_urls.extend(replied_image_urls)
+    # QQ 大表情包单独抽,不进普通 image_urls;是否喂模型由 hermes_sticker_vision_enabled 门控
+    sticker_urls = await _extract_sticker_urls(uni_msg, bot, adapter_name)
     nickname = _extract_sender_nickname(event, adapter_name) or user_id
 
     # B-0: 非文本段占位拼到 msg_text 末尾。注意这里**不重复**对 replied_message 做
@@ -808,15 +839,16 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         suffix = " ".join(nontext_placeholders)
         msg_text = (msg_text + " " + suffix).strip() if msg_text else suffix
 
-    # 在 at_placeholders 注入**之前**快照:@ 是寻址不是内容,纯 @-only 消息
-    # (用户 tab 补全误发 / 单 @ 当 ping) 不应触发 chat。perception 入口仍会写
-    # buffer (历史里能看到 @),只是 main handler 不进 chat。
-    has_real_content = bool(msg_text) or bool(image_urls)
-
     # At 段回填:让 Hermes 在 decision_protocol 里能看到当前消息 @ 了谁;keyword
     # 模式的 startswith 检测不受影响(at_placeholders 拼在末尾,不在前缀)
     # 传 event + bot_self_id 让 helper 检测「OneBot v11 _check_at_me 剥走的 @bot」并补回
+    # 本部署补丁: at_placeholders 计算上移到 has_real_content
+    # 快照之前,并把「含 At 段」计入 has_real_content——纯 @bot 消息(先发图再补 @
+    # 的常见操作)不再被空消息闸门吞掉,按正常显式触发进 chat。完全无内容的空消息
+    # (无文本/无图/无 At/无转发)仍走原 skip。仅 @ 他人的消息由下游闸门兜底:
+    # 窗口外被 not_active_not_explicit 挡,窗口内被 @s-only-other-users 挡。
     at_placeholders = _collect_at_placeholders(uni_msg, event=event, bot_self_id=str(bot.self_id))
+    has_real_content = bool(msg_text) or bool(image_urls) or bool(at_placeholders)
     if at_placeholders:
         suffix = " ".join(at_placeholders)
         msg_text = (msg_text + " " + suffix).strip() if msg_text else suffix
@@ -850,6 +882,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # explicit 但不寻址,真 @bot 则照样寻址。
     is_explicit_trigger = False
     addressed_to_bot = False
+    keyword_soft_hit = False  # keyword-soft 模式全文命中(隐式激活)
     if target.private:
         is_explicit_trigger = True
     else:
@@ -868,6 +901,15 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             is_explicit_trigger = is_mentioned
         elif trigger_mode == "all":
             is_explicit_trigger = True
+        elif trigger_mode == "keyword-soft":
+            # 本部署新增:显式只剩真 @/引用;关键词全文命中 = 隐式激活,
+            # 不剥前缀、不升级 addressed_to_bot,由 LLM 拿 N1 条上下文自判是否点名。
+            for kw in plugin_config.hermes_keywords:
+                if kw and kw in msg_text:
+                    keyword_soft_hit = True
+                    break
+            if is_mentioned:
+                is_explicit_trigger = True
         elif trigger_mode == "keyword":
             for kw in plugin_config.hermes_keywords:
                 if msg_text.startswith(kw):
@@ -886,9 +928,15 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         and _mcp.active_sessions.is_active(adapter_name, group_id, now)
     )
 
-    if not is_explicit_trigger and not in_active_window:
+    if not is_explicit_trigger and not in_active_window and not keyword_soft_hit:
         logger.debug(f"[HERMES skip] not_active_not_explicit adapter={adapter_name} group={group_id} user={user_id}")
         matcher.skip()
+
+    # 隐式激活只延时不开窗(窗口生命周期定案):窗口内的非显式消息滑动续期,
+    # 受 T5 封顶(touch 内部判)。窗口外的隐式激活(keyword-soft 命中 / 定时巡查)
+    # 走 ephemeral 临时 turn,不调 trigger()。
+    if in_active_window and not is_explicit_trigger:
+        _mcp.active_sessions.touch(adapter_name, group_id, now)
 
     # C: 活跃窗口内,若消息只 @ 他人未点名 bot,视作非本路径触发,只让 perception
     # 写 buffer,不进 chat() 决策。修「跨目标 @ 误抢」模式 1。
@@ -930,6 +978,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
                 group_id=group_id,
                 text=msg_text,
                 image_urls=image_urls,
+                sticker_urls=sticker_urls,
                 is_private=target.private,
                 now_ms=now,
                 event_msg_id=getattr(event, "message_id", None),
@@ -946,10 +995,15 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             group_id=group_id,
             text=msg_text,
             image_urls=image_urls,
+            sticker_urls=sticker_urls,
             is_explicit_trigger=is_explicit_trigger,
             addressed_to_bot=addressed_to_bot,
             now_ms=now,
             event_msg_id=getattr(event, "message_id", None),
+            # keyword-soft 窗口外命中:跑无窗口临时 turn(不开窗);窗口内则正常跑,
+            # 两种都推 N1 条上下文(不用续发轮裁剪)。
+            ephemeral=keyword_soft_hit and not in_active_window,
+            context_limit=plugin_config.hermes_keyword_soft_context if keyword_soft_hit else None,
         )
 
 
@@ -999,6 +1053,14 @@ async def _chat_and_adopt_rotation(**chat_kwargs) -> ChatResult:
     result = await hermes_client.chat(**chat_kwargs)
     if result.effective_session_key:
         session_manager.adopt_session_key(chat_kwargs["session_key"], result.effective_session_key)
+    # T1 活动基准:无论成败,chat() 走完就算本会话有 LLM 活动。
+    # chat_kwargs 四元组在 passive / reactive 两条路径上都齐全。
+    session_manager.mark_activity(
+        chat_kwargs["adapter_name"],
+        chat_kwargs["is_private"],
+        chat_kwargs["user_id"],
+        chat_kwargs.get("group_id"),
+    )
     return result
 
 
@@ -1109,6 +1171,7 @@ async def _run_passive_turn(
     group_id: str | None,
     text: str,
     image_urls: list[str],
+    sticker_urls: list[str] | None = None,
     is_private: bool,
     now_ms: int,
 ):
@@ -1152,11 +1215,33 @@ async def _run_passive_turn(
     # 图片内联成 data: URL 再出站:上游对 http(s) URL 是纯透传,交出去就把可达性
     # 赌在 provider 出网与 URL 时效上,且部分 provider 形态会静默丢图。
     inlined = await inline_image_urls(image_urls)
+    sticker_inlined = (
+        await inline_image_urls(sticker_urls or [])
+        if plugin_config.hermes_sticker_vision_enabled
+        else []
+    )
     user_content = build_passive_user_content(
         recent_messages=recent,
         current_text=text or " ",
         current_image_urls=inlined,
+        current_sticker_urls=sticker_inlined,
     )
+
+    # 本部署补丁: 长任务旁白实时转发。旁白是本轮 turn 的附属
+    # 输出,用 handler 现成的 bot/target 直发,不走 push_message(那是带窗口校验的
+    # 独立发话通道);不 @ 人(进度广播不针对特定个体)。extract_response_media 剥掉
+    # MEDIA:/md 图片标签——旁白里的本地路径原样发出会泄主机路径;媒体最终回复还会带。
+    async def _interim_echo(segment: str) -> None:
+        cleaned, _, _ = extract_response_media(segment)
+        if cleaned:
+            await send_text_with_media(
+                bot=bot,
+                target=target,
+                text=cleaned,
+                media_urls=[],
+                at_user_id=None,
+                adapter_name=adapter_name,
+            )
 
     result = await _chat_with_overflow_recovery(
         "passive",
@@ -1175,7 +1260,18 @@ async def _run_passive_turn(
         system_prompt=system_prompt,
         user_content_override=user_content,
         target=hermes_target,
+        interim_callback=_interim_echo if plugin_config.hermes_interim_echo_enabled else None,
     )
+
+    # 本部署补丁: 403 鉴权类错误硬静默——不发 fallback、
+    # 不发 raw_text,不依赖 fallback 配置。403 是运维事件(key/额度),群里通知无意义,
+    # 上游持续故障时每条触发一条通知就是刷屏。记 error 级日志让运维能看见。
+    if result.is_forbidden_error:
+        logger.error(
+            f"[HERMES passive] 403 鉴权类错误,已静默丢弃 (group={group_id} is_private={is_private})"
+            "——检查接入点 key / provider 额度"
+        )
+        return result
 
     # 上游 transport_error 同款保护(见 _run_reactive_turn 同名分支注释)。
     # passive 路径下私聊总是显式对话,群聊已通过触发判断进得来,两边都该有可见反馈;
@@ -1210,10 +1306,13 @@ async def _run_passive_turn(
         logger.warning(f"[HERMES passive] 检测到 submit_decision 形 JSON 残留,抠 reply_text 后发送(group={group_id})")
         reply_text = extracted
 
-    cleaned_text, extracted_media_urls = extract_response_media(reply_text)
+    cleaned_text, extracted_media_urls, extracted_files = extract_response_media(reply_text)
     media_urls = list(result.media_urls) + [u for u in extracted_media_urls if u not in result.media_urls]
+    # 本部署补丁(2026-10-08): 本地文件上传。client 层(普通文本路径)已收过一轮
+    # file_paths; handler 层对 reply_text 的二次 extract 覆盖 JSON 残留场景。
+    file_paths = list(result.file_paths) + [p for p in extracted_files if p not in result.file_paths]
 
-    if not cleaned_text and not media_urls:
+    if not cleaned_text and not media_urls and not file_paths:
         return result
     await send_text_with_media(
         bot=bot,
@@ -1223,6 +1322,8 @@ async def _run_passive_turn(
         at_user_id=None if is_private else user_id,
         adapter_name=adapter_name,
     )
+    # 文件跟在文本消息之后上传(占位符在前作说明, 文件随后到达)。
+    await send_local_files(bot=bot, target=target, file_paths=file_paths, adapter_name=adapter_name)
     return result
 
 
@@ -1235,15 +1336,25 @@ async def _run_reactive_turn(
     group_id: str,
     text: str,
     image_urls: list[str],
+    sticker_urls: list[str] | None = None,
     is_explicit_trigger: bool,
     addressed_to_bot: bool = False,
     now_ms: int,
     nickname: str | None = None,
+    ephemeral: bool = False,
+    recent_override: list[BufferedMessage] | None = None,
+    context_limit: int | None = None,
 ):
     """跑一发 reactive turn,返回 hermes_client.chat() 的 ChatResult,或 None 表示提前 return。
 
     外壳 _handle_reactive_path 负责 inflight + 图片门控,这里只管:
     拉 recent → 组 prompt → 调 chat → 解析 decision → 发出向 → 回写 buffer。
+
+    ephemeral=True(本部署新增,隐式激活用):无活跃窗口也跑,现场造一个不注册进
+    管理器的临时 session;发言即开窗(见发送成功段),沉默不开窗。
+    recent_override: 定时巡查(T2)传入的 T4 窗口消息(新→旧),替代默认拉取。
+    context_limit: 覆盖 hermes_perception_buffer 的拉取条数(keyword-soft 的 N1),
+    设置时不再做续发轮裁剪。
     """
     assert _mcp.message_buffer is not None and _mcp.active_sessions is not None
 
@@ -1251,33 +1362,53 @@ async def _run_reactive_turn(
     # get_if_active 与 is_active(handle_message 入口处用过)同口径。
     session = _mcp.active_sessions.get_if_active(adapter_name, group_id, now_ms)
     if session is None:
-        # turn 生命期内的 TTL 过期已由 begin_turn/end_turn 租约挡住。剩下两条来路:
-        # 上一发 turn 返回了 should_exit_active(唯一会 end() 窗口的地方),或者窗口
-        # 恰好在「turn 结束 → refire 接力」的交接瞬间过期且被 cron sweep 扫掉。
-        # 两种都意味着有人的触发被吞了 —— 必须留痕,不能静默 return。
-        logger.warning(
-            f"[HERMES reactive] drop: no active window at turn start "
-            f"(group={group_id} user={user_id} explicit={is_explicit_trigger} now_ms={now_ms})"
+        if not ephemeral:
+            # turn 生命期内的 TTL 过期已由 begin_turn/end_turn 租约挡住。剩下两条来路:
+            # 上一发 turn 返回了 should_exit_active(唯一会 end() 窗口的地方),或者窗口
+            # 恰好在「turn 结束 → refire 接力」的交接瞬间过期且被 cron sweep 扫掉。
+            # 两种都意味着有人的触发被吞了 —— 必须留痕,不能静默 return。
+            logger.warning(
+                f"[HERMES reactive] drop: no active window at turn start "
+                f"(group={group_id} user={user_id} explicit={is_explicit_trigger} now_ms={now_ms})"
+            )
+            return None
+        # 隐式激活临时 turn:造一个不注册进管理器的 session 实例。下游读操作
+        # (triggered_by / topic_hint / last_bot_reply_at)天然兼容;写操作
+        # (touch / mark_bot_replied / end_if_current)按 key 查管理器,全是安全 no-op。
+        session = ActiveSession(
+            adapter=adapter_name,
+            group_id=group_id,
+            triggered_by=user_id,
+            started_at=now_ms,
+            last_active_at=now_ms,
+            expires_at=now_ms,  # 已过期:仅作数据载体,不代表有窗口
         )
-        return None
+        logger.debug(f"[HERMES reactive] ephemeral turn start (group={group_id} user={user_id})")
 
     # B.3: 快照本 turn 入口时的 last_bot_reply_at, 供 chat() 返回后判定 agent loop
     # 期间是否有外部(MCP push_message)推过 bot 自己的回复。 若发生, 即使 LLM 返
     # should_reply=True 也必须抑制本路 send, 否则同 turn 内双答。
     last_bot_reply_at_at_entry = session.last_bot_reply_at
 
-    recent_full = _mcp.message_buffer.get_recent(
-        adapter=adapter_name,
-        group_id=group_id,
-        limit=plugin_config.hermes_perception_buffer,
-    )
-    # 续发轮裁剪:归属判定主要依赖窗口尾部与 bot 自己的上一条发言,
-    # 全量窗口只在 explicit 触发轮保留(裁剪函数内含回退开关语义)。
-    recent = (
-        recent_full
-        if is_explicit_trigger
-        else select_followup_window(recent_full, plugin_config.hermes_reactive_followup_window)
-    )
+    if recent_override is not None:
+        # 定时巡查(T2):T4 窗口消息由调用方过滤好,新→旧顺序与 get_recent 一致,
+        # 不做续发轮裁剪——窗口本身就是裁好的。
+        recent_full = recent_override
+        recent = recent_override
+    else:
+        recent_full = _mcp.message_buffer.get_recent(
+            adapter=adapter_name,
+            group_id=group_id,
+            limit=context_limit or plugin_config.hermes_perception_buffer,
+        )
+        # 续发轮裁剪:归属判定主要依赖窗口尾部与 bot 自己的上一条发言,
+        # 全量窗口只在 explicit 触发轮保留(裁剪函数内含回退开关语义)。
+        # context_limit(keyword-soft 的 N1)设置时也不裁:N1 本身就是配置好的推送量。
+        recent = (
+            recent_full
+            if is_explicit_trigger or context_limit is not None
+            else select_followup_window(recent_full, plugin_config.hermes_reactive_followup_window)
+        )
 
     system_prompt = build_reactive_system_prompt()
     # 平台账号名 + self_id 一起进 prompt:模型判归属只能靠这两样把消息里回填的
@@ -1289,6 +1420,11 @@ async def _run_reactive_turn(
     # 模型需要时自行用 get_message_images 按 m:id 拉字节,省多模态 token。
     # 门控不能用 is_explicit_trigger:trigger=all 下它恒真(L867),or 上去等于没门控。
     # 插件升级会冲掉此改动,详见 项目文档库。
+    sticker_inlined = (
+        await inline_image_urls(sticker_urls or [])
+        if plugin_config.hermes_sticker_vision_enabled
+        else []
+    )
     if addressed_to_bot:
         inlined = await inline_image_urls(image_urls)
     else:
@@ -1312,6 +1448,7 @@ async def _run_reactive_turn(
         current_nickname=nickname or user_id,
         current_text=text or "[图片]",
         current_image_urls=inlined,
+        current_sticker_urls=sticker_inlined,
     )
 
     # 出站 prompt 体量:模型在 explicit @ 下静默时,第一件要排除的就是「上下文被
@@ -1347,6 +1484,19 @@ async def _run_reactive_turn(
     # 注:user_content_override 已携带 user message 的全部内容(text + 多模态);
     # text/image_urls 在 chat() 中会被忽略(见 hermes_client.chat 文档),此处显式传 ""
     # /[] 让契约清晰,避免被读者误以为 image_urls 也参与了构造。
+    # 本部署补丁: 旁白实时转发,同 passive 路径注释。
+    async def _interim_echo(segment: str) -> None:
+        cleaned, _, _ = extract_response_media(segment)
+        if cleaned:
+            await send_text_with_media(
+                bot=bot,
+                target=target,
+                text=cleaned,
+                media_urls=[],
+                at_user_id=None,
+                adapter_name=adapter_name,
+            )
+
     result = await _chat_with_overflow_recovery(
         "reactive",
         reply_bot=bot,
@@ -1365,9 +1515,17 @@ async def _run_reactive_turn(
         system_prompt=system_prompt,
         user_content_override=user_content,
         target=hermes_target,
+        interim_callback=_interim_echo if plugin_config.hermes_interim_echo_enabled else None,
     )
 
     if result.parse_failed or result.structured is None:
+        # 本部署补丁: 403 鉴权类错误硬静默(同 passive 路径注释)。
+        if result.is_forbidden_error:
+            logger.error(
+                f"[HERMES reactive] 403 鉴权类错误,已静默丢弃 (group={group_id})"
+                "——检查接入点 key / provider 额度"
+            )
+            return result
         # 上游 transport_error(5xx / 网络断 / 流被掐):raw_text 是服务端错误信息原文
         # (如 "Model generated invalid tool call: ..."),原文转发会把内部错误丢到群里
         # 既泄密又难看。换成 config 里的友好兜底文本;空串则静默。
@@ -1415,7 +1573,7 @@ async def _run_reactive_turn(
             extracted = maybe_extract_decision_reply_text(fallback_text)
             if extracted is not None:
                 fallback_text = extracted
-            cleaned_text, extracted_media_urls = extract_response_media(fallback_text)
+            cleaned_text, extracted_media_urls, extracted_files = extract_response_media(fallback_text)
             media_urls = list(result.media_urls) + [u for u in extracted_media_urls if u not in result.media_urls]
             # 群里明确说话给某人 → at;主动插话(散文兜底)→ 不 at,与成功回复路径同口径
             # 本部署补丁: 同成功路径,判据换成 addressed_to_bot。
@@ -1425,6 +1583,12 @@ async def _run_reactive_turn(
                 text=cleaned_text,
                 media_urls=media_urls,
                 at_user_id=user_id if addressed_to_bot else None,
+                adapter_name=adapter_name,
+            )
+            # 本部署补丁(2026-10-08): 散文兜底同样可能带本地文件引用。
+            await send_local_files(
+                bot=bot, target=target,
+                file_paths=list(result.file_paths) + [p for p in extracted_files if p not in result.file_paths],
                 adapter_name=adapter_name,
             )
         return result
@@ -1474,8 +1638,8 @@ async def _run_reactive_turn(
         return result
 
     reply_text = str(decision.get("reply_text") or "").strip()
-    cleaned_reply_text, media_urls = extract_response_media(reply_text)
-    if not cleaned_reply_text and not media_urls:
+    cleaned_reply_text, media_urls, file_paths = extract_response_media(reply_text)
+    if not cleaned_reply_text and not media_urls and not file_paths:
         return result
 
     # B.3: 同 turn 内防重复闸门 — 若 chat() agent loop 期间 last_bot_reply_at
@@ -1535,6 +1699,8 @@ async def _run_reactive_turn(
         at_user_id=at_user,
         adapter_name=adapter_name,
     )
+    # 本部署补丁(2026-10-08): 本地文件跟在文本消息之后上传。
+    await send_local_files(bot=bot, target=target, file_paths=file_paths, adapter_name=adapter_name)
     logger.debug(
         f"[HERMES reactive] sent adapter={adapter_name} group={group_id} "
         f"ok={sent} text_len={len(cleaned_reply_text)} media={len(media_urls)} at_user={at_user}"
@@ -1549,6 +1715,12 @@ async def _run_reactive_turn(
     # 入参,又避免多次读时钟在三个字段间引入毫秒级偏差。
     if sent and _mcp.message_buffer is not None:
         reply_now_ms = _now_ms()
+        # 发言即开窗(窗口生命周期定案):隐式激活的临时 turn 真说了话 → 开启活跃
+        # 窗口,群内跟帖可被听见。should_exit_active 优先——LLM 明说了「这轮谈完了」,
+        # 不得借发言把窗又顶开。开窗后 touch / mark_bot_replied 都有了落点。
+        if ephemeral and not decision.get("should_exit_active"):
+            _mcp.active_sessions.trigger(adapter_name, group_id, user_id, now_ms=reply_now_ms)
+            logger.info(f"[HERMES reactive] ephemeral turn spoke; active window opened (group={group_id})")
         # 回写清洗后的文本 + [图片] 占位,绝不写 reply_text 原文:媒体在回复里是内联
         # data:image;base64 形态,单张图就是几十万字符,原文入库后会被逐 turn 渲染进
         # <recent_messages>,几轮把上下文顶满,模型开始引用错历史。入站侧本来就只存
@@ -1602,6 +1774,7 @@ async def _handle_passive_path(
     group_id: str | None,
     text: str,
     image_urls: list[str],
+    sticker_urls: list[str] | None = None,
     is_private: bool,
     now_ms: int,
     nickname: str | None = None,
@@ -1625,6 +1798,7 @@ async def _handle_passive_path(
         nickname=nickname or user_id,
         content=text,
         image_urls=list(image_urls),
+        sticker_urls=list(sticker_urls or []),
         reply_to_ts=None,
         is_bot=False,
     )
@@ -1651,6 +1825,7 @@ async def _handle_passive_path(
             group_id=group_id,
             text=text,
             image_urls=image_urls,
+            sticker_urls=sticker_urls,
             is_private=is_private,
             now_ms=now_ms,
         )
@@ -1719,17 +1894,25 @@ async def _handle_reactive_path(
     group_id: str,
     text: str,
     image_urls: list[str],
+    sticker_urls: list[str] | None = None,
     is_explicit_trigger: bool,
     addressed_to_bot: bool = False,
     now_ms: int,
     nickname: str | None = None,
     event_msg_id: str | int | None = None,
+    ephemeral: bool = False,
+    recent_override: list[BufferedMessage] | None = None,
+    context_limit: int | None = None,
 ):
     """Reactive 外壳:inflight 占位 → 调 _run_reactive_turn → finally 合并重燃。
 
     coalesce 语义:in-flight 期间到来的新触发不并发跑,只覆盖 pending 单元;
     本发完成后 take_pending,如有则用 create_task 起一个 _refire 接力,
     本 task 立即 return,不阻塞 NoneBot 事件循环。
+
+    ephemeral / recent_override / context_limit(本部署新增)原样透传给
+    _run_reactive_turn,语义见该函数 docstring。ephemeral turn 没有窗口,
+    cooldown 与租约本来就是 None 安全路径,照常走。
     """
     assert _mcp.inflight is not None and _mcp.active_sessions is not None
 
@@ -1776,6 +1959,7 @@ async def _handle_reactive_path(
         nickname=nickname or user_id,
         content=text,
         image_urls=list(image_urls),
+        sticker_urls=list(sticker_urls or []),
         reply_to_ts=None,
         is_bot=False,
     )
@@ -1815,9 +1999,13 @@ async def _handle_reactive_path(
             group_id=group_id,
             text=text,
             image_urls=image_urls,
+            sticker_urls=sticker_urls,
             is_explicit_trigger=is_explicit_trigger,
             addressed_to_bot=addressed_to_bot,
             now_ms=now_ms,
+            ephemeral=ephemeral,
+            recent_override=recent_override,
+            context_limit=context_limit,
         )
         should_refire_pending = True
     except Exception:
@@ -1842,6 +2030,7 @@ async def _handle_reactive_path(
                         original_msg_id=pending_entry.original_msg_id,
                         depth=1,
                         mode="reactive",
+                        ephemeral=ephemeral,
                         bot=bot,
                         target=target,
                         adapter_name=adapter_name,
@@ -1859,12 +2048,18 @@ async def _refire(
     depth: int,
     mode: str,
     addressed_to_bot: bool = False,
+    ephemeral: bool = False,
     bot: Bot,
     target,
     adapter_name: str,
     group_id,
 ):
-    """链式重燃。fire-and-forget,深度上限 MAX_REFIRE_DEPTH。"""
+    """链式重燃。fire-and-forget,深度上限 MAX_REFIRE_DEPTH。
+
+    ephemeral(本部署新增)沿重燃链透传:临时 turn 期间排进 pending 的
+    keyword-soft 命中需要以同样的无窗口方式续跑,否则会在 _run_reactive_turn
+    入口的 get_if_active 处被当「窗口没了」误吞。显式 pending 不受影响——
+    显式触发在 dispatch 时已 trigger() 开窗,get_if_active 必然命中。"""
     from ..core.inflight import MAX_REFIRE_DEPTH
 
     assert _mcp.inflight is not None
@@ -1913,9 +2108,11 @@ async def _refire(
                 group_id=group_id,
                 text=trigger_msg.content,
                 image_urls=list(trigger_msg.image_urls),
+                sticker_urls=list(trigger_msg.sticker_urls),
                 is_explicit_trigger=is_explicit_trigger,
                 addressed_to_bot=addressed_to_bot,
                 now_ms=refire_now_ms,
+                ephemeral=ephemeral,
             )
         else:
             result = await _run_passive_turn(
@@ -1926,6 +2123,7 @@ async def _refire(
                 group_id=trigger_msg.group_id,
                 text=trigger_msg.content,
                 image_urls=list(trigger_msg.image_urls),
+                sticker_urls=list(trigger_msg.sticker_urls),
                 is_private=trigger_msg.group_id is None,
                 now_ms=refire_now_ms,
             )
@@ -1959,6 +2157,7 @@ async def _refire(
                     original_msg_id=pending_entry.original_msg_id,
                     depth=depth + 1,
                     mode=mode,
+                    ephemeral=ephemeral,
                     bot=bot,
                     target=target,
                     adapter_name=adapter_name,

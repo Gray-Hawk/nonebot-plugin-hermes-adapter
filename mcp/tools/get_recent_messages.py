@@ -30,7 +30,8 @@ class RecentMessageView(BaseModel):
     user_id: str
     nickname: str
     content: str
-    image_count: int = Field(..., description="该消息附带的图数量;0 表示无图")
+    image_count: int = Field(..., description="该消息附带的普通图数量;0 表示无图")
+    sticker_count: int = Field(default=0, description="该消息附带的收藏表情(sticker)数量;同样可用 get_message_images 召回")
     is_bot: bool
 
 
@@ -71,6 +72,7 @@ async def get_recent_messages_impl(
             nickname=m.nickname,
             content=m.content,
             image_count=len(m.image_urls),
+            sticker_count=len(m.sticker_urls),
             is_bot=m.is_bot,
         )
         for m in rows

@@ -140,6 +140,7 @@ def init_runtime_state() -> None:
     if active_sessions is None:
         active_sessions = ActiveSessionManager(
             default_ttl_sec=plugin_config.hermes_active_session_ttl_sec,
+            t5_sec=plugin_config.hermes_active_session_t5_sec,
         )
     if bot_registry is None:
         bot_registry = BotRegistry()

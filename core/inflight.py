@@ -110,3 +110,7 @@ class InflightRegistry:
         slot 不存在则 no-op。
         """
         self._slots.pop(key, None)
+
+    def is_inflight(self, key: tuple[str, str]) -> bool:
+        """该 key 上是否有正在跑的 turn。T1 空闲重置的「执行中绝不清」判据。"""
+        return key in self._slots

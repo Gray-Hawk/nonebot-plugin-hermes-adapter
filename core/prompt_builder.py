@@ -152,6 +152,12 @@ _DECISION_PROTOCOL_BLOCK = (
     "</decision_protocol>"
 )
 
+# 表情包/收藏表情的口径：进 vision 只为情绪与语气，不把梗图本身当分析对象。
+_STICKER_MOOD_NOTE = (
+    "\n[表情包] 仅作情绪/语气信号：可用来判断用户心情；不要描述画面、不要考据梗图、"
+    "不要把表情包当工单，除非用户明确要求解读/评价。"
+)
+
 
 def build_reactive_system_prompt() -> str:
     """reactive 路径的 system prompt:纯 decision_protocol 协议块。
@@ -347,6 +353,7 @@ def build_reactive_user_content(
     current_nickname: str | None,
     current_text: str,
     current_image_urls: Sequence[str],
+    current_sticker_urls: Sequence[str] = (),
 ) -> UserContent:
     """reactive user content: <runtime_state> + <recent_messages> + <current_message>。
 
@@ -367,6 +374,8 @@ def build_reactive_user_content(
 
     current_tag = _format_speaker_tag(current_nickname, current_user_id)
     current_block_text = f"<current_message>\n{current_tag}: {current_text}\n</current_message>"
+    if current_sticker_urls:
+        current_block_text += _STICKER_MOOD_NOTE
 
     # 近因 reminder:小模型容易在长 protocol + 角色 core 双重 system 下忘掉 JSON 信封,
     # 直接吐裸文本回复(典型表现:整段角色对白 0 个花括号)。把契约提示放到 user content
@@ -379,11 +388,17 @@ def build_reactive_user_content(
 
     text_block = runtime_block + "\n\n" + history_block + "\n\n" + current_block_text + reminder
 
-    if not current_image_urls:
+    sticker_urls = list(current_sticker_urls or [])
+    if not current_image_urls and not sticker_urls:
         return text_block
 
     parts: list[dict[str, Any]] = [{"type": "text", "text": text_block}]
     for u in current_image_urls:
+        parts.append({"type": "image_url", "image_url": {"url": u}})
+    # 表情包与普通图片分开标注:占位文本里已有 [表情包],这里在图片前再补一个
+    # 近端标签,避免多图时把 sticker 和正常照片/截图混成同一语义。
+    for u in sticker_urls:
+        parts.append({"type": "text", "text": "[表情包]"})
         parts.append({"type": "image_url", "image_url": {"url": u}})
     return parts
 
@@ -393,6 +408,7 @@ def build_passive_user_content(
     recent_messages: Sequence[BufferedMessage],
     current_text: str,
     current_image_urls: Sequence[str],
+    current_sticker_urls: Sequence[str] = (),
 ) -> UserContent:
     """passive user content:可选 <recent_messages> + 当前文本(图片走多模态 parts)。
 
@@ -403,11 +419,16 @@ def build_passive_user_content(
         text_block = _render_recent_messages_block(recent_messages) + "\n\n" + current_text
     else:
         text_block = current_text
+    if current_sticker_urls:
+        text_block += _STICKER_MOOD_NOTE
 
-    if not current_image_urls:
+    if not current_image_urls and not current_sticker_urls:
         return text_block
 
     parts: list[dict[str, Any]] = [{"type": "text", "text": text_block}]
     for u in current_image_urls:
+        parts.append({"type": "image_url", "image_url": {"url": u}})
+    for u in current_sticker_urls:
+        parts.append({"type": "text", "text": "[表情包]"})
         parts.append({"type": "image_url", "image_url": {"url": u}})
     return parts

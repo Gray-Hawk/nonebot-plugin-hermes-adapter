@@ -26,6 +26,9 @@ class BufferedMessage:
     nickname: str
     content: str
     image_urls: list[str] = field(default_factory=list)
+    sticker_urls: list[str] = field(default_factory=list)
+    """QQ 收藏/自定义表情 (Image.sticker=True) 的 URL。与普通图片分开存,
+    message_images 表里以 kind='sticker' 区分,idx 接在 image_urls 之后连续编号。"""
     reply_to_ts: int | None = None
     is_bot: bool = False
     id: int | None = None
@@ -65,8 +68,14 @@ class MessageBuffer:
 
     def append(self, msg: BufferedMessage) -> None:
         msg_id = self._store.append(msg)
-        if msg_id is not None and msg.image_urls:
+        if msg_id is None:
+            return
+        # sticker 的 idx 接在 image_urls 之后(与 MessageStore.append 的编号一致),
+        # 用 start_index 把 offset 告诉 fetcher,回填 sha 时 (msg_id, idx) 才能对上行。
+        if msg.image_urls:
             self._fetcher.submit(msg_id, msg.image_urls)
+        if msg.sticker_urls:
+            self._fetcher.submit(msg_id, msg.sticker_urls, start_index=len(msg.image_urls))
 
     def get_recent(
         self,

@@ -43,6 +43,32 @@ class Config(BaseModel):
     hermes_api_timeout: int = 300
     """API 请求超时时间(秒),Agent 执行可能较慢"""
 
+    # 本部署补丁: 长任务中间旁白实时转发。
+    hermes_interim_echo_enabled: bool = False
+    """长任务中间旁白实时转发(本部署补丁 维护者拍板默认关, 需在 .env 显式开启)。
+
+    True 时 chat() 走 SSE 流式: agent 每轮工具调用前的旁白文本段以
+    hermes.tool.progress(status=running) 帧为切分点实时转发到群/私聊,
+    最终回复段仍走原解析管线一次性发出。False 退回一次性非流式(旧行为)。
+
+    零 LLM 成本(流式只是传输方式不同, 生成量不变); 旁白转发是机械行为。
+    流式下上游不内联本地图片, 由插件侧 inline_local_media_images 按白名单
+    补做(见 core/media_whitelist.py)。"""
+
+    # 本部署补丁: 本地文件/图片投递的白名单与尺寸上限。
+    hermes_media_allow_dirs: str = ""
+    """额外的本地文件投递白名单根目录(os.pathsep 分隔, 支持 ~)。
+
+    默认白名单只有 ~/.hermes/cache/scratch 与 hermes 内建媒体缓存目录
+    (images/audio/videos/documents/screenshots 及 legacy *_cache 布局);
+    工作目录刻意不进默认(2026-10-08 维护者拍板), 需要时在这里加, 如:
+        HERMES_MEDIA_ALLOW_DIRS="/home/user:/mnt/nas/share"
+    判定宁严勿宽: 不在白名单内的本地路径一律退回 [生成了文件] 占位符。"""
+
+    hermes_local_file_max_mb: int = 50
+    """本地文件经群文件/私聊文件上传的尺寸上限(MB)。图片内联(转 data URL)
+    不受此限, 固定 5MB 与上游 _MEDIA_DATA_URL_MAX_BYTES 对齐。"""
+
     hermes_group_endpoints: dict[str, HermesEndpoint] = {}
     """按群路由的接入点表。键为 `{adapter}:{group_id}`(与 hermes_admin_users 同构)。
 
@@ -62,7 +88,11 @@ class Config(BaseModel):
 
     # --- 触发模式 ---
     hermes_group_trigger: str = "at"
-    """群聊触发方式: at / all / keyword"""
+    """群聊触发方式: at / all / keyword / keyword-soft
+
+    keyword-soft(本部署新增): 显式激活只剩真 @bot / 引用 bot 消息;关键词改为
+    全文匹配的隐式激活(不点名、不开窗只续期,窗口外跑临时 turn),推最近
+    hermes_keyword_soft_context(N1) 条消息给 LLM 自判是否发言。"""
 
     hermes_keywords: set[str] = {"/ai"}
     """keyword 模式下的触发关键词"""
@@ -233,6 +263,60 @@ class Config(BaseModel):
     用来阻断「我刚说完别人接话→我又凑一句」类型的过触发。
     0 = 关闭(回退到旧行为)。显式 @bot 不受影响,任何时候都会立刻进入决策。"""
 
+    # --- 激活体系改造:隐性激活 + T1/T5 + T2 定时激活(本部署新增) ---
+
+    hermes_keyword_soft_context: int = 10
+    """N1: keyword-soft 触发模式下,关键词命中(全文匹配)时推送给 LLM 的最近消息
+    条数。关键词命中是隐式激活:不升级 addressed_to_bot,窗口外跑临时 turn 不开窗,
+    窗口内只滑动续期。"""
+
+    hermes_session_idle_reset_sec: int = 0
+    """T1: 会话空闲自动重置(秒)。以最后一次 chat() 完成或 push_message 成功为活动
+    基准,T1 内无任何显式/隐式激活或 LLM 主动行为,则静默重置会话(等价 /clear 的
+    session 效果,但不发任何群提示)。0 = 禁用。
+    正在执行的 turn(inflight / active session 租约)绝不会被重置。
+    超控命令:/delay 暂停本会话 T1 计时,/resume 恢复并重置计时。"""
+
+    hermes_active_session_t5_sec: int = 0
+    """T5: 活跃窗口仅靠隐式续期(touch)的最长存活时间(秒)。自最后一次实质激活
+    (显式触发 trigger / bot 发言 mark_bot_replied)起算,超 T5 后窗口在读路径
+    (is_active / get_if_active)视为不活跃,随后按 TTL 自然过期。0 = 禁用。
+    应大于 hermes_active_session_ttl_sec,否则等效于「窗口只能活 T5」(启动时 WARN)。"""
+
+    hermes_proactive_interval_sec: int = 0
+    """T2: 定时隐性激活的基础检查间隔(秒)。0 = 禁用整个功能。
+    仅在「群无活跃窗口 且 无 in-flight turn」时检查;命中则跑一发无窗口的临时
+    reactive turn(ephemeral),LLM 自决是否发言;发言即开窗,沉默不开窗。"""
+
+    hermes_proactive_jitter_sec: int = 0
+    """T3: 每次检查间隔附加的随机偏移上限(秒),实际间隔 = T2 + random(0, T3)。
+    避免回复节奏过于机械。0 = 不附加偏移。"""
+
+    hermes_proactive_window_sec: int = 300
+    """T4: 每次检查时向前回看的新消息窗口(秒)。实际起点取 max(now-T4, 上次检查
+    时刻)——不重复推送已判断过的记录。窗口内无新消息则不打扰 LLM。"""
+
+    hermes_proactive_max_messages: int = 10
+    """N2: 定时激活推送给 LLM 的最大消息条数,窗口内超出时取最新 N2 条。"""
+
+    hermes_proactive_groups: set[str] = set()
+    """允许定时激活的群 ID 集合。空 = BotRegistry 已知的全部群(重启后需群里先有人
+    发言才会进入巡查名单)。"""
+
+    # 本部署补丁: 后台任务完成投递轮询
+    hermes_delivery_poll_interval_sec: int = 30
+    """投递轮询间隔(秒)。0 = 禁用。
+    背景:api_server 无状态会话的异步委派(delegate_task 后台结果)完成时,上游只把
+    结果作为 display_kind=async_delegation_complete 的投递记录写进会话转录,不主动
+    跑 turn(客户端拥有下一轮);TUI/桌面端靠轮询 /api/sessions/{id}/messages 看到它,
+    而本插件原先没有等价通道——结果只能干等下一条群消息才被折叠进上下文。
+    开启后每拍轮询全部已知会话的该端点,发现新投递记录就跑一发 LLM turn 让 agent
+    用自己的人设口径汇报(群=reactive 临时 turn,私聊=passive turn)。
+    成本语义:每次任务完成 = 一发额外 LLM turn(完成是低频事件);轮询本身只是本地
+    HTTP + 小分页查询,无 LLM 调用。首轮轮询对存量记录做基线播种不播报(nb 停机期间
+    的完成仍会随下一条真实消息自然折叠进上下文,不补播避免刷屏);目标群/私聊不在
+    BotRegistry 或有 turn 在跑时顺延下一拍,不丢。"""
+
     hermes_transport_error_fallback_text: str = "嗯…我这边遇到点状况,稍后再问一次"
     """Hermes 上游返 5xx / 传输错误时, 替代 LLM raw_text 的兜底文本。
     没有这条兜底, 服务端英文错误信息(如 "Model generated invalid tool call: ...")
@@ -302,6 +386,15 @@ class Config(BaseModel):
 
     上游请求体有硬上限且要与文本历史共享,这里留出余量;超出预算的图片被丢弃
     而非撑爆整个请求 —— 少一张图仍能答话,请求被拒则整轮失败。
+    """
+
+    hermes_sticker_vision_enabled: bool = False
+    """用户收藏/自定义表情(OneBot image sub_type=1，alconna Image.sticker=True)是否抓字节内联喂给模型。
+
+    纯开关,无门控:False=完全没有表情包感知;True=只要消息进入 chat 就把表情图片
+    直接投送给模型,并仍与普通图片分开标注。默认关是 token 预算考虑;开启意味着接受
+    活跃窗口/私聊里每张收藏表情都占一份多模态预算。QQ 默认 face 小表情无图片 URL,
+    仍走 [表情] 占位。
     """
 
     # --- Phase B-1: 合并转发处理 ---

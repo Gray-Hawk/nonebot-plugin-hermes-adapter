@@ -75,15 +75,19 @@ class ImageFetcher:
         self._worker: asyncio.Task | None = None
         self._client: httpx.AsyncClient | None = None
 
-    def submit(self, message_id: int, urls: list[str]) -> None:
+    def submit(self, message_id: int, urls: list[str], *, start_index: int = 0) -> None:
         """把每张图挂进 pending 表。同 URL 已 in-flight 时只加 (msg_id, idx),
         不重复入队。overflow 时按 URL 维度丢最老。
+
+        start_index:本批 URL 在 message_images 表里的起始 idx。普通图从 0 起,
+        sticker 接在普通图之后(见 MessageBuffer.append),回填 sha 按 (msg_id, idx)
+        定位行,idx 编号必须与 MessageStore.append 写入时一致。
 
         只收 http(s):worker 是 httpx,喂它主机本地路径或 data: URL 只会抛
         UnsupportedProtocol 并重试到上限,白占队列还刷 warning。
         """
         new_urls: list[str] = []
-        for idx, url in enumerate(urls):
+        for idx, url in enumerate(urls, start=start_index):
             if not url:
                 continue
             if not url.startswith(("http://", "https://")):

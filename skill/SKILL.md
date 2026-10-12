@@ -61,15 +61,22 @@ deliberately, not by default.
 
 Each returned message carries:
 - `id` — DB primary key, stable across turns; pair with `get_message_images` to fetch images
-- `image_count` — number of images attached (0 = text only)
+- `image_count` — number of regular images attached (0 = none)
+- `sticker_count` — number of QQ stickers (收藏表情) attached; recallable the same way
 - `text`, `user`, `ts`, `is_bot` — as before
 
 ### `get_message_images(message_ids, adapter?, group_id?)`
 
 Fetch image bytes for up to 4 message ids in a single call. Returns a content array
-mixing a JSON header (per-image metadata) with `TextContent` markers + `ImageContent`
-base64 blocks. The image content flows through Hermes's multimodal injection pipeline,
-so on your next LLM turn you'll **actually see** the images.
+mixing a JSON header (per-image metadata, including `kind`) with `TextContent` markers
++ `ImageContent` base64 blocks. The image content flows through Hermes's multimodal
+injection pipeline, so on your next LLM turn you'll **actually see** the images.
+
+Stickers are stored and recalled through the exact same pipeline. Their marker reads
+`[sticker for m:<id> idx=N]` instead of `[image for ...]` — treat sticker bytes as a
+mood/tone signal (same rule as inline stickers: don't describe or fact-check the meme
+itself unless the user asks). The per-image `kind` field in the JSON header is
+`"image"` or `"sticker"`.
 
 Each per-image result has `available: true|false`. When unavailable, `reason` is one of:
 - `cache_miss` — image was never fetched (URL expired before download) or has been

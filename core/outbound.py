@@ -174,6 +174,46 @@ def _split_into_forward_nodes(
     return nodes
 
 
+# 本部署补丁: 本地文件上传(群文件/私聊文件)。
+async def send_local_files(
+    *,
+    bot: Bot,
+    target: alconna.Target,
+    file_paths: Sequence[str],
+    adapter_name: str | None = None,
+) -> int:
+    """把白名单内的本地文件经 upload_group_file / upload_private_file 上传,返回成功数。
+
+    只在 onebotv11 启用(其余 adapter 没有对应 API);白名单判定逐文件进行,
+    被拒/上传失败的单个文件不影响其余, 日志各记一条。文件与文本消息分开发:
+    OneBot 的文件上传是独立 API, 不混在消息段里。
+    """
+    if not file_paths:
+        return 0
+    if adapter_name != "onebotv11":
+        logger.warning(f"[OUTBOUND] 本地文件上传仅支持 onebotv11, 跳过 {len(file_paths)} 个文件 (adapter={adapter_name})")
+        return 0
+    from .media_whitelist import validate_local_file
+
+    max_bytes = plugin_config.hermes_local_file_max_mb * 1024 * 1024
+    sent = 0
+    for raw in file_paths:
+        path = validate_local_file(raw, max_bytes=max_bytes)
+        if path is None:
+            logger.warning(f"[OUTBOUND] 本地文件被白名单拒绝或不存在, 跳过: {raw[:120]}")
+            continue
+        try:
+            if target.private:
+                await bot.call_api("upload_private_file", user_id=int(target.id), file=str(path), name=path.name)
+            else:
+                await bot.call_api("upload_group_file", group_id=int(target.id), file=str(path), name=path.name)
+            sent += 1
+            logger.debug(f"[OUTBOUND] 文件已上传 target={target} name={path.name} size={path.stat().st_size}")
+        except Exception as exc:
+            logger.warning(f"[OUTBOUND] 文件上传失败 {path.name}: {exc}")
+    return sent
+
+
 async def send_text_with_media(
     *,
     bot: Bot,
