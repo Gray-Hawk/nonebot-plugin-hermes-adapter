@@ -205,6 +205,55 @@ def _extract_sender_nickname(event: Event, adapter_name: str) -> str | None:
     return None
 
 
+def _extract_replied_sender_label(event: Event) -> str:
+    """取被引消息的发送者标签 `昵称(user_id)`,取不到返回 ''。
+
+    本部署补丁:信封的 `(引用: ...)` 原本不带被引消息归属,
+    LLM 分不清引用的是 bot 自己的话、当前发言者的话还是第三方的话——「引用 A 的
+    旧消息对 B 说『说的就是你』」会因归属缺失被误判成冲 bot 说(2026-10-13 群
+    200000003 实测误接话)。OneBot v11 的 Reply 对象自带 sender(user_id/card/
+    nickname),无需额外 API;昵称沿用 _extract_sender_nickname 的群名片优先约定
+    并过 _sanitize_nickname 防 [user=…] 标签伪装。非 OneBot adapter 或无 sender
+    字段时经 getattr 链安全落 '',下游回退旧的无归属格式,行为不退化。
+    """
+    try:
+        reply = getattr(event, "reply", None)
+        sender = getattr(reply, "sender", None)
+        if sender is None:
+            return ""
+        user_id = "".join(
+            ch for ch in str(getattr(sender, "user_id", "") or "") if ch.isprintable()
+        ).strip()
+        nickname = _sanitize_nickname(getattr(sender, "card", None)) or _sanitize_nickname(
+            getattr(sender, "nickname", None)
+        )
+        if nickname and user_id:
+            return f"{nickname}({user_id})"
+        return nickname or user_id
+    except Exception:
+        return ""
+
+
+def _format_quote_prefix(replied_text: str, sender_label: str) -> str:
+    """拼 `(引用 ...)` 前缀。sender_label 为空时回退旧的无归属形态。"""
+    if sender_label:
+        return f"(引用 {sender_label}: {replied_text})"
+    return f"(引用: {replied_text})"
+
+
+def _rewrite_quoted_ats(placeholders: list[str]) -> str:
+    """引用内历史@改写:['@全体', '@<id>'] → '提及全体 提及<id>',空列表返 ''。
+
+    本部署补丁(雷②, 维护者定案用「提及」):半角「@<bot_id>」
+    随引用文本进 current_message 会字面命中 decision 协议「`@<你的 id>` 就是在 @ 你」
+    的规则(2026-10-13 群 200000003 误接话事故:引用含 @bot 的旧消息 + 当前在对
+    别人说话,被判成冲 bot 说)。改写后 id 信息保留、字面 token 断开,「提及」与@
+    语义等价。只作用于引用块内——当前消息自身的 @ 占位(at_placeholders)维持
+    「@<id>」原格式,协议块靠「块外才是当前@」区分两者。
+    """
+    return " ".join("提及" + p.removeprefix("@") for p in placeholders)
+
+
 _ACK_CANCEL_UNSUPPORTED_WARNED: set[str] = set()
 """Bot self_id 集合: 已经 WARN 过"撤销 emoji 在此 OneBot 实现端不支持"的 bot。
 
@@ -967,14 +1016,20 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # 引用消息提取
     replied_text = ""
     replied_image_urls: list[str] = []
+    replied_sender = ""
     if hasattr(event, "reply") and event.reply:
+        # 本部署补丁: 发送者归属独立提取(见 helper docstring),
+        # 放在引用本体提取之外——归属提取失败只丢标签,不拖垮引用文本/图片。
+        replied_sender = _extract_replied_sender_label(event)
         try:
             replied_message = await alconna.UniMessage.generate(message=event.reply.message, bot=bot)
             replied_text = replied_message.extract_plain_text().strip()
             replied_image_urls = await _extract_image_urls(replied_message, bot, adapter_name)
             replied_at = _collect_at_placeholders(replied_message)
             if replied_at:
-                suffix = " ".join(replied_at)
+                # 本部署补丁(雷②): 引用内历史@改写成「提及」,
+                # 见 _rewrite_quoted_ats docstring
+                suffix = _rewrite_quoted_ats(replied_at)
                 replied_text = (replied_text + " " + suffix).strip() if replied_text else suffix
             # 引用折叠消息:被引 UniMessage 里的 forward 段带 id,直接展开内联。
             # fetch_failed 自闭合变体也拼——「这里有个取不到的折叠」比空白强。
@@ -993,7 +1048,8 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
 
     msg_text = uni_msg.extract_plain_text().strip()
     if replied_text:
-        msg_text = f"(引用: {replied_text}) {msg_text}".strip()
+        # 本部署补丁: 前缀带发送者归属,空标签回退旧格式
+        msg_text = f"{_format_quote_prefix(replied_text, replied_sender)} {msg_text}".strip()
 
     image_urls = await _extract_image_urls(uni_msg, bot, adapter_name)
     image_urls.extend(replied_image_urls)
