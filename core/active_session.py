@@ -99,6 +99,39 @@ class ActiveSessionManager:
         # 本部署补丁: key 级 turn 租约计数。
         # >0 时该 key 下的窗口不判过期、不被 sweep;归零即删条目,不会漏涨。
         self._leases: dict[tuple[str, str], int] = {}
+        # 本部署补丁(阶段2a): 窗口持久化镜像(可选绑定)。
+        self._store = None
+
+    # --- 阶段2a 持久化镜像 ---
+    def bind_store(self, store, now_ms: int) -> int:
+        """绑定 WindowStore 并装回未死窗口,返回装回条数。
+
+        装回判据与读路径同口径:TTL 未过期 且 未超 T5;死窗不装回且顺手删行。
+        租约不持久化(turn 不跨重启)。内存为主、库为影子——装回只发生在启动,
+        之后一切读走内存。"""
+        from .storage.window_store import session_from_payload
+
+        self._store = store
+        restored = 0
+        for adapter, group_id, payload, _ in store.load_all():
+            s = session_from_payload(adapter, group_id, payload)
+            if not s.is_alive(now_ms) or self._beyond_t5(s, now_ms):
+                store.delete(adapter, group_id)
+                continue
+            self._sessions[(adapter, group_id)] = s
+            restored += 1
+        return restored
+
+    def _persist(self, s: ActiveSession) -> None:
+        if self._store is None:
+            return
+        from .storage.window_store import session_to_payload
+
+        self._store.upsert(s.adapter, s.group_id, session_to_payload(s), s.expires_at)
+
+    def _drop(self, adapter: str, group_id: str) -> None:
+        if self._store is not None:
+            self._store.delete(adapter, group_id)
 
     def _beyond_t5(self, s: ActiveSession, now_ms: int) -> bool:
         """T5 封顶:窗口仅靠隐式续期吊着的时间超过 T5 即视为不活跃。
@@ -140,6 +173,7 @@ class ActiveSessionManager:
             s.anchor_master = old.anchor_master
             s.anchor_guest = old.anchor_guest
         self._sessions[(adapter, group_id)] = s
+        self._persist(s)
         return s
 
     def touch(self, adapter: str, group_id: str, now_ms: int) -> ActiveSession | None:
@@ -151,6 +185,7 @@ class ActiveSessionManager:
             return None
         s.last_active_at = now_ms
         s.expires_at = now_ms + self._ttl_ms
+        self._persist(s)
         return s
 
     def get(self, adapter: str, group_id: str) -> ActiveSession | None:
@@ -210,6 +245,7 @@ class ActiveSessionManager:
         for rec in (s.anchor_master, s.anchor_guest):
             if rec is not None and rec.ts <= now_ms:
                 rec.answered = True
+        self._persist(s)
         return True
 
     def pin_anchor(
@@ -233,6 +269,7 @@ class ActiveSessionManager:
         """
         if record.commissioner_id in master_ids:
             session.anchor_master = record
+            self._persist(session)
             return True
         old = session.anchor_guest
         if (
@@ -241,6 +278,7 @@ class ActiveSessionManager:
             or (max_age_ms > 0 and now_ms - old.ts > max_age_ms)
         ):
             session.anchor_guest = record
+            self._persist(session)
             return True
         return False
 
@@ -259,6 +297,8 @@ class ActiveSessionManager:
             if rec is not None and (who == "all" or rec.commissioner_id == who):
                 setattr(s, slot, None)
                 released += 1
+        if released:
+            self._persist(s)
         return released
 
     def get_anchors(
@@ -279,14 +319,18 @@ class ActiveSessionManager:
         if s is None:
             return []
         out: builtins.list[AnchorRecord] = []
+        aged_out = False
         for slot in ("anchor_master", "anchor_guest"):
             rec = getattr(s, slot)
             if rec is None:
                 continue
             if max_age_ms > 0 and now_ms - rec.ts > max_age_ms:
                 setattr(s, slot, None)
+                aged_out = True
                 continue
             out.append(rec)
+        if aged_out:
+            self._persist(s)
         return out
 
     def lease_count(self, adapter: str, group_id: str) -> int:
@@ -349,6 +393,7 @@ class ActiveSessionManager:
             return
         floor = now_ms + min(self._ttl_ms, _TURN_END_GRACE_MS)
         s.expires_at = max(s.expires_at, floor)
+        self._persist(s)
 
     def update_topic(self, adapter: str, group_id: str, topic_hint: str | None) -> None:
         """更新或清空 topic_hint。
@@ -359,10 +404,12 @@ class ActiveSessionManager:
         s = self._sessions.get((adapter, group_id))
         if s is not None:
             s.topic_hint = topic_hint
+            self._persist(s)
 
     def end(self, adapter: str, group_id: str) -> None:
         """按 key 无条件收窗。turn 内表达"这轮谈完了"请用 `end_if_current`。"""
         self._sessions.pop((adapter, group_id), None)
+        self._drop(adapter, group_id)
 
     def end_if_current(self, session: ActiveSession) -> bool:
         """只在字典里仍是这个实例时收窗;返回是否真的收了。
@@ -376,6 +423,7 @@ class ActiveSessionManager:
         if self._sessions.get(key) is not session:
             return False
         del self._sessions[key]
+        self._drop(*key)
         return True
 
     def list(self, adapter: str | None = None) -> builtins.list[ActiveSession]:
@@ -391,4 +439,5 @@ class ActiveSessionManager:
         ]
         for s in expired:
             self._sessions.pop((s.adapter, s.group_id), None)
+            self._drop(s.adapter, s.group_id)
         return expired

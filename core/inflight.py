@@ -100,8 +100,43 @@ class InflightRegistry:
     registry 只负责「现在有没有人在跑」+「跑完后下一发是谁」两个状态。
     """
 
+    # --- 阶段2b:followup 槽操作(runs steer 注入与 pending_steer 回收用) ---
     def __init__(self) -> None:
         self._slots: dict[tuple[str, str], InflightSlot] = {}
+
+    def take_followup(self, key: tuple[str, str]) -> PendingEntry | None:
+        """弹出并返回 followup 槽条目(无则 None)。
+
+        steer 注入前先取出:注入成功即不再排队;注入失败由 restore_followup 放回。
+        """
+        slot = self._slots.get(key)
+        if slot is None or slot.followup is None:
+            return None
+        entry = slot.followup
+        slot.followup = None
+        return entry
+
+    def restore_followup(self, key: tuple[str, str], entry: PendingEntry) -> None:
+        """把 take_followup 取出的条目放回(仅槽仍空时;已有更新条目则按
+        latest-wins 语义丢弃被放回的旧条目,调用方记 debug 即可)。"""
+        slot = self._slots.get(key)
+        if slot is None:
+            return
+        if slot.followup is None:
+            slot.followup = entry
+
+    def add_followup(self, key: tuple[str, str], entry: PendingEntry) -> None:
+        """写入 followup 槽;已有条目时把新文本并入(latest-wins 语义下不整槽替换,
+        防 pending_steer 回收把 turn 期间真实跟帖顶掉)。"""
+        slot = self._slots.get(key)
+        if slot is None:
+            self._slots[key] = InflightSlot(started_at=entry.msg.ts, followup=entry)
+            return
+        if slot.followup is None:
+            slot.followup = entry
+            return
+        _merge_pending_message(slot.followup.msg, entry.msg)
+
 
     def try_enter(
         self,

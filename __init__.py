@@ -78,6 +78,12 @@ async def _hermes_m1_startup():
     register_session_idle_reset()
     register_proactive_activation()
     register_delivery_poll()
+    # 阶段2a:nb 重启后续跑在跑 runs turn。仅在 runs 通道开启时有意义
+    # (completions 路不写 tracker,resume 自然空转返回)。
+    if plugin_config.hermes_runs_channel_enabled:
+        from .tasks import resume_active_runs
+
+        await resume_active_runs()
 
     # 投递轮询间隔过小只会白增本地请求与日志噪音,任务完成汇报的时效收益可忽略
     if 0 < plugin_config.hermes_delivery_poll_interval_sec < 10:
@@ -144,6 +150,11 @@ async def _hermes_m1_startup():
         for notice in multiplex_reverse_channel_notices():
             logger.info(f"[HERMES] {notice}")
         logger.info(f"[HERMES] 按群路由已启用,{len(plugin_config.hermes_group_endpoints)} 个接入点")
+
+    if plugin_config.hermes_runs_channel_enabled:
+        # 本部署补丁(阶段1): 实验通道,启动期明示,防止
+        # 「配了忘了」时排查 turn 行为差异无头可查。
+        logger.warning("[HERMES] runs 通道已启用(实验性): turn 走 /v1/runs 而非 chat/completions")
 
     logger.info(
         f"Hermes Plugin loaded — API: {plugin_config.hermes_api_url} | "

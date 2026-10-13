@@ -18,7 +18,10 @@ from nonebot.matcher import Matcher
 from .. import mcp as _mcp
 from ..config import plugin_config
 from ..core.hermes_client import hermes_client
+from ..core.approvals import pending_count as approvals_pending_count
+from ..core.approvals import pop_oldest as approvals_pop_oldest
 from ..core.routing import all_targets, resolve_target
+from ..core.run_tracker import make_scope_key
 from ..core.session import session_manager
 from ..utils import check_isolation, get_adapter_name
 
@@ -191,6 +194,8 @@ def build_help_text(
     if is_admin:
         # 管理员才看见运行时状态命令,普通用户视角下此命令"不存在"
         lines.append("/hermes-status - 查看插件运行时状态(管理员)")
+        lines.append("/run-status - 查看当前会话在跑的 run(管理员)")
+        lines.append("/run-stop - 终止当前会话在跑的 run(管理员)")
 
     if header is not None:
         text = header.strip("\n") + "\n\n命令：\n" + "\n".join(lines)
@@ -339,3 +344,127 @@ def build_status_lines(now_ms: int) -> list[str]:
         lines.append(f"  ... +{len(reg_lines) - 5} more")
 
     return lines
+
+# --- /run-status、/run-stop(阶段3a/3b,管理员;群内私聊均可用,非管理员隐身) ---
+run_status_command = on_command("run-status", force_whitespace=True, priority=88, block=True)
+run_stop_command = on_command("run-stop", force_whitespace=True, priority=88, block=True)
+
+
+def _is_admin(adapter_name: str, user_id: str) -> bool:
+    """管理员判定(与 /hermes-status 同口径:白名单 {adapter}:{user_id})。"""
+    return f"{adapter_name}:{user_id}" in plugin_config.hermes_admin_users
+
+
+def _scope_live_run(adapter_name: str, private: bool, user_id: str, group_id: str | None):
+    """取当前会话登记的 live run(runs 通道开启时才有;tracker 为空=没在跑)。"""
+    if _mcp.run_tracker is None:
+        return None
+    return _mcp.run_tracker.get_by_scope(make_scope_key(adapter_name, private, user_id, group_id))
+
+
+@run_status_command.handle()
+async def handle_run_status(bot: Bot, event: Event, matcher: Matcher):
+    """查看当前会话在跑的 run(管理员)"""
+    target = alconna.get_target()
+    if not check_isolation(event, target):
+        matcher.skip()
+    adapter_name = get_adapter_name(target)
+    user_id = event.get_user_id() or ""
+    if not _is_admin(adapter_name, user_id):
+        logger.debug(f"[HERMES] /run-status silent skip for {adapter_name}:{user_id}")
+        return  # 隐身策略(同 /hermes-status):不暴露命令存在性
+    group_id = None if target.private else target.id
+    live = _scope_live_run(adapter_name, target.private, user_id, group_id)
+    if live is None:
+        await alconna.UniMessage("当前会话没有在跑的 run(runs 通道关闭或无活动 turn)").send(target=target, bot=bot)
+        return
+    st = await hermes_client.get_run_status(
+        tgt=resolve_target(adapter_name, target.private, group_id), run_id=live.run_id
+    )
+    if st is None:
+        await alconna.UniMessage(
+            f"run {live.run_id} 状态拉取失败(gateway 侧可能已终结,等插件收尾清理)"
+        ).send(target=target, bot=bot)
+        return
+    elapsed = int(time.time() - live.started_at)
+    lines = [
+        f"🏃 run: {live.run_id}",
+        f"状态: {st.get('status')} (已 {elapsed}s)",
+        f"最近事件: {st.get('last_event') or '-'}",
+        f"模式: {live.mode} | session: {live.session_key}",
+    ]
+    usage = st.get("usage")
+    if isinstance(usage, dict) and usage:
+        lines.append(
+            f"tokens: 入{usage.get('input_tokens')} 出{usage.get('output_tokens')}"
+            f"(缓存读 {usage.get('cache_read_tokens', 0)})"
+        )
+    await alconna.UniMessage("\n".join(lines)).send(target=target, bot=bot)
+
+
+@run_stop_command.handle()
+async def handle_run_stop(bot: Bot, event: Event, matcher: Matcher):
+    """终止当前会话在跑的 run(管理员,协作式)"""
+    target = alconna.get_target()
+    if not check_isolation(event, target):
+        matcher.skip()
+    adapter_name = get_adapter_name(target)
+    user_id = event.get_user_id() or ""
+    if not _is_admin(adapter_name, user_id):
+        logger.debug(f"[HERMES] /run-stop silent skip for {adapter_name}:{user_id}")
+        return
+    group_id = None if target.private else target.id
+    live = _scope_live_run(adapter_name, target.private, user_id, group_id)
+    if live is None:
+        await alconna.UniMessage("当前会话没有在跑的 run,没有可终止的对象").send(target=target, bot=bot)
+        return
+    ok = await hermes_client.stop_run(
+        tgt=resolve_target(adapter_name, target.private, group_id), run_id=live.run_id
+    )
+    if ok:
+        # 被停 turn 自身走 interrupted 硬静默,本条命令回执即唯一通知
+        await alconna.UniMessage(f"🛑 已发送终止: {live.run_id}(协作式,正在收尾)").send(target=target, bot=bot)
+    else:
+        await alconna.UniMessage(f"终止请求未被受理: {live.run_id}(run 可能已自行结束)").send(target=target, bot=bot)
+
+# --- /approve(阶段3c,管理员应答挂起审批) ---
+approve_command = on_command("approve", force_whitespace=True, priority=88, block=True)
+
+
+@approve_command.handle()
+async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna.UniMessage | None = None):
+    """应答挂起审批(管理员):/approve <once|session|always|deny>,答最旧一条"""
+    target = alconna.get_target()
+    if not check_isolation(event, target):
+        matcher.skip()
+    adapter_name = get_adapter_name(target)
+    user_id = event.get_user_id() or ""
+    if not _is_admin(adapter_name, user_id):
+        logger.debug(f"[HERMES] /approve silent skip for {adapter_name}:{user_id}")
+        return
+    # nonebot on_command 的参数在 event 余文里;手剥比引 CommandArg 少一层适配器依赖
+    raw = ""
+    try:
+        raw = event.get_plaintext().strip()
+    except Exception:
+        pass
+    # get_plaintext 含命令本体(/approve xxx),剥掉首个空白前的部分
+    choice = raw.split(maxsplit=1)[1].strip().lower() if " " in raw else ""
+    if choice not in {"once", "session", "always", "deny"}:
+        await alconna.UniMessage(
+            f"用法: /approve <once|session|always|deny>(当前挂起 {approvals_pending_count()} 条)"
+        ).send(target=target, bot=bot)
+        return
+    entry = approvals_pop_oldest()
+    if entry is None:
+        await alconna.UniMessage("当前没有挂起的审批(可能已超时自动拒绝)").send(target=target, bot=bot)
+        return
+    ok, msg = await hermes_client.respond_approval(
+        tgt=resolve_target(entry.adapter, entry.is_private, entry.group_id),
+        run_id=entry.run_id,
+        choice=choice,
+    )
+    if ok:
+        await alconna.UniMessage(f"✅ 审批 #{entry.approval_id} 已应答: {msg}").send(target=target, bot=bot)
+    else:
+        await alconna.UniMessage(f"审批 #{entry.approval_id} 应答失败: {msg}(可能已超时或已被应答)").send(target=target, bot=bot)

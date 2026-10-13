@@ -21,6 +21,8 @@ from nonebot.rule import Rule
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
 from ..core.active_session import ActiveSession, AnchorRecord
+from ..core.approvals import add_pending as approvals_add_pending
+from ..core.approvals import notify_admins as approvals_notify_admins
 from ..core.hermes_client import (
     ChatResult,
     extract_response_media,
@@ -29,7 +31,9 @@ from ..core.hermes_client import (
     preview_raw,
 )
 from ..core.image_inline import inline_image_urls
+from ..core.inflight import PendingEntry
 from ..core.message_buffer import BufferedMessage
+from ..core.run_tracker import make_scope_key
 from ..core.outbound import get_bot_nickname, send_local_files, send_text_with_media
 from ..core.prompt_builder import (
     build_passive_system_prompt,
@@ -1418,7 +1422,11 @@ async def _chat_with_overflow_recovery(label: str, /, *, reply_bot: Bot, reply_t
     reply_bot / reply_target 刻意不叫 bot / target:chat_kwargs 里的 `target` 是出向接入点
     (HermesTarget),与发消息用的会话目标同名不同物。
     """
-    result = await _chat_with_persistence_retry(label, **chat_kwargs)
+    # 阶段2a:bot_self_id 顺 kwargs 注入 chat()(runs 路 run_tracker 登记用),
+    # 单点注入覆盖全部调用点;completions 路忽略此参数。
+    result = await _chat_with_persistence_retry(
+        label, bot_self_id=str(reply_bot.self_id), **chat_kwargs
+    )
     if not result.is_context_overflow:
         return result
 
@@ -1444,7 +1452,9 @@ async def _chat_with_overflow_recovery(label: str, /, *, reply_bot: Bot, reply_t
     session_manager.clear_session(adapter_name, is_private, user_id, group_id)
     chat_kwargs["session_key"] = session_manager.get_session_key(adapter_name, is_private, user_id, group_id)
 
-    retried = await _chat_with_persistence_retry(label, **chat_kwargs)
+    retried = await _chat_with_persistence_retry(
+        label, bot_self_id=str(reply_bot.self_id), **chat_kwargs
+    )
     if retried.is_context_overflow:
         logger.error(
             f"[HERMES {label}] 重置后仍然溢出,放弃本轮(group={group_id})—— 病因不在历史而在单轮本身:"
@@ -1558,7 +1568,37 @@ async def _run_passive_turn(
         user_content_override=user_content,
         target=hermes_target,
         interim_callback=_interim_echo if plugin_config.hermes_interim_echo_enabled else None,
+        approval_callback=(
+            _make_approval_notify(
+                bot, adapter_name,
+                f"私聊 {user_id}" if is_private else f"群 {group_id}",
+                is_private=is_private, group_id=group_id,
+            )
+            if plugin_config.hermes_runs_channel_enabled else None
+        ),
     )
+
+    # 阶段2b:runs 路迟到 steer 回收(被动路径)——私聊/passive 直说按委托排队,
+    # 与既有 passive pending 语义一致;turn 结束后的 refire 自然接力。
+    if result is not None and result.pending_steer:
+        _scope_key = (adapter_name, f"private:{user_id}" if is_private else f"group:{group_id}")
+        _mcp.inflight.try_enter(
+            _scope_key,
+            BufferedMessage(
+                ts=_now_ms(), adapter=adapter_name, group_id=group_id,
+                user_id=user_id, nickname="(迟到 steer)",
+                content=result.pending_steer, image_urls=[], sticker_urls=[],
+                reply_to_ts=None, is_bot=False,
+            ),
+            is_explicit_trigger=True,
+            original_msg_id=None,
+            now_ms=_now_ms(),
+            commission=True,
+        )
+        logger.info(
+            f"[HERMES passive] 回收 pending_steer 进委托队列 "
+            f"(key={_scope_key} len={len(result.pending_steer)})"
+        )
 
     # 本部署补丁: 403 鉴权类错误硬静默——不发 fallback、
     # 不发 raw_text,不依赖 fallback 配置。403 是运维事件(key/额度),群里通知无意义,
@@ -1573,6 +1613,11 @@ async def _run_passive_turn(
             f"[HERMES passive] {_silence_kind},已静默丢弃 (group={group_id} is_private={is_private})"
             "——检查接入点 key / provider 额度与可用性"
         )
+        return result
+
+    # 阶段3b:turn 被主动终止,硬静默(同 reactive 分支注释)。
+    if result.is_interrupted:
+        logger.info(f"[HERMES passive] turn 被终止,硬静默 (group={group_id} is_private={is_private})")
         return result
 
     # 上游 transport_error 同款保护(见 _run_reactive_turn 同名分支注释)。
@@ -1847,7 +1892,32 @@ async def _run_reactive_turn(
         user_content_override=user_content,
         target=hermes_target,
         interim_callback=_interim_echo if plugin_config.hermes_interim_echo_enabled else None,
+        approval_callback=(
+            _make_approval_notify(bot, adapter_name, f"群 {group_id}", is_private=False, group_id=group_id)
+            if plugin_config.hermes_runs_channel_enabled else None
+        ),
     )
+
+    # 阶段2b:runs 路 turn 收尾时,上游漏接的迟到 steer 随 completed 上浮——排回
+    # pending refire,不能丢(那是用户在 turn 边界上说的话)。add_followup 合并
+    # 语义,不顶掉 turn 期间新来的真实跟帖。
+    if result is not None and result.pending_steer:
+        _mcp.inflight.add_followup(
+            (adapter_name, f"group:{group_id}"),
+            PendingEntry(
+                msg=BufferedMessage(
+                    ts=_now_ms(), adapter=adapter_name, group_id=group_id,
+                    user_id=user_id, nickname="(迟到 steer)",
+                    content=result.pending_steer, image_urls=[], sticker_urls=[],
+                    reply_to_ts=None, is_bot=False,
+                ),
+                is_explicit_trigger=False,
+            ),
+        )
+        logger.info(
+            f"[HERMES reactive] 回收 pending_steer 进 pending "
+            f"(group={group_id} len={len(result.pending_steer)})"
+        )
 
     # 增量推送水位推进:仅在内容确定落进上游转录时推进(非 transport 错误、
     # 非 403/暂不可用等 provider 报错家族);失败/本 turn 内发生会话轮换则不推进,
@@ -1875,12 +1945,25 @@ async def _run_reactive_turn(
                 "——检查接入点 key / provider 额度与可用性"
             )
             return result
+        # 阶段3b:turn 被主动终止(/run-stop 或 gateway 关停)——硬静默。
+        # 终止是管理员的主动动作,命令回执已经说明,不再发「被中断」兜底文本。
+        if result.is_interrupted:
+            logger.info(f"[HERMES reactive] turn 被终止,硬静默 (group={group_id})")
+            return result
         # 上游 transport_error(5xx / 网络断 / 流被掐):raw_text 是服务端错误信息原文
         # (如 "Model generated invalid tool call: ..."),原文转发会把内部错误丢到群里
         # 既泄密又难看。换成 config 里的友好兜底文本;空串则静默。
         # parse_failed 但非 transport(LLM 真的回了点啥但结构错):原样转发 raw_text,
         # 仍可能是用户想要的回答。
         if result.is_transport_error and is_explicit_trigger:
+            # 阶段2d(维护者定案「丢了就贴」):429 满额丢单(自动重试一次仍 429)不发
+            # 文本,在触发消息上贴 emoji 表「忙,稍等」;无 msg id 时退回文本兜底。
+            if result.is_rate_limited and trigger_msg_id is not None:
+                logger.info(
+                    f"[HERMES reactive] 429 满额丢单,贴表情 (group={group_id} msg={trigger_msg_id})"
+                )
+                await _emoji_like_quiet(bot, trigger_msg_id, plugin_config.hermes_rate_limit_emoji_id)
+                return result
             fallback_text = plugin_config.hermes_transport_error_fallback_text
             logger.warning(
                 f"[HERMES reactive] transport error fallback "
@@ -2282,6 +2365,84 @@ def _in_post_reply_cooldown(adapter_name: str, group_id: str, now_ms: int) -> bo
     return 0 <= elapsed_ms < cooldown_sec * 1000
 
 
+def _make_approval_notify(
+    bot: Bot, adapter_name: str, scope_desc: str, *, is_private: bool, group_id: str | None
+):
+    """阶段3c:approval_callback 工厂——登记挂起审批并私聊通知管理员。
+
+    群聊侧不发任何消息(审批是管理员私事);通知失败只记日志,不拖垮主 turn。
+    """
+    async def _notify(approval: dict) -> None:
+        entry = approvals_add_pending(
+            run_id=str(approval.get("run_id") or ""),
+            adapter=adapter_name,
+            scope_desc=scope_desc,
+            command=str(approval.get("command") or approval.get("preview") or ""),
+            choices=[str(c) for c in (approval.get("choices") or [])],
+            is_private=is_private,
+            group_id=group_id,
+        )
+        sent = await approvals_notify_admins(
+            bot=bot, adapter_name=adapter_name, entry=entry,
+            admin_users=set(plugin_config.hermes_admin_users),
+        )
+        logger.info(
+            f"[HERMES approval] 审批挂起 #{entry.approval_id} run={entry.run_id} "
+            f"scope={scope_desc} 通知管理员 {sent} 人"
+        )
+
+    return _notify
+
+
+async def _emoji_like_quiet(bot: Bot, msg_id, emoji_id: int) -> None:
+    """贴 emoji 回执,失败只记 debug(阶段2d:429 丢单「丢了就贴」用)。
+
+    QQ NT 协议下 set_msg_emoji_like 仅群聊可用——调用方自己保证群聊场景。
+    """
+    try:
+        await bot.call_api("set_msg_emoji_like", message_id=msg_id, emoji_id=emoji_id)
+    except Exception as e:
+        logger.debug(f"[HERMES] emoji 回执失败 (msg_id={msg_id} emoji_id={emoji_id}): {e}")
+
+
+async def _try_steer_followup(
+    key: tuple[str, str],
+    adapter_name: str,
+    user_id: str,
+    group_id: str,
+) -> bool:
+    """阶段2b:把 followup 槽里的跟帖 steer 注入在跑的 run,成功=True(不再排队)。
+
+    只接纯文本跟帖:带图/表情包的走不了 steer(文本通道),原样放回走 pending。
+    run 已收尾(409)/无 live run/网络异常 → 放回走 pending,语义与旧路完全一致。
+    """
+    tracker = _mcp.run_tracker
+    if tracker is None:
+        return False
+    entry = _mcp.inflight.take_followup(key)
+    if entry is None:
+        return False
+    if entry.msg.image_urls or entry.msg.sticker_urls:
+        _mcp.inflight.restore_followup(key, entry)
+        return False
+    live = tracker.get_by_scope(make_scope_key(adapter_name, False, user_id, group_id))
+    if live is None:
+        _mcp.inflight.restore_followup(key, entry)
+        return False
+    text = f"[user={entry.msg.nickname} id={entry.msg.user_id}]: {entry.msg.content}"
+    ok = await hermes_client.steer_run(
+        tgt=resolve_target(adapter_name, False, group_id), run_id=live.run_id, text=text
+    )
+    if not ok:
+        _mcp.inflight.restore_followup(key, entry)
+        return False
+    logger.info(
+        f"[HERMES reactive] 跟帖已 steer 注入在跑 turn (group={group_id} "
+        f"user={entry.msg.user_id} run_id={live.run_id} len={len(text)})"
+    )
+    return True
+
+
 async def _handle_reactive_path(
     *,
     bot: Bot,
@@ -2362,6 +2523,7 @@ async def _handle_reactive_path(
         is_bot=False,
     )
 
+    is_commission = addressed_to_bot and user_id not in set(plugin_config.hermes_known_bots)
     inflight_result = _mcp.inflight.try_enter(
         key,
         current_buffered,
@@ -2369,9 +2531,18 @@ async def _handle_reactive_path(
         original_msg_id=event_msg_id,
         now_ms=now_ms,
         addressed_to_bot=addressed_to_bot,
-        commission=(addressed_to_bot and user_id not in set(plugin_config.hermes_known_bots)),  # 群聊只有平台确认冲 bot 的人类 @ 才进委托队列
+        commission=is_commission,  # 群聊只有平台确认冲 bot 的人类 @ 才进委托队列
     )
     if inflight_result != "entered":
+        # 阶段2b:非委托跟帖在 runs 通道下先尝 steer 注入在跑 turn(成功即不排队);
+        # 委托/带媒体/旧路/run 已收尾被拒 → 一律维持原 pending 语义。
+        if (
+            inflight_result == "queued"
+            and not is_commission
+            and plugin_config.hermes_runs_channel_enabled
+            and await _try_steer_followup(key, adapter_name, user_id, group_id)
+        ):
+            return
         # 入队是 coalesce 的正常语义,但必须可观测:这条分支早先对 bystander 完全静默,
         # 一串消息集体没反应时日志里只剩 cooldown_check,查不出去向。
         logger.debug(

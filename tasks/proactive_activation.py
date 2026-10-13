@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import random
 import time
+from collections import deque
 
 from nonebot import logger, require
 
@@ -32,11 +33,50 @@ _TICK_SEC = 30
 _next_check_at: dict[tuple[str, str], float] = {}
 _last_check_at: dict[tuple[str, str], float] = {}
 
+# 阶段2c(维护者 2026-10-13 定案,原话「巡查必须异步了,同步模式会一瞬间挤占好几个
+# 队列」):巡查改全局串行队列——到龄群进队列去重,全局同一时刻最多 1 发巡查
+# turn 在跑;失败(含 429)即弃不重试,下轮 T2 自然再查。
+# 旧形态是同 tick 多群到龄就 create_task 并发点火,每发捏着一个 gateway 全局槽
+# (max_concurrent_runs=10)几分钟,扎堆即挤占用户 turn 的槽位。
+_patrol_queue: deque[tuple[str, str, dict]] = deque()
+_patrol_queued: set[tuple[str, str]] = set()
+_patrol_running = False
+
 _PROACTIVE_PROMPT = (
     "(定时巡查:以上是群里最近的新消息,请自行判断是否值得发言。"
     "本模式 push_message 不可用,想说话就直接在 submit_decision 里给 reply_text;"
     "没什么可说的就 should_reply=false)"
 )
+
+
+def _enqueue_patrol(adapter: str, scope_id: str, kwargs: dict) -> bool:
+    """到龄群进巡查队列(按群去重)。返回是否真入队(已排队= False)。"""
+    if (adapter, scope_id) in _patrol_queued:
+        return False
+    _patrol_queue.append((adapter, scope_id, kwargs))
+    _patrol_queued.add((adapter, scope_id))
+    return True
+
+
+async def _drain_patrol_queue(run_one) -> None:
+    """串行消费巡查队列(全局同一时刻最多 1 发巡查 turn)。
+
+    run_one 失败(含 429/传输错误/异常)只记日志即弃——巡查 turn 天生可弃,
+    不重试不贴表情(与用户 turn 的「丢了就贴」刻意分流),下轮 T2 自然再查。
+    finally 复位 _patrol_running:中途异常也不能把队列永久锁死。
+    """
+    global _patrol_running
+    try:
+        while _patrol_queue:
+            adapter, scope_id, kwargs = _patrol_queue.popleft()
+            _patrol_queued.discard((adapter, scope_id))
+            logger.info(f"[HERMES proactive] 串行点火: {adapter}/{scope_id} (队列余 {len(_patrol_queue)})")
+            try:
+                await run_one(**kwargs)
+            except Exception as exc:
+                logger.warning(f"[HERMES proactive] 巡查 turn 异常即弃 {adapter}/{scope_id}: {exc}")
+    finally:
+        _patrol_running = False
 
 
 def register_proactive_activation() -> None:
@@ -105,13 +145,15 @@ def register_proactive_activation() -> None:
                 continue
 
             logger.info(
-                f"[HERMES proactive] firing ephemeral turn: {adapter}/{scope_id} "
+                f"[HERMES proactive] due,进串行队列: {adapter}/{scope_id} "
                 f"msgs={len(msgs)} window_sec={cfg.hermes_proactive_window_sec}"
             )
-            # fire-and-forget:turn 可能跑几分钟(工具链/压缩),不能堵住调度 tick
-            # 里其他群的检查;并发安全由 inflight registry 保证。
-            asyncio.create_task(
-                _handle_reactive_path(
+            # 阶段2c:并发点火 → 全局串行队列。kwargs 与旧 create_task 调用一致,
+            # 由 worker 逐个 await(全局同一时刻最多 1 发巡查 turn 占槽)。
+            _enqueue_patrol(
+                adapter,
+                scope_id,
+                dict(
                     bot=bot,
                     target=entry.target,
                     adapter_name=adapter,
@@ -125,8 +167,14 @@ def register_proactive_activation() -> None:
                     now_ms=now_ms,
                     ephemeral=True,
                     recent_override=msgs,
-                )
+                ),
             )
+
+        # 队列非空且 worker 未跑 → 点火 worker(单事件循环内 check-then-set 无竞态)
+        global _patrol_running
+        if _patrol_queue and not _patrol_running:
+            _patrol_running = True
+            asyncio.create_task(_drain_patrol_queue(_handle_reactive_path))
 
     logger.info(
         f"[HERMES] T2 定时隐性激活已启用: 间隔 {interval}s"

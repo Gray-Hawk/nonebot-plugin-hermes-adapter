@@ -455,5 +455,20 @@ class Config(BaseModel):
     私聊永远走截断(send_private_forward_msg 实现端覆盖差)。
     非 onebotv11 适配器亦不受此开关影响,沿用截断。"""
 
+    hermes_runs_channel_enabled: bool = False
+    """本部署补丁(runs 迁移阶段1): chat() 改走 /v1/runs 通道。
+
+    True = turn 的提交/读取改走「POST /v1/runs + events SSE」替代
+    /v1/chat/completions;下游解析与失败文案检测完全复用。默认 False 仍旧路。
+    实验性开关:阶段2(turn 引擎适配 reattach/steer/pending_steer)未落地前,
+    开启只改变传输层形态,不带来新能力。"""
+
+    hermes_rate_limit_emoji_id: int = 96
+    """本部署补丁(阶段2d, 维护者定案「丢了就贴」): 429 满额
+    丢单(自动重试一次仍 429)时贴在触发消息上的 emoji id——「忙,稍等」的轻量
+    信号,不发文本报错。仅群聊(QQ NT 协议私聊不支持 emoji 回执,私聊走文本兜底)。
+    默认 96(冷汗),刻意与 ack(341)和已移除的旧 busy(97/擦汗)都不同 id,
+    语义不混淆。"""
+
 
 plugin_config = get_plugin_config(Config)
