@@ -794,7 +794,8 @@ async def handle_perception(bot: Bot, event: Event):
 # 所以延迟起跑的 turn 自动看到防抖期内到达的所有碎片,触发载荷只需管归属。
 class _DebounceState:
     """per-target 防抖状态。首条消息的 handler 常驻(睡满防抖窗口后 dispatch),
-    期内后续消息只更新本状态并立即返回——合并语义靠「载荷替换 + 截止顺延」。"""
+    期内后续消息只更新本状态并立即返回——合并语义:同一个人的碎片「拼接」
+    (文本换行拼、媒体追加),跨人碎片才「替换」载荷;截止时间顺延。"""
 
     __slots__ = ("first_mono", "deadline_mono", "payload", "merged")
 
@@ -806,6 +807,31 @@ class _DebounceState:
 
 
 _debounce_states: dict[tuple[str, str], _DebounceState] = {}
+
+
+def _merge_fragment_payload(old: dict, new: dict) -> None:
+    """同一个人的防抖碎片并入在窗载荷(2026-10-12 维护者拍板:替换改拼接——
+    「如果是替换还要防抖干嘛」)。文本换行拼接;图片/表情包 URL 追加去重;
+    explicit/addressed 取并集(任一碎片被点名,合并触发即被点名);
+    ephemeral 两者皆真才真;now_ms 取最新(触发时序以最后一条为准);
+    event 保留首条——ack 已用它贴过 emoji,dispatch 不再用。"""
+
+    new_text = (new.get("msg_text") or "").strip()
+    if new_text:
+        old_text = (old.get("msg_text") or "").strip()
+        old["msg_text"] = f"{old_text}\n{new_text}" if old_text else new_text
+    for field in ("image_urls", "sticker_urls"):
+        incoming = list(new.get(field) or [])
+        if incoming:
+            merged = list(old.get(field) or [])
+            merged.extend(u for u in incoming if u not in merged)
+            old[field] = merged
+    old["is_explicit_trigger"] = old["is_explicit_trigger"] or new["is_explicit_trigger"]
+    old["addressed_to_bot"] = old["addressed_to_bot"] or new["addressed_to_bot"]
+    old["ephemeral"] = old["ephemeral"] and new["ephemeral"]
+    if new.get("context_limit") is not None:
+        old["context_limit"] = new["context_limit"]
+    old["now_ms"] = new["now_ms"]
 
 
 def _debounce_arrive(
@@ -820,10 +846,12 @@ def _debounce_arrive(
     """一条触发到达防抖闸。返回 (state, is_new)。
 
     is_new=True: 调用方是首条触发,负责睡满窗口后 dispatch(state.payload)。
-    is_new=False: 本条被合并——载荷按 replaceable 替换、截止时间顺延(受
-    first+max_wait 硬上限),调用方应立即返回。
-    replaceable=False 用于「纯图非显式碎片」:顺延但不替换载荷(该形态会在
-    reactive 图片门控被整 turn 吞掉,替换会弄丢先前的文本触发载荷)。
+    is_new=False: 本条被合并,调用方应立即返回。合并规则(2026-10-12 坑2修复):
+    同一个发送者的碎片一律拼接进在窗载荷(_merge_fragment_payload);
+    跨发送者碎片(群聊)按 replaceable 决定是否整体替换;截止时间顺延
+    (受 first+max_wait 硬上限)。
+    replaceable=False 用于「纯图/纯表情包非显式碎片」:顺延但不替换(该形态
+    会在 reactive 图片门控被整 turn 吞掉,替换会弄丢先前的文本触发载荷)。
     get-or-create 与状态更新之间无 await,asyncio 单线程下原子。
     """
     st = _debounce_states.get(key)
@@ -835,7 +863,9 @@ def _debounce_arrive(
         )
         _debounce_states[key] = st
         return st, True
-    if replaceable:
+    if st.payload.get("user_id") == payload.get("user_id"):
+        _merge_fragment_payload(st.payload, payload)
+    elif replaceable:
         st.payload = payload
     st.merged += 1
     new_deadline = now_mono + debounce_sec
@@ -1090,28 +1120,11 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
 
     # 显式触发(全隐式化后 = addressed):进入 / 续期活跃态(群聊场景)
     if is_explicit_trigger and not target.private and group_id and plugin_config.hermes_active_session_enabled:
-        sess = _mcp.active_sessions.trigger(adapter_name, group_id, user_id, now_ms=now)
+        _mcp.active_sessions.trigger(adapter_name, group_id, user_id, now_ms=now)
         logger.info(f"[HERMES] active_session triggered/renewed: {adapter_name}/{group_id} by {user_id}")
-        # 本部署补丁(凌晨批项4 委托锚): addressed 消息 = 委托轮,
-        # 按双槽规则钉锚(维护者槽无条件/客人槽三条件,见 pin_anchor)。锚是「任务来源
-        # 指针」:续发轮裁剪掉原始委托后,靠它找回任务。文本在钉入时截一道,
-        # 渲染端还有一道 sanitize。纯 @ 无文本也钉(委托可能跟在图里/下一条)。
-        # 锚优化短期项A(2026-10-12,维护者拍板):已知 bot(hermes_known_bots)的发言
-        # 永不钉锚——bot 的 quote 接话不是委托,钉上只会挤占锚位、刷新锚龄。
-        if user_id not in set(plugin_config.hermes_known_bots):
-            _mcp.active_sessions.pin_anchor(
-                sess,
-                AnchorRecord(
-                    commissioner_id=user_id,
-                    commissioner_nickname=nickname,
-                    msg_id=getattr(event, "message_id", None),
-                    text=msg_text[:200],
-                    ts=now,
-                ),
-                master_ids=set(plugin_config.hermes_admin_users),
-                max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
-                now_ms=now,
-            )
+        # 2026-10-13 队列化定案:入口不再自动钉锚。@ 只保证进委托队列并拿到一次
+        # 主动判断轮;是否钉锚由该轮 submit_decision 显式给 pin_anchor(见 _run_reactive_turn)。
+        # 这样玩笑/围观 @ 不会污染双槽,正常任务也不因锚满被挤掉。
 
     if not target.private:
         logger.info(
@@ -1121,16 +1134,23 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         )
 
     # --- 应答防抖(本部署补丁:凌晨批项6) ---
-    # 首条触发:登记状态 → 进 ack scope 秒贴 emoji → 睡满防抖窗 → 拿最新载荷 dispatch。
-    # 期内碎片:替换载荷 + 顺延截止(受 max_wait 硬上限)后立即返回,不另起 turn。
+    # 首条触发:登记状态 → 进 ack scope 秒贴 emoji → 睡满防抖窗 → 拿合并后载荷 dispatch。
+    # 期内碎片:同人拼接/跨人替换 + 顺延截止(受 max_wait 硬上限)后立即返回,不另起 turn。
     # 防抖期间不占 inflight slot;T2 定时/投递轮询不经过本 handler,天然不防抖。
-    # 显式/隐式一视同仁(@ 委托同样防抖,几秒等待对委托无感)。
+    # 显式/隐式闲聊一视同仁;但群里 addressed_to_bot 的委托 @ 不走群防抖——
+    # 多人同时 @ 时,群级防抖的跨人替换会把先到的委托触发载荷顶掉(2026-10-13
+    # 队列化配套)。委托直连 _dispatch_chat,排队交给 inflight 的委托队列。
+    skip_debounce_for_commission = (
+        (not target.private)
+        and addressed_to_bot
+        and user_id not in set(plugin_config.hermes_known_bots)
+    )
     debounce_sec = (
         plugin_config.hermes_reply_debounce_private_sec
         if target.private
         else plugin_config.hermes_reply_debounce_group_sec
     )
-    if debounce_sec > 0:
+    if debounce_sec > 0 and not skip_debounce_for_commission:
         scope_id = user_id if target.private else (group_id or "")
         debounce_key = (adapter_name, f"{'private' if target.private else 'group'}:{scope_id}")
         payload = dict(
@@ -1152,17 +1172,18 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         )
         # get-or-create 与状态更新之间无 await,asyncio 单线程下原子。
         loop = asyncio.get_running_loop()
-        # 纯图非显式碎片不替换载荷:它是 reactive 图片门控会整 turn 吞掉的形态,
-        # 替换会把先前的文本触发载荷弄丢;但仍顺延截止(图已在 buffer 里,
-        # 最终 turn 看得到)。私聊恒 explicit,不受此保护影响(与旧行为一致)。
-        image_only = bool(image_urls) and not msg_text.strip()
+        # 纯图/纯表情包非显式碎片不替换跨人载荷:它是 reactive 图片门控会整 turn
+        # 吞掉的形态,替换会把先前的文本触发载荷弄丢;但仍顺延截止(图已在 buffer
+        # 里,最终 turn 看得到)。同人碎片不走替换——_merge_fragment_payload 拼接,
+        # 本保护只对群聊跨人碎片有意义。
+        media_only = (bool(image_urls) or bool(sticker_urls)) and not msg_text.strip()
         st, is_new = _debounce_arrive(
             debounce_key,
             payload,
             debounce_sec=debounce_sec,
             max_wait_sec=plugin_config.hermes_reply_debounce_max_wait_sec,
             now_mono=loop.time(),
-            replaceable=not (image_only and not is_explicit_trigger),
+            replaceable=not (media_only and not is_explicit_trigger),
         )
         if not is_new:
             logger.debug(
@@ -1190,9 +1211,15 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
                     f"[HERMES debounce] fire (key={debounce_key} merged={st.merged} "
                     f"waited={loop.time() - st.first_mono:.1f}s)"
                 )
+                # 坑1修复(2026-10-12,维护者拍板):发车前先释放状态——此前状态活到
+                # 整个 turn 结束才 pop,turn 期间到达的消息被当作「期内碎片」合并进
+                # 已过发车点的死状态,随 pop 一并丢弃(私聊文本/@ 委托被无声吞掉,
+                # 生产实证三连丢)。提前 pop 后,turn 期间的新消息开新防抖窗正常发车,
+                # inflight 占线则进 pending 走现成 refire 接力。
+                _debounce_states.pop(debounce_key, None)
                 await _dispatch_chat(**st.payload)
         finally:
-            _debounce_states.pop(debounce_key, None)
+            _debounce_states.pop(debounce_key, None)  # 睡眠期异常兜底;正常路径已 pop,no-op
         return
 
     # --- 调用 Hermes (防抖关闭时走原路径直发) ---
@@ -1569,6 +1596,7 @@ async def _run_reactive_turn(
     addressed_to_bot: bool = False,
     now_ms: int,
     nickname: str | None = None,
+    trigger_msg_id: str | int | None = None,
     ephemeral: bool = False,
     recent_override: list[BufferedMessage] | None = None,
     context_limit: int | None = None,
@@ -1641,9 +1669,8 @@ async def _run_reactive_turn(
     # 接力链不用为此加字段。
     sender_blacklisted = _is_blacklisted(group_id, user_id)
     # 本部署补丁(凌晨批项4): 取在钉委托锚(懒式超龄剔除)。
-    # ephemeral 临时 session 不注册进管理器,天然无锚。本 turn 触发消息自己钉的
-    # 锚(ts 与 commissioner 都和当前消息相同)不渲染——它就是 current_message,
-    # 再进 <pinned_tasks> 是冗余。
+    # 2026-10-13 改手动单轨后,入口不再自动钉锚;这里只会读到「之前判断轮已确认
+    # 并 pin 成功」的锚。ephemeral 临时 session 不注册进管理器,天然无锚。
     pinned_anchors: list[AnchorRecord] = []
     if not ephemeral:
         pinned_anchors = [
@@ -2045,6 +2072,35 @@ async def _run_reactive_turn(
                 f"[HERMES reactive] mark_bot_replied landed nowhere: active window gone "
                 f"(group={group_id}); post-reply cooldown will not engage for follow-ups"
             )
+        # 2026-10-13 队列化定案:委托锚改手动单轨——入口不再自动钉,只有本轮
+        # submit_decision 显式 pin_anchor=true 且回复真发出去了才钉。放在 mark_bot_replied
+        # 之后,避免新锚立刻被自己的发言标成 answered;should_exit_active/ ephemeral 不钉。
+        if (
+            decision.get("pin_anchor") is True
+            and not ephemeral
+            and not decision.get("should_exit_active")
+        ):
+            current_session = _mcp.active_sessions.get_if_active(adapter_name, group_id, reply_now_ms)
+            if current_session is None:
+                logger.info(f"[HERMES reactive] pin_anchor skipped: no active window (group={group_id} user={user_id})")
+            else:
+                pinned = _mcp.active_sessions.pin_anchor(
+                    current_session,
+                    AnchorRecord(
+                        commissioner_id=user_id,
+                        commissioner_nickname=nickname or user_id,
+                        msg_id=trigger_msg_id,
+                        text=(text or "")[:200],
+                        ts=now_ms,
+                    ),
+                    master_ids=set(plugin_config.hermes_admin_users),
+                    max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
+                    now_ms=now_ms,
+                )
+                logger.info(
+                    f"[HERMES reactive] pin_anchor {'pinned' if pinned else 'declined'} "
+                    f"(group={group_id} user={user_id} msg_id={trigger_msg_id})"
+                )
 
     return result
 
@@ -2094,6 +2150,7 @@ async def _handle_passive_path(
             is_explicit_trigger=True,  # passive 路径只在 (private OR active_session=off) 触发, 二者都需要 user 显式说话
             original_msg_id=event_msg_id,
             now_ms=now_ms,
+            commission=True,  # passive/私聊直说都按委托排队,不做闲聊 followup 合并
         )
         != "entered"
     ):
@@ -2122,8 +2179,8 @@ async def _handle_passive_path(
         if not should_refire:
             _mcp.inflight.exit(key)
         else:
-            pending_entry = _mcp.inflight.take_pending(key)
-            if pending_entry is None or pending_entry.msg.ts <= current_buffered.ts:
+            pending_entry = _mcp.inflight.pop_next_pending(key, after_ts=current_buffered.ts)
+            if pending_entry is None:
                 _mcp.inflight.exit(key)
             else:
                 asyncio.create_task(
@@ -2190,9 +2247,10 @@ async def _handle_reactive_path(
 ):
     """Reactive 外壳:inflight 占位 → 调 _run_reactive_turn → finally 合并重燃。
 
-    coalesce 语义:in-flight 期间到来的新触发不并发跑,只覆盖 pending 单元;
-    本发完成后 take_pending,如有则用 create_task 起一个 _refire 接力,
-    本 task 立即 return,不阻塞 NoneBot 事件循环。
+    coalesce 语义:in-flight 期间到来的新触发不并发跑;委托 @ 进按委托人分键的
+    FIFO 队列(总 3/每人 1),旁观闲聊只留一个最新 followup。本发完成后
+    pop_next_pending 取下一发,用 create_task 起 _refire 接力,本 task 立即 return,
+    不阻塞 NoneBot 事件循环。
 
     ephemeral / recent_override / context_limit(本部署新增)原样透传给
     _run_reactive_turn,语义见该函数 docstring。ephemeral turn 没有窗口,
@@ -2255,6 +2313,7 @@ async def _handle_reactive_path(
         original_msg_id=event_msg_id,
         now_ms=now_ms,
         addressed_to_bot=addressed_to_bot,
+        commission=(addressed_to_bot and user_id not in set(plugin_config.hermes_known_bots)),  # 群聊只有平台确认冲 bot 的人类 @ 才进委托队列
     )
     if inflight_result != "entered":
         # 入队是 coalesce 的正常语义,但必须可观测:这条分支早先对 bystander 完全静默,
@@ -2287,6 +2346,7 @@ async def _handle_reactive_path(
             is_explicit_trigger=is_explicit_trigger,
             addressed_to_bot=addressed_to_bot,
             now_ms=now_ms,
+            trigger_msg_id=event_msg_id,
             ephemeral=ephemeral,
             recent_override=recent_override,
             context_limit=context_limit,
@@ -2302,8 +2362,8 @@ async def _handle_reactive_path(
         if not should_refire_pending:
             _mcp.inflight.exit(key)
         else:
-            pending_entry = _mcp.inflight.take_pending(key)
-            if pending_entry is None or pending_entry.msg.ts <= current_buffered.ts:
+            pending_entry = _mcp.inflight.pop_next_pending(key, after_ts=current_buffered.ts)
+            if pending_entry is None:
                 _mcp.inflight.exit(key)
             else:
                 asyncio.create_task(
@@ -2396,6 +2456,7 @@ async def _refire(
                 is_explicit_trigger=is_explicit_trigger,
                 addressed_to_bot=addressed_to_bot,
                 now_ms=refire_now_ms,
+                trigger_msg_id=original_msg_id,
                 ephemeral=ephemeral,
             )
         else:
@@ -2430,8 +2491,8 @@ async def _refire(
             # B012 豁免: try 侧异常已被上方 except 捕获记录,不存在被吞的活异常;
             # refire 是独立 create_task 的旁路接力,CancelledError 窗口仅停机时。
             return  # noqa: B012
-        pending_entry = _mcp.inflight.take_pending(key)
-        if pending_entry and pending_entry.msg.ts > trigger_msg.ts:
+        pending_entry = _mcp.inflight.pop_next_pending(key, after_ts=trigger_msg.ts)
+        if pending_entry:
             asyncio.create_task(
                 _refire(
                     key=key,

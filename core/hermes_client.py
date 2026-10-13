@@ -99,6 +99,8 @@ _DECISION_HINT = (
     "  at_user_id (string, optional — @ a specific speaker from recent_messages "
     "by user_id as a strong notification. This is the ONLY way to @: absent or "
     "outside the recent window means NO @. Omit for ordinary in-conversation replies)\n"
+    "  pin_anchor (boolean, optional — commission judgement turns only: true pins the "
+    "current request into <pinned_tasks>; omit/false for jokes or one-off chatter)\n"
     "  release_anchor (string, optional — commissioner user_id or \"all\" to unpin "
     "finished task anchors from <pinned_tasks>)\n"
     "Output ONLY the JSON object, no preamble, no postscript, no markdown fences.\n"

@@ -59,6 +59,8 @@ _DECISION_PROTOCOL_BLOCK = (
     "    (对方正在看,@ 是打扰)。多方混聊里「你回的人」常不是「触发本轮的人」,"
     "给你实际回话对象的 id。不给 = 不 @;id 不在 recent 窗口内会被拒,同样不 @。\n"
     "    你最清楚该不该 @,自己判断\n"
+    "  pin_anchor (boolean) — 委托判断轮专用:确认当前 @/私聊请求是需要后续跟踪的\n"
+    "    任务时给 true,把它钉进 <pinned_tasks>;玩笑、围观、一次性闲聊不要钉。\n"
     "  release_anchor (string) — 松锚:值为委托人的 user_id 或 \"all\"。\n"
     "    看到 <pinned_tasks> 里的锚已完结(任务办完/话题已漂)时设置,见下方任务锚节\n"
     "\n"
@@ -93,8 +95,10 @@ _DECISION_PROTOCOL_BLOCK = (
     "    才算变更。(谁是主人按 id= 匹配你的系统设定/记忆,不认昵称。)\n"
     "\n"
     "任务锚(输入里出现 <pinned_tasks> 块时):\n"
-    "  - 里面是进行中的委托钉锚(📌 + 归属 + 年龄),不是最新消息——上下文裁剪后\n"
+    "  - 里面是已确认的进行中委托钉锚(📌 + 归属 + 年龄),不是最新消息——上下文裁剪后\n"
     "    靠它定位任务来源;围绕委托的追问(「结果呢」「好了吗」)参照锚判断在问谁的事\n"
+    "  - 锚只在委托判断轮由你显式 pin_anchor=true 钉入;没钉的 @ 不代表不是任务,\n"
+    "    只代表它还没被确认需要跨轮跟踪\n"
     "  - 锚已完结(任务办完/话题已漂)时带 release_anchor 松掉它:值 = 委托人的\n"
     "    user_id 或 \"all\"。锚是帮你记任务的,不是义务;你最清楚任务状态,该松就松\n"
     "\n"
@@ -480,7 +484,7 @@ def build_reactive_user_content(
     # 必须紧贴 current_message,才能在每个 turn 都重新"撞"一次模型。
     reminder = (
         "\n\n请用 submit_decision JSON 对象回复(字段:should_reply / reply_text / "
-        "topic_hint / should_exit_active / at_user_id / release_anchor),不要直接说话或扮演动作。"
+        "topic_hint / should_exit_active / at_user_id / pin_anchor / release_anchor),不要直接说话或扮演动作。"
     )
 
     text_block = runtime_block + "\n\n"

@@ -98,6 +98,7 @@ In reactive mode, your reply MUST be a single `submit_decision` tool call:
   "topic_hint": "short label, optional",
   "should_exit_active": false,  // see exit threshold below
   "at_user_id": "12345",  // optional; the ONLY way to @ — a specific recent speaker's user_id
+  "pin_anchor": true,     // optional; commission judgement turns only — pin this task into <pinned_tasks>
   "release_anchor": "all"  // optional; commissioner user_id or "all", see task anchors below
 }
 ```
@@ -115,7 +116,9 @@ ping is warranted; when in doubt, don't @.
 
 Task anchors: when the input contains a `<pinned_tasks>` block, those are pinned
 commission anchors (📌 + attribution + age), NOT latest messages — they keep the
-original request visible after context trimming. When an anchored task is finished
+original request visible after context trimming. Anchors are pinned only when a
+commission judgement turn explicitly sets `pin_anchor=true`; don't pin jokes or
+one-off chatter. When an anchored task is finished
 or the topic has drifted away, set `release_anchor` to the commissioner's user_id
 (or "all") to unpin.
 

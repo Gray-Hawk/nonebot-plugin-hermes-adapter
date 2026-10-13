@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 
 import nonebot_plugin_alconna as alconna
 from nonebot import logger, on_command
@@ -134,24 +135,50 @@ async def handle_ping(bot: Bot, event: Event, matcher: Matcher):
 # --- /help ---
 help_command = on_command("help", aliases={"帮助"}, force_whitespace=True, priority=88, block=True)
 
+_HELP_MENU_SEP = "---"
 
-@help_command.handle()
-async def handle_help(bot: Bot, event: Event, matcher: Matcher):
-    """显示帮助信息"""
-    target = alconna.get_target()
-    if not check_isolation(event, target):
-        matcher.skip()
 
-    # 是否管理员决定要不要把 /hermes-status 暴露给当前用户
-    adapter_name = get_adapter_name(target)
-    user_id = event.get_user_id() or ""
-    is_admin = f"{adapter_name}:{user_id}" in plugin_config.hermes_admin_users
+def load_help_menu_decor(path: str) -> tuple[str | None, str | None]:
+    """读取 /help 自定义头尾(2026-10-13 维护者拍板:只自定义头尾,独立文件)。
 
-    if target.private:
-        intro = "🤖 Hermes Agent 帮助\n\n直接发送消息即可与 AI 对话。\n\n命令：\n"
+    返回 (header, footer);任一为 None 表示该段回退内置。文件不存在/读取失败/
+    内容为空时整体回退并 WARN,/help 不挂。文件现读现发,保存即生效。
+    格式:第一行单独 --- 分隔;之前是头,之后是尾;没有 --- 则整个文件只当头。
+    """
+    if not path:
+        return None, None
+    try:
+        raw = Path(path).expanduser().read_text(encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"[HERMES] /help 菜单文件读取失败({path}): {e};回退内置菜单")
+        return None, None
+    lines = raw.splitlines()
+    sep_at = next((i for i, line in enumerate(lines) if line.strip() == _HELP_MENU_SEP), None)
+    if sep_at is None:
+        header, footer = raw, ""
     else:
-        intro = "🤖 Hermes Agent 帮助\n\n@我 发送消息即可与 AI 对话。\n\n命令：\n"
+        header = "\n".join(lines[:sep_at])
+        footer = "\n".join(lines[sep_at + 1 :])
+    header = header.strip("\n")
+    footer = footer.strip("\n")
+    if not header.strip() and not footer.strip():
+        logger.warning(f"[HERMES] /help 菜单文件为空({path});回退内置菜单")
+        return None, None
+    return (header or None), (footer or None)
 
+
+def build_help_text(
+    is_private: bool,
+    is_admin: bool,
+    *,
+    header: str | None = None,
+    footer: str | None = None,
+) -> str:
+    """拼装 /help 正文。与 handler 分开以便离线冒烟。
+
+    默认形态保持旧行为一字不差;自定义只换头尾,中间命令清单仍按功能开关
+    动态生成(T1 才列 /delay /resume,管理员才列 /hermes-status)。
+    """
     lines = [
         "/clear - 重置对话",
         "/ping - 检查连接状态",
@@ -165,7 +192,33 @@ async def handle_help(bot: Bot, event: Event, matcher: Matcher):
         # 管理员才看见运行时状态命令,普通用户视角下此命令"不存在"
         lines.append("/hermes-status - 查看插件运行时状态(管理员)")
 
-    help_text = intro + "\n".join(lines)
+    if header is not None:
+        text = header.strip("\n") + "\n\n命令：\n" + "\n".join(lines)
+    else:
+        if is_private:
+            intro = "🤖 Hermes Agent 帮助\n\n直接发送消息即可与 AI 对话。\n\n命令：\n"
+        else:
+            intro = "🤖 Hermes Agent 帮助\n\n@我 发送消息即可与 AI 对话。\n\n命令：\n"
+        text = intro + "\n".join(lines)
+    if footer is not None:
+        text += "\n\n" + footer.strip("\n")
+    return text
+
+
+@help_command.handle()
+async def handle_help(bot: Bot, event: Event, matcher: Matcher):
+    """显示帮助信息"""
+    target = alconna.get_target()
+    if not check_isolation(event, target):
+        matcher.skip()
+
+    # 是否管理员决定要不要把 /hermes-status 暴露给当前用户
+    adapter_name = get_adapter_name(target)
+    user_id = event.get_user_id() or ""
+    is_admin = f"{adapter_name}:{user_id}" in plugin_config.hermes_admin_users
+
+    header, footer = load_help_menu_decor(plugin_config.hermes_help_menu_file)
+    help_text = build_help_text(target.private, is_admin, header=header, footer=footer)
     await alconna.UniMessage(help_text).send(target=target, bot=bot)
 
 

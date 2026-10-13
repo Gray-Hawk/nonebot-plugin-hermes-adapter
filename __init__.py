@@ -97,6 +97,15 @@ async def _hermes_m1_startup():
             "隐式续期完全失效;若这是本意可忽略本警告"
         )
 
+    # /help 菜单文件配了路径但读不到时,启动期先提醒;运行期仍会回退内置菜单
+    if plugin_config.hermes_help_menu_file and not os.path.exists(
+        os.path.expanduser(plugin_config.hermes_help_menu_file)
+    ):
+        logger.warning(
+            f"[HERMES] HERMES_HELP_MENU_FILE 指向的文件不存在: "
+            f"{plugin_config.hermes_help_menu_file};/help 将回退内置菜单"
+        )
+
     if os.environ.get("HERMES_PERCEPTION_IMAGE_MODE"):
         logger.warning(
             "[HERMES] HERMES_PERCEPTION_IMAGE_MODE is deprecated since 2026-05-13. "
