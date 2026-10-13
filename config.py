@@ -179,34 +179,6 @@ class Config(BaseModel):
     hermes_perception_text_length: int = 200
     """被动感知单条历史消息最大长度(超出截断)"""
 
-    hermes_reactive_followup_window: int = 6
-    """reactive 续发轮 <recent_messages> 的条数闸(OR 双闸之一,另加 bot 自己最近一条)。
-
-    本部署补丁(凌晨批项5): 语义从「纯条数裁剪」改为
-    「条数 OR 时间」双闸的条数侧——消息在最最新 N 条内 *或* 年龄在
-    hermes_reactive_followup_time_sec 内即保留(2026-10-11 三群全量回测:
-    纯条数误伤热群、纯时间误伤冷群,OR 混合两头兼顾)。默认值 4 → 6;
-    热群建议 .env 里调到 8-12(本部署即用 12)。
-
-    explicit 触发轮不受影响,始终全量。设 0 且 time_sec=0 时关闭裁剪,
-    行为与旧版一致 —— 这就是回退开关。
-
-    尾部条数包含当前消息自身(perception 先于主 handler 入库,`get_recent` 会取到它)。
-    裁剪的前提是「被裁掉的行已经出现在会话记录里」——per-user session
-    (`HERMES_SESSION_SHARE_GROUP=false`)与在途合并重发的消息不完全满足该前提,
-    介意时调大窗口或设 0。"""
-
-    hermes_reactive_followup_time_sec: int = 180
-    """reactive 续发轮的时间闸(OR 双闸之二,秒):年龄不超过 N 秒的消息即使超出
-    条数闸也保留。0 = 退回纯条数旧行为。冷群消息稀、相关上下文「旧但浅」,
-    靠条数闸兜底;热群消息密、相关上下文「新但深」,靠本闸兜底。"""
-
-    hermes_reactive_followup_fetch_limit: int = 24
-    """reactive 续发轮的拉取深度上限(条):时间闸需要看到比条数闸更深的历史
-    才有料可裁,续发轮按 max(hermes_perception_buffer, 本值) 深取后再过双闸,
-    本值同时硬性封顶 OR 合并后的最大体积(防热群爆量轮 token 失控)。
-    explicit 轮与 keyword-soft 轮的拉取深度不受本项影响。"""
-
     hermes_perception_image_mode: str = "placeholder"
     """历史记录中的图片处理模式:
     - placeholder: 历史里图只用 [图片] 占位 + URL 引用,多模态 content 只发当前图 (默认)

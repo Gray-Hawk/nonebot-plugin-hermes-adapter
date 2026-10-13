@@ -53,14 +53,12 @@ _DECISION_PROTOCOL_BLOCK = (
     "  reply_text (string) — should_reply=true 时必填,留空表示静默\n"
     "  topic_hint (string) — 简短话题标记(中文 OK),将带入下一轮 runtime_state\n"
     "  should_exit_active (boolean) — 谨慎使用,见下方退出门槛\n"
-    "  at_user (boolean) — 是否在回复里 @ 触发者(@ 是强提醒,会弹通知)。\n"
-    "    省略或 false = 不 @。只有对方需要被明确通知时才 true:点名提问的回答、\n"
-    "    委托受理/完成的回执、许久未发言者的应答。热聊中的即时接话不 @\n"
-    "    (对方正在看,@ 是打扰)。你最清楚该不该 @,自己判断\n"
-    "  at_user_id (string) — 指定 @ 谁(recent_messages 里某位发言者的 user_id)。\n"
-    "    多方混聊里「你回的人」常不是「触发本轮的人」,布尔 at_user 只会 @ 触发者;\n"
-    "    需要 @ 的人不是触发者时改用本字段。id 不在 recent 窗口内会被拒,\n"
-    "    回落布尔口径。给了 at_user_id 就不用再给 at_user\n"
+    "  at_user_id (string) — 要 @ 就给对方的 user_id(recent_messages 里某位发言者),"
+    "这是唯一 @ 途径。@ 是强提醒会弹通知,只有对方需要被明确通知时才给:点名提问的回答、\n"
+    "    委托受理/完成的回执、许久未发言者的应答。热聊中的即时接话不给\n"
+    "    (对方正在看,@ 是打扰)。多方混聊里「你回的人」常不是「触发本轮的人」,"
+    "给你实际回话对象的 id。不给 = 不 @;id 不在 recent 窗口内会被拒,同样不 @。\n"
+    "    你最清楚该不该 @,自己判断\n"
     "  release_anchor (string) — 松锚:值为委托人的 user_id 或 \"all\"。\n"
     "    看到 <pinned_tasks> 里的锚已完结(任务办完/话题已漂)时设置,见下方任务锚节\n"
     "\n"
@@ -309,7 +307,11 @@ def _expand_forward_preview(content: str, forward_content: str) -> str:
     return f"{content}\n{forward_content}"
 
 
-def _render_recent_messages_block(recent_messages: Sequence[BufferedMessage]) -> str:
+def _render_recent_messages_block(
+    recent_messages: Sequence[BufferedMessage],
+    *,
+    incremental: bool = False,
+) -> str:
     """渲染 <recent_messages> 块。recent_messages: 新→旧顺序;在 prompt 内反转为旧→新。
 
     每条历史行用 `[m:<id>] ` 前缀标识 DB 主键 — 跨 turn 稳定,Hermes 调
@@ -321,12 +323,17 @@ def _render_recent_messages_block(recent_messages: Sequence[BufferedMessage]) ->
 
     折叠消息展开:窗口内最新一条带 forward_content 的行,preview 标签原位替换为
     全文块(截断上限放宽到 _MAX_EXPANDED_FORWARD_LINE_CHARS);更旧的保持 preview。
+
+    incremental=True(增量推送,reactive 路径):块头加一行说明本块只含未推过的
+    新消息——否则模型会把块变短误读成历史被截断/群冷了(2026-10-12 维护者立项)。
     """
     msgs = list(recent_messages)
     # 新→旧序里第一条带全文的折叠 = 窗口内最新一条;只展开它,更旧的保持 preview——
     # 展开成本按 turn 支付,预算只给最可能被追问的那条。
     expand_target = next((m for m in msgs if m.forward_content), None)
     lines = ["<recent_messages>"]
+    if incremental:
+        lines.append("(本块仅含尚未推送过的新消息;更早的对话见本会话历史记录)")
     for m in reversed(msgs):
         bot_prefix = "[bot] " if m.is_bot else ""
         speaker_tag = _format_speaker_tag(m.nickname, m.user_id)
@@ -341,43 +348,24 @@ def _render_recent_messages_block(recent_messages: Sequence[BufferedMessage]) ->
     return "\n".join(lines)
 
 
-def select_followup_window(
+def split_unpushed_messages(
     recent_messages: Sequence[BufferedMessage],
-    limit: int,
-    *,
-    now_ms: int = 0,
-    time_sec: float = 0,
-) -> list[BufferedMessage]:
-    """裁剪 reactive 续发轮的窗口。输入输出均为新→旧顺序的子序列。
+    watermark: int | None,
+) -> tuple[list[BufferedMessage], int | None]:
+    """增量推送拆分(本部署补丁:维护者立项):
+    从历史里分出「还没推给本会话转录」的消息。
 
-    本部署补丁(凌晨批项5): 纯条数闸改「条数 OR 时间」双闸——
-    消息满足「在最新 limit 条内」或「年龄 <= time_sec 秒」之一即保留。
-    2026-10-11 三群全量回测:纯条数闸误伤热群(消息密,相关上下文新但深),
-    纯时间闸误伤冷群(消息稀,相关上下文旧但浅),OR 混合两头兼顾
-    (热群覆盖率 17%→68%,冷群 53%→92%)。time_sec=0 退回纯条数旧行为。
+    watermark = 已推过的最大消息 id(None = 本会话首推/刚归零,全量返回)。
+    id=None 的 transient 消息(未入库,只出现在 inflight pending 回放)无法被
+    水位标记,一律视为新消息且不参与水位推进。
 
-    另保留钉住 [bot] 自己最近一条发言的旧规则(decision_protocol 的防连发/
-    防重复规则要求模型看得见自己的上一次发言),锚系统落地后它降权为副锚。
-
-    limit <= 0 且 time_sec <= 0 时不裁剪(配置回退开关)。引用对象无需钉住:
-    引用内容在 handlers 侧已内联进 current_message 文本。
+    返回 (新消息子序列(保持新→旧序), 本轮应推进到的水位)。
+    新消息为空时水位为 None(不推进,防空轮把水位顶过头)。
     """
     msgs = list(recent_messages)
-    if limit <= 0 and time_sec <= 0:
-        return msgs
-    cutoff_ms = now_ms - int(time_sec * 1000) if (time_sec > 0 and now_ms) else None
-    keep = [
-        m
-        for i, m in enumerate(msgs)
-        if (limit > 0 and i < limit) or (cutoff_ms is not None and m.ts >= cutoff_ms)
-    ]
-    if not keep and msgs:
-        # 双闸全空兜底(纯时间闸 + 全部超龄):至少留最新一条,不给模型空窗口
-        keep = msgs[:1]
-    last_bot = next((m for m in msgs if m.is_bot), None)
-    if last_bot is not None and last_bot not in keep:
-        keep.append(last_bot)
-    return keep
+    new = [m for m in msgs if m.id is None or watermark is None or m.id > watermark]
+    new_watermark = max((m.id for m in new if m.id is not None), default=None)
+    return new, new_watermark
 
 
 def build_passive_system_prompt(
@@ -476,7 +464,7 @@ def build_reactive_user_content(
         topic_hint=topic_hint,
         sender_blacklisted=sender_blacklisted,
     )
-    history_block = _render_recent_messages_block(recent_messages)
+    history_block = _render_recent_messages_block(recent_messages, incremental=True)
     pinned_block = (
         _render_pinned_tasks_block(pinned_anchors, now_ms=now_ms) if pinned_anchors else ""
     )
@@ -492,7 +480,7 @@ def build_reactive_user_content(
     # 必须紧贴 current_message,才能在每个 turn 都重新"撞"一次模型。
     reminder = (
         "\n\n请用 submit_decision JSON 对象回复(字段:should_reply / reply_text / "
-        "topic_hint / should_exit_active / at_user / at_user_id / release_anchor),不要直接说话或扮演动作。"
+        "topic_hint / should_exit_active / at_user_id / release_anchor),不要直接说话或扮演动作。"
     )
 
     text_block = runtime_block + "\n\n"

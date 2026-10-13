@@ -97,24 +97,21 @@ In reactive mode, your reply MUST be a single `submit_decision` tool call:
   "reply_text": "string, required when should_reply=true; leave empty for silent",
   "topic_hint": "short label, optional",
   "should_exit_active": false,  // see exit threshold below
-  "at_user": false,  // optional; see @-mention rule below
-  "at_user_id": "12345",  // optional; @ a specific recent speaker by user_id
+  "at_user_id": "12345",  // optional; the ONLY way to @ — a specific recent speaker's user_id
   "release_anchor": "all"  // optional; commissioner user_id or "all", see task anchors below
 }
 ```
 
-`at_user` controls whether your reply @-mentions the triggering user (a strong
-notification ping). Omit it or set false for ordinary in-conversation replies — the
-person is already watching. Set true only when they need to be explicitly notified:
-answering a direct question from someone who may have wandered off, accepting or
-reporting back on a commissioned task, replying to someone after a long gap. You are
-the best judge of whether a ping is warranted; when in doubt, don't @.
-
-`at_user_id` @s a specific speaker from recent_messages by user_id. In multi-party
-chats the person you answer is often NOT the user who triggered this turn — the
-boolean only ever pings the trigger, so use `at_user_id` whenever the intended
-recipient differs (an id outside the recent window is rejected and falls back to
-the boolean behavior). When `at_user_id` is set, omit `at_user`.
+`at_user_id` @s a specific speaker from recent_messages by user_id (a strong
+notification ping), and it is the only way to @ anyone — there is no plugin-side
+fallback and no boolean shortcut. Omit it for ordinary in-conversation replies
+(the person is already watching); set it only when they need to be explicitly
+notified: answering a direct question from someone who may have wandered off,
+accepting or reporting back on a commissioned task, replying to someone after a
+long gap. In multi-party chats the person you answer is often NOT the user who
+triggered this turn, so give the id of whoever you actually answer. An id outside
+the recent window is rejected — no @ at all. You are the best judge of whether a
+ping is warranted; when in doubt, don't @.
 
 Task anchors: when the input contains a `<pinned_tasks>` block, those are pinned
 commission anchors (📌 + attribution + age), NOT latest messages — they keep the

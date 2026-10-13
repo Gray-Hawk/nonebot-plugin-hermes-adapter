@@ -36,7 +36,7 @@ from ..core.prompt_builder import (
     build_passive_user_content,
     build_reactive_system_prompt,
     build_reactive_user_content,
-    select_followup_window,
+    split_unpushed_messages,
 )
 from ..core.routing import resolve_target
 from ..core.session import session_manager
@@ -1619,36 +1619,21 @@ async def _run_reactive_turn(
     last_bot_reply_at_at_entry = session.last_bot_reply_at
 
     if recent_override is not None:
-        # 定时巡查(T2):T4 窗口消息由调用方过滤好,新→旧顺序与 get_recent 一致,
-        # 不做续发轮裁剪——窗口本身就是裁好的。
+        # 定时巡查(T2):T4 窗口消息由调用方过滤好,新→旧顺序与 get_recent 一致。
         recent_full = recent_override
-        recent = recent_override
     else:
-        # 本部署补丁(凌晨批项5): 续发轮(非显式、无 N1 指定)
-        # 按 followup_fetch_limit 深取——时间闸需要比条数闸更深的历史才有料可裁,
-        # 深度上限同时硬性封顶 OR 双闸合并后的最大体积。explicit/keyword-soft 轮不变。
-        is_followup_turn = not is_explicit_trigger and context_limit is None
-        fetch_limit = plugin_config.hermes_perception_buffer
-        if is_followup_turn:
-            fetch_limit = max(fetch_limit, plugin_config.hermes_reactive_followup_fetch_limit)
         recent_full = _mcp.message_buffer.get_recent(
             adapter=adapter_name,
             group_id=group_id,
-            limit=context_limit or fetch_limit,
+            limit=context_limit or plugin_config.hermes_perception_buffer,
         )
-        # 续发轮裁剪:归属判定主要依赖窗口尾部与 bot 自己的上一条发言,
-        # 全量窗口只在 explicit 触发轮保留(裁剪函数内含回退开关语义)。
-        # context_limit(keyword-soft 的 N1)设置时也不裁:N1 本身就是配置好的推送量。
-        recent = (
-            recent_full
-            if is_explicit_trigger or context_limit is not None
-            else select_followup_window(
-                recent_full,
-                plugin_config.hermes_reactive_followup_window,
-                now_ms=now_ms,
-                time_sec=plugin_config.hermes_reactive_followup_time_sec,
-            )
-        )
+    # 本部署补丁(增量推送,维护者立项): 只推「没推过」的新消息,
+    # 旧历史由 Hermes 服务端转录承担——此前每轮全量重推历史块,块随 user 消息落进
+    # 转录、后续每轮重发,复利占输入账单 ~10%(生产实证)。拉取上限即推送上限:
+    # 水位过老导致新消息超上限时,更老的永久跳过(与旧窗口外不可见语义一致)。
+    # 旧续发轮 OR 双闸/select_followup_window 随之废弃(维护者 2026-10-12 定:配置削减)。
+    watermark = session_manager.get_push_watermark(adapter_name, user_id, group_id)
+    recent, new_watermark = split_unpushed_messages(recent_full, watermark)
 
     system_prompt = build_reactive_system_prompt()
     # 本部署补丁(凌晨批项3): 黑名单标记进 runtime_state。
@@ -1781,6 +1766,19 @@ async def _run_reactive_turn(
         interim_callback=_interim_echo if plugin_config.hermes_interim_echo_enabled else None,
     )
 
+    # 增量推送水位推进:仅在内容确定落进上游转录时推进(非 transport 错误、
+    # 非 403/暂不可用等 provider 报错家族);失败/本 turn 内发生会话轮换则不推进,
+    # 下轮从旧水位(或全量)重推——宁重复,不丢失。
+    if (
+        new_watermark is not None
+        and not result.is_transport_error
+        and not result.is_forbidden_error
+        and not result.is_outage_error
+    ):
+        session_manager.advance_push_watermark(
+            adapter_name, user_id, group_id, new_watermark, expected_key=session_key
+        )
+
     if result.parse_failed or result.structured is None:
         # 本部署补丁: 403 鉴权类错误硬静默(同 passive 路径注释)。
         # 2026-10-11 扩展: provider 暂不可用/重试耗尽引导文案同口径静默。
@@ -1812,7 +1810,8 @@ async def _run_reactive_turn(
                     target=target,
                     text=fallback_text,
                     media_urls=[],
-                    at_user_id=user_id,
+                    # 问题5(2026-10-12): transport 错误连模型输出都没有,不 @。
+                    at_user_id=None,
                     adapter_name=adapter_name,
                 )
             return result
@@ -1843,14 +1842,14 @@ async def _run_reactive_turn(
                 fallback_text = extracted
             cleaned_text, extracted_media_urls, extracted_files = extract_response_media(fallback_text)
             media_urls = list(result.media_urls) + [u for u in extracted_media_urls if u not in result.media_urls]
-            # 群里明确说话给某人 → at;主动插话(散文兜底)→ 不 at,与成功回复路径同口径
-            # 本部署补丁: 同成功路径,判据换成 addressed_to_bot。
+            # 本部署补丁(问题5): 散文兜底恒不 @——
+            # 信封破了拿不到决策,没有任何 @ 依据,顺带消掉「兜底答错」。
             await send_text_with_media(
                 bot=bot,
                 target=target,
                 text=cleaned_text,
                 media_urls=media_urls,
-                at_user_id=user_id if addressed_to_bot else None,
+                at_user_id=None,
                 adapter_name=adapter_name,
             )
             # 本部署补丁(2026-10-08): 散文兜底同样可能带本地文件引用。
@@ -1965,27 +1964,17 @@ async def _run_reactive_turn(
         )
         return result
 
-    # 群里明确说话给某人 → at;主动插话 → 不 at
-    # 本部署补丁: 判据从 is_explicit_trigger 换成 addressed_to_bot。
-    # trigger=all 下每条消息都是 explicit,原判据导致条条回复都 @;改为只有真 @bot/引用
-    # bot 的消息才 @。插件升级会冲掉此改动,详见项目文档库。
-    # 本部署补丁: @ 自决(方案 A,维护者拍板)——submit_decision
-    # 带 at_user 键时以模型为准(@ 是强提醒,模型最清楚该不该);缺省维持
-    # addressed_to_bot 口径。散文兜底路径(L1595 附近)无决策信封,维持原判据不动。
-    _decision_at = decision.get("at_user")
-    # 锚优化短期项B(2026-10-12,维护者拍板):at_user_id 让模型指定 @ 谁——
-    # 多方混聊里「回谁的话」与「谁触发的」常不一致,布尔口径只会 @ 触发者,
-    # 已实战连犯 @ 错人。合法(at_user_id 落在本 turn recent 窗口发言者内)
-    # 优先;非法/缺省回落原布尔口径(不放大成 @ 不在场的人)。
+    # 本部署补丁(问题5,维护者拍板): 彻底废弃插件层 @ 兜底,
+    # @ 完全由 LLM 决策——只认信封里的 at_user_id,且值必须落在本 turn recent
+    # 窗口发言者集合内(防模型 @ 不在场的人);没给/非法就不 @。
+    # 理由(维护者原话):@ 兜底本质是废弃机制,LLM 决策完全足够,兜底反而可能答错;
+    # @ 是强提醒,漏 @ 无害、错 @ 才烦人。at_user 布尔字段随之废弃(协议契约已同步删除)。
     _decision_at_id = decision.get("at_user_id")
+    at_user: str | None = None
     if _decision_at_id is not None and str(_decision_at_id) in {
         str(m.user_id) for m in recent
     }:
-        at_user: str | None = str(_decision_at_id)
-    elif _decision_at is None:
-        at_user = user_id if addressed_to_bot else None
-    else:
-        at_user = user_id if _decision_at else None
+        at_user = str(_decision_at_id)
     sent = await send_text_with_media(
         bot=bot,
         target=target,

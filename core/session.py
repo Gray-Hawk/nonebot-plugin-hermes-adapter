@@ -33,6 +33,9 @@ class SessionManager:
         """internal_id -> 最后一次 chat() 完成 / push_message 成功的 epoch 秒"""
         self._idle_paused: set[str] = set()
         """被 /delay 暂停 T1 计时的 internal_id"""
+        # 增量推送水位(2026-10-12 维护者立项):internal_id -> (session_key, 已推最大消息 id)。
+        # 内存态即可——nb 重启丢水位的代价只是每群首 turn 全量重推一次,无副作用。
+        self._push_watermark: dict[str, tuple[str, int]] = {}
 
     def bind_store(self, store: SessionKeyStore) -> None:
         """绑定持久化存储并载入已有映射(启动时调一次)。
@@ -212,6 +215,8 @@ class SessionManager:
             if current != previous_key:
                 continue
             self._cache[internal_id] = new_key
+            # 新转录是空的,增量推送水位随轮换失效(get 侧也有 key 校验兜底)
+            self._push_watermark.pop(internal_id, None)
             self._persist(internal_id)
             logger.info(f"[SESSION] 采纳上游轮换: {internal_id} -> {new_key}")
             return True
@@ -229,12 +234,58 @@ class SessionManager:
         Hermes 据此把后续对话当作新会话。"""
         internal_id = self._get_internal_id(adapter_name, is_private, user_id, group_id)
         self._cache.pop(internal_id, None)
+        self._push_watermark.pop(internal_id, None)  # 转录清空,增量推送水位归零
         gen = self._generation.get(internal_id, 0) + 1
         self._generation[internal_id] = gen
         # 立刻把新 key 落库:generation 只活在内存的话,重启后 /clear 会失效,
         # 被清掉的会话原地复活。
         self.get_session_key(adapter_name, is_private, user_id, group_id)
         logger.info(f"[SESSION] 会话已重置: {internal_id} (generation={gen})")
+
+    # --- 增量推送水位(2026-10-12 维护者立项,仅群聊 reactive 使用) ---
+
+    def get_push_watermark(
+        self, adapter_name: str, user_id: str, group_id: str
+    ) -> int | None:
+        """本会话已推过的最大消息 id;None = 首推/已归零(下轮全量窗口)。
+
+        水位与 session key 绑定:存储的 key 与当前映射不一致(上游轮换/
+        /clear 后重建)即视为无效,返回 None 让下轮全量重推——新转录是空的,
+        不推就丢历史。
+        """
+        internal_id = self._get_internal_id(adapter_name, False, user_id, group_id)
+        entry = self._push_watermark.get(internal_id)
+        if entry is None:
+            return None
+        key, watermark = entry
+        if key != self._cache.get(internal_id):
+            self._push_watermark.pop(internal_id, None)
+            return None
+        return watermark
+
+    def advance_push_watermark(
+        self,
+        adapter_name: str,
+        user_id: str,
+        group_id: str,
+        msg_id: int,
+        expected_key: str,
+    ) -> None:
+        """推进水位(只升不降,并发 refire/ephemeral 乱序安全)。
+
+        expected_key = 本轮 chat() 使用的 session key:本 turn 内若发生上游轮换
+        (溢出恢复),缓存 key 已变,推送的内容只进了旧转录,新转录靠 continuation
+        摘要——此时拒绝推进,下轮 get 返回 None 全量重推,宁重复不丢失。
+        """
+        internal_id = self._get_internal_id(adapter_name, False, user_id, group_id)
+        key = self._cache.get(internal_id)
+        if key is None or key != expected_key:
+            return
+        entry = self._push_watermark.get(internal_id)
+        if entry is None or entry[0] != key:
+            self._push_watermark[internal_id] = (key, msg_id)
+        else:
+            self._push_watermark[internal_id] = (key, max(entry[1], msg_id))
 
     # --- T1 空闲自动重置(本部署新增) ---
 
@@ -320,6 +371,7 @@ class SessionManager:
         internal_id 上,导致原 id 的 generation 递增永远不持久化。
         重置后活动基准刷新为现在,给新会话一个完整 T1 周期。"""
         self._cache.pop(internal_id, None)
+        self._push_watermark.pop(internal_id, None)  # 转录清空,增量推送水位归零
         gen = self._generation.get(internal_id, 0) + 1
         self._generation[internal_id] = gen
         self._cache[internal_id] = f"hermes-{internal_id}-g{gen}"
