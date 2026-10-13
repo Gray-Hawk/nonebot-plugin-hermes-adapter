@@ -22,6 +22,7 @@ from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
 from ..core.active_session import ActiveSession, AnchorRecord
 from ..core.approvals import add_pending as approvals_add_pending
+from ..core.approvals import admin_user_ids
 from ..core.approvals import notify_admins as approvals_notify_admins
 from ..core.hermes_client import (
     ChatResult,
@@ -2232,7 +2233,11 @@ async def _run_reactive_turn(
                         text=(text or "")[:200],
                         ts=now_ms,
                     ),
-                    master_ids=set(plugin_config.hermes_admin_users),
+                    # 2026-10-13 审核修复(BUG2): master_ids 必须拆前缀——
+                    # hermes_admin_users 是「adapter:id」复合键(修改19 统一),
+                    # 而 commissioner_id 是裸 user_id,直接比恒不命中,维护者槽形同虚设。
+                    # 复用 approvals 同款拆法:只取当前适配器名下的裸 id,跨平台不串。
+                    master_ids=set(admin_user_ids(set(plugin_config.hermes_admin_users), adapter_name)),
                     max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
                     now_ms=now_ms,
                 )

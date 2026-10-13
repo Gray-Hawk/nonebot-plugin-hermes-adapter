@@ -119,6 +119,7 @@ async def _resume_row(row: TrackedRun) -> None:
     headers = {"Authorization": f"Bearer {tgt.api_key}"} if tgt.api_key else {}
     parser = RunsEventParser()
     status_body: dict = {}
+    streamed = False  # 是否真订阅过事件流(终态 run 跳过订阅,下面的终态闸要区分)
     try:
         async with httpx.AsyncClient(timeout=tgt.timeout) as client:
             resp = await client.get(f"{tgt.base_url}/v1/runs/{row.run_id}", headers=headers)
@@ -128,6 +129,7 @@ async def _resume_row(row: TrackedRun) -> None:
             status = str(status_body.get("status") or "")
             if status not in _TERMINAL_STATUSES:
                 # 仍在跑:按 last_seq 续订(帧从 last_seq+1 起,天然不重复)
+                streamed = True
                 async with client.stream(
                     "GET",
                     f"{tgt.base_url}/v1/runs/{row.run_id}/events?last_seq={row.last_seq}",
@@ -174,7 +176,10 @@ async def _resume_row(row: TrackedRun) -> None:
             tracker.finish(row.run_id)
             return
         output = str(status_body.get("output") or "")
-    if not parser.terminal:
+    # 2026-10-13 审核修复(BUG1): 终态闸只对「真订阅过事件流」的路径生效——
+    # 停机期间已终态的 run 从未喂过帧,parser.terminal 恒 False,旧代码在这里
+    # 把已从 status_body 捞出的 output 拦死:不补发、不删行,行变僵尸每次启动重演。
+    if streamed and not parser.terminal:
         logger.warning(f"[HERMES run-resume] 事件流未见终态帧 run_id={row.run_id},保留行待下次启动")
         return
 
