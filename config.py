@@ -102,10 +102,14 @@ class Config(BaseModel):
     """私聊触发方式: all / allowlist"""
 
     hermes_allow_users: set[str] = set()
-    """允许私聊的用户 ID(allowlist 模式)"""
+    """允许私聊的用户(allowlist 模式)。格式:`{adapter}:{user_id}`
+    (2026-10-13 起与 hermes_admin_users 同构,不再接受裸 id)。
+    例:["onebotv11:12345678"]"""
 
     hermes_allow_groups: set[str] = set()
-    """允许响应的群组 ID(空 = 全部允许)"""
+    """允许响应的群(空 = 全部允许)。格式:`{adapter}:{group_id}`
+    (2026-10-13 起与 hermes_admin_users 同构,不再接受裸 id)。
+    例:["onebotv11:87654321"]"""
 
     hermes_admin_users: set[str] = set()
     """管理员白名单(adapter+user 复合 ID)。用于 /hermes-status 等敏感命令。
