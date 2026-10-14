@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
+import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -16,7 +19,10 @@ import httpx
 import json5  # type: ignore[import-untyped]
 from nonebot import logger
 
+from ..config import plugin_config
+from .media_whitelist import inline_local_media_images
 from .routing import HermesTarget, default_target
+from .run_tracker import make_scope_key
 
 # user_content_override 期望形态:纯文本 或 OpenAI 多模态 parts 列表
 UserContent = str | list[dict[str, Any]]
@@ -94,6 +100,20 @@ _DECISION_HINT = (
     "  reply_text (string, optional, required when should_reply=true)\n"
     "  topic_hint (string, optional)\n"
     "  should_exit_active (boolean, optional)\n"
+    "  at_user_id (string, optional — @ a specific speaker from recent_messages "
+    "by user_id as a strong notification. This is the ONLY way to @: absent or "
+    "outside the recent window means NO @. Omit for ordinary in-conversation replies)\n"
+    "  pin_anchor (boolean, optional — commission judgement turns only: true pins the "
+    "current request into <pinned_tasks>; omit/false for jokes or one-off chatter)\n"
+    "  release_anchor (string, optional — commissioner user_id or \"all\" to unpin "
+    "finished task anchors from <pinned_tasks>)\n"
+    "  answer_anchor (string, optional — commissioner user_id or \"all\": declare your "
+    "reply answered that pinned task; unknown ids are rejected and echoed back next turn)\n"
+    "  anchor_merge (string, optional — starter user_id of a pinned task this message "
+    "belongs to: merges the sender into its participants instead of pinning new)\n"
+    "  background_task (string, optional — a one-line note when you just dispatched "
+    "background work (subagent/background process); on completion the system wakes "
+    "you and echoes the note. Omit when nothing is running)\n"
     "Output ONLY the JSON object, no preamble, no postscript, no markdown fences.\n"
     "All string values MUST be single-line; escape line breaks inside strings as \\n (no raw newlines)."
 )
@@ -221,6 +241,25 @@ def _summarize_error_body(body: str) -> tuple[str, int | None]:
     return msg[:300], inner_status
 
 
+def _transport_failure(status: int, body: str) -> "ChatResult":
+    """非 200 响应的统一归纳(本部署补丁 2026-10-08 抽出, 非流式/流式分支共用)。
+
+    403 识别:外层 HTTP 状态或 502 包裹的内层 status 任一为 403 即打
+    is_forbidden_error 硬标记,handler 层据此硬静默(防 key 失效/额度耗尽时
+    每条触发刷一条「AI 服务异常」)。
+    """
+    reason, inner_status = _summarize_error_body(body)
+    inner_tag = f" inner={inner_status}" if inner_status else ""
+    logger.error(f"[HERMES] upstream HTTP {status}{inner_tag}: {reason}")
+    return ChatResult(
+        raw_text=_user_facing_error(reason),
+        parse_failed=True,
+        is_transport_error=True,
+        is_forbidden_error=(status == 403 or inner_status == 403),
+        is_rate_limited=(status == 429),
+    )
+
+
 def preview_raw(text: str, *, head: int = 220, tail: int = 220) -> str:
     """给日志用的回复预览:**头尾都取**,中间省略。
 
@@ -263,15 +302,17 @@ def _media_basename(ref: str) -> str:
     return ref.rsplit("/", 1)[-1] or ref
 
 
-def extract_response_media(text: str) -> tuple[str, list[str]]:
-    """从 Hermes 回复中提取 markdown 图片 / MEDIA: 标签 URL,返回 (清洗后文本, URL 列表)。
+def extract_response_media(text: str) -> tuple[str, list[str], list[str]]:
+    """从 Hermes 回复中提取 markdown 图片 / MEDIA: 标签 URL,返回 (清洗后文本, URL 列表, 本地文件路径列表)。
 
     两种标签同一套分流规则:http(s) 与 data:image/…;base64 进媒体列表;
-    其余是 Hermes 主机上的本地文件路径(音频/视频/超限图片/路径校验失败,
-    api_server 不做内联改写),bot 侧无法抓取,原位替换为 [生成了文件: 文件名]
-    占位——静默删掉会让用户只看到「画好啦」却没有图。
+    主机本地路径(本部署补丁 2026-10-08 起)进 file_paths 供 send_local_files
+    上传文件本体(白名单判定在发送侧), 文本原位仍留 [生成了文件: 文件名]
+    占位——上传被白名单拒绝时用户仍能看到提示, 上传成功时占位符即说明文字;
+    其余 data: 非图片 payload 直接去掉。
     """
     media_urls: list[str] = []
+    file_paths: list[str] = []
 
     def _collect(ref: str) -> str | None:
         """进媒体列表返回 None;否则返回该原位替换成的占位文本。"""
@@ -284,6 +325,7 @@ def extract_response_media(text: str) -> tuple[str, list[str]]:
             # 非图片 data URL(text/plain 等):既不是可投递媒体也不是文件,直接去掉,
             # 不能按路径切 basename——那会把 payload 本身当文件名贴到群里。
             return ""
+        file_paths.append(ref)
         return f"[生成了文件: {_media_basename(ref)}]"
 
     def _md_image_repl(m: re.Match) -> str:
@@ -296,7 +338,7 @@ def extract_response_media(text: str) -> tuple[str, list[str]]:
     cleaned = _MEDIA_TAG_PATTERN.sub(_media_tag_repl, cleaned)
     cleaned = _TRUNCATED_MD_IMAGE_PATTERN.sub(_TRUNCATED_IMAGE_PLACEHOLDER, cleaned)
 
-    return cleaned.strip(), media_urls
+    return cleaned.strip(), media_urls, file_paths
 
 
 _SALVAGE_SHOULD_REPLY_RE = re.compile(r'"should_reply"\s*:\s*(true|false)', re.IGNORECASE)
@@ -498,15 +540,49 @@ _PROVIDER_ERROR_MARKERS = (
     "invalid_request_error",
 )
 
+# 上游 turn_failure_copy 的鉴权失败引导文案 (2026-10-09 实测线上模型 5h 额度 403):
+#   "{label} rejected your API key, so the model can't be reached. ...\n\nProvider said: HTTP 403: ..."
+# "HTTP 403" 被挪到第二段,老前缀正则失配,报错被当正常回复发进群。
+# 认完整固定句式而非锚定开头:该句式只由上游失败路径生成,模型正常回复不会逐字产出。
+_PROVIDER_AUTH_COPY_RE = re.compile(
+    r"rejected your (?:API key|sign-in), so the model can't be reached", re.IGNORECASE
+)
+
+# 本部署补丁: 上游 turn_failure_copy 的「重试耗尽/暂不可用」
+# 引导文案家族 (exhausted_copy 全部 lead + reset 变体 + nous_rate_limit):
+#   "{label} didn't respond in time on any of {n} attempts — it looks temporarily
+#    unavailable. Wait a minute and send /retry, or switch models with /model.
+#    To avoid this in future, add a backup provider with `hermes fallback add`.
+#    \n\nProvider said: Connection error."
+# 认 CLI 指令残片而非 lead 句(lead 带 {label}/{attempts} 模板参数且上游会演进):
+# 面向 QQ 的正常回复绝不会教用户敲 hermes CLI。非重试家族(model_not_found /
+# format_error / ssl / policy_blocked 等)刻意不覆盖——它们语义不同,维护者未拍板。
+_PROVIDER_OUTAGE_COPY_RE = re.compile(
+    r"hermes\s+fallback\s+add"
+    r"|send\s+/retry[^\n]{0,80}?switch\s+models\s+with\s+/model",
+    re.IGNORECASE,
+)
+
+
+def is_provider_outage_text(text: str) -> bool:
+    """检测回复是否为上游「provider 暂不可用/重试耗尽」引导文案(200 外壳)。"""
+    return bool(text) and bool(_PROVIDER_OUTAGE_COPY_RE.search(text))
+
 
 def is_provider_error_text(text: str) -> bool:
     """检测回复内容是否为上游透传的 provider 报错(200 外壳 + 错误正文)。
 
-    前缀与特征词必须同时命中:只认前缀会把正经聊到状态码的回复误伤,只认特征词会把
+    老形态:前缀与特征词必须同时命中:只认前缀会把正经聊到状态码的回复误伤,只认特征词会把
     讨论报错本身的对话误伤 —— 而误伤的代价是把用户想要的回答换成一句兜底。
+    新形态(鉴权引导文案):固定句式直接命中,不再要求特征词。
+    本部署补丁(2026-10-11): 暂不可用引导文案家族同理会骗过前两道,直接认 CLI 残片。
     """
     if not text:
         return False
+    if _PROVIDER_AUTH_COPY_RE.search(text):
+        return True
+    if is_provider_outage_text(text):
+        return True
     if not _PROVIDER_ERROR_PREFIX_RE.match(text):
         return False
     lower = text.lower()
@@ -541,6 +617,184 @@ def rotated_session_key(header_value: str | None, sent_key: str) -> str | None:
     return value
 
 
+# --- 本部署补丁: SSE 流式 + 中间旁白切分 ---
+
+# 旁白段最小长度:低于这个长度不值得发一条群消息(空白/单标点段)。
+_INTERIM_MIN_CHARS = 2
+
+
+class InterimSegmenter:
+    """SSE 行流 → 旁白段切分 + 最终回复累积。纯逻辑无网络依赖,可单测。
+
+    实测时序(2026-10-08 对生产 api_server 探测): agent 每轮工具调用前的旁白
+    content delta 完整流出之后, 该轮的 hermes.tool.progress(status=running) 帧
+    才到达。因此以 running 帧为段界: 帧到时把累积缓冲作为一段旁白吐出; EOS 时
+    剩余缓冲即最终回复。无工具的 turn 没有 running 帧, 整段=最终回复,
+    与非流式语义一致。
+
+    reasoning_content / hermes.status / approval.request 帧一律不消费;
+    tool.progress 的 completed 帧不切分(段在 running 时已吐, completed 时缓冲为空)。
+    """
+
+    def __init__(self) -> None:
+        self._seg: list[str] = []
+        self._event = ""
+
+    def feed(self, line: str) -> str | None:
+        """喂一行 SSE 原始行。返回切出的旁白段(strip 后, 达最小长度),否则 None。"""
+        if not line or line.startswith(":"):  # 空行(帧界)与 keepalive
+            return None
+        if line.startswith("event:"):
+            self._event = line[6:].strip()
+            return None
+        if not line.startswith("data:"):
+            return None
+        data_str = line[5:].strip()
+        if data_str == "[DONE]":
+            return None
+        event, self._event = self._event, ""
+        try:
+            payload = json.loads(data_str)
+        except ValueError:
+            return None
+        if event == "hermes.tool.progress":
+            if isinstance(payload, dict) and payload.get("status") == "running":
+                return self._pop_segment()
+            return None
+        if event:
+            # 其余带名事件帧(approval.request / hermes.status 等)一律不消费。
+            # approval.request 的 payload 带 choices=["once","session",...](list[str]),
+            # 漏到下方会被当 chat chunk 解析, choices[0].get 抛 AttributeError
+            # ('str' object has no attribute 'get'), 2026-10-12 实证炸断 SSE。
+            return None
+        # 普通 chat.completion.chunk(无 event 名): 只取 content delta, reasoning 等丢弃
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        if not choices or not isinstance(choices[0], dict):
+            return None
+        delta = choices[0].get("delta")
+        piece = delta.get("content") if isinstance(delta, dict) else None
+        if piece:
+            self._seg.append(piece)
+        return None
+
+    def _pop_segment(self) -> str | None:
+        text = "".join(self._seg).strip()
+        self._seg.clear()
+        return text if len(text) >= _INTERIM_MIN_CHARS else None
+
+    def final_text(self) -> str:
+        """EOS 时调用: 剩余缓冲 = 最终回复段(送原解析管线的 raw_text)。"""
+        return "".join(self._seg)
+
+
+class StreamHttpError(Exception):
+    """流式分支的非 200 响应;携带 status 与 body 让主流程走统一错误归纳。"""
+
+    def __init__(self, status: int, body: str) -> None:
+        super().__init__(f"stream HTTP {status}")
+        self.status = status
+        self.body = body
+
+
+class RunsEventParser:
+    """runs events SSE 行流 → 旁白段 + 终态。纯逻辑无网络依赖,可单测。
+
+    本部署补丁(runs 迁移阶段1)。消费规则按阶段0实测定案:
+    - message.interim = 上游切好的旁白段 → 逐段交给调用方(达最小长度,strip);
+    - message.delta  = 混有旁白的预览流 → 只计数,**绝不拼正文**(output 才是正文);
+    - run.completed → 正文取 output;run.failed → 取 error(已脱敏);
+      run.cancelled → interrupted 标记;
+    - 其余帧(tool.*/reasoning.*/approval.*/run.steered)与注释帧(: keepalive 等)
+      一律不消费。runs 帧是 data-only(事件名在 payload["event"]),event: 行形态
+      作兜底兼容。
+    """
+
+    def __init__(self) -> None:
+        self.output: str | None = None
+        self.error: str | None = None
+        self.interrupted = False
+        self.terminal = False
+        self.stream_closed = False
+        self.usage: dict[str, Any] = {}
+        self.delta_count = 0
+        self.last_seq = -1
+        self.pending_steer = ""
+        self.approval: dict | None = None
+        self._event = ""
+
+    def feed(self, line: str) -> str | None:
+        """喂一行 SSE 原始行。切出旁白段则返回(strip 后,达最小长度),否则 None。"""
+        if not line:
+            return None
+        if line.startswith(":"):
+            # 注释帧:keepalive/open 忽略;stream closed 记录(供调用方判提早断流)
+            if "stream closed" in line:
+                self.stream_closed = True
+            return None
+        if line.startswith("event:"):
+            self._event = line[6:].strip()
+            return None
+        if line.startswith("id:"):
+            return None
+        if not line.startswith("data:"):
+            return None
+        data_str = line[5:].strip()
+        if data_str == "[DONE]":
+            return None
+        event, self._event = self._event, ""
+        try:
+            payload = json.loads(data_str)
+        except ValueError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        seq = payload.get("seq")
+        if isinstance(seq, int):
+            self.last_seq = seq
+        if not event:
+            event = str(payload.get("event") or "")
+        if event == "message.interim":
+            text = str(payload.get("text") or "").strip()
+            return text if len(text) >= _INTERIM_MIN_CHARS else None
+        if event == "message.delta":
+            self.delta_count += 1
+            return None
+        if event == "approval.request":
+            # 阶段3c:整帧原文暂存(command 上游已脱敏),由消费循环交 approval_callback
+            self.approval = payload
+            return None
+        if event == "run.completed":
+            self.output = str(payload.get("output") or "")
+            usage = payload.get("usage")
+            self.usage = usage if isinstance(usage, dict) else {}
+            # 阶段2b:turn 收尾后才到的 steer 上浮在这里(源码:turn_finalizer 漏接的
+            # steer 进 result.pending_steer,api_server_runs 透到 completed 帧)
+            pending = payload.get("pending_steer")
+            self.pending_steer = str(pending) if pending else ""
+            self.terminal = True
+            return None
+        if event == "run.failed":
+            self.error = str(payload.get("error") or "unknown")
+            self.terminal = True
+            return None
+        if event == "run.cancelled":
+            self.interrupted = True
+            self.terminal = True
+            return None
+        if event == "run.interrupted":
+            # 2026-10-13 审核修复(低危⑨): 网关关停/owner 失联会把 run 打成
+            # interrupted,终态集与网关 TERMINAL_STATUSES 对齐,别落成「事件流提前
+            # 关闭」的传输错误文案——按取消同语义硬静默处理。
+            self.interrupted = True
+            self.terminal = True
+            return None
+        return None
+
+
+InterimCallback = Callable[[str], Awaitable[None]]
+ApprovalCallback = Callable[[dict], Awaitable[None]]  # 阶段3c:approval.request 帧原文(已脱敏)
+
+
 def is_persistence_error_text(text: str) -> bool:
     """检测回复内容是否为 Hermes 上游 SQLite session 持久化失败引发的中断报错文本。"""
     if not text:
@@ -564,6 +818,9 @@ class ChatResult:
     raw_text: str
     structured: dict[str, Any] | None = None
     media_urls: list[str] = field(default_factory=list)
+    file_paths: list[str] = field(default_factory=list)
+    """本部署补丁(2026-10-08): 回复里引用到的本地文件路径(MEDIA:/path 等),
+    供 handler 层 send_local_files 上传文件本体。白名单判定在发送侧。"""
     parse_failed: bool = False
     """期望结构化输出但解析失败(JSON 提取不到 / json5 解析报错 / 非 dict 类型)。"""
 
@@ -575,6 +832,25 @@ class ChatResult:
     场景下 parse_failed 也设 True 以阻止 caller 误把 raw_text 当模型有效输出)。
     """
 
+    is_forbidden_error: bool = False
+    """本部署补丁: 403 鉴权类错误硬标记。
+
+    覆盖三种来源:api_server HTTP 403(key 无效/缺失)、502 包裹的内层 403
+    (provider 侧 403 经上游包装)、200 包裹的 provider 报错文本含 HTTP 403。
+    handler 层对此标记一律静默(不发 fallback、不发 raw_text),不依赖
+    hermes_transport_error_fallback_text 配置——403 是运维事件(key/额度),
+    群里通知无意义,上游持续故障时每条触发一条通知就是刷屏。
+    """
+
+    is_outage_error: bool = False
+    """本部署补丁: provider 暂不可用/重试耗尽硬标记。
+
+    来源:200 包裹的上游 exhausted_copy 引导文案("didn't respond in time ...
+    Provider said: Connection error." 等家族)。与 is_forbidden_error 同系统:
+    handler 层一律静默——provider 暂时挂了是运维事件,群里发英文 CLI 引导文案
+    无意义,故障期每条触发刷一条就是刷屏。
+    """
+
     is_persistence_error: bool = False
     """上游 Hermes session DB 持久化失败(session_persistence_failed)。
 
@@ -582,6 +858,19 @@ class ChatResult:
     置 True 让 handler 能识别并按 persistence_cause 决定重试还是静默屏蔽,
     而不是把上游报错原文丢进群里。
     """
+
+    pending_steer: str = ""
+    """runs 路限定(阶段2b):turn 收尾后才到达的 steer 文本(上游 turn_finalizer
+    漏接后上浮)。非空时 handler 应把它作为跟进消息排回 pending refire,
+    不能丢——那是用户在 turn 边界上说的话。completions 路恒空。"""
+
+    is_rate_limited: bool = False
+    """HTTP 429 满额丢单(阶段2d)。自动重试一次仍 429 才打此标记;
+    handler 据此「丢了就贴」:群聊在触发消息上贴 emoji 不发文本,私聊文本兜底。"""
+
+    is_interrupted: bool = False
+    """runs turn 被取消/中断(阶段3b, /run-stop 或 gateway 关停)。
+    handler 硬静默:终止是管理员的主动动作,命令回执已说明,不再发错误兜底文本。"""
 
     is_context_overflow: bool = False
     """上游上下文溢出,且它那边关掉了自动压缩(compression.enabled: false)。
@@ -684,6 +973,9 @@ class HermesClient:
         system_prompt: str | None = None,
         user_content_override: UserContent | None = None,
         target: HermesTarget | None = None,
+        interim_callback: InterimCallback | None = None,
+        bot_self_id: str | None = None,
+        approval_callback: "ApprovalCallback | None" = None,
     ) -> ChatResult:
         """调用 Hermes,返回 ChatResult。
 
@@ -702,6 +994,9 @@ class HermesClient:
           按群路由时由 handler 经 routing.resolve_target() 解析后传入。
         - mode 字段当前为路由元数据,chat() 内部不分支判断;Task 15 handler 据此决定
           如何呈现结果(reactive 走 structured 流,passive 走 raw_text)。
+        - interim_callback(本部署补丁): 非 None 时改走 SSE 流式,
+          agent 每轮工具调用前的旁白段实时回调给它(发送失败仅记日志,不影响主 turn);
+          raw_text 只含最终回复段。None = 旧行为(一次性非流式)。
         """
         tgt = target or default_target()
         url = f"{tgt.base_url}/v1/chat/completions"
@@ -738,59 +1033,108 @@ class HermesClient:
         payload: dict[str, Any] = {
             "model": "hermes-agent",
             "messages": messages,
-            "stream": False,
+            "stream": interim_callback is not None,
         }
         # 路径 B:不发 tools / tool_choice(Hermes 透传不可靠,P0-spike 已验)
 
         headers = self.get_headers(session_key, memory_key, api_key=tgt.api_key)
-        try:
+        runs_pending_steer = ""
+
+        # 低危⑧(2026-10-14):幂等键每轮只造一次,429 自动重试与提交段网络重试都
+        # 复用同一键——网关 lost-acceptance 重放只认同键同指纹,每试一次换键等于
+        # 名不副实,还会在提交应答丢失时放大出孤儿 run。
+        turn_idem_key = f"turn-{uuid.uuid4().hex}"
+
+        async def _do_transport() -> tuple[str, str | None, "ChatResult | None", str]:
+            """三分支统一出口 (raw_text, rotated, failure, pending_steer)。
+
+            非 2xx 一律抛 StreamHttpError(含非流式分支——原本直接 return
+            _transport_failure),让 429 自动重试只写一个点(阶段2d)。
+            """
+            if plugin_config.hermes_runs_channel_enabled:
+                # 本部署补丁(runs 迁移阶段1): 开关开启时整路
+                # 改走 /v1/runs;下游持久化/溢出/provider 文案检测与 JSON 解析完全复用。
+                return await self._chat_via_runs(
+                    tgt=tgt, headers=headers, content=content,
+                    system_prompt=system_prompt, session_key=session_key,
+                    timeout=tgt.timeout, interim_callback=interim_callback,
+                    approval_callback=approval_callback,
+                    idempotency_key=turn_idem_key,
+                    scope=dict(
+                        adapter=adapter_name, is_private=is_private, user_id=user_id,
+                        group_id=group_id, bot_self_id=bot_self_id or "",
+                        mode=mode, expect_structured=expect_structured,
+                    ),
+                )
+            if interim_callback is not None:
+                # 本部署补丁: SSE 流式读取,旁白段实时回调,
+                # raw_text 只取最终回复段(旁白不进原解析管线)。
+                raw_text, rotated = await self._stream_chat(
+                    url, payload, headers, tgt.timeout, session_key, interim_callback
+                )
+                return raw_text, rotated, None, ""
             async with httpx.AsyncClient(timeout=tgt.timeout) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code != 200:
-                    reason, inner_status = _summarize_error_body(resp.text)
-                    inner_tag = f" inner={inner_status}" if inner_status else ""
-                    logger.error(f"[HERMES] upstream HTTP {resp.status_code}{inner_tag}: {reason}")
-                    return ChatResult(
-                        raw_text=_user_facing_error(reason),
-                        parse_failed=True,
-                        is_transport_error=True,
-                    )
+                    raise StreamHttpError(resp.status_code, resp.text)
                 data = resp.json()
                 rotated = rotated_session_key(resp.headers.get("X-Hermes-Session-Id"), session_key)
-        except httpx.TimeoutException:
-            logger.error(f"[HERMES] API 请求超时 ({tgt.timeout}s, target={tgt.label})")
-            return ChatResult(
-                raw_text="⚠️ AI 服务响应超时,请稍后重试",
-                parse_failed=True,
-                is_transport_error=True,
-            )
-        except httpx.ConnectError:
-            logger.error(f"[HERMES] 无法连接到 {tgt.base_url} (target={tgt.label})")
-            return ChatResult(
-                raw_text="⚠️ 无法连接到 AI 服务",
-                parse_failed=True,
-                is_transport_error=True,
-            )
-        except Exception as exc:
-            logger.error(f"[HERMES] API 请求异常: {exc}")
-            return ChatResult(
-                raw_text=f"⚠️ AI 服务异常: {exc}",
-                parse_failed=True,
-                is_transport_error=True,
-            )
+            if not (data.get("choices") or []):
+                # 期望结构化但响应空:这是结构性失败而非"模型选择不回复"
+                return "", rotated, ChatResult(
+                    raw_text="", parse_failed=expect_structured,
+                ), ""
+            msg = (data.get("choices") or [{}])[0].get("message") or {}
+            return msg.get("content") or "", rotated, None, ""
+
+        # 阶段2d(维护者定案「丢了就贴」前置):429 满额先自动重试一次(Retry-After: 1s),
+        # 再 429 才归纳上抛——贴表情是「重试也进不去」的兜底,不是一见 429 就躺。
+        _rl_retried = False
+        while True:
+            try:
+                raw_text, rotated, runs_failure, runs_pending_steer = await _do_transport()
+                break
+            except StreamHttpError as exc:
+                if exc.status == 429 and not _rl_retried:
+                    _rl_retried = True
+                    logger.warning("[HERMES] 429 满额,1s 后自动重试一次")
+                    await asyncio.sleep(1)
+                    continue
+                # 流式分支的非 200:与非流式同一套归纳(含 403 硬标记),保证错误面一致。
+                return _transport_failure(exc.status, exc.body)
+            except httpx.TimeoutException:
+                logger.error(f"[HERMES] API 请求超时 ({tgt.timeout}s, target={tgt.label})")
+                return ChatResult(
+                    raw_text="⚠️ AI 服务响应超时,请稍后重试",
+                    parse_failed=True,
+                    is_transport_error=True,
+                )
+            except httpx.ConnectError:
+                logger.error(f"[HERMES] 无法连接到 {tgt.base_url} (target={tgt.label})")
+                return ChatResult(
+                    raw_text="⚠️ 无法连接到 AI 服务",
+                    parse_failed=True,
+                    is_transport_error=True,
+                )
+            except Exception as exc:
+                logger.error(f"[HERMES] API 请求异常: {exc}")
+                return ChatResult(
+                    raw_text=f"⚠️ AI 服务异常: {exc}",
+                    parse_failed=True,
+                    is_transport_error=True,
+                )
+        if runs_failure is not None:
+            # 空 choices(非流式)等 completions 侧失败也要带回轮换 id;runs 侧 rotated
+            # 恒 None,挂上无害。
+            runs_failure.effective_session_key = rotated
+            return runs_failure
 
         def _out(result: ChatResult) -> ChatResult:
             """给本轮所有出口统一挂上有效 session id(轮换才有值)。"""
             result.effective_session_key = rotated
+            if runs_pending_steer:
+                result.pending_steer = runs_pending_steer
             return result
-
-        choices = data.get("choices") or []
-        if not choices:
-            # 期望结构化但响应空:这是结构性失败而非"模型选择不回复"
-            return _out(ChatResult(raw_text="", parse_failed=expect_structured))
-
-        msg = choices[0].get("message") or {}
-        raw_text = msg.get("content") or ""
 
         # 检查是否为上游持久化失败错误(Hermes 返回 200 但 content 为 Session DB 错误提示)
         if is_persistence_error_text(raw_text):
@@ -829,7 +1173,22 @@ class HermesClient:
             logger.warning(
                 f"[HERMES] 上游以 200 返回了 provider 报错,按传输失败处理 (raw_len={len(raw_text)} preview={preview!r})"
             )
-            return _out(ChatResult(raw_text=raw_text, parse_failed=True, is_transport_error=True))
+            # 本部署补丁(2026-10-08): 文本形态 "HTTP 403: ..." 的 provider 鉴权错误
+            # 同样打硬标记,handler 硬静默。
+            # 2026-10-09 扩展:引导文案形态 ("...rejected your API key... Provider said: HTTP 403: ...")
+            # 的 403 不在开头,此处已认定是 provider 报错,全文搜 "HTTP 403" 即可,无误伤面。
+            forbidden = bool(
+                re.match(r"^\s*HTTP\s+403\b", raw_text, re.IGNORECASE)
+                or re.search(r"\bHTTP\s+403\b", raw_text, re.IGNORECASE)
+            )
+            # 本部署补丁(2026-10-11): 暂不可用引导文案家族打独立硬标记,
+            # handler 与 403 同口径硬静默。
+            outage = is_provider_outage_text(raw_text)
+            return _out(ChatResult(
+                raw_text=raw_text, parse_failed=True, is_transport_error=True,
+                is_forbidden_error=forbidden,
+                is_outage_error=outage,
+            ))
 
         # 路径 B:从 raw_text 提取首个 {...} JSON5 块
         if expect_structured and structured_tool_name == "submit_decision":
@@ -843,8 +1202,292 @@ class HermesClient:
             return _out(ChatResult(raw_text=raw_text, structured=structured))
 
         # 普通文本路径(passive 或未要求结构化)
-        cleaned, media_urls = extract_response_media(raw_text)
-        return _out(ChatResult(raw_text=cleaned, media_urls=media_urls))
+        cleaned, media_urls, file_paths = extract_response_media(raw_text)
+        return _out(ChatResult(raw_text=cleaned, media_urls=media_urls, file_paths=file_paths))
+
+    async def _stream_chat(
+        self,
+        url: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        timeout: int,
+        session_key: str,
+        interim_callback: InterimCallback,
+    ) -> tuple[str, str | None]:
+        """SSE 流式读取(本部署补丁)。返回 (最终回复段, rotated_session_key)。
+
+        旁白段经 InterimSegmenter 切出后逐段 await interim_callback;回调失败仅记
+        WARNING(旁白是附属输出,发不出去不能搞砸主 turn)。
+
+        错误面与 chat() 非流式分支对齐:非 200 抛 StreamHttpError(由调用方归纳),
+        超时/连接/其他异常原样向上抛(chat() 的 except 链统一接管)。
+        SSE keepalive 帧保证长 turn 中 read timeout 不会误杀(上游按
+        CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS 周期发 `: keepalive`)。
+        """
+        seg = InterimSegmenter()
+        rotated: str | None = None
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                if resp.status_code != 200:
+                    body = (await resp.aread()).decode("utf-8", "replace")
+                    raise StreamHttpError(resp.status_code, body)
+                rotated = rotated_session_key(resp.headers.get("X-Hermes-Session-Id"), session_key)
+                async for line in resp.aiter_lines():
+                    interim = seg.feed(line)
+                    if interim is None:
+                        continue
+                    try:
+                        await interim_callback(interim)
+                    except Exception:
+                        logger.warning("[HERMES] 旁白转发失败(不影响主 turn)", exc_info=True)
+        # 流式下上游不做 _resolve_media_to_data_urls(只在非流式响应路径),
+        # 本地图片在这里按插件白名单补内联, 让 raw_text 形态与非流式一致(2026-10-08 补丁)。
+        return inline_local_media_images(seg.final_text()), rotated
+
+    async def respond_approval(self, *, tgt: HermesTarget, run_id: str, choice: str) -> tuple[bool, str]:
+        """POST /v1/runs/{id}/approval 应答挂起审批(阶段3c)。返回 (成功, 说明)。
+
+        choice 合法集(API key 路径):once / session / always / deny;
+        approve/approved/allow 上游别名映射到 once。409 = 无挂中审批(已答/已超时)。
+        """
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    f"{tgt.base_url}/v1/runs/{run_id}/approval",
+                    json={"choice": choice},
+                    headers=self.get_headers(api_key=tgt.api_key),
+                )
+            if resp.status_code == 200:
+                return True, str(resp.json().get("choice") or choice)
+            try:
+                detail = str(resp.json().get("error", {}).get("message") or resp.text)[:200]
+            except ValueError:
+                detail = resp.text[:200]
+            return False, f"HTTP {resp.status_code}: {detail}"
+        except Exception as exc:
+            return False, f"请求异常: {exc}"
+
+    async def get_run_status(self, *, tgt: HermesTarget, run_id: str) -> dict | None:
+        """GET /v1/runs/{id} 取 run 状态(阶段3a),失败返回 None。"""
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(
+                    f"{tgt.base_url}/v1/runs/{run_id}",
+                    headers=self.get_headers(api_key=tgt.api_key),
+                )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    async def stop_run(self, *, tgt: HermesTarget, run_id: str) -> bool:
+        """POST /v1/runs/{id}/stop 协作式终止(阶段3b),返回是否被受理(2xx)。"""
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    f"{tgt.base_url}/v1/runs/{run_id}/stop",
+                    json={},
+                    headers=self.get_headers(api_key=tgt.api_key),
+                )
+            return resp.status_code in (200, 202)
+        except Exception:
+            return False
+
+    async def steer_run(self, *, tgt: HermesTarget, run_id: str, text: str) -> bool:
+        """POST /v1/runs/{id}/steer 注入文本(阶段2b)。返回是否被接受。
+
+        接受语义(上游 api_server_runs._handle_steer_run):run 在 running 且 agent
+        支持 steer → 排队到 _pending_steer,当前工具批次后作为独立 user 行投递;
+        run 不在 running(收尾/终态)→ 409 不接受,调用方回退 pending 排队语义。
+        任何网络/协议异常都归 False,调用方走同一回退,不区分原因。
+        """
+        headers = self.get_headers(api_key=tgt.api_key)
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    f"{tgt.base_url}/v1/runs/{run_id}/steer",
+                    json={"input": text},
+                    headers=headers,
+                )
+            if resp.status_code != 200:
+                logger.debug(f"[HERMES] steer 被拒 run_id={run_id} http={resp.status_code}")
+                return False
+            return bool(resp.json().get("accepted"))
+        except Exception as exc:
+            logger.debug(f"[HERMES] steer 请求失败 run_id={run_id}: {exc}")
+            return False
+
+    async def _submit_run_with_replay(
+        self, client: httpx.AsyncClient, tgt: HermesTarget, body: dict, submit_headers: dict
+    ):
+        """POST /v1/runs 带一次网络类重试(低危⑧, 2026-10-14)。
+
+        同一 Idempotency-Key 下重试是安全的:首次若已被网关接纳但应答丢失
+        (lost-acceptance),重试命中网关幂等库,原样 202 归还同一 run_id
+        (replayed=true),不会重复开 run;首次若根本没到达,重试即正常新建。
+        非 2xx(含 429 满额)不在此重试——429 的统一重试在 chat() 层。
+        """
+        for attempt in (1, 2):
+            try:
+                return await client.post(f"{tgt.base_url}/v1/runs", json=body, headers=submit_headers)
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                if attempt == 2:
+                    raise
+                logger.warning(
+                    f"[HERMES] runs 提交网络异常({type(exc).__name__}),同幂等键重试一次"
+                )
+
+    async def _stop_run_quiet(self, base_url: str, headers: dict[str, str], run_id: str) -> None:
+        """尽力 stop 一个 run(超时/异常止损用),任何失败只记日志。
+
+        本部署补丁(runs 迁移阶段1):旧路中断=断连接,runs 路
+        中断必须显式 stop,否则孤儿 run 在 gateway 继续占槽跑完。"""
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(f"{base_url}/v1/runs/{run_id}/stop", json={}, headers=headers)
+        except Exception:
+            logger.warning(f"[HERMES] runs stop 止损失败 run_id={run_id}(孤儿 run 将自行跑完)", exc_info=True)
+
+    async def _chat_via_runs(
+        self,
+        *,
+        tgt: HermesTarget,
+        headers: dict[str, str],
+        content: Any,
+        system_prompt: str,
+        session_key: str,
+        timeout: int,
+        interim_callback: InterimCallback | None,
+        approval_callback: "ApprovalCallback | None",
+        idempotency_key: str,
+        scope: dict[str, Any],
+    ) -> tuple[str, str | None, "ChatResult | None", str]:
+        """runs 通道(本部署补丁:阶段1)。返回 (raw_text, rotated, failure)。
+
+        - rotated 恒 None:压缩轮换由上游 _resolve_live_session_id 服务端透明处理,
+          插件不再手动 adopt;
+        - failure 非 None 时 chat() 直接返回该 ChatResult(run.failed / run.cancelled /
+          事件流提早关闭),completed 时 failure=None,raw_text 走下游统一解析;
+        - 提交带 Idempotency-Key(每轮 chat 一个 key,由调用方造好传入;429 重试与
+          提交段网络重试全程复用):网络抖动重交=网关重放同一 run,不重复开;
+        - 错误面与流式分支对齐:提交/订阅非 2xx 抛 StreamHttpError,超时/连接/其他
+          异常向上抛(chat() except 链统一接管),抛出前对 run 发 stop 止损;
+        - 图片等 content parts 原样透传(2026-10-13 实测 runs 转发给 provider)。
+        """
+        body = {
+            "input": [{"role": "user", "content": content}],
+            "instructions": system_prompt,
+            "session_id": session_key,
+            "model": "hermes-agent",
+        }
+        submit_headers = dict(headers)
+        submit_headers["Idempotency-Key"] = idempotency_key
+        parser = RunsEventParser()
+        run_id = ""
+        tracker = None
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await self._submit_run_with_replay(client, tgt, body, submit_headers)
+                if resp.status_code not in (200, 202):
+                    raise StreamHttpError(resp.status_code, resp.text)
+                run_id = str(resp.json().get("run_id") or "")
+                if resp.json().get("replayed"):
+                    # 同键重放认领:首次提交的应答丢过,网关把原 run 还回来了
+                    logger.warning(f"[HERMES] runs 提交重放认领 (run_id={run_id})")
+                if not run_id:
+                    raise StreamHttpError(202, f"missing run_id: {resp.text[:200]}")
+                # 阶段2a:登记在跑 run(nb 重启后 run_resume 按此行 reattach 续跑)。
+                # bot_self_id 缺失(旧调用点未传)时不登记——resume 找不到 bot 投不出去,
+                # 登记了也是死行;缺 id 只发生在非 handler 直调的探测场景。
+                from .. import mcp as _mcp  # 延迟导入防环(mcp 装配在 handlers 之后)
+
+                tracker = _mcp.run_tracker
+                if tracker is not None and scope.get("bot_self_id"):
+                    tracker.upsert(
+                        run_id=run_id,
+                        scope_key=make_scope_key(
+                            scope["adapter"], scope["is_private"], scope["user_id"], scope["group_id"]
+                        ),
+                        adapter=scope["adapter"],
+                        is_private=scope["is_private"],
+                        user_id=scope["user_id"],
+                        group_id=scope["group_id"],
+                        bot_self_id=scope["bot_self_id"],
+                        session_key=session_key,
+                        mode=scope["mode"],
+                        expect_structured=bool(scope["expect_structured"]),
+                    )
+                # 订阅略早于执行器注册是上游支持的 race 窗口(events 处理器内置等待)
+                async with client.stream(
+                    "GET", f"{tgt.base_url}/v1/runs/{run_id}/events", headers=headers
+                ) as ev:
+                    if ev.status_code != 200:
+                        raise StreamHttpError(ev.status_code, (await ev.aread()).decode("utf-8", "replace"))
+                    async for line in ev.aiter_lines():
+                        interim = parser.feed(line)
+                        if interim and interim_callback is not None:
+                            try:
+                                await interim_callback(interim)
+                            except Exception:
+                                logger.warning("[HERMES] 旁白转发失败(不影响主 turn)", exc_info=True)
+                        # 阶段3c:审批挂起帧即时上交(command 已脱敏;回调失败不拖垮主 turn)
+                        if parser.approval is not None and approval_callback is not None:
+                            approval, parser.approval = parser.approval, None
+                            try:
+                                await approval_callback(approval)
+                            except Exception:
+                                logger.warning("[HERMES] 审批通知回调失败(不影响主 turn)", exc_info=True)
+                        # 粗粒度写库:旁白帧与终态帧才更新 last_seq(delta 高频不写)
+                        if tracker is not None and parser.last_seq >= 0 and (interim or parser.terminal):
+                            tracker.update_seq(run_id, parser.last_seq)
+                        if parser.terminal:
+                            break
+        except Exception:
+            # 超时/连接/解析任何异常:孤儿 run 止损后原样上抛,chat() except 链归纳
+            if run_id:
+                await self._stop_run_quiet(tgt.base_url, headers, run_id)
+            if tracker is not None:
+                tracker.finish(run_id)
+            raise
+
+        def _finish() -> None:
+            if tracker is not None:
+                tracker.finish(run_id)
+
+        if parser.interrupted:
+            logger.warning(f"[HERMES] runs turn 被中断 (run_id={run_id})")
+            _finish()
+            return "", None, ChatResult(
+                raw_text="⚠️ AI 服务响应被中断,请稍后重试",
+                parse_failed=True,
+                is_transport_error=True,
+                is_interrupted=True,
+            ), ""
+        if parser.error is not None:
+            # run.failed:error 已脱敏。403 硬标记与 provider 报错同口径(handler 硬静默)
+            logger.warning(f"[HERMES] runs turn 失败 (run_id={run_id} error={parser.error[:200]!r})")
+            forbidden = bool(re.search(r"\bHTTP\s+403\b", parser.error, re.IGNORECASE))
+            _finish()
+            return "", None, ChatResult(
+                raw_text=parser.error,
+                parse_failed=True,
+                is_transport_error=True,
+                is_forbidden_error=forbidden,
+                is_outage_error=is_provider_outage_text(parser.error),
+            ), ""
+        if not parser.terminal:
+            logger.warning(f"[HERMES] runs 事件流未见终态帧即关闭 (run_id={run_id})")
+            _finish()
+            return "", None, ChatResult(
+                raw_text="⚠️ AI 服务响应中断(事件流提前关闭),请稍后重试",
+                parse_failed=True,
+                is_transport_error=True,
+            ), ""
+        # completed:与流式分支同形补内联,rotated=None(轮换上游服务端处理)
+        _finish()
+        return inline_local_media_images(parser.output or ""), None, None, parser.pending_steer
 
     async def fetch_capabilities(self) -> dict[str, Any]:
         """取 /v1/capabilities;任何失败都返回空 dict —— 探测不能阻塞启动。"""

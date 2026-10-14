@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from ...core.message_buffer import BufferedMessage
 from ...core.outbound import get_bot_nickname, send_text_with_media
 from ...core.routing import CallerScope
+from ...core.session import session_manager
 from ..auth import PushContextError, validate_push_context
 
 if TYPE_CHECKING:
@@ -156,6 +157,10 @@ async def push_message_impl(
     )
     if not success:
         return PushMessageResult(ok=False, error="send failed (see nonebot log)", skipped_images=skipped)
+
+    # T1 活动基准:LLM 主动发话也算活动,防止「agent 长任务期间只 push 不说话」
+    # 被空闲重置误判。群级标记,share_group / per-user 两种会话形态一起覆盖。
+    session_manager.mark_activity_group(inp.adapter, inp.group_id)
 
     # 滑动续期。注:用 send 前的 now_ms 而非 send 后的 wall clock,
     # 慢 send(图片上传等)情况下 TTL 续期会比 wall clock 略短(<10s 量级,

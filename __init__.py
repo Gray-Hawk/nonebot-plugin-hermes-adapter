@@ -60,7 +60,13 @@ async def _hermes_m1_startup():
         stop_mcp_server,
         stop_storage,
     )
-    from .tasks import register_expire_active_sessions, register_storage_vacuum
+    from .tasks import (
+        register_delivery_poll,
+        register_expire_active_sessions,
+        register_proactive_activation,
+        register_session_idle_reset,
+        register_storage_vacuum,
+    )
 
     init_runtime_state()
     await start_storage()
@@ -69,6 +75,51 @@ async def _hermes_m1_startup():
     _driver.on_shutdown(stop_storage)
     register_expire_active_sessions()
     register_storage_vacuum()
+    register_session_idle_reset()
+    register_proactive_activation()
+    register_delivery_poll()
+    # 阶段2a:nb 重启后续跑在跑 runs turn。仅在 runs 通道开启时有意义
+    # (completions 路不写 tracker,resume 自然空转返回)。
+    if plugin_config.hermes_runs_channel_enabled:
+        from .tasks import resume_active_runs
+
+        await resume_active_runs()
+
+    # 投递轮询间隔过小只会白增本地请求与日志噪音,任务完成汇报的时效收益可忽略
+    if 0 < plugin_config.hermes_delivery_poll_interval_sec < 10:
+        logger.warning(
+            f"[HERMES] HERMES_DELIVERY_POLL_INTERVAL_SEC({plugin_config.hermes_delivery_poll_interval_sec}) "
+            "小于 10s:汇报时效收益可忽略,只会白增轮询开销;若这是本意可忽略本警告"
+        )
+
+    # T5 应大于 TTL,配反了等效于「窗口只能活 T5」——能跑但多半不是本意
+    if (
+        0 < plugin_config.hermes_active_session_t5_sec
+        <= plugin_config.hermes_active_session_ttl_sec
+    ):
+        logger.warning(
+            f"[HERMES] HERMES_ACTIVE_SESSION_T5_SEC({plugin_config.hermes_active_session_t5_sec}) "
+            f"<= TTL({plugin_config.hermes_active_session_ttl_sec}):窗口实际只能活 T5 秒,"
+            "隐式续期完全失效;若这是本意可忽略本警告"
+        )
+
+    # /help 菜单文件配了路径但读不到时,启动期先提醒;运行期仍会回退内置菜单
+    if plugin_config.hermes_help_menu_file and not os.path.exists(
+        os.path.expanduser(plugin_config.hermes_help_menu_file)
+    ):
+        logger.warning(
+            f"[HERMES] HERMES_HELP_MENU_FILE 指向的文件不存在: "
+            f"{plugin_config.hermes_help_menu_file};/help 将回退内置菜单"
+        )
+
+    # 定制定居目录(2026-10-13):配了但目录不存在时启动期提醒;各功能各自回退内置
+    if plugin_config.hermes_custom_dir and not os.path.isdir(
+        os.path.expanduser(plugin_config.hermes_custom_dir)
+    ):
+        logger.warning(
+            f"[HERMES] HERMES_CUSTOM_DIR 指向的目录不存在: "
+            f"{plugin_config.hermes_custom_dir};定制功能将回退内置默认"
+        )
 
     if os.environ.get("HERMES_PERCEPTION_IMAGE_MODE"):
         logger.warning(
@@ -108,6 +159,11 @@ async def _hermes_m1_startup():
         for notice in multiplex_reverse_channel_notices():
             logger.info(f"[HERMES] {notice}")
         logger.info(f"[HERMES] 按群路由已启用,{len(plugin_config.hermes_group_endpoints)} 个接入点")
+
+    if plugin_config.hermes_runs_channel_enabled:
+        # 本部署补丁(阶段1): 实验通道,启动期明示,防止
+        # 「配了忘了」时排查 turn 行为差异无头可查。
+        logger.warning("[HERMES] runs 通道已启用(实验性): turn 走 /v1/runs 而非 chat/completions")
 
     logger.info(
         f"Hermes Plugin loaded — API: {plugin_config.hermes_api_url} | "

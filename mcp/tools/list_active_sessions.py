@@ -63,6 +63,7 @@ async def list_active_sessions_impl(
         # 这是发现工具,越权目标**过滤**掉而不是报错:调用方只该看见自己名下的群,
         # 别群的 triggered_by / topic_hint 本身就是不该外流的信息。
         # scope=None(认不出调用方)过滤掉一切。
-        if r.is_alive(now_ms) and scope is not None and scope.allows(r.adapter, r.group_id)
+        # 本部署补丁: 租约改 key 级,判活换管理器口径(TTL+租约)
+        if active_sessions.is_alive(r.adapter, r.group_id, now_ms) and scope is not None and scope.allows(r.adapter, r.group_id)
     ]
     return ListActiveSessionsResult(sessions=views)

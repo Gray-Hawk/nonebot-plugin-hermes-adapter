@@ -262,12 +262,15 @@ def build_mcp_app(
         adapter: str | None = None,
         group_id: str | None = None,
     ) -> list:
-        """Fetch image bytes for specific message ids (max 4 ids per call).
+        """Fetch image/sticker bytes for specific message ids (max 4 ids per call).
 
-        Returns a content[] array combining a JSON header (per-image metadata)
-        with TextContent markers + ImageContent blocks for each available image.
+        Returns a content[] array combining a JSON header (per-image metadata,
+        including kind='image'|'sticker') with TextContent markers + ImageContent
+        blocks for each available image. Stickers (QQ 收藏表情) are recalled the
+        same way; their marker reads "[sticker for m:<id> idx=N]".
         Use after get_recent_messages identifies which message_id the user
-        is referring to (e.g. '上图' → most recent msg with image_count > 0).
+        is referring to (e.g. '上图' → most recent msg with image_count > 0,
+        '表情包' → sticker_count > 0).
         """
         inp = GetMessageImagesInput(
             message_ids=message_ids,

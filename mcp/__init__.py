@@ -15,6 +15,7 @@ from ..core.active_session import ActiveSessionManager
 from ..core.bot_registry import BotRegistry
 from ..core.inflight import InflightRegistry
 from ..core.message_buffer import MessageBuffer
+from ..core.run_tracker import RunTracker
 from ..core.session import session_manager
 from ..core.storage.image_cache import ImageCache
 from ..core.storage.image_fetcher import ImageFetcher
@@ -77,6 +78,9 @@ message_store: MessageStore | None = None
 image_cache: ImageCache | None = None
 image_fetcher: ImageFetcher | None = None
 session_key_store: SessionKeyStore | None = None
+run_tracker: RunTracker | None = None
+# WindowStore 走延迟导入(在 init_runtime_state 里),这里只留槽位给 shutdown 关连接
+window_store = None
 
 _server_task: asyncio.Task | None = None
 _uvicorn_server: uvicorn.Server | None = None
@@ -108,7 +112,7 @@ def _default_image_cache_dir() -> Path:
 def init_runtime_state() -> None:
     """由 plugin __init__.py 在 startup 钩子里调用,装配全局对象。"""
     global message_buffer, active_sessions, bot_registry, inflight
-    global message_store, image_cache, image_fetcher, session_key_store
+    global message_store, image_cache, image_fetcher, session_key_store, run_tracker, window_store
 
     db_path_str = plugin_config.hermes_storage_db_path or ""
     db_path = Path(db_path_str) if db_path_str else _default_db_path()
@@ -120,6 +124,9 @@ def init_runtime_state() -> None:
         # 淘汰的逻辑误伤会话映射。
         session_key_store = SessionKeyStore(db_path=db_path.parent / "session_keys.db")
         session_manager.bind_store(session_key_store)
+    if run_tracker is None:
+        # 阶段2a:在跑 run 跟踪,同样是「重启必须还在」的运行时状态,同目录分文件。
+        run_tracker = RunTracker(db_path=db_path.parent / "active_runs.db")
     if image_cache is None:
         cache_dir_str = plugin_config.hermes_image_cache_dir or ""
         cache_dir = Path(cache_dir_str) if cache_dir_str else _default_image_cache_dir()
@@ -140,7 +147,20 @@ def init_runtime_state() -> None:
     if active_sessions is None:
         active_sessions = ActiveSessionManager(
             default_ttl_sec=plugin_config.hermes_active_session_ttl_sec,
+            t5_sec=plugin_config.hermes_active_session_t5_sec,
         )
+        # 阶段2a:窗口持久化镜像——启动装回未死窗口(含委托锚),重启从「失忆」变
+        # 「续听」。装回日志有窗才打,无窗启动不刷噪音。
+        from ..core.storage.window_store import WindowStore
+        import time as _time
+
+        window_store = WindowStore(db_path=db_path.parent / "active_windows.db")
+        _restored = active_sessions.bind_store(
+            window_store,
+            now_ms=int(_time.time() * 1000),
+        )
+        if _restored:
+            logger.info(f"[HERMES] 活跃窗口已续听: 装回 {_restored} 个未过期窗口")
     if bot_registry is None:
         bot_registry = BotRegistry()
     if inflight is None:
@@ -154,13 +174,17 @@ async def start_storage() -> None:
 
 
 async def stop_storage() -> None:
-    """关闭 image_fetcher 与 message_store。"""
+    """关闭 image_fetcher 与各 SQLite 连接(低危⑫:run_tracker/window_store 也要关)。"""
     if image_fetcher is not None:
         await image_fetcher.stop()
     if message_store is not None:
         message_store.close()
     if session_key_store is not None:
         session_key_store.close()
+    if run_tracker is not None:
+        run_tracker.close()
+    if window_store is not None:
+        window_store.close()
 
 
 def _on_server_task_done(task: asyncio.Task) -> None:

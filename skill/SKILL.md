@@ -61,15 +61,22 @@ deliberately, not by default.
 
 Each returned message carries:
 - `id` — DB primary key, stable across turns; pair with `get_message_images` to fetch images
-- `image_count` — number of images attached (0 = text only)
+- `image_count` — number of regular images attached (0 = none)
+- `sticker_count` — number of QQ stickers (收藏表情) attached; recallable the same way
 - `text`, `user`, `ts`, `is_bot` — as before
 
 ### `get_message_images(message_ids, adapter?, group_id?)`
 
 Fetch image bytes for up to 4 message ids in a single call. Returns a content array
-mixing a JSON header (per-image metadata) with `TextContent` markers + `ImageContent`
-base64 blocks. The image content flows through Hermes's multimodal injection pipeline,
-so on your next LLM turn you'll **actually see** the images.
+mixing a JSON header (per-image metadata, including `kind`) with `TextContent` markers
++ `ImageContent` base64 blocks. The image content flows through Hermes's multimodal
+injection pipeline, so on your next LLM turn you'll **actually see** the images.
+
+Stickers are stored and recalled through the exact same pipeline. Their marker reads
+`[sticker for m:<id> idx=N]` instead of `[image for ...]` — treat sticker bytes as a
+mood/tone signal (same rule as inline stickers: don't describe or fact-check the meme
+itself unless the user asks). The per-image `kind` field in the JSON header is
+`"image"` or `"sticker"`.
 
 Each per-image result has `available: true|false`. When unavailable, `reason` is one of:
 - `cache_miss` — image was never fetched (URL expired before download) or has been
@@ -89,9 +96,53 @@ In reactive mode, your reply MUST be a single `submit_decision` tool call:
   "should_reply": true | false,
   "reply_text": "string, required when should_reply=true; leave empty for silent",
   "topic_hint": "short label, optional",
-  "should_exit_active": false  // see exit threshold below
+  "should_exit_active": false,  // see exit threshold below
+  "at_user_id": "12345",  // optional; the ONLY way to @ — a specific recent speaker's user_id
+  "pin_anchor": true,     // optional; commission judgement turns only — pin this task into <pinned_tasks>
+  "release_anchor": "all",  // optional; commissioner user_id or "all", see task anchors below
+  "answer_anchor": "12345", // optional; commissioner user_id or "all" — this reply answered that pinned task
+  "anchor_merge": "12345",  // optional; starter user_id of the pinned task this message belongs to (merge, don't pin new)
+  "background_task": "调研 XX"  // optional; note for work you just dispatched to background —
+                                // on completion the system wakes you and echoes this note
 }
 ```
+
+`at_user_id` @s a specific speaker from recent_messages by user_id (a strong
+notification ping), and it is the only way to @ anyone — there is no plugin-side
+fallback and no boolean shortcut. Omit it for ordinary in-conversation replies
+(the person is already watching); set it only when they need to be explicitly
+notified: answering a direct question from someone who may have wandered off,
+accepting or reporting back on a commissioned task, replying to someone after a
+long gap. In multi-party chats the person you answer is often NOT the user who
+triggered this turn, so give the id of whoever you actually answer. An id outside
+the recent window is rejected — no @ at all. You are the best judge of whether a
+ping is warranted; when in doubt, don't @.
+
+Task anchors: when the input contains a `<pinned_tasks>` block, those are pinned
+commission anchors (📌 + attribution + age), NOT latest messages — they keep the
+original request visible after context trimming. Anchors are pinned only when a
+commission judgement turn explicitly sets `pin_anchor=true`; don't pin jokes or
+one-off chatter. When an anchored task is finished
+or the topic has drifted away, set `release_anchor` to the commissioner's user_id
+(or "all") to unpin. When your reply answers an anchored commission, set
+`answer_anchor` to the commissioner's user_id (or "all") to mark it answered — an
+answered guest anchor yields its slot to new commissions sooner. Only ids currently
+pinned are accepted; unknown ids are ignored and echoed back next turn as a plugin
+note, so fix it then.
+
+Anchors are per-task, not per-person: participants share equal footing. When the
+current message belongs to a pinned task (a follow-up spec change, an acceptance
+reply), set `anchor_merge` to that task's starter user_id to join its participants
+instead of pinning a new anchor; quoting the task's original message auto-merges
+too. Mid-turn you may receive steered messages from stakeholders ([user=…] lines):
+handle them inline; if one is a brand-new independent commission, acknowledge it in
+your reply or ask them to re-send later — steered messages never create anchors.
+
+Blacklist: when runtime_state has `sender_blacklisted: true`, the current
+sender is on the soft blacklist — default `should_reply=false` even if they @ you.
+Exception: an active anchor or a recent human message explicitly commissioned
+interaction with that account (e.g. "你去跟它说 X"); resume normal conversation for
+the commission's lifetime only.
 
 When `should_reply=false`, the plugin sends nothing — that is the **correct** behavior for
 "this conversation isn't about me, I'll stay quiet." Staying silent ≠ leaving — keep
