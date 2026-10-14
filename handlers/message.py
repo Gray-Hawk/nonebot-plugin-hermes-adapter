@@ -8,6 +8,7 @@ priority=98 main:触发判断 → reactive 决策 → 出向
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import re
 import time
 from contextlib import asynccontextmanager
@@ -20,7 +21,7 @@ from nonebot.rule import Rule
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
-from ..core.active_session import ActiveSession, AnchorRecord
+from ..core.active_session import ActiveSession, AnchorRecord, Participant
 from ..core.approvals import add_pending as approvals_add_pending
 from ..core.approvals import admin_user_ids
 from ..core.approvals import notify_admins as approvals_notify_admins
@@ -1052,6 +1053,10 @@ def _merge_fragment_payload(old: dict, new: dict) -> None:
     old["ephemeral"] = old["ephemeral"] and new["ephemeral"]
     if new.get("context_limit") is not None:
         old["context_limit"] = new["context_limit"]
+    # 引用 id(任务锚归并用):任一碎片带引用即保留首个——碎片同源一条引用链,
+    # 首个非空即可代表;跨人碎片不走本函数(整体替换,随载荷自带)。
+    if old.get("replied_msg_id") is None and new.get("replied_msg_id") is not None:
+        old["replied_msg_id"] = new["replied_msg_id"]
     old["now_ms"] = new["now_ms"]
 
 
@@ -1128,9 +1133,25 @@ async def _dispatch_chat(
     now_ms: int,
     ephemeral: bool = False,
     context_limit: int | None = None,
+    replied_msg_id=None,
 ):
     """ack scope + passive/reactive 分叉(原 handle_message 末段,防抖批抽出以便
     防抖到期后与防抖关闭路径共用同一 dispatch)。"""
+    # 任务锚+steer(规划书§3,2026-10-14):资格内纯文本直注在跑 turn——私聊恒资格,
+    # 群聊仅委托且发送者在资格集合(在跑 turn 触发者 ∪ 在钉锚全体参与者)。
+    # 直注成功即 return,不贴 ack(维护者定案);注不进去落回正常 dispatch,零丢失。
+    if (
+        plugin_config.hermes_runs_channel_enabled
+        and not ephemeral
+        and not image_urls
+        and not sticker_urls
+        and await _maybe_steer_direct(
+            target=target, adapter_name=adapter_name, user_id=user_id, nickname=nickname,
+            group_id=group_id, msg_text=msg_text, is_explicit_trigger=is_explicit_trigger,
+            now_ms=now_ms,
+        )
+    ):
+        return
     async with _ack_scope(
         bot,
         event,
@@ -1175,6 +1196,7 @@ async def _dispatch_chat(
             # 两种都推 N1 条上下文(不用续发轮裁剪)。
             ephemeral=ephemeral,
             context_limit=context_limit,
+            replied_msg_id=replied_msg_id,
         )
 
 
@@ -1204,10 +1226,12 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     replied_text = ""
     replied_image_urls: list[str] = []
     replied_sender = ""
+    replied_msg_id = None  # 任务锚 quote 自动归并用(规划书§2.2)
     if hasattr(event, "reply") and event.reply:
         # 本部署补丁: 发送者归属独立提取(见 helper docstring),
         # 放在引用本体提取之外——归属提取失败只丢标签,不拖垮引用文本/图片。
         replied_sender = _extract_replied_sender_label(event)
+        replied_msg_id = getattr(event.reply, "message_id", None)
         try:
             replied_message = await alconna.UniMessage.generate(message=event.reply.message, bot=bot)
             replied_text = replied_message.extract_plain_text().strip()
@@ -1414,6 +1438,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             is_explicit_trigger=is_explicit_trigger,
             addressed_to_bot=addressed_to_bot,
             now_ms=now,
+            replied_msg_id=replied_msg_id,
             ephemeral=keyword_soft_hit and not in_active_window,
             context_limit=plugin_config.hermes_keyword_soft_context if keyword_soft_hit else None,
         )
@@ -1484,6 +1509,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         is_explicit_trigger=is_explicit_trigger,
         addressed_to_bot=addressed_to_bot,
         now_ms=now,
+        replied_msg_id=replied_msg_id,
         ephemeral=keyword_soft_hit and not in_active_window,
         context_limit=plugin_config.hermes_keyword_soft_context if keyword_soft_hit else None,
     )
@@ -1907,6 +1933,7 @@ async def _run_reactive_turn(
     ephemeral: bool = False,
     recent_override: list[BufferedMessage] | None = None,
     context_limit: int | None = None,
+    replied_msg_id=None,
 ):
     """跑一发 reactive turn,返回 hermes_client.chat() 的 ChatResult,或 None 表示提前 return。
 
@@ -2442,10 +2469,49 @@ async def _run_reactive_turn(
         # 按「开窗前」的 in_active_window 算,冷窗下「@bot+关键词」的委托轮恒 ephemeral=True,
         # 但入口 trigger() 已开真窗口,旧门把这支永远挡在钉锚外且无日志。真正的闸门是
         # 下面的 get_if_active:没窗(ephemeral 沉默/窗已死)自然钉不上,有窗就该能钉。
+        # 任务锚重构(2026-10-14,规划书§2.2):merge 双通道优先于新钉——
+        # ①信封 anchor_merge=发起者 id(模型判同任务;校验在钉发起者集合,非法走
+        #   便签反馈通道,下轮贴回模型自修正);
+        # ②quote 自动归并:pin_anchor=true 且当前消息引用的正是某锚的首条委托消息。
+        # 闲聊引用不归并(没报 pin/merge 就不评估)。refire 接力出的委托没有
+        # replied_msg_id(队列不存引用 id),只能靠信封通道——已知边界(§5.1)。
+        merge_starter: str | None = None
+        anchor_merge_raw = decision.get("anchor_merge")
+        if anchor_merge_raw and not decision.get("should_exit_active"):
+            candidate = str(anchor_merge_raw)
+            if candidate in _mcp.active_sessions.pinned_commissioners(adapter_name, group_id):
+                merge_starter = candidate
+            else:
+                task_notes.push_plugin_note(
+                    _feedback_scope_key(adapter_name, False, user_id, group_id),
+                    "anchor-merge-invalid",
+                    f"你上一轮填的 anchor_merge={candidate} 不在在钉锚发起者集合,已忽略;"
+                    "要归并请填在钉任务的发起者 id",
+                    cooldown_sec=0,
+                )
+                logger.info(
+                    f"[HERMES reactive] anchor_merge invalid: {candidate!r} (group={group_id})"
+                )
         if (
-            decision.get("pin_anchor") is True
+            merge_starter is None
+            and decision.get("pin_anchor") is True
             and not decision.get("should_exit_active")
+            and replied_msg_id is not None
         ):
+            merge_starter = _mcp.active_sessions.find_anchor_starter_by_msg_id(
+                adapter_name, group_id, replied_msg_id
+            )
+        if merge_starter is not None:
+            merge_session = _mcp.active_sessions.get_if_active(adapter_name, group_id, reply_now_ms)
+            merged = merge_session is not None and _mcp.active_sessions.merge_into_anchor(
+                merge_session, starter_id=merge_starter,
+                user_id=user_id, nickname=nickname, now_ms=now_ms,
+            )
+            logger.info(
+                f"[HERMES reactive] anchor merge {'merged' if merged else 'failed'} "
+                f"(group={group_id} starter={merge_starter} user={user_id})"
+            )
+        elif decision.get("pin_anchor") is True and not decision.get("should_exit_active"):
             current_session = _mcp.active_sessions.get_if_active(adapter_name, group_id, reply_now_ms)
             if current_session is None:
                 logger.info(f"[HERMES reactive] pin_anchor skipped: no active window (group={group_id} user={user_id})")
@@ -2453,8 +2519,9 @@ async def _run_reactive_turn(
                 pinned = _mcp.active_sessions.pin_anchor(
                     current_session,
                     AnchorRecord(
-                        commissioner_id=user_id,
-                        commissioner_nickname=nickname or user_id,
+                        participants=[
+                            Participant(user_id=user_id, nickname=nickname or user_id, joined_ts=now_ms)
+                        ],
                         msg_id=trigger_msg_id,
                         text=(text or "")[:200],
                         ts=now_ms,
@@ -2663,6 +2730,78 @@ async def _emoji_like_quiet(bot: Bot, msg_id, emoji_id: int) -> None:
         logger.debug(f"[HERMES] emoji 回执失败 (msg_id={msg_id} emoji_id={emoji_id}): {e}")
 
 
+def _steer_eligible_ids(
+    adapter_name: str, is_private: bool, user_id: str, group_id: str | None, now_ms: int
+) -> set[str]:
+    """steer 资格集合(任务锚+steer 规划书§3.1,2026-10-14 维护者定案):
+    在跑 turn 触发者 ∪ 在钉锚全体参与者。私聊锚不存在,集合={live 触发者}。"""
+    ids: set[str] = set()
+    tracker = _mcp.run_tracker
+    if tracker is not None:
+        live = tracker.get_by_scope(make_scope_key(adapter_name, is_private, user_id, group_id))
+        if live is not None:
+            ids.add(live.user_id)
+    if not is_private and group_id is not None and _mcp.active_sessions is not None:
+        ids.update(
+            _mcp.active_sessions.pinned_participant_ids(
+                adapter_name, group_id, now_ms,
+                max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
+            )
+        )
+    return ids
+
+
+async def _steer_text_into_live_run(
+    adapter_name: str, is_private: bool, user_id: str, group_id: str | None, text: str
+) -> bool:
+    """把纯文本 steer 注入本 scope 在跑的 run。无 live run / 已收尾(409) /
+    网络异常 → False(调用方落回正常排队,零丢失)。scope 感知版发送原语
+    (规划书§3.2/3.3);群聊 followup 槽的 _try_steer_followup 也走它。"""
+    tracker = _mcp.run_tracker
+    if tracker is None:
+        return False
+    live = tracker.get_by_scope(make_scope_key(adapter_name, is_private, user_id, group_id))
+    if live is None:
+        return False
+    ok = await hermes_client.steer_run(
+        tgt=resolve_target(adapter_name, is_private, group_id), run_id=live.run_id, text=text
+    )
+    if ok:
+        logger.info(
+            f"[HERMES steer] 直注在跑 turn (scope={'private' if is_private else 'group'}:"
+            f"{user_id if is_private else group_id} run_id={live.run_id} len={len(text)})"
+        )
+    return ok
+
+
+async def _maybe_steer_direct(
+    *,
+    target,
+    adapter_name: str,
+    user_id: str,
+    nickname: str | None,
+    group_id: str | None,
+    msg_text: str,
+    is_explicit_trigger: bool,
+    now_ms: int,
+) -> bool:
+    """资格内纯文本 steer 直注(规划书§3.2/3.3)。True=已注入,调用方不再 dispatch。
+
+    私聊:本 scope 有 live run 即资格成立(在跑 run 必属本人)。
+    群聊:仅委托(explicit=addressed)且发送者 ∈ 资格集合才直试;闲聊不直注,
+    维持走 reactive 队尾的 followup 槽 steer(_try_steer_followup,现状)。
+    """
+    if not msg_text.strip():
+        return False
+    if not target.private:
+        if not is_explicit_trigger:
+            return False
+        if user_id not in _steer_eligible_ids(adapter_name, False, user_id, group_id, now_ms):
+            return False
+    text = f"[user={nickname or user_id} id={user_id}]: {msg_text.strip()}"
+    return await _steer_text_into_live_run(adapter_name, target.private, user_id, group_id, text)
+
+
 async def _try_steer_followup(
     key: tuple[str, str],
     adapter_name: str,
@@ -2680,16 +2819,32 @@ async def _try_steer_followup(
     结算时内容对不上就不摘——并入内容留在槽里走 pending 接力(注入过的前缀会重复
     一次,但零丢失;丢失与重复的代价不对称,选重复)。
     """
+    # 常备探针(2026-10-14 维护者定案保留,详见 local-mods 修改 25):入口与各早退口
+    # 全部 INFO 级留痕——现网 INFO 级别下原 DEBUG 分支不可见,无法区分
+    # 「未被调用」与「调用后静默早退」。日志标记 [HERMES steer探针]。
+    logger.info(
+        f"[HERMES steer探针] 进入 followup steer 尝试 (group={group_id} user={user_id})"
+    )
     tracker = _mcp.run_tracker
     if tracker is None:
+        logger.info(f"[HERMES steer探针] 早退: run_tracker 为 None (group={group_id})")
         return False
     entry = _mcp.inflight.peek_followup(key)
     if entry is None:
+        logger.info(f"[HERMES steer探针] 早退: followup 槽为空 (group={group_id} key={key})")
         return False
     if entry.msg.image_urls or entry.msg.sticker_urls:
+        logger.info(
+            f"[HERMES steer探针] 早退: 条目带媒体 (group={group_id} "
+            f"imgs={len(entry.msg.image_urls)} stickers={len(entry.msg.sticker_urls)})"
+        )
         return False
     live = tracker.get_by_scope(make_scope_key(adapter_name, False, user_id, group_id))
     if live is None:
+        logger.info(
+            f"[HERMES steer探针] 早退: 查无 live run (group={group_id} "
+            f"scope={make_scope_key(adapter_name, False, user_id, group_id)})"
+        )
         return False
     content_snapshot = entry.msg.content
     text = f"[user={entry.msg.nickname} id={entry.msg.user_id}]: {content_snapshot}"
@@ -2697,6 +2852,9 @@ async def _try_steer_followup(
         tgt=resolve_target(adapter_name, False, group_id), run_id=live.run_id, text=text
     )
     if not ok:
+        logger.info(
+            f"[HERMES steer探针] 早退: steer_run 返回 False (group={group_id} run_id={live.run_id})"
+        )
         return False
     if _mcp.inflight.peek_followup(key) is entry and entry.msg.content == content_snapshot:
         _mcp.inflight.settle_followup(key, entry)
@@ -2728,6 +2886,7 @@ async def _handle_reactive_path(
     ephemeral: bool = False,
     droppable: bool = False,
     recent_override: list[BufferedMessage] | None = None,
+    replied_msg_id=None,
     context_limit: int | None = None,
 ):
     """Reactive 外壳:inflight 占位 → 调 _run_reactive_turn → finally 合并重燃。
@@ -2823,9 +2982,13 @@ async def _handle_reactive_path(
             return
         # 入队是 coalesce 的正常语义,但必须可观测:这条分支早先对 bystander 完全静默,
         # 一串消息集体没反应时日志里只剩 cooldown_check,查不出去向。
-        logger.debug(
-            f"[HERMES reactive] queued behind in-flight turn "
-            f"(group={group_id} user={user_id} explicit={is_explicit_trigger} result={inflight_result})"
+        # 常备探针(2026-10-14 维护者定案保留,详见 local-mods 修改 25):DEBUG→INFO 并
+        # 补 steer 门各条件取值,定位「queued 后未走 steer」时卡在哪一项。
+        logger.info(
+            f"[HERMES steer探针] queued behind in-flight turn "
+            f"(group={group_id} user={user_id} explicit={is_explicit_trigger} "
+            f"commission={is_commission} ephemeral={ephemeral} "
+            f"runs_channel={plugin_config.hermes_runs_channel_enabled} result={inflight_result})"
         )
         return
 
@@ -2855,6 +3018,7 @@ async def _handle_reactive_path(
             ephemeral=ephemeral,
             recent_override=recent_override,
             context_limit=context_limit,
+            replied_msg_id=replied_msg_id,
         )
         should_refire_pending = True
     except Exception:
@@ -2916,6 +3080,15 @@ async def _refire(
     from ..core.inflight import MAX_REFIRE_DEPTH
 
     assert _mcp.inflight is not None
+
+    # 迟到表情包降级(任务锚+steer 规划书§3.6,2026-10-14 维护者定案):refire 接力的
+    # 全是「到达时撞在跑 turn、排过队」的消息,表情退占位符——不抽帧不内联不
+    # 事后解读;入库在到达时已完成,召回路径不受影响(是回退不是丢弃)。
+    if trigger_msg.sticker_urls:
+        trigger_msg = dataclasses.replace(
+            trigger_msg, sticker_urls=[],
+            content=(trigger_msg.content + " [表情包]").strip(),
+        )
 
     if depth > MAX_REFIRE_DEPTH:
         _mcp.inflight.exit(key)  # release slot first to avoid race with concurrent arrivals

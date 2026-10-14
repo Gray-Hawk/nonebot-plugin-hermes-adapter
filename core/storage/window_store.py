@@ -82,8 +82,10 @@ def session_to_payload(s) -> dict[str, Any]:
         if rec is None:
             return None
         return {
-            "commissioner_id": rec.commissioner_id,
-            "commissioner_nickname": rec.commissioner_nickname,
+            "participants": [
+                {"user_id": p.user_id, "nickname": p.nickname, "joined_ts": p.joined_ts}
+                for p in rec.participants
+            ],
             "msg_id": rec.msg_id,
             "text": rec.text,
             "ts": rec.ts,
@@ -106,18 +108,39 @@ def session_to_payload(s) -> dict[str, Any]:
 
 
 def session_from_payload(adapter: str, group_id: str, payload: dict[str, Any]):
-    """JSON payload → ActiveSession。字段缺失按默认值容忍(老版本行也能装)。"""
-    from ..active_session import ActiveSession, AnchorRecord
+    """JSON payload → ActiveSession。字段缺失按默认值容忍(老版本行也能装)。
+
+    锚的双形态装载(任务化重构 2026-10-14):新形态 participants 列表直接用;
+    旧形态 {commissioner_id, commissioner_nickname} 迁移为单参与者。
+    """
+    from ..active_session import ActiveSession, AnchorRecord, Participant
 
     def _anchor(d):
         if not isinstance(d, dict):
             return None
+        ts = int(d.get("ts") or 0)
+        participants: list = []
+        raw_parts = d.get("participants")
+        if isinstance(raw_parts, list):
+            for p in raw_parts:
+                if isinstance(p, dict) and str(p.get("user_id") or ""):
+                    participants.append(
+                        Participant(
+                            user_id=str(p["user_id"]),
+                            nickname=p.get("nickname"),
+                            joined_ts=int(p.get("joined_ts") or ts),
+                        )
+                    )
+        if not participants:
+            # 旧形态迁移:单 commissioner → 单参与者
+            cid = str(d.get("commissioner_id") or "")
+            if cid:
+                participants = [Participant(user_id=cid, nickname=d.get("commissioner_nickname"), joined_ts=ts)]
         return AnchorRecord(
-            commissioner_id=str(d.get("commissioner_id") or ""),
-            commissioner_nickname=d.get("commissioner_nickname"),
+            participants=participants,
             msg_id=d.get("msg_id"),
             text=str(d.get("text") or ""),
-            ts=int(d.get("ts") or 0),
+            ts=ts,
             answered=bool(d.get("answered")),
         )
 

@@ -109,6 +109,8 @@ _DECISION_HINT = (
     "finished task anchors from <pinned_tasks>)\n"
     "  answer_anchor (string, optional — commissioner user_id or \"all\": declare your "
     "reply answered that pinned task; unknown ids are rejected and echoed back next turn)\n"
+    "  anchor_merge (string, optional — starter user_id of a pinned task this message "
+    "belongs to: merges the sender into its participants instead of pinning new)\n"
     "  background_task (string, optional — a one-line note when you just dispatched "
     "background work (subagent/background process); on completion the system wakes "
     "you and echoes the note. Omit when nothing is running)\n"

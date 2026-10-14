@@ -15,18 +15,40 @@ _TURN_END_GRACE_MS = 10_000
 
 
 @dataclass
-class AnchorRecord:
-    """委托锚(本部署补丁:凌晨批项4):一条被钉住的 addressed
-    委托消息,随窗口存活,渲染进 <pinned_tasks> 块供续发轮定位任务来源。"""
+class Participant:
+    """任务参与者(任务锚重构,2026-10-14):平权、有序,首位恒为发起者。"""
 
-    commissioner_id: str
-    commissioner_nickname: str | None
+    user_id: str
+    nickname: str | None
+    joined_ts: int  # ms
+
+
+@dataclass
+class AnchorRecord:
+    """任务锚(2026-10-14 任务化重构,原「委托锚」):一桩被钉住的委托任务,
+    随窗口存活,渲染进 <pinned_tasks> 块供续发轮定位任务来源。
+
+    按任务组织而非按人:同任务的补充/验收 merge 进同一条锚,参与者平权累积;
+    发起者恒为 participants[0],任务句柄=发起者 id(release/answer/merge 的
+    引用值)。answered=「该任务已应答」:模型信封 answer_anchor 声明置位,
+    merge 进新输入时程控重置为 False(维护者定案:防遗漏回复)。客人槽顶锚规则
+    照旧认 answered——旧任务已应答,锚剩余价值低,可被顶。
+    """
+
+    participants: list[Participant]
     msg_id: str | int | None
     text: str  # 钉入时已截断(渲染端还会再过一道 sanitize)
     ts: int  # ms
     answered: bool = False
-    """bot 在锚钉入后是否已发言过(mark_bot_replied 置位)。客人槽顶锚规则的
-    「旧锚任务已应答」判据——旧委托已拿到答案,锚剩余价值低,可被顶。"""
+
+    @property
+    def commissioner_id(self) -> str:
+        """兼容旧读取点:发起者 id(任务句柄)。空锚防御回 ''。"""
+        return self.participants[0].user_id if self.participants else ""
+
+    @property
+    def commissioner_nickname(self) -> str | None:
+        return self.participants[0].nickname if self.participants else None
 
 
 @dataclass
@@ -330,6 +352,58 @@ class ActiveSessionManager:
         if marked:
             self._persist(s)
         return marked
+
+    def pinned_participant_ids(self, adapter: str, group_id: str, now_ms: int, max_age_ms: int) -> set[str]:
+        """全部在钉锚的全体参与者 id 集合(steer 资格判定用,任务化重构 2026-10-14)。
+
+        走 get_anchors(懒式超龄剔除)口径:过期/超龄锚的参与者不再有资格。
+        """
+        out: set[str] = set()
+        for rec in self.get_anchors(adapter, group_id, now_ms, max_age_ms=max_age_ms):
+            out.update(p.user_id for p in rec.participants)
+        return out
+
+    def find_anchor_starter_by_msg_id(self, adapter: str, group_id: str, msg_id) -> str | None:
+        """按首条委托消息 id 找在钉锚,命中返回发起者 id(quote 自动归并用)。"""
+        if msg_id is None:
+            return None
+        s = self._sessions.get((adapter, group_id))
+        if s is None:
+            return None
+        for rec in (s.anchor_master, s.anchor_guest):
+            if rec is not None and rec.msg_id is not None and str(rec.msg_id) == str(msg_id):
+                return rec.commissioner_id
+        return None
+
+    def merge_into_anchor(
+        self,
+        session: "ActiveSession",
+        *,
+        starter_id: str,
+        user_id: str,
+        nickname: str | None,
+        now_ms: int,
+    ) -> bool:
+        """把发送者并入指定任务的锚(任务化重构 2026-10-14)。返回是否并入。
+
+        participants 追加去重(同人刷新昵称);**answered 程控重置为 False**
+        (维护者定案:merge 进新输入=任务重新打开,防遗漏回复;答完由模型
+        answer_anchor 手动标回)。直接操作传入的 session 实例(与 pin_anchor 同约定)。
+        """
+        for slot in ("anchor_master", "anchor_guest"):
+            rec = getattr(session, slot)
+            if rec is not None and rec.commissioner_id == starter_id:
+                known = {p.user_id for p in rec.participants}
+                if user_id not in known:
+                    rec.participants.append(Participant(user_id=user_id, nickname=nickname, joined_ts=now_ms))
+                else:
+                    for p in rec.participants:
+                        if p.user_id == user_id:
+                            p.nickname = nickname or p.nickname
+                rec.answered = False
+                self._persist(session)
+                return True
+        return False
 
     def get_anchors(
         self,

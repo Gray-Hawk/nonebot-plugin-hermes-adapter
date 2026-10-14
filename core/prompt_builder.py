@@ -65,6 +65,8 @@ _DECISION_PROTOCOL_BLOCK = (
     "    看到 <pinned_tasks> 里的锚已完结(任务办完/话题已漂)时设置,见下方任务锚节\n"
     "  answer_anchor (string) — 标应答:本轮回复解答了某条在钉委托时,填委托人的\n"
     "    user_id 或 \"all\";只填在钉锚里的 id,填错会被忽略并在下一轮提醒你\n"
+    "  anchor_merge (string) — 归并:当前消息属于某条在钉任务(补充/验收)时,填该\n"
+    "    任务发起者的 user_id;只填在钉锚的发起者 id,填错会被忽略并下轮提醒\n"
     "  background_task (string) — 离场任务便签:刚派出后台任务(子代理/后台进程)时\n"
     "    填一句任务摘要;完成时系统会叫醒你并把便签回投。便签让唤醒轮知道「在等谁」,\n"
     "    不派活不要填。填了便签的回合可以直接静默收尾,不必承诺「稍后汇报」\n"
@@ -103,14 +105,17 @@ _DECISION_PROTOCOL_BLOCK = (
     "    才算变更。(谁是主人按 id= 匹配你的系统设定/记忆,不认昵称。)\n"
     "\n"
     "任务锚(输入里出现 <pinned_tasks> 块时):\n"
-    "  - 里面是已确认的进行中委托钉锚(📌 + 归属 + 年龄),不是最新消息——上下文裁剪后\n"
-    "    靠它定位任务来源;围绕委托的追问(「结果呢」「好了吗」)参照锚判断在问谁的事\n"
-    "  - 锚只在委托判断轮由你显式 pin_anchor=true 钉入;没钉的 @ 不代表不是任务,\n"
-    "    只代表它还没被确认需要跨轮跟踪\n"
-    "  - 锚已完结(任务办完/话题已漂)时带 release_anchor 松掉它:值 = 委托人的\n"
+    "  - 一条锚 = 一桩委托任务(不按人):📌 行是发起者+年龄,参与者平权——围绕\n"
+    "    任务的补充/追问/验收,无论谁说的,都参照锚归属到这桩事上\n"
+    "  - 锚只在委托判断轮由你显式 pin_anchor=true 钉入(新任务);当前消息属于\n"
+    "    在钉任务时(补充/验收)改填 anchor_merge=该任务发起者的 user_id,\n"
+    "    归并进参与者,不新钉;没钉的 @ 不代表不是任务,只代表还没被确认\n"
+    "  - 锚已完结(任务办完/话题已漂)时带 release_anchor 松掉它:值 = 发起者的\n"
     "    user_id 或 \"all\"。锚是帮你记任务的,不是义务;你最清楚任务状态,该松就松\n"
-    "  - 你的回复解答了某条锚的委托时,带 answer_anchor=委托人的 user_id(或 \"all\")\n"
+    "  - 你的回复解答了某条锚的委托时,带 answer_anchor=发起者的 user_id(或 \"all\")\n"
     "    标「已应答」:客人槽位会因此提前让给新委托;没答不要填,填错下轮会被提醒\n"
+    "  - turn 中途可能插进干系人的补充/指示(steer 注入,以 [user=…] 行出现):\n"
+    "    直接接续处理;若是全新独立委托,在回复里明确受理或请对方稍后重发\n"
     "\n"
     "插话原则(决定 should_reply):\n"
     "  - 与你之前的发言或被 @ 的话题强相关 → true\n"
@@ -496,7 +501,7 @@ def build_reactive_user_content(
     # 必须紧贴 current_message,才能在每个 turn 都重新"撞"一次模型。
     reminder = (
         "\n\n请用 submit_decision JSON 对象回复(字段:should_reply / reply_text / "
-        "topic_hint / should_exit_active / at_user_id / pin_anchor / release_anchor / answer_anchor / background_task),不要直接说话或扮演动作。"
+        "topic_hint / should_exit_active / at_user_id / pin_anchor / release_anchor / answer_anchor / anchor_merge / background_task),不要直接说话或扮演动作。"
     )
     # 2026-10-13 分级反馈:插件提示便签贴 reminder 尾(近因位置,下轮即见即焚)
     if plugin_note:
