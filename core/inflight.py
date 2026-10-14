@@ -15,7 +15,7 @@ in-flight 时新消息不占并发,只排队;当前一发完成后按顺序接�
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from .message_buffer import BufferedMessage
@@ -62,12 +62,31 @@ class InflightSlot:
     commissions: deque[PendingEntry] = field(default_factory=deque)
 
 
+def _strip_stickers_for_queue(msg: BufferedMessage) -> BufferedMessage:
+    """入队前剥掉表情包:sticker_urls 置空,文本补一个 [表情包] 占位。
+
+    队列不承载表情包(2026-10-14 维护者定案):表情包的生命周期止步于 perception
+    层——到达时已入库留字节、buffer 留占位,模型可经 get_message_images 召回;
+    排队回放只需要知道「有表情包」,不需要字节。此前在 _refire 接力时才降级,
+    时机太晚:条目在槽期间 sticker_urls 会毒化 steer 的媒体检查
+    (_try_steer_followup),让后续纯文本跟帖连坐失去实时注入。前移到入队时点
+    后,槽内条目永无 sticker,steer 门不再被堵。
+    """
+    if not msg.sticker_urls:
+        return msg
+    return replace(msg, sticker_urls=[], content=(msg.content + " [表情包]").strip())
+
+
 def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
     """排队消息并入旧条目(语义同防抖拼接)。
 
-    文本换行拼接;图片/表情包 URL 追加去重;ts 取最新(接力时序以最后一条为准);
+    文本换行拼接;图片 URL 追加去重;ts 取最新(接力时序以最后一条为准);
     original_msg_id 由调用方随 PendingEntry 换成最新。reply_to_ts 目前全空,
     仍取最新值,避免未来启用后旧 None 盖掉新值。
+
+    表情包不并入(2026-10-14 维护者定案,队列不承载表情包):new 带的 sticker
+    只折算成一个 [表情包] 文本占位拼进内容,URL 不进场——槽内条目永无
+    sticker_urls,steer 媒体检查不会被毒化。
 
     2026-10-13 审核修复(中危③): 归属不再被后到者覆盖——旧实现无条件
     old.nickname = new.nickname,跨发送者合并(followup 槽)会渲染出「昵称是B
@@ -76,12 +95,15 @@ def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
     """
     same_user = new.user_id == old.user_id
     new_text = (new.content or "").strip()
+    if new.sticker_urls:
+        new_text = (new_text + " [表情包]").strip()
     if new_text:
         if not same_user:
             new_text = f"{new.nickname or new.user_id}: {new_text}"
         old_text = (old.content or "").strip()
         old.content = f"{old_text}\n{new_text}" if old_text else new_text
-    for field_name in ("image_urls", "sticker_urls"):
+    # 只合并普通图片:委托带图接力后仍要看图是真实需求,sticker 见上方说明。
+    for field_name in ("image_urls",):
         incoming = list(getattr(new, field_name) or [])
         if incoming:
             merged = list(getattr(old, field_name) or [])
@@ -106,6 +128,8 @@ class InflightRegistry:
         新委托人且队列未满 → 追加,返回 'queued';队列满 → 不丢旧委托,丢本条,
         返回 'queue_full'
       - commission=False(旁观/闲聊):只刷新 followup 槽(latest wins),返回 'queued'
+      - 表情包不入队(2026-10-14 维护者定案):sticker_urls 入队即剥,
+        折算成 [表情包] 文本占位;字节在 perception 层已入库,召回不受影响
 
     不持有任何 asyncio.Task 引用 —— 重燃由 caller 用 create_task 自己接手,
     registry 只负责「现在有没有人在跑」+「跑完后下一发是谁」两个状态。
@@ -139,7 +163,10 @@ class InflightRegistry:
 
     def add_followup(self, key: tuple[str, str], entry: PendingEntry) -> None:
         """写入 followup 槽;已有条目时把新文本并入(latest-wins 语义下不整槽替换,
-        防 pending_steer 回收把 turn 期间真实跟帖顶掉)。"""
+        防 pending_steer 回收把 turn 期间真实跟帖顶掉)。入槽即剥表情包,
+        与 try_enter 排队路径同规。"""
+        if entry.msg.sticker_urls:
+            entry = replace(entry, msg=_strip_stickers_for_queue(entry.msg))
         slot = self._slots.get(key)
         if slot is None:
             self._slots[key] = InflightSlot(started_at=entry.msg.ts, followup=entry)
@@ -167,6 +194,10 @@ class InflightRegistry:
             self._slots[key] = InflightSlot(started_at=now_ms)
             return "entered"
 
+        # 队列不承载表情包(2026-10-14 维护者定案):入队即剥,占位文本保留语义。
+        # 注意只影响排队路径——entered 分支不落 current_msg,当轮 turn 的
+        # sticker vision 走 dispatch 直传的函数参数,不受本剥离影响。
+        current_msg = _strip_stickers_for_queue(current_msg)
         entry = PendingEntry(
             msg=current_msg,
             is_explicit_trigger=is_explicit_trigger,

@@ -8,7 +8,6 @@ priority=98 main:触发判断 → reactive 决策 → 出向
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import re
 import time
 from contextlib import asynccontextmanager
@@ -2810,7 +2809,11 @@ async def _try_steer_followup(
 ) -> bool:
     """阶段2b:把 followup 槽里的跟帖 steer 注入在跑的 run,成功=True(不再排队)。
 
-    只接纯文本跟帖:带图/表情包的走不了 steer(文本通道),留在槽里走 pending。
+    只接纯文本跟帖:带图的走不了 steer(文本通道),留在槽里走 pending。
+    表情包自 2026-10-14 起入队即剥(队列不承载),下方 sticker_urls 检查是
+    防御性保留,正常路径不会再命中。注入文本前还会再剥一次 [表情包] 占位——
+    占位对在跑 turn 是纯干扰(维护者定案),剥完无有效文本的条目不注入,
+    留槽走接力。
     run 已收尾(409)/无 live run/网络异常 → 留在槽里走 pending,语义与旧路完全一致。
 
     2026-10-13 审核修复(中危②): 改 peek/settle——条目在 steer 全程不离槽,
@@ -2847,7 +2850,22 @@ async def _try_steer_followup(
         )
         return False
     content_snapshot = entry.msg.content
-    text = f"[user={entry.msg.nickname} id={entry.msg.user_id}]: {content_snapshot}"
+    # 注入前剥掉 [表情包] 占位(2026-10-14 维护者定案):占位对在跑 turn 是纯干扰,
+    # 轮内不需要知道「有人发了表情包」。剥完只剩空壳(纯表情包条目,或跨人并入
+    # 留下的「昵称: 」空行)→ 不注入,条目留槽走 pending 接力,语义不变。
+    steer_lines = []
+    for ln in content_snapshot.split("\n"):
+        ln = ln.replace("[表情包]", "").strip()
+        if ln and not ln.endswith(":"):
+            steer_lines.append(ln)
+    steer_text = "\n".join(steer_lines).strip()
+    if not steer_text:
+        logger.info(
+            f"[HERMES steer探针] 早退: 剥占位后无有效文本(纯表情包条目) "
+            f"(group={group_id})"
+        )
+        return False
+    text = f"[user={entry.msg.nickname} id={entry.msg.user_id}]: {steer_text}"
     ok = await hermes_client.steer_run(
         tgt=resolve_target(adapter_name, False, group_id), run_id=live.run_id, text=text
     )
@@ -2902,14 +2920,16 @@ async def _handle_reactive_path(
     """
     assert _mcp.inflight is not None and _mcp.active_sessions is not None
 
-    # 图片门控:active window + 非显式触发 + 纯图无文本 → 跳过 chat()
+    # 图片门控:active window + 非显式触发 + 纯图/纯表情包无文本 → 跳过 chat()
     # 理由:LLM 自己的 should_reply 决策对图片要先看完才能定,而看图本身慢。
     # 这种「旁观纯图」最大概率是 should_reply=false,跳过它就是省一次多模态调用。
     # 消息已被 priority=1 perception 写入 MessageBuffer,等下次文本触发能看到。
+    # 2026-10-14 补漏(维护者定案):sticker_urls 纳入门控——此前只查 image_urls,
+    # 纯表情包旁观消息穿门控入队,把 followup 槽毒化成「带媒体」连坐 steer。
     in_active = _mcp.active_sessions.is_active(adapter_name, group_id, now_ms)
-    if in_active and not is_explicit_trigger and image_urls and not text.strip():
+    if in_active and not is_explicit_trigger and (image_urls or sticker_urls) and not text.strip():
         logger.debug(
-            f"[HERMES reactive] skip image-only passive in-window msg "
+            f"[HERMES reactive] skip media-only passive in-window msg "
             f"(group={group_id} user={user_id}); buffered for next text trigger"
         )
         return
@@ -3081,14 +3101,10 @@ async def _refire(
 
     assert _mcp.inflight is not None
 
-    # 迟到表情包降级(任务锚+steer 规划书§3.6,2026-10-14 维护者定案):refire 接力的
-    # 全是「到达时撞在跑 turn、排过队」的消息,表情退占位符——不抽帧不内联不
-    # 事后解读;入库在到达时已完成,召回路径不受影响(是回退不是丢弃)。
-    if trigger_msg.sticker_urls:
-        trigger_msg = dataclasses.replace(
-            trigger_msg, sticker_urls=[],
-            content=(trigger_msg.content + " [表情包]").strip(),
-        )
+    # 表情包无需在此降级(2026-10-14 维护者定案):队列不承载表情包——入队时点
+    # 已在 inflight 层剥离成 [表情包] 文本占位(见 core/inflight.py
+    # _strip_stickers_for_queue),接力出来的条目 sticker_urls 恒为空。
+    # 字节在到达时已入库,召回路径不受影响。
 
     if depth > MAX_REFIRE_DEPTH:
         _mcp.inflight.exit(key)  # release slot first to avoid race with concurrent arrivals
