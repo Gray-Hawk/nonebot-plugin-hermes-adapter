@@ -15,8 +15,9 @@
 - 续跑期间到达的旁白帧按 interim_echo 同款转发(受 hermes_interim_echo_enabled 控制)。
 
 送达窗口:BotRegistry 重启即清、scope 内可能已有新 turn 在跑——等 entry 出现且
-scope 空闲才送,15s 一拍共 40 拍(10 分钟);超时记 WARN 删行(小概率事件,日志
-可查)。reattach 过程自身的网络失败:记 WARN **保留行**,下次 nb 启动再试
+scope 空闲才送,15s 一拍共 40 拍(10 分钟);超时**保留行**等下次启动再送
+(低危⑫,2026-10-14:旧版超时就删行,completed 回复永久丢;真僵尸行由启动时
+TTL 清扫兜底)。reattach 过程自身的网络失败:记 WARN **保留行**,下次 nb 启动再试
 (runs 在 gateway 侧还活着,行留着零成本)。
 """
 
@@ -41,6 +42,10 @@ from ..core.run_tracker import TrackedRun
 _RESUME_RETRY_SEC = 15
 _RESUME_RETRY_MAX = 40  # 40 拍 × 15s = 10 分钟送达窗口
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
+# 僵尸行 TTL(低危⑫):送达失败/网络失败保留的行若永远送不出去(群组沉寂、bot 离线、
+# 网关已遗忘该 run),启动时按龄期清扫。单 turn 迭代数有硬顶,真在跑的 run 到不了
+# 24h 龄期,误伤不到;网关终态状态只留 1h,更老的行本来也送不出去。
+_ZOMBIE_TTL_SEC = 24 * 3600
 
 
 def _inflight_key(row: TrackedRun) -> tuple[str, str]:
@@ -76,6 +81,10 @@ async def resume_active_runs() -> None:
     tracker = _mcp.run_tracker
     if tracker is None:
         return
+    # 低危⑫:先扫僵尸行(龄期超 TTL 的行——网关早已遗忘那些 run,送不出去了)
+    pruned = tracker.prune_zombies(_ZOMBIE_TTL_SEC)
+    if pruned:
+        logger.warning(f"[HERMES run-resume] 清扫僵尸行 {len(pruned)} 条: {pruned}")
     rows = tracker.list_running()
     if not rows:
         return
@@ -102,17 +111,16 @@ async def _resume_row(row: TrackedRun) -> None:
             entry = None
         await asyncio.sleep(_RESUME_RETRY_SEC)
     if entry is None:
+        # 低危⑫(2026-10-14):送达窗口超时不再弃行——删行=completed 回复永久丢。
+        # 保留行等下次启动再送;永远送不出去的真僵尸由启动 TTL 清扫兜底。
         logger.warning(
-            f"[HERMES run-resume] 送达窗口超时弃行 run_id={row.run_id} scope={row.scope_key}"
-            "(回复未能补发,run 本体在 gateway 侧状态可手工查)"
+            f"[HERMES run-resume] 送达窗口超时,保留行待下次启动 run_id={row.run_id} scope={row.scope_key}"
         )
-        tracker.finish(row.run_id)
         return
     try:
         bot = get_bot(entry.bot_self_id)
     except (KeyError, ValueError) as exc:
-        logger.warning(f"[HERMES run-resume] bot 离线弃行 run_id={row.run_id}: {exc}")
-        tracker.finish(row.run_id)
+        logger.warning(f"[HERMES run-resume] bot 离线,保留行待下次启动 run_id={row.run_id}: {exc}")
         return
 
     tgt = resolve_target(row.adapter, row.is_private, row.group_id)

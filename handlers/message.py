@@ -211,6 +211,19 @@ def _extract_sender_nickname(event: Event, adapter_name: str) -> str | None:
     return None
 
 
+def _label_safe(value: str) -> str:
+    """低危⑬(2026-10-14):引用归属标签的定界符加固。
+
+    `(引用 昵称(id): …)` 形态里半角 ( ) : 是结构字符——群名片或异平台 id 里
+    混入这些字符能伪造归属边界、往引用块注入假内容。全角化后语义不变、结构不破。
+    只用于归属标签拼装;昵称的通用清洗仍是 _sanitize_nickname。
+    注意:映射表必须用 \\u 转义写,直接写全角字面量会被上游管道规范化回半角
+    (2026-10-14 踩过:replace("(", "(") 两侧同字节,等于没替换)。
+    """
+    _FW = {"(": "\uff08", ")": "\uff09", ":": "\uff1a", "[": "\uff3b", "]": "\uff3d"}
+    return "".join(_FW.get(ch, ch) for ch in value)
+
+
 def _extract_replied_sender_label(event: Event) -> str:
     """取被引消息的发送者标签 `昵称(user_id)`,取不到返回 ''。
 
@@ -226,13 +239,18 @@ def _extract_replied_sender_label(event: Event) -> str:
         reply = getattr(event, "reply", None)
         sender = getattr(reply, "sender", None)
         if sender is None:
+            # 低危⑬(2026-10-14):v12 等 adapter 的 reply 不带 sender——记一笔
+            # 可观测,不再静默吞;下游照旧回退无归属格式,行为不退化。
+            logger.info("[HERMES] 引用消息无 sender 字段(adapter 缺归属信息),回退无归属格式")
             return ""
-        user_id = "".join(
-            ch for ch in str(getattr(sender, "user_id", "") or "") if ch.isprintable()
-        ).strip()
+        user_id = _label_safe(
+            "".join(ch for ch in str(getattr(sender, "user_id", "") or "") if ch.isprintable()).strip()
+        )
         nickname = _sanitize_nickname(getattr(sender, "card", None)) or _sanitize_nickname(
             getattr(sender, "nickname", None)
         )
+        if nickname:
+            nickname = _label_safe(nickname)
         if nickname and user_id:
             return f"{nickname}({user_id})"
         return nickname or user_id
@@ -1037,6 +1055,16 @@ def _merge_fragment_payload(old: dict, new: dict) -> None:
     old["now_ms"] = new["now_ms"]
 
 
+def _keyword_soft_hit(keywords, text: str) -> bool:
+    """keyword-soft 点火判定(低危⑬-②,2026-10-14 维护者定案:判定与呈递分离)。
+
+    只在「用户当下手打的本体快照」上匹配关键词。调用方必须传拼接信封前的
+    本体文本——引用块/非文本占位/@回填/合并转发展开都照常进 msg_text 给
+    LLM 看,但不参与点火(旧文本/转发日志里的关键词不再误触发)。
+    """
+    return any(kw and kw in text for kw in keywords)
+
+
 def _debounce_arrive(
     key: tuple[str, str],
     payload: dict,
@@ -1059,9 +1087,14 @@ def _debounce_arrive(
     """
     st = _debounce_states.get(key)
     if st is None:
+        deadline = now_mono + debounce_sec
+        if max_wait_sec > 0:
+            # 低危⑬(2026-10-14):首条也套 max_wait 硬上限——debounce_sec 配得比
+            # max_wait 大时,旧代码首条 deadline 会越过 first+max_wait 才发车。
+            deadline = min(deadline, now_mono + max_wait_sec)
         st = _DebounceState(
             first_mono=now_mono,
-            deadline_mono=now_mono + debounce_sec,
+            deadline_mono=deadline,
             payload=payload,
         )
         _debounce_states[key] = st
@@ -1201,6 +1234,9 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         matcher.skip()
 
     msg_text = uni_msg.extract_plain_text().strip()
+    # 低危⑬-②(2026-10-14 维护者定案):keyword-soft 判定的快照要在任何拼接之前取——
+    # 引用前缀/占位/@回填/转发展开随后都会拼进 msg_text,那些文本不参与点火。
+    keyword_match_text = msg_text
     if replied_text:
         # 本部署补丁: 前缀带发送者归属,空标签回退旧格式;
         # 引用文本先过一道字面手打 @ 的改写(中危⑥,见 helper docstring)
@@ -1296,12 +1332,11 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             )
         addressed_to_bot = is_mentioned and not sender_blacklisted
         is_explicit_trigger = addressed_to_bot
-        # keyword-soft 单路径:关键词全文命中 = 隐式激活,不剥前缀、不升级
+        # keyword-soft 单路径:关键词命中 = 隐式激活,不剥前缀、不升级
         # addressed_to_bot,由 LLM 拿 N1 条上下文自判是否点名。
-        for kw in plugin_config.hermes_keywords:
-            if kw and kw in msg_text:
-                keyword_soft_hit = True
-                break
+        # 低危⑬-②(2026-10-14):判定只跑本体快照(keyword_match_text),引用块/
+        # 转发等拼接文本不参与点火;内容本身仍在 msg_text 里完整呈递给 LLM。
+        keyword_soft_hit = _keyword_soft_hit(plugin_config.hermes_keywords, keyword_match_text)
 
     # --- M1 核心:活跃态分支 ---
     in_active_window = (
@@ -2436,6 +2471,33 @@ async def _run_reactive_turn(
                     f"[HERMES reactive] pin_anchor {'pinned' if pinned else 'declined'} "
                     f"(group={group_id} user={user_id} msg_id={trigger_msg_id})"
                 )
+
+        # 低危⑬-① 方案D(2026-10-14 维护者定案+修正): answered 改模型自答自标——
+        # 信封 answer_anchor=委托人 id|"all",回复真发出才标记(与 pin 同门槛,
+        # 收窗轮不标记)。错填不静默丢:值校验在钉锚委托人集合,非法值走插件
+        # 便签反馈通道,下一轮贴回模型自修正(维护者:「解挂不差一轮聊天」)。
+        answer_anchor = decision.get("answer_anchor")
+        if answer_anchor and not decision.get("should_exit_active"):
+            who = "all" if answer_anchor is True else str(answer_anchor)
+            valid_ids = _mcp.active_sessions.pinned_commissioners(adapter_name, group_id)
+            if who != "all" and who not in valid_ids:
+                task_notes.push_plugin_note(
+                    _feedback_scope_key(adapter_name, False, user_id, group_id),
+                    "answer-anchor-invalid",
+                    f"你上一轮填的 answer_anchor={who} 不在当前在钉锚委托人集合"
+                    f"({sorted(valid_ids) or '空'}),已忽略;要标应答请填在钉委托人的 id 或 all",
+                    cooldown_sec=0,
+                )
+                logger.info(
+                    f"[HERMES reactive] answer_anchor invalid: who={who!r} "
+                    f"pinned={sorted(valid_ids)} (group={group_id})"
+                )
+            else:
+                marked_anchors = _mcp.active_sessions.mark_anchor_answered(adapter_name, group_id, who)
+                if marked_anchors:
+                    logger.info(
+                        f"[HERMES reactive] anchor answered: who={who} count={marked_anchors} (group={group_id})"
+                    )
 
     return result
 

@@ -63,6 +63,8 @@ _DECISION_PROTOCOL_BLOCK = (
     "    任务时给 true,把它钉进 <pinned_tasks>;玩笑、围观、一次性闲聊不要钉。\n"
     "  release_anchor (string) — 松锚:值为委托人的 user_id 或 \"all\"。\n"
     "    看到 <pinned_tasks> 里的锚已完结(任务办完/话题已漂)时设置,见下方任务锚节\n"
+    "  answer_anchor (string) — 标应答:本轮回复解答了某条在钉委托时,填委托人的\n"
+    "    user_id 或 \"all\";只填在钉锚里的 id,填错会被忽略并在下一轮提醒你\n"
     "  background_task (string) — 离场任务便签:刚派出后台任务(子代理/后台进程)时\n"
     "    填一句任务摘要;完成时系统会叫醒你并把便签回投。便签让唤醒轮知道「在等谁」,\n"
     "    不派活不要填。填了便签的回合可以直接静默收尾,不必承诺「稍后汇报」\n"
@@ -107,6 +109,8 @@ _DECISION_PROTOCOL_BLOCK = (
     "    只代表它还没被确认需要跨轮跟踪\n"
     "  - 锚已完结(任务办完/话题已漂)时带 release_anchor 松掉它:值 = 委托人的\n"
     "    user_id 或 \"all\"。锚是帮你记任务的,不是义务;你最清楚任务状态,该松就松\n"
+    "  - 你的回复解答了某条锚的委托时,带 answer_anchor=委托人的 user_id(或 \"all\")\n"
+    "    标「已应答」:客人槽位会因此提前让给新委托;没答不要填,填错下轮会被提醒\n"
     "\n"
     "插话原则(决定 should_reply):\n"
     "  - 与你之前的发言或被 @ 的话题强相关 → true\n"
@@ -492,7 +496,7 @@ def build_reactive_user_content(
     # 必须紧贴 current_message,才能在每个 turn 都重新"撞"一次模型。
     reminder = (
         "\n\n请用 submit_decision JSON 对象回复(字段:should_reply / reply_text / "
-        "topic_hint / should_exit_active / at_user_id / pin_anchor / release_anchor / background_task),不要直接说话或扮演动作。"
+        "topic_hint / should_exit_active / at_user_id / pin_anchor / release_anchor / answer_anchor / background_task),不要直接说话或扮演动作。"
     )
     # 2026-10-13 分级反馈:插件提示便签贴 reminder 尾(近因位置,下轮即见即焚)
     if plugin_note:

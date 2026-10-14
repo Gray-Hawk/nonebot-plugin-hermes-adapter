@@ -15,6 +15,7 @@ RunsEventParser 捕获 → turn 的 approval_callback → 本模块登记 + 私�
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import time
 from dataclasses import dataclass, field
@@ -44,6 +45,11 @@ class PendingApproval:
 
 _pending: dict[int, PendingApproval] = {}
 _seq = itertools.count(1)
+
+# 低危⑬(2026-10-14):/approve 应答互斥锁。peek 与 acknowledge 之间夹着 ack RPC
+# 的 await,两把并发 /approve 会 peek 到同一条目→重复应答、第二条目被跳过。
+# 锁把「看→答→删」串成原子段;回执发送在锁外,不占串行段。
+answer_lock = asyncio.Lock()
 
 
 def add_pending(

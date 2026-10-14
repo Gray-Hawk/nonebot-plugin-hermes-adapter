@@ -107,6 +107,8 @@ _DECISION_HINT = (
     "current request into <pinned_tasks>; omit/false for jokes or one-off chatter)\n"
     "  release_anchor (string, optional — commissioner user_id or \"all\" to unpin "
     "finished task anchors from <pinned_tasks>)\n"
+    "  answer_anchor (string, optional — commissioner user_id or \"all\": declare your "
+    "reply answered that pinned task; unknown ids are rejected and echoed back next turn)\n"
     "  background_task (string, optional — a one-line note when you just dispatched "
     "background work (subagent/background process); on completion the system wakes "
     "you and echoes the note. Omit when nothing is running)\n"
@@ -1036,6 +1038,11 @@ class HermesClient:
         headers = self.get_headers(session_key, memory_key, api_key=tgt.api_key)
         runs_pending_steer = ""
 
+        # 低危⑧(2026-10-14):幂等键每轮只造一次,429 自动重试与提交段网络重试都
+        # 复用同一键——网关 lost-acceptance 重放只认同键同指纹,每试一次换键等于
+        # 名不副实,还会在提交应答丢失时放大出孤儿 run。
+        turn_idem_key = f"turn-{uuid.uuid4().hex}"
+
         async def _do_transport() -> tuple[str, str | None, "ChatResult | None", str]:
             """三分支统一出口 (raw_text, rotated, failure, pending_steer)。
 
@@ -1050,6 +1057,7 @@ class HermesClient:
                     system_prompt=system_prompt, session_key=session_key,
                     timeout=tgt.timeout, interim_callback=interim_callback,
                     approval_callback=approval_callback,
+                    idempotency_key=turn_idem_key,
                     scope=dict(
                         adapter=adapter_name, is_private=is_private, user_id=user_id,
                         group_id=group_id, bot_self_id=bot_self_id or "",
@@ -1309,6 +1317,26 @@ class HermesClient:
             logger.debug(f"[HERMES] steer 请求失败 run_id={run_id}: {exc}")
             return False
 
+    async def _submit_run_with_replay(
+        self, client: httpx.AsyncClient, tgt: HermesTarget, body: dict, submit_headers: dict
+    ):
+        """POST /v1/runs 带一次网络类重试(低危⑧, 2026-10-14)。
+
+        同一 Idempotency-Key 下重试是安全的:首次若已被网关接纳但应答丢失
+        (lost-acceptance),重试命中网关幂等库,原样 202 归还同一 run_id
+        (replayed=true),不会重复开 run;首次若根本没到达,重试即正常新建。
+        非 2xx(含 429 满额)不在此重试——429 的统一重试在 chat() 层。
+        """
+        for attempt in (1, 2):
+            try:
+                return await client.post(f"{tgt.base_url}/v1/runs", json=body, headers=submit_headers)
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                if attempt == 2:
+                    raise
+                logger.warning(
+                    f"[HERMES] runs 提交网络异常({type(exc).__name__}),同幂等键重试一次"
+                )
+
     async def _stop_run_quiet(self, base_url: str, headers: dict[str, str], run_id: str) -> None:
         """尽力 stop 一个 run(超时/异常止损用),任何失败只记日志。
 
@@ -1331,6 +1359,7 @@ class HermesClient:
         timeout: int,
         interim_callback: InterimCallback | None,
         approval_callback: "ApprovalCallback | None",
+        idempotency_key: str,
         scope: dict[str, Any],
     ) -> tuple[str, str | None, "ChatResult | None", str]:
         """runs 通道(本部署补丁:阶段1)。返回 (raw_text, rotated, failure)。
@@ -1339,7 +1368,8 @@ class HermesClient:
           插件不再手动 adopt;
         - failure 非 None 时 chat() 直接返回该 ChatResult(run.failed / run.cancelled /
           事件流提早关闭),completed 时 failure=None,raw_text 走下游统一解析;
-        - 提交带 Idempotency-Key(每调一次 chat 一个新 key):网络抖动重交=重放不重复;
+        - 提交带 Idempotency-Key(每轮 chat 一个 key,由调用方造好传入;429 重试与
+          提交段网络重试全程复用):网络抖动重交=网关重放同一 run,不重复开;
         - 错误面与流式分支对齐:提交/订阅非 2xx 抛 StreamHttpError,超时/连接/其他
           异常向上抛(chat() except 链统一接管),抛出前对 run 发 stop 止损;
         - 图片等 content parts 原样透传(2026-10-13 实测 runs 转发给 provider)。
@@ -1351,16 +1381,19 @@ class HermesClient:
             "model": "hermes-agent",
         }
         submit_headers = dict(headers)
-        submit_headers["Idempotency-Key"] = f"turn-{uuid.uuid4().hex}"
+        submit_headers["Idempotency-Key"] = idempotency_key
         parser = RunsEventParser()
         run_id = ""
         tracker = None
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(f"{tgt.base_url}/v1/runs", json=body, headers=submit_headers)
+                resp = await self._submit_run_with_replay(client, tgt, body, submit_headers)
                 if resp.status_code not in (200, 202):
                     raise StreamHttpError(resp.status_code, resp.text)
                 run_id = str(resp.json().get("run_id") or "")
+                if resp.json().get("replayed"):
+                    # 同键重放认领:首次提交的应答丢过,网关把原 run 还回来了
+                    logger.warning(f"[HERMES] runs 提交重放认领 (run_id={run_id})")
                 if not run_id:
                     raise StreamHttpError(202, f"missing run_id: {resp.text[:200]}")
                 # 阶段2a:登记在跑 run(nb 重启后 run_resume 按此行 reattach 续跑)。

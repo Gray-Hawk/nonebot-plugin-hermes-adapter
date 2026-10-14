@@ -59,7 +59,7 @@ _BUILTIN_RULES = (
         "pattern": r"[「」]",
         "where": "all",
         "action": "note",
-        "note": "小提示:群聊要求全角标点,你上一轮的消息里出现了直角引号「」,双引号请用“”。",
+        "note": "群聊要求全角标点,你上一轮的消息里出现了直角引号「」,双引号请用“”。",
     },
     {
         "name": "departure-promise",

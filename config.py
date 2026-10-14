@@ -96,7 +96,8 @@ class Config(BaseModel):
     配置其它值时按 keyword-soft 处理并 WARN 一次。字段保留仅为 .env 兼容。"""
 
     hermes_keywords: set[str] = {"/ai"}
-    """keyword-soft 隐式激活的关键词集合(全文匹配,命中即隐式激活推 N1 条上下文)"""
+    """keyword-soft 隐式激活的关键词集合(命中即隐式激活推 N1 条上下文)。
+    匹配范围(2026-10-14 起):只匹配用户消息本体;引用块/转发展开/占位符不参与点火。"""
 
     hermes_private_trigger: str = "all"
     """私聊触发方式: all / allowlist"""

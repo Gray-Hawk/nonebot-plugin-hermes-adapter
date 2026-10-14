@@ -79,6 +79,8 @@ image_cache: ImageCache | None = None
 image_fetcher: ImageFetcher | None = None
 session_key_store: SessionKeyStore | None = None
 run_tracker: RunTracker | None = None
+# WindowStore 走延迟导入(在 init_runtime_state 里),这里只留槽位给 shutdown 关连接
+window_store = None
 
 _server_task: asyncio.Task | None = None
 _uvicorn_server: uvicorn.Server | None = None
@@ -110,7 +112,7 @@ def _default_image_cache_dir() -> Path:
 def init_runtime_state() -> None:
     """由 plugin __init__.py 在 startup 钩子里调用,装配全局对象。"""
     global message_buffer, active_sessions, bot_registry, inflight
-    global message_store, image_cache, image_fetcher, session_key_store, run_tracker
+    global message_store, image_cache, image_fetcher, session_key_store, run_tracker, window_store
 
     db_path_str = plugin_config.hermes_storage_db_path or ""
     db_path = Path(db_path_str) if db_path_str else _default_db_path()
@@ -152,8 +154,9 @@ def init_runtime_state() -> None:
         from ..core.storage.window_store import WindowStore
         import time as _time
 
+        window_store = WindowStore(db_path=db_path.parent / "active_windows.db")
         _restored = active_sessions.bind_store(
-            WindowStore(db_path=db_path.parent / "active_windows.db"),
+            window_store,
             now_ms=int(_time.time() * 1000),
         )
         if _restored:
@@ -171,13 +174,17 @@ async def start_storage() -> None:
 
 
 async def stop_storage() -> None:
-    """关闭 image_fetcher 与 message_store。"""
+    """关闭 image_fetcher 与各 SQLite 连接(低危⑫:run_tracker/window_store 也要关)。"""
     if image_fetcher is not None:
         await image_fetcher.stop()
     if message_store is not None:
         message_store.close()
     if session_key_store is not None:
         session_key_store.close()
+    if run_tracker is not None:
+        run_tracker.close()
+    if window_store is not None:
+        window_store.close()
 
 
 def _on_server_task_done(task: asyncio.Task) -> None:

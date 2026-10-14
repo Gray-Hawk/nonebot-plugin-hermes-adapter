@@ -40,6 +40,9 @@ class WindowStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path))
         self._conn.execute("PRAGMA journal_mode=WAL")
+        # 低危⑫(2026-10-14):WAL 标配 synchronous=NORMAL(同 run_tracker,镜像库
+        # 不需要每提交 fsync)。
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute(_SCHEMA)
         self._conn.commit()
 

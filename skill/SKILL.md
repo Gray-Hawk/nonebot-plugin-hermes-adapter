@@ -100,6 +100,7 @@ In reactive mode, your reply MUST be a single `submit_decision` tool call:
   "at_user_id": "12345",  // optional; the ONLY way to @ — a specific recent speaker's user_id
   "pin_anchor": true,     // optional; commission judgement turns only — pin this task into <pinned_tasks>
   "release_anchor": "all",  // optional; commissioner user_id or "all", see task anchors below
+  "answer_anchor": "12345", // optional; commissioner user_id or "all" — this reply answered that pinned task
   "background_task": "调研 XX"  // optional; note for work you just dispatched to background —
                                 // on completion the system wakes you and echoes this note
 }
@@ -122,7 +123,11 @@ original request visible after context trimming. Anchors are pinned only when a
 commission judgement turn explicitly sets `pin_anchor=true`; don't pin jokes or
 one-off chatter. When an anchored task is finished
 or the topic has drifted away, set `release_anchor` to the commissioner's user_id
-(or "all") to unpin.
+(or "all") to unpin. When your reply answers an anchored commission, set
+`answer_anchor` to the commissioner's user_id (or "all") to mark it answered — an
+answered guest anchor yields its slot to new commissions sooner. Only ids currently
+pinned are accepted; unknown ids are ignored and echoed back next turn as a plugin
+note, so fix it then.
 
 Blacklist: when runtime_state has `sender_blacklisted: true`, the current
 sender is on the soft blacklist — default `should_reply=false` even if they @ you.

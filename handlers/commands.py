@@ -21,6 +21,7 @@ from ..core.hermes_client import hermes_client
 from ..core.approvals import pending_count as approvals_pending_count
 from ..core.approvals import peek_oldest as approvals_peek_oldest
 from ..core.approvals import acknowledge as approvals_acknowledge
+from ..core.approvals import answer_lock as approvals_answer_lock
 from ..core.routing import all_targets, resolve_target
 from ..core.run_tracker import make_scope_key
 from ..core.session import session_manager
@@ -148,6 +149,8 @@ def load_help_menu_decor(path: str) -> tuple[str | None, str | None]:
     返回 (header, footer);任一为 None 表示该段回退内置。文件不存在/读取失败/
     内容为空时整体回退并 WARN,/help 不挂。文件现读现发,保存即生效。
     格式:第一行单独 --- 分隔;之前是头,之后是尾;没有 --- 则整个文件只当头。
+    注意(低危⑬,2026-10-14):头尾内容里不能再出现单独一行的 ---(会被当分隔符),
+    文件里有多行 --- 时只按第一行切并 WARN 提醒。
     """
     if not path:
         return None, None
@@ -157,7 +160,13 @@ def load_help_menu_decor(path: str) -> tuple[str | None, str | None]:
         logger.warning(f"[HERMES] /help 菜单文件读取失败({path}): {e};回退内置菜单")
         return None, None
     lines = raw.splitlines()
-    sep_at = next((i for i, line in enumerate(lines) if line.strip() == _HELP_MENU_SEP), None)
+    sep_lines = [i for i, line in enumerate(lines) if line.strip() == _HELP_MENU_SEP]
+    if len(sep_lines) > 1:
+        logger.warning(
+            f"[HERMES] /help 菜单文件含 {len(sep_lines)} 行 {_HELP_MENU_SEP}({path});"
+            "只按第一行切分,其余当尾段内容——若不符合预期请整改文件"
+        )
+    sep_at = sep_lines[0] if sep_lines else None
     if sep_at is None:
         header, footer = raw, ""
     else:
@@ -197,6 +206,7 @@ def build_help_text(
         lines.append("/hermes-status - 查看插件运行时状态(管理员)")
         lines.append("/run-status - 查看当前会话在跑的 run(管理员)")
         lines.append("/run-stop - 终止当前会话在跑的 run(管理员)")
+        lines.append("/reasoning - 查看/切换全局推理档位(管理员)")
 
     if header is not None:
         text = header.strip("\n") + "\n\n命令：\n" + "\n".join(lines)
@@ -223,7 +233,8 @@ async def handle_help(bot: Bot, event: Event, matcher: Matcher):
     user_id = event.get_user_id() or ""
     is_admin = f"{adapter_name}:{user_id}" in plugin_config.hermes_admin_users
 
-    header, footer = load_help_menu_decor(plugin_config.hermes_help_menu_file)
+    # 低危⑬(2026-10-14):菜单文件读取挪出事件循环(同步 IO 会堵住其他消息处理)
+    header, footer = await asyncio.to_thread(load_help_menu_decor, plugin_config.hermes_help_menu_file)
     help_text = build_help_text(target.private, is_admin, header=header, footer=footer)
     await alconna.UniMessage(help_text).send(target=target, bot=bot)
 
@@ -428,6 +439,88 @@ async def handle_run_stop(bot: Bot, event: Event, matcher: Matcher):
     else:
         await alconna.UniMessage(f"终止请求未被受理: {live.run_id}(run 可能已自行结束)").send(target=target, bot=bot)
 
+# --- /reasoning(2026-10-14 维护者定案,管理员;全局推理档位快切) ---
+# 链路:hermes config set 原子改写 config.yaml → api_server 每请求现读 → 即时全局生效,
+# gateway 与 nb 均无需重启;chat/completions 与 runs 通道共用同一回退路径。
+reasoning_command = on_command("reasoning", force_whitespace=True, priority=88, block=True)
+
+# 线上模型只认这三档(其余内部档位会被归并),故只开放这三个;换模型时按需再扩
+_REASONING_LEVELS = ("low", "high", "max")
+_REASONING_CONFIG_KEY = "agent.reasoning_effort"
+
+
+def _hermes_cli_path() -> str:
+    """hermes CLI 位置:PATH 优先,兜底 ~/.local/bin/hermes(systemd 服务 PATH 可能不含它)。"""
+    import shutil
+    return shutil.which("hermes") or str(Path.home() / ".local/bin/hermes")
+
+
+async def _hermes_config_cli(*args: str) -> tuple[bool, str]:
+    """调官方 hermes config 子命令(原子写 + 注释保留 + fail-closed 护栏全自带,
+    不手改 config.yaml)。返回 (成功与否, 输出摘要)。stdout 的 unknown-key notice
+    是校验名单过时(只拒 wrong-prefix 形态,普通未知键照写),以退出码判成败。"""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            _hermes_cli_path(), *args,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        return proc.returncode == 0, out.decode("utf-8", "replace").strip()
+    except Exception as e:
+        return False, str(e)
+
+
+async def reasoning_effort_get() -> str:
+    """读当前全局档位(展示用;读不到回 'unknown' 不阻断查询回复)。"""
+    ok, out = await _hermes_config_cli("config", "get", _REASONING_CONFIG_KEY, "--raw")
+    return out.splitlines()[-1].strip() if ok and out.strip() else "unknown"
+
+
+async def reasoning_effort_set(level: str) -> tuple[bool, str]:
+    return await _hermes_config_cli("config", "set", _REASONING_CONFIG_KEY, level)
+
+
+@reasoning_command.handle()
+async def handle_reasoning(bot: Bot, event: Event, matcher: Matcher):
+    """查看/切换全局推理档位(管理员):/reasoning [low|high|max],改完全局即时生效"""
+    target = alconna.get_target()
+    if not check_isolation(event, target):
+        matcher.skip()
+    adapter_name = get_adapter_name(target)
+    user_id = event.get_user_id() or ""
+    if not _is_admin(adapter_name, user_id):
+        logger.debug(f"[HERMES] /reasoning silent skip for {adapter_name}:{user_id}")
+        return  # 隐身策略(同 /run-status):不暴露命令存在性
+    # 手剥参数(同 /approve):get_plaintext 含命令本体,取首个空白后的余文
+    raw = ""
+    try:
+        raw = event.get_plaintext().strip()
+    except Exception:
+        pass
+    level = raw.split(maxsplit=1)[1].strip().lower() if " " in raw else ""
+    if not level:
+        current = await reasoning_effort_get()
+        await alconna.UniMessage(
+            f"当前全局推理档位: {current}\n切换: /reasoning <low|high|max>(即时生效,无需重启)"
+        ).send(target=target, bot=bot)
+        return
+    if level not in _REASONING_LEVELS:
+        await alconna.UniMessage(
+            f"不支持的档位: {level}(可选 low/high/max)"
+        ).send(target=target, bot=bot)
+        return
+    before = await reasoning_effort_get()
+    ok, out = await reasoning_effort_set(level)
+    if ok:
+        logger.info(f"[HERMES] /reasoning: {adapter_name}:{user_id} 切全局档位 {before} -> {level}")
+        await alconna.UniMessage(
+            f"✅ 全局推理档位已切换: {before} → {level}(所有会话即时生效)"
+        ).send(target=target, bot=bot)
+    else:
+        await alconna.UniMessage(
+            f"⚠️ 切换失败,config 未改动: {out[:200]}"
+        ).send(target=target, bot=bot)
+
 # --- /approve(阶段3c,管理员应答挂起审批) ---
 approve_command = on_command("approve", force_whitespace=True, priority=88, block=True)
 
@@ -456,18 +549,22 @@ async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna
             f"用法: /approve <once|session|always|deny>(当前挂起 {approvals_pending_count()} 条)"
         ).send(target=target, bot=bot)
         return
-    entry = approvals_peek_oldest()
+    # 低危⑬(2026-10-14):看→答→删全程持锁,两把并发 /approve 不会 peek 到同一条目
+    async with approvals_answer_lock:
+        entry = approvals_peek_oldest()
+        if entry is not None:
+            ok, msg = await hermes_client.respond_approval(
+                tgt=resolve_target(entry.adapter, entry.is_private, entry.group_id),
+                run_id=entry.run_id,
+                choice=choice,
+            )
+            if ok:
+                # 2026-10-13 审核修复(中危⑦): 先应答后删单——失败留单,管理员可重试
+                approvals_acknowledge(entry.approval_id)
     if entry is None:
         await alconna.UniMessage("当前没有挂起的审批(可能已超时自动拒绝)").send(target=target, bot=bot)
         return
-    ok, msg = await hermes_client.respond_approval(
-        tgt=resolve_target(entry.adapter, entry.is_private, entry.group_id),
-        run_id=entry.run_id,
-        choice=choice,
-    )
     if ok:
-        # 2026-10-13 审核修复(中危⑦): 先应答后删单——失败留单,管理员可重试
-        approvals_acknowledge(entry.approval_id)
         await alconna.UniMessage(f"✅ 审批 #{entry.approval_id} 已应答: {msg}").send(target=target, bot=bot)
     else:
         await alconna.UniMessage(f"审批 #{entry.approval_id} 应答失败: {msg}(可能已超时或已被应答;条目保留,可重试)").send(target=target, bot=bot)

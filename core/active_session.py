@@ -239,12 +239,10 @@ class ActiveSessionManager:
         s.last_bot_reply_media = media_count
         s.last_bot_reply_text = text
         s.last_strong_activation_at = now_ms  # bot 发言 = 实质激活,T5 重新起算
-        # 本部署补丁(凌晨批项4): bot 发言后,所有早于本次
-        # 发言的委托锚标记「已应答」(客人槽顶锚规则的条件 a)。应答 ≠ 松锚——
-        # 应答后线程阶段的追问仍需要锚,锚继续钉到窗口死/超龄/模型 release。
-        for rec in (s.anchor_master, s.anchor_guest):
-            if rec is not None and rec.ts <= now_ms:
-                rec.answered = True
+        # 低危⑬-① 方案D(2026-10-14 维护者定案):answered 不再由本方法自动全覆盖标记——
+        # 「答没答、答的是谁」模型自己最清楚,改由信封 answer_anchor 字段声明,
+        # 走 mark_anchor_answered;插件端不再替模型做归属判断(旧逻辑:bot 答任何人
+        # 都把所有锚标 answered,客人槽保护期形同虚设)。
         self._persist(s)
         return True
 
@@ -300,6 +298,38 @@ class ActiveSessionManager:
         if released:
             self._persist(s)
         return released
+
+    def pinned_commissioners(self, adapter: str, group_id: str) -> set[str]:
+        """当前在钉锚的委托人裸 id 集合(answer_anchor 的合法值校验用)。无窗口/无锚 = 空集。"""
+        s = self._sessions.get((adapter, group_id))
+        if s is None:
+            return set()
+        return {
+            rec.commissioner_id
+            for rec in (s.anchor_master, s.anchor_guest)
+            if rec is not None
+        }
+
+    def mark_anchor_answered(self, adapter: str, group_id: str, who: str) -> int:
+        """把指定委托人的在钉锚标「已应答」,返回新标记的条数(方案D:模型自答自标)。
+
+        who=委托人 user_id 或 "all"。合法性校验(值是否在 pinned_commissioners 里)
+        在调用方(handler)做,本方法只管标记;无窗口/无匹配 = 0 安全 no-op。
+        已 answered 的锚不重复计数。应答 ≠ 松锚——追问期锚继续钉到窗口死/超龄/release。
+        """
+        s = self._sessions.get((adapter, group_id))
+        if s is None:
+            return 0
+        marked = 0
+        for slot in ("anchor_master", "anchor_guest"):
+            rec = getattr(s, slot)
+            if rec is not None and (who == "all" or rec.commissioner_id == who):
+                if not rec.answered:
+                    rec.answered = True
+                    marked += 1
+        if marked:
+            self._persist(s)
+        return marked
 
     def get_anchors(
         self,

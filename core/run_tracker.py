@@ -64,6 +64,9 @@ class RunTracker:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path))
         self._conn.execute("PRAGMA journal_mode=WAL")
+        # 低危⑫(2026-10-14):WAL 标配 synchronous=NORMAL。影子镜像库丢最后一批
+        # 提交只发生在 OS 掉电级事故(应用崩溃不丢),FULL 的每提交 fsync 不值得。
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute(_SCHEMA)
         self._conn.commit()
 
@@ -134,6 +137,24 @@ class RunTracker:
             user_id=r[4], group_id=r[5], bot_self_id=r[6], session_key=r[7],
             mode=r[8], expect_structured=bool(r[9]), last_seq=r[10], started_at=r[11],
         )
+
+    def prune_zombies(self, max_age_sec: float, *, now: float | None = None) -> list[str]:
+        """删 started_at 超过 max_age_sec 的僵尸行,返回被删 run_id 列表(低危⑫)。
+
+        僵尸来源:送达窗口超时/reattach 网络失败保留的行,其 run 在 gateway 侧早已
+        终态并被状态库遗忘(上游终态只留 1h)——行留着只会每次启动重演失败。
+        上限取 24h:单 turn 迭代数有硬顶,真在跑的 run 到不了这个龄期,误伤不到。
+        """
+        now = time.time() if now is None else now
+        cutoff = now - max_age_sec
+        rows = self._conn.execute(
+            "SELECT run_id FROM active_runs WHERE started_at < ?", (cutoff,)
+        ).fetchall()
+        ids = [r[0] for r in rows]
+        if ids:
+            self._conn.execute("DELETE FROM active_runs WHERE started_at < ?", (cutoff,))
+            self._conn.commit()
+        return ids
 
     def close(self) -> None:
         self._conn.close()
