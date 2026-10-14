@@ -63,6 +63,9 @@ _DECISION_PROTOCOL_BLOCK = (
     "    任务时给 true,把它钉进 <pinned_tasks>;玩笑、围观、一次性闲聊不要钉。\n"
     "  release_anchor (string) — 松锚:值为委托人的 user_id 或 \"all\"。\n"
     "    看到 <pinned_tasks> 里的锚已完结(任务办完/话题已漂)时设置,见下方任务锚节\n"
+    "  background_task (string) — 离场任务便签:刚派出后台任务(子代理/后台进程)时\n"
+    "    填一句任务摘要;完成时系统会叫醒你并把便签回投。便签让唤醒轮知道「在等谁」,\n"
+    "    不派活不要填。填了便签的回合可以直接静默收尾,不必承诺「稍后汇报」\n"
     "\n"
     "对象归属(先决定这条是不是冲你说的,再走插话原则;命中一条「归你」就停,不再下挪):\n"
     "  - runtime_state 里有 `addressed_to_you: true` → 平台层面已经确认这条是冲你说的\n"
@@ -70,11 +73,11 @@ _DECISION_PROTOCOL_BLOCK = (
     "    「可能在叫别人」「不确定是否针对你」「归属模糊」为理由 should_reply=false。\n"
     "    但注意:addressed 只确认归属,不构成回复义务——消息无实质内容\n"
     "    (纯表情、灌水、无意义整活)时仍应 should_reply=false\n"
-    "  - 当前消息明确 @ 你(@ 后面跟 runtime_state.you 的 id 就是 @ 你;即使同时 @ 了别人,\n"
-    "    只要 @ 列表里有你就算) → 归你,继续走后面的插话原则\n"
     "  - 开头的「(引用 昵称(id): …)」块是被引用的历史消息:冒号前是被引消息的发送者,\n"
-    "    块内「提及<id>」是那条消息当时 @ 过谁的记录,不算当前消息 @ 你;\n"
-    "    当前消息自己 @ 了谁,只看引用块之外的 @<id>\n"
+    "    块内「提及<id>」是那条消息当时 @ 过谁的记录(真实 @ 段与字面手打的 @id\n"
+    "    都已一并改写),不算当前消息 @ 你;当前消息自己 @ 了谁,只看引用块之外的 @<id>\n"
+    "  - 当前消息明确 @ 你(引用块之外,@ 后面跟 runtime_state.you 的 id 就是 @ 你;\n"
+    "    即使同时 @ 了别人,只要 @ 列表里有你就算) → 归你,继续走后面的插话原则\n"
     "  - 当前消息 reply/quote 指向 recent_messages 里 [bot] 你自己的一条 → 归你\n"
     "  - 当前消息**只** @ 了别人(包括另一个 bot)且没同时 @ 你 → 不归你,should_reply=false\n"
     "  - 当前消息 reply/quote 指向别人(普通 user 或另一个 [bot])且没同时 @ 你 → 不归你\n"
@@ -205,6 +208,7 @@ _PRIVATE_DECISION_PROTOCOL_BLOCK = (
 _STICKER_MOOD_NOTE = (
     "\n[表情包] 仅作情绪/语气信号：可用来判断用户心情；不要描述画面、不要考据梗图、"
     "不要把表情包当工单，除非用户明确要求解读/评价。"
+    "「表情包 第i/N帧」是同一动图按时间顺序抽出的连续帧，合起来理解为一个表情。"
 )
 
 
@@ -448,9 +452,10 @@ def build_reactive_user_content(
     current_nickname: str | None,
     current_text: str,
     current_image_urls: Sequence[str],
-    current_sticker_urls: Sequence[str] = (),
+    current_sticker_urls: Sequence[Sequence[str]] = (),
     sender_blacklisted: bool = False,
     pinned_anchors: Sequence[Any] = (),
+    plugin_note: str | None = None,
     now_ms: int = 0,
 ) -> UserContent:
     """reactive user content: <runtime_state> + [pinned_tasks] + <recent_messages> + <current_message>。
@@ -487,16 +492,19 @@ def build_reactive_user_content(
     # 必须紧贴 current_message,才能在每个 turn 都重新"撞"一次模型。
     reminder = (
         "\n\n请用 submit_decision JSON 对象回复(字段:should_reply / reply_text / "
-        "topic_hint / should_exit_active / at_user_id / pin_anchor / release_anchor),不要直接说话或扮演动作。"
+        "topic_hint / should_exit_active / at_user_id / pin_anchor / release_anchor / background_task),不要直接说话或扮演动作。"
     )
+    # 2026-10-13 分级反馈:插件提示便签贴 reminder 尾(近因位置,下轮即见即焚)
+    if plugin_note:
+        reminder += f"\n(插件小提示:{plugin_note})"
 
     text_block = runtime_block + "\n\n"
     if pinned_block:
         text_block += pinned_block + "\n\n"
     text_block += history_block + "\n\n" + current_block_text + reminder
 
-    sticker_urls = list(current_sticker_urls or [])
-    if not current_image_urls and not sticker_urls:
+    sticker_groups = [list(g) for g in (current_sticker_urls or []) if g]
+    if not current_image_urls and not sticker_groups:
         return text_block
 
     parts: list[dict[str, Any]] = [{"type": "text", "text": text_block}]
@@ -504,9 +512,17 @@ def build_reactive_user_content(
         parts.append({"type": "image_url", "image_url": {"url": u}})
     # 表情包与普通图片分开标注:占位文本里已有 [表情包],这里在图片前再补一个
     # 近端标签,避免多图时把 sticker 和正常照片/截图混成同一语义。
-    for u in sticker_urls:
-        parts.append({"type": "text", "text": "[表情包]"})
-        parts.append({"type": "image_url", "image_url": {"url": u}})
+    # 2026-10-13 动图抽帧:帧组结构自配对——一张表情的所有帧装在同一组,
+    # 标签按组内位置生成([表情包 第i/N帧]),跨表情结构性不可能张冠李戴。
+    for frames in sticker_groups:
+        if len(frames) == 1:
+            parts.append({"type": "text", "text": "[表情包]"})
+            parts.append({"type": "image_url", "image_url": {"url": frames[0]}})
+        else:
+            n = len(frames)
+            for i, u in enumerate(frames):
+                parts.append({"type": "text", "text": f"[表情包 第{i + 1}/{n}帧,同一动图按时间顺序]"})
+                parts.append({"type": "image_url", "image_url": {"url": u}})
     return parts
 
 
@@ -515,7 +531,8 @@ def build_passive_user_content(
     recent_messages: Sequence[BufferedMessage],
     current_text: str,
     current_image_urls: Sequence[str],
-    current_sticker_urls: Sequence[str] = (),
+    current_sticker_urls: Sequence[Sequence[str]] = (),
+    plugin_note: str | None = None,
 ) -> UserContent:
     """passive user content:可选 <recent_messages> + 当前文本(图片走多模态 parts)。
 
@@ -528,14 +545,24 @@ def build_passive_user_content(
         text_block = current_text
     if current_sticker_urls:
         text_block += _STICKER_MOOD_NOTE
+    # 2026-10-13 分级反馈:插件提示便签贴文本尾
+    if plugin_note:
+        text_block += f"\n(插件小提示:{plugin_note})"
 
-    if not current_image_urls and not current_sticker_urls:
+    sticker_groups = [list(g) for g in (current_sticker_urls or []) if g]
+    if not current_image_urls and not sticker_groups:
         return text_block
 
     parts: list[dict[str, Any]] = [{"type": "text", "text": text_block}]
     for u in current_image_urls:
         parts.append({"type": "image_url", "image_url": {"url": u}})
-    for u in current_sticker_urls:
-        parts.append({"type": "text", "text": "[表情包]"})
-        parts.append({"type": "image_url", "image_url": {"url": u}})
+    for frames in sticker_groups:
+        if len(frames) == 1:
+            parts.append({"type": "text", "text": "[表情包]"})
+            parts.append({"type": "image_url", "image_url": {"url": frames[0]}})
+        else:
+            n = len(frames)
+            for i, u in enumerate(frames):
+                parts.append({"type": "text", "text": f"[表情包 第{i + 1}/{n}帧,同一动图按时间顺序]"})
+                parts.append({"type": "image_url", "image_url": {"url": u}})
     return parts

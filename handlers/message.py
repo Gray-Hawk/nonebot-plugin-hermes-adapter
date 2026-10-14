@@ -31,10 +31,11 @@ from ..core.hermes_client import (
     maybe_extract_decision_reply_text,
     preview_raw,
 )
-from ..core.image_inline import inline_image_urls
+from ..core.image_inline import inline_image_urls, inline_sticker_frames
 from ..core.inflight import PendingEntry
 from ..core.message_buffer import BufferedMessage
 from ..core.run_tracker import make_scope_key
+from ..core import task_notes
 from ..core.outbound import get_bot_nickname, send_local_files, send_text_with_media
 from ..core.prompt_builder import (
     build_passive_system_prompt,
@@ -257,6 +258,154 @@ def _rewrite_quoted_ats(placeholders: list[str]) -> str:
     「@<id>」原格式,协议块靠「块外才是当前@」区分两者。
     """
     return " ".join("提及" + p.removeprefix("@") for p in placeholders)
+
+
+# 字面手打 @ 的有界匹配:仅 QQ 号段(5-12 位数字,后不接数字),别碰邮箱/@英文名。
+_QUOTED_LITERAL_AT_RE = re.compile(r"@(\d{5,12})(?!\d)")
+_QUOTED_LITERAL_ATALL_RE = re.compile(r"@全体(?:成员)?")
+
+
+def _rewrite_quoted_literal_ats(text: str) -> str:
+    """引用文本里字面手打的「@QQ号」/「@全体」改写「提及」(2026-10-13 审核修复 中危⑥)。
+
+    _rewrite_quoted_ats 只覆盖 At 段派生的占位;手打进文本的 @数字 不经过它,
+    会字面命中决策协议「@<id>=@你」规则——群 200000003 事故的同形态残余面。
+    这里补一道有界兜底(只认 QQ 号段,不误伤邮箱/英文@)。只作用引用块内,
+    当前消息正文不经过本函数。
+    """
+    text = _QUOTED_LITERAL_ATALL_RE.sub("提及全体", text)
+    return _QUOTED_LITERAL_AT_RE.sub(r"提及\1", text)
+
+
+# --- 2026-10-13 错误分级反馈 + 离场确认轮(维护者合成方案;规则引擎见 core/feedback_rules.py) ---
+# 统一不拦截:命中 action=note 的规则 → 下一轮贴暗示便签;action=confirm → 追加离场确认轮。
+# 规则来自 hermes_custom_dir/feedback_rules.json,缺省回退内置两条。
+
+_DEPARTURE_CONFIRM_PROMPT = (
+    "(系统核对:你上一条回复里出现了“稍后/回头再汇报”类措辞。"
+    "如果有后台任务在跑、完成时系统会叫醒你——填 background_task 登记任务便签后 "
+    "should_reply=false,或不登记直接静默,都可以;如果刚才是说漏了、并没有任务在跑,"
+    "请用 reply_text 向对方补充说明)"
+)
+
+# (scope_key, rule_name) → 上次 confirm 点火时刻(按规则名各自冷却,互不影响)
+_confirm_fired_at: dict[tuple[tuple[str, str], str], float] = {}
+
+
+def _feedback_scope_key(adapter_name: str, is_private: bool, user_id: str, group_id: str | None) -> tuple[str, str]:
+    """反馈便签/确认轮的 scope key,与 inflight 键同形。"""
+    scope = "private" if is_private else "group"
+    scope_id = user_id if is_private else (group_id or "")
+    return (adapter_name, f"{scope}:{scope_id}")
+
+
+def _record_background_note(key: tuple[str, str], decision: dict, *, log_tag: str) -> None:
+    """模型在 submit_decision 里填了 background_task → 登记离场任务便签(静默也登记)。"""
+    note = decision.get("background_task")
+    if isinstance(note, str) and note.strip():
+        task_notes.set_task_note(key, note.strip()[:200])
+        logger.info(f"[HERMES {log_tag}] 离场任务便签已登记: {note.strip()[:60]}")
+
+
+async def _fire_departure_confirm(
+    *,
+    key: tuple[str, str],
+    rule_name: str,
+    prompt: str,
+    cooldown_sec: float,
+    bot: Bot,
+    target,
+    adapter_name: str,
+    user_id: str,
+    group_id: str | None,
+    is_private: bool,
+) -> None:
+    """追加一发离场确认轮(create_task 排队,经 inflight 接力在本 turn 后跑,不并发)。"""
+    now = time.time()
+    mark = (key, rule_name)
+    if now - _confirm_fired_at.get(mark, 0) < cooldown_sec:
+        logger.debug(f"[HERMES feedback] 确认轮冷却中,跳过 {key} rule={rule_name}")
+        return
+    _confirm_fired_at[mark] = now
+    logger.info(f"[HERMES feedback] 命中 confirm 规则 {rule_name},追加离场确认轮 {key}")
+    if is_private:
+        asyncio.create_task(
+            _handle_passive_path(
+                bot=bot, target=target, adapter_name=adapter_name,
+                user_id=user_id, nickname="系统核对", group_id=None,
+                text=prompt, image_urls=[], is_private=True,
+                now_ms=_now_ms(),
+            )
+        )
+    else:
+        asyncio.create_task(
+            _handle_reactive_path(
+                bot=bot, target=target, adapter_name=adapter_name,
+                user_id="system-check", nickname="系统核对", group_id=group_id,
+                text=prompt, image_urls=[], is_explicit_trigger=False,
+                addressed_to_bot=False, now_ms=_now_ms(), ephemeral=True,
+            )
+        )
+
+
+async def _post_send_feedback(
+    *,
+    key: tuple[str, str],
+    reply_text: str,
+    bot: Bot,
+    target,
+    adapter_name: str,
+    user_id: str,
+    group_id: str | None,
+    is_private: bool,
+    synthetic: bool = False,
+) -> None:
+    """发送成功后的分级反馈检查(2026-10-13 维护者合成方案,规则引擎驱动)。
+
+    - 逐条评估 feedback_rules 里 where=reply/all 的规则;
+    - note → 写下轮暗示便签(按规则冷却去重),不当轮打断;
+    - confirm → 按规则冷却追加离场确认轮。
+    synthetic=True(巡查/确认轮等系统轮)不触发——防确认轮自己的措辞再命中递归。
+    合成轮身份由调用方按 user_id 约定("system-check"/"timer"/"delivery")判定,
+    不在 _handle/_run 签名上加参数。
+    """
+    if synthetic or not reply_text:
+        return
+    from ..core.feedback_rules import load_rules
+
+    for rule in load_rules():
+        if rule.where not in ("reply", "all") or not rule.regex.search(reply_text):
+            continue
+        if rule.action == "note":
+            task_notes.push_plugin_note(
+                key, rule.name, rule.note, cooldown_sec=rule.cooldown_sec or 24 * 3600
+            )
+        elif rule.action == "confirm":
+            await _fire_departure_confirm(
+                key=key, rule_name=rule.name,
+                prompt=rule.prompt or _DEPARTURE_CONFIRM_PROMPT,
+                cooldown_sec=rule.cooldown_sec or 300.0,
+                bot=bot, target=target, adapter_name=adapter_name,
+                user_id=user_id, group_id=group_id, is_private=is_private,
+            )
+
+
+def _check_interim_feedback(key: tuple[str, str], segment: str) -> None:
+    """旁白段的规则检测(2026-10-13,where=interim/all;仅 note 动作——旁白是过程
+    文本,命中 confirm 不当真,确认轮只跟正式回复)。"""
+    if not segment:
+        return
+    from ..core.feedback_rules import load_rules
+
+    for rule in load_rules():
+        if rule.where in ("interim", "all") and rule.action == "note" and rule.regex.search(segment):
+            task_notes.push_plugin_note(
+                key, rule.name, rule.note, cooldown_sec=rule.cooldown_sec or 24 * 3600
+            )
+
+
+# 合成轮 user_id 约定:这些来源的措辞不进入分级反馈检测(防确认轮/巡查提示词递归命中)
+_SYNTHETIC_USER_IDS = frozenset({"system-check", "timer", "delivery"})
 
 
 _ACK_CANCEL_UNSUPPORTED_WARNED: set[str] = set()
@@ -1053,7 +1202,9 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
 
     msg_text = uni_msg.extract_plain_text().strip()
     if replied_text:
-        # 本部署补丁: 前缀带发送者归属,空标签回退旧格式
+        # 本部署补丁: 前缀带发送者归属,空标签回退旧格式;
+        # 引用文本先过一道字面手打 @ 的改写(中危⑥,见 helper docstring)
+        replied_text = _rewrite_quoted_literal_ats(replied_text)
         msg_text = f"{_format_quote_prefix(replied_text, replied_sender)} {msg_text}".strip()
 
     image_urls = await _extract_image_urls(uni_msg, bot, adapter_name)
@@ -1522,8 +1673,10 @@ async def _run_passive_turn(
     # 图片内联成 data: URL 再出站:上游对 http(s) URL 是纯透传,交出去就把可达性
     # 赌在 provider 出网与 URL 时效上,且部分 provider 形态会静默丢图。
     inlined = await inline_image_urls(image_urls)
+    # 2026-10-13 动图抽帧:表情走专用通道,返回帧组(动图多帧/静态单帧),
+    # 帧组结构自配对防张冠李戴(见 image_inline.inline_sticker_frames docstring)。
     sticker_inlined = (
-        await inline_image_urls(sticker_urls or [])
+        await inline_sticker_frames(sticker_urls or [])
         if plugin_config.hermes_sticker_vision_enabled
         else []
     )
@@ -1532,6 +1685,10 @@ async def _run_passive_turn(
         current_text=text or " ",
         current_image_urls=inlined,
         current_sticker_urls=sticker_inlined,
+        # 2026-10-13 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
+        plugin_note="\n".join(
+            task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, is_private, user_id, group_id))
+        ) or None,
     )
 
     # 本部署补丁: 长任务旁白实时转发。旁白是本轮 turn 的附属
@@ -1539,6 +1696,10 @@ async def _run_passive_turn(
     # 独立发话通道);不 @ 人(进度广播不针对特定个体)。extract_response_media 剥掉
     # MEDIA:/md 图片标签——旁白里的本地路径原样发出会泄主机路径;媒体最终回复还会带。
     async def _interim_echo(segment: str) -> None:
+        # 2026-10-13 分级反馈:旁白段过 where=interim/all 的 note 规则(确认轮不跟旁白)
+        _check_interim_feedback(
+            _feedback_scope_key(adapter_name, is_private, user_id, group_id), segment
+        )
         cleaned, _, _ = extract_response_media(segment)
         if cleaned:
             await send_text_with_media(
@@ -1646,7 +1807,10 @@ async def _run_passive_turn(
     # 本部署补丁(凌晨批项2): 私聊决策信封解析成功时按信封走——
     # should_reply=false 即静默(私聊不再硬必回)。解析失败回 raw_text:私聊是显式
     # 对话,静默更像故障;并保留既有防御性抠取(模型可能吐了破信封)。
+    # 2026-10-13 分级反馈:background_task 便签登记(静默轮也登记)。
+    _fb_key = _feedback_scope_key(adapter_name, is_private, user_id, group_id)
     if use_private_decision and result.structured is not None and not result.parse_failed:
+        _record_background_note(_fb_key, result.structured, log_tag="passive")
         if not result.structured.get("should_reply"):
             logger.info(f"[HERMES passive] 私聊自决静默 (user={user_id})")
             return result
@@ -1678,6 +1842,12 @@ async def _run_passive_turn(
         media_urls=media_urls,
         at_user_id=None if is_private else user_id,
         adapter_name=adapter_name,
+    )
+    # 2026-10-13 分级反馈:发送成功后的文书暗示/离场确认检查(合成轮豁免)
+    await _post_send_feedback(
+        key=_fb_key, reply_text=cleaned_text, bot=bot, target=target,
+        adapter_name=adapter_name, user_id=user_id, group_id=group_id,
+        is_private=is_private, synthetic=user_id in _SYNTHETIC_USER_IDS,
     )
     # 文件跟在文本消息之后上传(占位符在前作说明, 文件随后到达)。
     await send_local_files(bot=bot, target=target, file_paths=file_paths, adapter_name=adapter_name)
@@ -1795,7 +1965,7 @@ async def _run_reactive_turn(
     # 门控不能用 is_explicit_trigger:trigger=all 下它恒真(L867),or 上去等于没门控。
     # 插件升级会冲掉此改动,详见 项目文档库。
     sticker_inlined = (
-        await inline_image_urls(sticker_urls or [])
+        await inline_sticker_frames(sticker_urls or [])
         if plugin_config.hermes_sticker_vision_enabled
         else []
     )
@@ -1825,6 +1995,10 @@ async def _run_reactive_turn(
         current_sticker_urls=sticker_inlined,
         sender_blacklisted=sender_blacklisted,
         pinned_anchors=pinned_anchors,
+        # 2026-10-13 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
+        plugin_note="\n".join(
+            task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, False, user_id, group_id))
+        ) or None,
         now_ms=now_ms,
     )
 
@@ -1863,6 +2037,10 @@ async def _run_reactive_turn(
     # /[] 让契约清晰,避免被读者误以为 image_urls 也参与了构造。
     # 本部署补丁: 旁白实时转发,同 passive 路径注释。
     async def _interim_echo(segment: str) -> None:
+        # 2026-10-13 分级反馈:旁白段过 where=interim/all 的 note 规则(确认轮不跟旁白)
+        _check_interim_feedback(
+            _feedback_scope_key(adapter_name, False, user_id, group_id), segment
+        )
         cleaned, _, _ = extract_response_media(segment)
         if cleaned:
             await send_text_with_media(
@@ -2042,6 +2220,9 @@ async def _run_reactive_turn(
     logger.debug(f"[HERMES reactive] decision raw (len={len(result.raw_text or '')}): {raw_preview!r}")
 
     decision = result.structured
+    # 2026-10-13 分级反馈:离场任务便签登记(静默轮也登记)
+    _fb_key = _feedback_scope_key(adapter_name, False, user_id, group_id)
+    _record_background_note(_fb_key, decision, log_tag="reactive")
     if decision.get("topic_hint"):
         _mcp.active_sessions.update_topic(adapter_name, group_id, str(decision["topic_hint"]))
     # 本部署补丁(凌晨批项4): 模型可控松锚。值=委托人
@@ -2156,6 +2337,13 @@ async def _run_reactive_turn(
         f"[HERMES reactive] sent adapter={adapter_name} group={group_id} "
         f"ok={sent} text_len={len(cleaned_reply_text)} media={len(media_urls)} at_user={at_user}"
     )
+    # 2026-10-13 分级反馈:发送成功后的文书暗示/离场确认检查(合成轮豁免)
+    if sent:
+        await _post_send_feedback(
+            key=_fb_key, reply_text=cleaned_reply_text, bot=bot, target=target,
+            adapter_name=adapter_name, user_id=user_id, group_id=group_id,
+            is_private=False, synthetic=user_id in _SYNTHETIC_USER_IDS,
+        )
 
     # 用 send 完成时的 wall clock,不复用入参 now_ms。
     # 入参 now_ms 是 _handle_reactive_path 进函数那一刻抓的, chat() + send 可能耗时
@@ -2214,10 +2402,13 @@ async def _run_reactive_turn(
             )
         # 2026-10-13 队列化定案:委托锚改手动单轨——入口不再自动钉,只有本轮
         # submit_decision 显式 pin_anchor=true 且回复真发出去了才钉。放在 mark_bot_replied
-        # 之后,避免新锚立刻被自己的发言标成 answered;should_exit_active/ ephemeral 不钉。
+        # 之后,避免新锚立刻被自己的发言标成 answered;should_exit_active 不钉。
+        # 2026-10-13 审核修复(中危④): 去掉 ephemeral 排除——ephemeral 在 handler 入口
+        # 按「开窗前」的 in_active_window 算,冷窗下「@bot+关键词」的委托轮恒 ephemeral=True,
+        # 但入口 trigger() 已开真窗口,旧门把这支永远挡在钉锚外且无日志。真正的闸门是
+        # 下面的 get_if_active:没窗(ephemeral 沉默/窗已死)自然钉不上,有窗就该能钉。
         if (
             decision.get("pin_anchor") is True
-            and not ephemeral
             and not decision.get("should_exit_active")
         ):
             current_session = _mcp.active_sessions.get_if_active(adapter_name, group_id, reply_now_ms)
@@ -2418,29 +2609,38 @@ async def _try_steer_followup(
 ) -> bool:
     """阶段2b:把 followup 槽里的跟帖 steer 注入在跑的 run,成功=True(不再排队)。
 
-    只接纯文本跟帖:带图/表情包的走不了 steer(文本通道),原样放回走 pending。
-    run 已收尾(409)/无 live run/网络异常 → 放回走 pending,语义与旧路完全一致。
+    只接纯文本跟帖:带图/表情包的走不了 steer(文本通道),留在槽里走 pending。
+    run 已收尾(409)/无 live run/网络异常 → 留在槽里走 pending,语义与旧路完全一致。
+
+    2026-10-13 审核修复(中危②): 改 peek/settle——条目在 steer 全程不离槽,
+    期间 turn 收尾由 pop_next_pending 捡走接力,不再存在「离槽-恢复」的静默吞消息路径。
+    注入文本是 await 前的快照:期间若有新跟帖并入(合并发生在同一个 entry 上),
+    结算时内容对不上就不摘——并入内容留在槽里走 pending 接力(注入过的前缀会重复
+    一次,但零丢失;丢失与重复的代价不对称,选重复)。
     """
     tracker = _mcp.run_tracker
     if tracker is None:
         return False
-    entry = _mcp.inflight.take_followup(key)
+    entry = _mcp.inflight.peek_followup(key)
     if entry is None:
         return False
     if entry.msg.image_urls or entry.msg.sticker_urls:
-        _mcp.inflight.restore_followup(key, entry)
         return False
     live = tracker.get_by_scope(make_scope_key(adapter_name, False, user_id, group_id))
     if live is None:
-        _mcp.inflight.restore_followup(key, entry)
         return False
-    text = f"[user={entry.msg.nickname} id={entry.msg.user_id}]: {entry.msg.content}"
+    content_snapshot = entry.msg.content
+    text = f"[user={entry.msg.nickname} id={entry.msg.user_id}]: {content_snapshot}"
     ok = await hermes_client.steer_run(
         tgt=resolve_target(adapter_name, False, group_id), run_id=live.run_id, text=text
     )
     if not ok:
-        _mcp.inflight.restore_followup(key, entry)
         return False
+    if _mcp.inflight.peek_followup(key) is entry and entry.msg.content == content_snapshot:
+        _mcp.inflight.settle_followup(key, entry)
+    else:
+        # await 期间并入了新内容(或被接力取走):留槽走 pending,不摘。
+        logger.debug(f"[HERMES reactive] steer 期间 followup 有并入,留槽接力 (group={group_id})")
     logger.info(
         f"[HERMES reactive] 跟帖已 steer 注入在跑 turn (group={group_id} "
         f"user={entry.msg.user_id} run_id={live.run_id} len={len(text)})"
@@ -2464,13 +2664,14 @@ async def _handle_reactive_path(
     nickname: str | None = None,
     event_msg_id: str | int | None = None,
     ephemeral: bool = False,
+    droppable: bool = False,
     recent_override: list[BufferedMessage] | None = None,
     context_limit: int | None = None,
 ):
     """Reactive 外壳:inflight 占位 → 调 _run_reactive_turn → finally 合并重燃。
 
     coalesce 语义:in-flight 期间到来的新触发不并发跑;委托 @ 进按委托人分键的
-    FIFO 队列(总 3/每人 1),旁观闲聊只留一个最新 followup。本发完成后
+    FIFO 队列(总 2/每人 1,2026-10-13 由 3 调 2),旁观闲聊只留一个最新 followup。本发完成后
     pop_next_pending 取下一发,用 create_task 起 _refire 接力,本 task 立即 return,
     不阻塞 NoneBot 事件循环。
 
@@ -2529,6 +2730,12 @@ async def _handle_reactive_path(
     )
 
     is_commission = addressed_to_bot and user_id not in set(plugin_config.hermes_known_bots)
+    # 2026-10-13 审核修复(巡查迟到闸门,维护者定案): droppable=True 的合成轮(巡查)
+    # 撞在跑 turn 直接丢弃——「巡查天生可弃」,不占 followup 槽不接力,否则活跃期
+    # 巡查会在用户 turn 结束后不请自来。投递轮询等不可弃合成轮不传此标记。
+    if droppable and _mcp.inflight.is_inflight(key):
+        logger.debug(f"[HERMES reactive] droppable turn discarded (inflight busy): group={group_id}")
+        return
     inflight_result = _mcp.inflight.try_enter(
         key,
         current_buffered,
@@ -2541,9 +2748,13 @@ async def _handle_reactive_path(
     if inflight_result != "entered":
         # 阶段2b:非委托跟帖在 runs 通道下先尝 steer 注入在跑 turn(成功即不排队);
         # 委托/带媒体/旧路/run 已收尾被拒 → 一律维持原 pending 语义。
+        # 2026-10-13 审核修复(中危①): 排除 ephemeral——定时巡查(user=timer)、
+        # 任务投递(user=delivery)这类合成输入也是非委托纯文本,此前会被原样注入
+        # 用户进行中的 turn(合成提示词污染对话),且被消费后不再走 pending。
         if (
             inflight_result == "queued"
             and not is_commission
+            and not ephemeral
             and plugin_config.hermes_runs_channel_enabled
             and await _try_steer_followup(key, adapter_name, user_id, group_id)
         ):
@@ -2604,6 +2815,10 @@ async def _handle_reactive_path(
                         trigger_msg=pending_entry.msg,
                         is_explicit_trigger=pending_entry.is_explicit_trigger,
                         original_msg_id=pending_entry.original_msg_id,
+                        # 2026-10-13 审核修复(中危⑤): 补上接力透传——此前这条 finally 链路
+                        # 丢 addressed_to_bot,排队委托 refire 起跑后 addressed 门控全失效
+                        # (图片不内联/归属标记缺行);passive 侧与递归链本来就传。
+                        addressed_to_bot=pending_entry.addressed_to_bot,
                         depth=1,
                         mode="reactive",
                         ephemeral=ephemeral,

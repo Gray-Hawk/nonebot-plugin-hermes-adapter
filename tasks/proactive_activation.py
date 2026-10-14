@@ -70,6 +70,16 @@ async def _drain_patrol_queue(run_one) -> None:
         while _patrol_queue:
             adapter, scope_id, kwargs = _patrol_queue.popleft()
             _patrol_queued.discard((adapter, scope_id))
+            # 2026-10-13 审核修复(巡查迟到闸门,维护者定案): 入队到点火可能隔几分钟
+            # (串行队列前车未走),期间窗口转活跃/有 turn 在跑 → 本轮直接弃。
+            # tick 入口的检查只是便宜前置过滤,这道才是执行时的真实闸门。
+            recheck_ms = int(time.time() * 1000)
+            if _mcp.active_sessions is not None and _mcp.active_sessions.is_active(adapter, scope_id, recheck_ms):
+                logger.info(f"[HERMES proactive] 点火前复查: 窗口已活跃,本轮弃 {adapter}/{scope_id}")
+                continue
+            if _mcp.inflight is not None and _mcp.inflight.is_inflight((adapter, f"group:{scope_id}")):
+                logger.info(f"[HERMES proactive] 点火前复查: turn 在跑,本轮弃 {adapter}/{scope_id}")
+                continue
             logger.info(f"[HERMES proactive] 串行点火: {adapter}/{scope_id} (队列余 {len(_patrol_queue)})")
             try:
                 await run_one(**kwargs)
@@ -166,6 +176,7 @@ def register_proactive_activation() -> None:
                     addressed_to_bot=False,
                     now_ms=now_ms,
                     ephemeral=True,
+                    droppable=True,  # 巡查天生可弃:撞在跑 turn 不占 followup 槽
                     recent_override=msgs,
                 ),
             )

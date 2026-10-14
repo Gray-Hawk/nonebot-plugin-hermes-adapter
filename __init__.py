@@ -112,6 +112,15 @@ async def _hermes_m1_startup():
             f"{plugin_config.hermes_help_menu_file};/help 将回退内置菜单"
         )
 
+    # 定制定居目录(2026-10-13):配了但目录不存在时启动期提醒;各功能各自回退内置
+    if plugin_config.hermes_custom_dir and not os.path.isdir(
+        os.path.expanduser(plugin_config.hermes_custom_dir)
+    ):
+        logger.warning(
+            f"[HERMES] HERMES_CUSTOM_DIR 指向的目录不存在: "
+            f"{plugin_config.hermes_custom_dir};定制功能将回退内置默认"
+        )
+
     if os.environ.get("HERMES_PERCEPTION_IMAGE_MODE"):
         logger.warning(
             "[HERMES] HERMES_PERCEPTION_IMAGE_MODE is deprecated since 2026-05-13. "

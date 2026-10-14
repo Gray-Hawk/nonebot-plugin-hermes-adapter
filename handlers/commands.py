@@ -19,7 +19,8 @@ from .. import mcp as _mcp
 from ..config import plugin_config
 from ..core.hermes_client import hermes_client
 from ..core.approvals import pending_count as approvals_pending_count
-from ..core.approvals import pop_oldest as approvals_pop_oldest
+from ..core.approvals import peek_oldest as approvals_peek_oldest
+from ..core.approvals import acknowledge as approvals_acknowledge
 from ..core.routing import all_targets, resolve_target
 from ..core.run_tracker import make_scope_key
 from ..core.session import session_manager
@@ -455,7 +456,7 @@ async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna
             f"用法: /approve <once|session|always|deny>(当前挂起 {approvals_pending_count()} 条)"
         ).send(target=target, bot=bot)
         return
-    entry = approvals_pop_oldest()
+    entry = approvals_peek_oldest()
     if entry is None:
         await alconna.UniMessage("当前没有挂起的审批(可能已超时自动拒绝)").send(target=target, bot=bot)
         return
@@ -465,6 +466,8 @@ async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna
         choice=choice,
     )
     if ok:
+        # 2026-10-13 审核修复(中危⑦): 先应答后删单——失败留单,管理员可重试
+        approvals_acknowledge(entry.approval_id)
         await alconna.UniMessage(f"✅ 审批 #{entry.approval_id} 已应答: {msg}").send(target=target, bot=bot)
     else:
-        await alconna.UniMessage(f"审批 #{entry.approval_id} 应答失败: {msg}(可能已超时或已被应答)").send(target=target, bot=bot)
+        await alconna.UniMessage(f"审批 #{entry.approval_id} 应答失败: {msg}(可能已超时或已被应答;条目保留,可重试)").send(target=target, bot=bot)

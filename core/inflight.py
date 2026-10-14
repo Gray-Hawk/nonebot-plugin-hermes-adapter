@@ -7,7 +7,7 @@ in-flight 时新消息不占并发,只排队;当前一发完成后按顺序接�
 
 2026-10-13 队列化(维护者拍板):pending 从「单槽 latest-wins」改成
 「委托队列 + 闲聊跟进槽」。委托=私聊消息或群聊 addressed_to_bot 的 @;
-不同委托人的 @ 各自排队(总上限 3),同一委托人重复 @ 只留一份并拼接内容;
+不同委托人的 @ 各自排队(总上限 2),同一委托人重复 @ 只留一份并拼接内容;
 非委托的旁观消息仍 latest-wins,只留一个跟进触发,绝不顶掉委托。
 队列满只丢新委托并 WARN,不用闲聊填满委托槽。
 """
@@ -24,10 +24,13 @@ from .message_buffer import BufferedMessage
 # 一次 burst 最多产出 1(主回) + MAX_REFIRE_DEPTH(链尾)= 4 发回复。
 MAX_REFIRE_DEPTH = 3
 
-# 委托排队上限(2026-10-13 维护者拍板):同一 target 最多 3 条委托;
+# 委托排队上限(2026-10-13 维护者拍板,同日由 3 调 2):同一 target 最多 2 条委托;
 # 同一委托人同时在队只留 1 条(后来的拼进这条)。超出上限的新委托直接丢,
 # 防止「队列积压 = 一条消息补跑一次 LLM turn」。
-MAX_PENDING_COMMISSIONS = 3
+# 容量数学(维护者定案口径,一波爆发 = 1 主 turn + MAX_REFIRE_DEPTH 3 层接力 = 4 发):
+# 2 委托 + 1 闲聊 followup 正好消化完,深度门不浪费也不冲掉委托。
+# 本值与 MAX_REFIRE_DEPTH 可调,缺省取低只为保证换任何模型都不出问题。
+MAX_PENDING_COMMISSIONS = 2
 MAX_PENDING_PER_USER = 1
 
 
@@ -60,15 +63,22 @@ class InflightSlot:
 
 
 def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
-    """同一委托人的在队消息并入旧条目(语义同防抖拼接)。
+    """排队消息并入旧条目(语义同防抖拼接)。
 
-    文本换行拼接;图片/表情包 URL 追加去重;ts/nickname 取最新(接力时序以最后一条
-    为准);original_msg_id 由调用方随 PendingEntry 换成最新。reply_to_ts 目前全空,
+    文本换行拼接;图片/表情包 URL 追加去重;ts 取最新(接力时序以最后一条为准);
+    original_msg_id 由调用方随 PendingEntry 换成最新。reply_to_ts 目前全空,
     仍取最新值,避免未来启用后旧 None 盖掉新值。
-    """
 
+    2026-10-13 审核修复(中危③): 归属不再被后到者覆盖——旧实现无条件
+    old.nickname = new.nickname,跨发送者合并(followup 槽)会渲染出「昵称是B
+    id是A」的错配发言者。现在 nickname 只在同发送者合并时刷新;跨发送者拼接的
+    文本带「昵称: 」前缀,归属信息不丢也不错配。
+    """
+    same_user = new.user_id == old.user_id
     new_text = (new.content or "").strip()
     if new_text:
+        if not same_user:
+            new_text = f"{new.nickname or new.user_id}: {new_text}"
         old_text = (old.content or "").strip()
         old.content = f"{old_text}\n{new_text}" if old_text else new_text
     for field_name in ("image_urls", "sticker_urls"):
@@ -78,7 +88,8 @@ def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
             merged.extend(u for u in incoming if u not in merged)
             setattr(old, field_name, merged)
     old.ts = new.ts
-    old.nickname = new.nickname
+    if same_user:
+        old.nickname = new.nickname
     old.reply_to_ts = new.reply_to_ts
 
 
@@ -104,26 +115,27 @@ class InflightRegistry:
     def __init__(self) -> None:
         self._slots: dict[tuple[str, str], InflightSlot] = {}
 
-    def take_followup(self, key: tuple[str, str]) -> PendingEntry | None:
-        """弹出并返回 followup 槽条目(无则 None)。
+    def peek_followup(self, key: tuple[str, str]) -> PendingEntry | None:
+        """非破坏性读 followup 槽条目(无则 None)。
 
-        steer 注入前先取出:注入成功即不再排队;注入失败由 restore_followup 放回。
+        2026-10-13 审核修复(中危②): steer 注入改「先看后确认」——旧 take/restore
+        组合在 await steer_run(最长 15s)期间条目已离槽,turn 若此时收尾,槽被
+        exit 删除、restore 静默吞条目(消息既未注入也不 refire)。peek 模式下条目
+        全程在槽:期间 turn 收尾会由 pop_next_pending 正常捡走接力,零丢失路径。
         """
         slot = self._slots.get(key)
-        if slot is None or slot.followup is None:
-            return None
-        entry = slot.followup
-        slot.followup = None
-        return entry
+        return slot.followup if slot is not None else None
 
-    def restore_followup(self, key: tuple[str, str], entry: PendingEntry) -> None:
-        """把 take_followup 取出的条目放回(仅槽仍空时;已有更新条目则按
-        latest-wins 语义丢弃被放回的旧条目,调用方记 debug 即可)。"""
+    def settle_followup(self, key: tuple[str, str], entry: PendingEntry) -> None:
+        """steer 注入成功后结算:仅当槽里还是同一个条目(identity)才摘除。
+
+        调用方(_try_steer_followup)还会先核对内容快照:await 期间并入过新文本
+        的条目不 settle,留槽走 pending 接力——宁可注入前缀重复一次,不丢并入内容。
+        若条目已被 pop_next_pending 取走接力,则 no-op。绝不误删后来居上的新条目。
+        """
         slot = self._slots.get(key)
-        if slot is None:
-            return
-        if slot.followup is None:
-            slot.followup = entry
+        if slot is not None and slot.followup is entry:
+            slot.followup = None
 
     def add_followup(self, key: tuple[str, str], entry: PendingEntry) -> None:
         """写入 followup 槽;已有条目时把新文本并入(latest-wins 语义下不整槽替换,
@@ -182,6 +194,9 @@ class InflightRegistry:
                 queued.original_msg_id = original_msg_id
                 return "queued"
         if len(slot.commissions) >= MAX_PENDING_COMMISSIONS:
+            # queue_full 静默丢弃是设计定案(2026-10-13 维护者拍板,勿「修」成贴表情/报错):
+            # 反馈表情用户看不明白、还可能被刺激反复 @ 刷屏;委托被丢用户自己会察觉
+            # 再找 bot。代价不对称,静默是对的。
             return "queue_full"
         slot.commissions.append(entry)
         return "queued"

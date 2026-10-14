@@ -34,6 +34,7 @@ from nonebot_plugin_apscheduler import scheduler
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
+from ..core import task_notes
 from ..core.routing import resolve_target
 from ..core.session import session_manager
 
@@ -128,6 +129,11 @@ async def _poll_session(
     # 确认能发才推进水位:fire-and-forget 的 turn 失败与否不再回捞(与 T2 同一约定)
     _last_seen[session_key] = new_seen
     now_ms = int(time.time() * 1000)
+    # 2026-10-13 分级反馈:模型离场时登记的任务便签随汇报轮回投(防压缩后忘记任务)。
+    # 便签点火即消费——汇报失败也不还,下轮完成行(若有)用通用引导语兜底。
+    note_key = (adapter, f"private:{user_id}" if is_private else f"group:{group_id or ''}")
+    task_note = task_notes.pop_task_note(note_key)
+    note_suffix = f'你离场时登记的任务便签:“{task_note}”。' if task_note else ""
     logger.info(
         f"[HERMES delivery-poll] 发现 {len(fresh)} 条新投递记录: {internal_id},唤起汇报 turn"
     )
@@ -143,7 +149,7 @@ async def _poll_session(
                 user_id=user_id,
                 nickname="任务投递",
                 group_id=None,
-                text=_PROMPT_PRIVATE,
+                text=note_suffix + _PROMPT_PRIVATE,
                 image_urls=[],
                 is_private=True,
                 now_ms=now_ms,
@@ -160,7 +166,7 @@ async def _poll_session(
                 user_id="delivery",
                 nickname="任务投递",
                 group_id=scope_id,
-                text=_PROMPT_GROUP,
+                text=note_suffix + _PROMPT_GROUP,
                 image_urls=[],
                 is_explicit_trigger=False,
                 addressed_to_bot=False,

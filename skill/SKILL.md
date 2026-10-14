@@ -99,7 +99,9 @@ In reactive mode, your reply MUST be a single `submit_decision` tool call:
   "should_exit_active": false,  // see exit threshold below
   "at_user_id": "12345",  // optional; the ONLY way to @ — a specific recent speaker's user_id
   "pin_anchor": true,     // optional; commission judgement turns only — pin this task into <pinned_tasks>
-  "release_anchor": "all"  // optional; commissioner user_id or "all", see task anchors below
+  "release_anchor": "all",  // optional; commissioner user_id or "all", see task anchors below
+  "background_task": "调研 XX"  // optional; note for work you just dispatched to background —
+                                // on completion the system wakes you and echoes this note
 }
 ```
 

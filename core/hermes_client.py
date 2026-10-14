@@ -107,6 +107,9 @@ _DECISION_HINT = (
     "current request into <pinned_tasks>; omit/false for jokes or one-off chatter)\n"
     "  release_anchor (string, optional — commissioner user_id or \"all\" to unpin "
     "finished task anchors from <pinned_tasks>)\n"
+    "  background_task (string, optional — a one-line note when you just dispatched "
+    "background work (subagent/background process); on completion the system wakes "
+    "you and echoes the note. Omit when nothing is running)\n"
     "Output ONLY the JSON object, no preamble, no postscript, no markdown fences.\n"
     "All string values MUST be single-line; escape line breaks inside strings as \\n (no raw newlines)."
 )
@@ -771,6 +774,13 @@ class RunsEventParser:
             self.terminal = True
             return None
         if event == "run.cancelled":
+            self.interrupted = True
+            self.terminal = True
+            return None
+        if event == "run.interrupted":
+            # 2026-10-13 审核修复(低危⑨): 网关关停/owner 失联会把 run 打成
+            # interrupted,终态集与网关 TERMINAL_STATUSES 对齐,别落成「事件流提前
+            # 关闭」的传输错误文案——按取消同语义硬静默处理。
             self.interrupted = True
             self.terminal = True
             return None
