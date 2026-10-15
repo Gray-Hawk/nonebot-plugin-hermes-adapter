@@ -5,6 +5,7 @@
 """
 
 from nonebot import get_plugin_config
+from pathlib import Path
 from pydantic import BaseModel, Field
 
 
@@ -288,12 +289,19 @@ class Config(BaseModel):
     # --- 定制定居目录(2026-10-13 维护者拍板:单目录 N 文件,防 .env 键膨胀) ---
 
     hermes_custom_dir: str = ""
-    """定制定居目录(本部署新增)。空 = 全部功能用内置默认。
-    目录内按约定文件名发现各类自定义,现读现用:
-      - feedback_rules.json  分级反馈规则(见 core/feedback_rules.py 的格式说明)
-    以后新增自定义类型只加约定文件名,不再加 .env 键。
-    目录不存在/某文件缺失 → 对应功能回退内置并 WARN,不影响其余。
-    存量独立文件键(如 hermes_help_menu_file)维持原样不迁移,两者无交互。"""
+    """定制定居目录。空 = 默认用 localstore 插件数据目录（2026-10-14 维护者定稿：
+    正式功能默认开启，与 messages.db 同目录，开箱即用；「选配 DIY 才手动配」的
+    旧语义仅限 help 菜单那种边角功能，不适用于此）；显式配置 = 覆盖到指定路径。
+    目录内按约定文件名发现各类自定义，现读现用：
+      - feedback_rules.json  分级反馈规则（见 core/feedback_rules.py 的格式说明）
+      - memory/<适配器>/groups/<群号>.md、people/<QQ号>.md  群档案（见 core/group_profile.py）
+    以后新增自定义类型只加约定文件名，不再加 .env 键。
+    某文件缺失 → 对应功能回退内置/静默跳过，不影响其余。
+    存量独立文件键（如 hermes_help_menu_file）维持原样不迁移，两者无交互。"""
+
+    hermes_group_profile_enabled: bool = True
+    """群档案（群记忆外挂）开关（2026-10-14 维护者定稿），缺省开。
+    false = 群档案注入静默关闭；其余定制功能（feedback_rules 等）不受影响。"""
 
     # --- 黑名单(本部署补丁:凌晨批项3,维护者拍板) ---
 
@@ -421,28 +429,20 @@ class Config(BaseModel):
     """单图总尝试次数(1=不重试,2=一次重试,以此类推)"""
 
     hermes_image_inline_enabled: bool = True
-    """当前轮图片是否内联成 data: URL 后再发给 Hermes。
-
-    关掉会退回直发平台图片 URL —— 上游对 URL 是纯透传,由 provider 自行抓取,
-    因而受制于 URL 时效与对端出网能力,且部分 provider 形态会静默丢图。
-    仅在需要与旧行为对照时临时关闭。
-    """
+    """[已废弃 2026-10-15] 三模式改造后由 media_config.yaml 的 mode 接管,
+    本键不再被读取,仅保留以免旧 .env 报错。删除前请确认已迁移。"""
 
     hermes_image_inline_max_edge: int = 1280
-    """内联前下采样的最长边像素。超过才缩,小图不放大"""
+    """[已废弃 2026-10-15] 由 media_config.yaml 的 inline.ladder 接管。"""
 
     hermes_image_inline_quality: int = 82
-    """内联重编码的 JPEG 质量"""
+    """[已废弃 2026-10-15] 由 media_config.yaml 的 inline.ladder 接管。"""
 
     hermes_image_inline_max_bytes: int = 2_000_000
-    """单图重编码后的字节上限。降质阶梯走完仍超出则丢弃该图"""
+    """[已废弃 2026-10-15] 由 media_config.yaml 的 inline.max_bytes 接管。"""
 
     hermes_image_inline_total_max_bytes: int = 4_000_000
-    """单轮内联图片的总字节预算。
-
-    上游请求体有硬上限且要与文本历史共享,这里留出余量;超出预算的图片被丢弃
-    而非撑爆整个请求 —— 少一张图仍能答话,请求被拒则整轮失败。
-    """
+    """[已废弃 2026-10-15] 三模式改造后无总量预算(只有单图 cap),本键不再被读取。"""
 
     hermes_sticker_vision_enabled: bool = False
     """用户收藏/自定义表情(OneBot image sub_type=1，alconna Image.sticker=True)是否抓字节内联喂给模型。
@@ -487,3 +487,29 @@ class Config(BaseModel):
 
 
 plugin_config = get_plugin_config(Config)
+
+
+def resolve_custom_dir() -> "Path | None":
+    """定制定居目录解析（2026-10-14 维护者定稿）。
+
+    显式配置 hermes_custom_dir → 指定路径；未配置（空串）→ localstore
+    插件数据目录（与 messages.db 同目录）。群档案的开关独立控制
+    （hermes_group_profile_enabled），不在此收口。
+    返回 None = 不可用，调用方按无定制处理（回退内置/静默跳过）。
+    """
+    raw = (plugin_config.hermes_custom_dir or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    try:
+        import nonebot_plugin_localstore as store
+
+        try:
+            # 正路：调用栈识别本插件（尊重 localstore_plugin_data_dir 重映射）。
+            return store.get_plugin_data_dir()
+        except Exception:
+            # 兜底：插件未经插件管理器加载（单测/脚本直 import）时调用栈识别
+            # 会抛 RuntimeError，退化为按名取 BASE_DATA_DIR/nonebot_plugin_hermes——
+            # 与正路默认解析结果一致，只是不吃重映射。
+            return store.get_data_dir("nonebot_plugin_hermes")
+    except Exception:
+        return None

@@ -11,6 +11,7 @@ import asyncio
 import re
 import time
 from contextlib import asynccontextmanager
+from collections.abc import Sequence
 
 import nonebot_plugin_alconna as alconna
 from nonebot import logger, on_message
@@ -24,6 +25,8 @@ from ..core.active_session import ActiveSession, AnchorRecord, Participant
 from ..core.approvals import add_pending as approvals_add_pending
 from ..core.approvals import admin_user_ids
 from ..core.approvals import notify_admins as approvals_notify_admins
+from ..core.group_profile import build_group_profile_block, sync_buddy_to_group
+from ..config import resolve_custom_dir
 from ..core.hermes_client import (
     ChatResult,
     extract_response_media,
@@ -31,7 +34,8 @@ from ..core.hermes_client import (
     maybe_extract_decision_reply_text,
     preview_raw,
 )
-from ..core.image_inline import inline_image_urls, inline_sticker_frames
+from ..core.image_inline import inline_gif_frames, inline_image_frames
+from ..core.media_config import MediaConfig, load_media_config
 from ..core.inflight import PendingEntry
 from ..core.message_buffer import BufferedMessage
 from ..core.run_tracker import make_scope_key
@@ -601,6 +605,59 @@ async def _extract_sticker_urls(uni_msg: alconna.UniMessage, bot: Bot, adapter_n
             urls.append(url)
     return urls
 
+# 本部署补丁(图片投送管线三模式): 取代 2026-09-29 修改3 的
+# addressed 单点门控。设计与参数定案见 项目文档库。
+def _collect_inline_image_urls(
+    media_cfg: MediaConfig,
+    *,
+    window_msgs: Sequence[BufferedMessage],
+    current_image_urls: Sequence[str],
+    current_user_id: str,
+    addressed_to_bot: bool,
+    self_id: str,
+) -> list[str]:
+    """按三模式收集本轮待内联的图片 URL(旧→新序;URL 级去重在编码入口做)。
+
+    - off: 全占位符,返回 [](例外名单不生效,统统不内联)。
+    - full: window_msgs(**增量窗口**,新→旧序)内所有图 + 当前消息图。
+    - semi: 以最新消息为锚的前后窗口(window_msgs 是新→旧序,开头即当前消息
+      紧邻段)内**存在 @bot**(当前消息 addressed 即满足;其余消息看 content
+      里 `@<self_id>` 字面——self_id 运行时传入,不锚定任何平台账号格式)
+      才内联窗口内图 + 当前消息图。
+    - 例外名单:条目为 off 的发言者其图永不内联(仍可被 get_message_images 拉图)。
+    """
+    if media_cfg.mode == "off":
+        return []
+
+    def _exempt(uid: str) -> bool:
+        return media_cfg.exemption_for(uid) == "off"
+
+    out: list[str] = []
+    window_hit = False
+    if media_cfg.mode == "full":
+        # 新→旧序收集后反转:图 parts 按旧→新排,与 recent_messages 渲染序一致
+        for m in reversed(window_msgs):
+            if not _exempt(m.user_id):
+                out.extend(m.image_urls)
+        window_hit = True
+    elif media_cfg.mode == "semi":
+        n = media_cfg.semi_window
+        # window_msgs 新→旧序:开头 2N+1 条=当前消息及其前后窗口(当前消息未入库时
+        # 为紧邻的前 N 条,多出的后 N 条近似无害——窗口只为判定与取图)。
+        window = list(window_msgs[: 2 * n + 1]) if n > 0 else []
+        window_hit = addressed_to_bot or any(f"@{self_id}" in (m.content or "") for m in window)
+        if window_hit:
+            for m in reversed(window):
+                if not _exempt(m.user_id):
+                    out.extend(m.image_urls)
+    # 当前消息的图:full 恒收;semi 窗口命中(含当前消息 addressed)时收;
+    # 窗口未命中且未 addressed 则不收(没让 bot 看,图留占位符——可拉图)。
+    if not _exempt(current_user_id) and (media_cfg.mode == "full" or window_hit):
+        for u in current_image_urls:
+            if u not in out:
+                out.append(u)
+    return out
+
 
 def _collect_nontext_placeholders(uni_msg: alconna.UniMessage) -> list[str]:
     """扫描非文本/普通图段,返回占位文本列表 (顺序近似按段类型聚合)。
@@ -989,6 +1046,10 @@ async def handle_perception(bot: Bot, event: Event):
                 forward_content=_forward_full_for_store(forward_full),
             )
         )
+
+    # 2026-10-15 补丁：发言者已有画像但不在群友行时，自动补进群友行
+    if group_id:
+        sync_buddy_to_group(adapter_name, group_id, user_id)
 
     # 写 BotRegistry
     scope = "private" if target.private else "group"
@@ -1723,20 +1784,43 @@ async def _run_passive_turn(
     # (全隐式化:私聊不再「硬必回」,模型按私聊版协议自决,无实质内容可静默)。
     # 群聊 passive(active_session=off 的旧部署形态)维持 raw_text 直发不动。
     use_private_decision = is_private
+    # 2026-10-15 补丁:计算记忆根路径,用于路由提示动态跟随配置
+    _custom_dir = resolve_custom_dir()
+    _memory_root = str(_custom_dir / "memory" / adapter_name) if _custom_dir else None
     system_prompt = build_passive_system_prompt(
         adapter=adapter_name,
         is_private=is_private,
         user_id=user_id,
         group_id=group_id,
         private_decision=use_private_decision,
+        # 群记忆外挂:群档案注入块(私聊 group_id=None 内部静默跳过)
+        profile_block=build_group_profile_block(adapter_name, group_id),
+        # 2026-10-15 补丁:传入功能开关,私聊时启用则注入简化版路由提示
+        group_profile_enabled=plugin_config.hermes_group_profile_enabled,
+        memory_root=_memory_root,
     )
     # 图片内联成 data: URL 再出站:上游对 http(s) URL 是纯透传,交出去就把可达性
     # 赌在 provider 出网与 URL 时效上,且部分 provider 形态会静默丢图。
-    inlined = await inline_image_urls(image_urls)
+    # 2026-10-15 三模式改造:私聊维持无条件内联;群聊 passive 与 reactive 同走
+    # media_config 三模式(窗口=recent;passive 无 addressed 概念,按 True 传——
+    # 群聊 passive 只在显式触发时被调用,等价于已被 @)。
+    media_cfg = load_media_config()
+    if is_private:
+        inline_urls = list(image_urls)
+    else:
+        inline_urls = _collect_inline_image_urls(
+            media_cfg,
+            window_msgs=recent,
+            current_image_urls=image_urls,
+            current_user_id=user_id,
+            addressed_to_bot=True,
+            self_id=str(bot.self_id),
+        )
+    inlined = await inline_image_frames(inline_urls, cfg=media_cfg) if inline_urls else []
     # 2026-10-13 动图抽帧:表情走专用通道,返回帧组(动图多帧/静态单帧),
-    # 帧组结构自配对防张冠李戴(见 image_inline.inline_sticker_frames docstring)。
+    # 帧组结构自配对防张冠李戴(见 image_inline.inline_gif_frames docstring)。
     sticker_inlined = (
-        await inline_sticker_frames(sticker_urls or [])
+        await inline_gif_frames(sticker_urls or [], cfg=media_cfg)
         if plugin_config.hermes_sticker_vision_enabled
         else []
     )
@@ -1996,7 +2080,25 @@ async def _run_reactive_turn(
     watermark = session_manager.get_push_watermark(adapter_name, user_id, group_id)
     recent, new_watermark = split_unpushed_messages(recent_full, watermark)
 
-    system_prompt = build_reactive_system_prompt()
+    # 平台账号名 + self_id 一起进 prompt:模型判归属只能靠这两样把消息里回填的
+    # 裸 `@<id>` 和 [bot] 历史行绑回自己。取值走进程内缓存,首轮一次 RPC。
+    self_nickname = await get_bot_nickname(bot)
+
+    # 2026-10-15 补丁:计算记忆根路径,用于路由提示动态跟随配置
+    _custom_dir = resolve_custom_dir()
+    _memory_root = str(_custom_dir / "memory" / adapter_name) if _custom_dir else None
+    system_prompt = build_reactive_system_prompt(
+        # 群记忆外挂:群档案注入块(私聊/无档案返回 None,函数内静默跳过)
+        profile_block=build_group_profile_block(adapter_name, group_id),
+        # 2026-10-15 补丁:传入功能开关,私聊时启用则注入简化版路由提示
+        group_profile_enabled=plugin_config.hermes_group_profile_enabled,
+        memory_root=_memory_root,
+        # 2026-10-15 补丁:会话上下文挪入系统提示,吃缓存
+        adapter=adapter_name,
+        group_id=group_id,
+        self_id=str(bot.self_id),
+        self_nickname=self_nickname,
+    )
     # 本部署补丁(凌晨批项3): 黑名单标记进 runtime_state。
     # 在 turn 内按 (group_id, user_id) 重算而非从 handler 透传——refire/pending
     # 接力链不用为此加字段。
@@ -2016,34 +2118,32 @@ async def _run_reactive_turn(
             )
             if not (a.ts == now_ms and a.commissioner_id == user_id)
         ]
-    # 平台账号名 + self_id 一起进 prompt:模型判归属只能靠这两样把消息里回填的
-    # 裸 `@<id>` 和 [bot] 历史行绑回自己。取值走进程内缓存,首轮一次 RPC。
-    self_nickname = await get_bot_nickname(bot)
     # 见 _run_passive_turn 同名调用注释:出站一律内联,不发平台 URL。
-    # 本部署补丁: 图片内联按 addressed_to_bot 门控——
-    # 只有真 @bot/引用 bot/唤起词 的消息才抓图内联;其余群消息只留 [图片] 占位符,
-    # 模型需要时自行用 get_message_images 按 m:id 拉字节,省多模态 token。
-    # 门控不能用 is_explicit_trigger:trigger=all 下它恒真(L867),or 上去等于没门控。
-    # 插件升级会冲掉此改动,详见 项目文档库。
+    # 本部署补丁(图片投送管线三模式): 取代 9-29 addressed
+    # 单点门控,三模式(full/semi/off)+例外名单由 media_config.yaml 现读现用。
+    # 判定逻辑收口在 _collect_inline_image_urls;内联走帧组(静图单帧,动图抽帧)。
+    media_cfg = load_media_config()
     sticker_inlined = (
-        await inline_sticker_frames(sticker_urls or [])
+        await inline_gif_frames(sticker_urls or [], cfg=media_cfg)
         if plugin_config.hermes_sticker_vision_enabled
         else []
     )
-    if addressed_to_bot:
-        inlined = await inline_image_urls(image_urls)
-    else:
-        inlined = []
-        # 文本+图的消息 text 里原本没有 [图片] 标记(占位符只在 perception buffer 和
-        # 纯图兜底里加),不内联时必须补一个,否则模型不知道这张图的存在。
-        # 纯图消息 text 为空,下游 current_text=text or "[图片]" 兜底,这里幂等。
-        if image_urls and "[图片]" not in text:
-            text = (text + " [图片]").strip() if text else "[图片]"
-    user_content = build_reactive_user_content(
-        adapter=adapter_name,
-        group_id=group_id,
+    inline_urls = _collect_inline_image_urls(
+        media_cfg,
+        # full 用增量窗口(recent=未推送过的新消息,其图从未进过视野);
+        # semi 用全量窗口(recent_full,判定前后文需要看到已推送的紧邻消息)
+        window_msgs=recent if media_cfg.mode == "full" else recent_full,
+        current_image_urls=image_urls,
+        current_user_id=user_id,
+        addressed_to_bot=addressed_to_bot,
         self_id=str(bot.self_id),
-        self_nickname=self_nickname,
+    )
+    inlined_frames = await inline_image_frames(inline_urls, cfg=media_cfg) if inline_urls else []
+    if image_urls and not inlined_frames and "[图片]" not in text:
+        # 当前消息带图但未内联(模式 off/semi 窗口无 @/例外名单):必须补占位符,
+        # 否则模型不知道图存在。纯图消息 text 为空,下游 current_text 兜底,这里幂等。
+        text = (text + " [图片]").strip() if text else "[图片]"
+    user_content = build_reactive_user_content(
         addressed_to_bot=addressed_to_bot,
         triggered_by=session.triggered_by,
         triggered_by_nickname=None,
@@ -2052,7 +2152,7 @@ async def _run_reactive_turn(
         current_user_id=user_id,
         current_nickname=nickname or user_id,
         current_text=text or "[图片]",
-        current_image_urls=inlined,
+        current_image_urls=inlined_frames,
         current_sticker_urls=sticker_inlined,
         sender_blacklisted=sender_blacklisted,
         pinned_anchors=pinned_anchors,
@@ -2072,7 +2172,7 @@ async def _run_reactive_turn(
     logger.debug(
         f"[HERMES reactive] prompt built group={group_id} user_content_chars={prompt_chars} "
         f"window={len(recent)}/{len(recent_full)} explicit={is_explicit_trigger} "
-        f"imgs={len(inlined)}/{len(image_urls)}"
+        f"mode={media_cfg.mode} imgs={len(inlined_frames)}/{len(image_urls)}"
     )
     if oversized:
         logger.warning(

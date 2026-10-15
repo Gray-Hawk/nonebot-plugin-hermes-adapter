@@ -164,9 +164,13 @@ _DECISION_PROTOCOL_BLOCK = (
     "    [m:X] 历史项不代表「在等你解读」,只在以下三种情况才去看/拉那张图——\n"
     "    (1) 当前消息字面指代它(「这张图」「刚那张」「第N张」+ 上下文锁定);\n"
     "    (2) 当前消息 reply/quote 到了 [m:X] 这一项;\n"
-    "    (3) 当前消息明确 @ 你且要求解读\n"
+    "    (3) 当前消息明确 @ 你且要求解读,或 @ 你且紧邻前文有 [图片] 占位\n"
     "    其它情况一律不要主动调 get_message_images 把字节拉回来,\n"
     "    没人点名的图不属于你这一发的发言对象\n"
+    "  - [图片]/[表情包] 占位符 = 你没看到那张图的任何内容:禁止描述、评论、\n"
+    "    脑补其画面(连「看着不错」这种泛泛评论也不行);需要内容就走上面三条去拉,\n"
+    "    拉不到就直说看不到\n"
+    "  - 指代不明(确定不了用户说的是哪张图)时,可以把相邻几张都拉下来确认再答\n"
     "\n"
     "你自己的身份:runtime_state.you 是你在本平台的账号(格式同 speaker 标签)。\n"
     "  - 消息里出现 `@<你的 id>` 就是在 @ 你 —— 那串数字看着陌生也是你,\n"
@@ -220,41 +224,114 @@ _STICKER_MOOD_NOTE = (
     "「表情包 第i/N帧」是同一动图按时间顺序抽出的连续帧，合起来理解为一个表情。"
 )
 
+# 本部署补丁: 群档案启用时的记忆写入路由提示。
+# 路径根需动态跟随 hermes_custom_dir 配置，不能写死。
+def _build_group_profile_routing_note(memory_root: str) -> str:
+    """群聊版路由提示：三层落点，路径根动态跟随配置。"""
+    return (
+        "【群记忆写入路由】本群档案已启用，写入时按内容性质选落点：\n"
+        f"- 群层面的事（群规、生态、bot 名单、群梗、群友昵称变动）→ write_file 写 {memory_root}/groups/<群号>.md\n"
+        f"- 个人画像（外貌、性格、与我的互动约定）→ write_file 写 {memory_root}/people/<QQ号>.md\n"
+        "- 主人的通用偏好、跨场景技术/环境事实 → memory 工具写全局库"
+    )
 
-def build_reactive_system_prompt() -> str:
-    """reactive 路径的 system prompt:纯 decision_protocol 协议块。
+
+def _build_private_profile_routing_note(memory_root: str) -> str:
+    """私聊版路由提示：两层落点（无群层面），路径根动态跟随配置。"""
+    return (
+        "【记忆写入路由】写入时按内容性质选落点：\n"
+        f"- 个人画像（外貌、性格、与我的互动约定）→ write_file 写 {memory_root}/people/<QQ号>.md\n"
+        "- 主人的通用偏好、跨场景技术/环境事实 → memory 工具写全局库"
+    )
+
+
+def _render_session_context(
+    *,
+    adapter: str,
+    group_id: str | None,
+    self_id: str,
+    self_nickname: str | None,
+) -> str:
+    """会话上下文块:会话级稳定信息,放系统提示吃缓存。
+
+    2026-10-15 维护者立项:把 adapter/group_id/self 从 per-turn 的 runtime_state
+    挪到系统提示,让 user content 只保留真正每轮变化的字段。
+    私聊 group_id=None 时省略该行。
+    """
+    lines = ["<session_context>", f"adapter: {adapter}"]
+    if group_id:
+        lines.append(f"group_id: {group_id}")
+    if self_id:
+        lines.append(f"you: {_format_speaker_tag(self_nickname, self_id)}")
+    lines.append("</session_context>")
+    return "\n".join(lines)
+
+
+def build_reactive_system_prompt(
+    *,
+    profile_block: str | None = None,
+    group_profile_enabled: bool = False,
+    memory_root: str | None = None,
+    adapter: str | None = None,
+    group_id: str | None = None,
+    self_id: str | None = None,
+    self_nickname: str | None = None,
+) -> str:
+    """reactive 路径的 system prompt:decision_protocol + 会话上下文 + 路由提示 + 群档案。
 
     runtime_state(triggered_by / topic_hint 等 per-turn 变化字段)已搬到 user content
     顶端(见 build_reactive_user_content),system 在 turn 间字节稳定,有利于 LLM
     前缀缓存延伸到后续的会话历史段。
+
+    profile_block(群记忆外挂,2026-10-14 定稿):群档案注入块,拼在协议块末尾。
+    块内容按群字节稳定(静态文件,仅编辑时变化);挂上后 reactive system 按群分叉,
+    前缀缓存随之按群分裂(预期行为,定稿三.10)。
+    2026-10-15 补丁:群档案功能启用时注入记忆写入路由提示。群聊用完整版(三层),
+    私聊用简化版(两层,无群层面);功能关闭时不注入。路径根动态跟随 hermes_custom_dir。
+    2026-10-15 补丁:会话上下文(adapter/group_id/self)挪入系统提示,吃缓存。
     """
-    return _DECISION_PROTOCOL_BLOCK
+    parts = [_DECISION_PROTOCOL_BLOCK]
+
+    # 会话上下文:稳定信息放路由提示附近,吃缓存
+    if adapter and self_id:
+        parts.append(_render_session_context(
+            adapter=adapter,
+            group_id=group_id,
+            self_id=self_id,
+            self_nickname=self_nickname,
+        ))
+
+    # 记忆写入路由提示
+    if profile_block and memory_root:
+        parts.append(_build_group_profile_routing_note(memory_root))
+    elif group_profile_enabled and memory_root:
+        parts.append(_build_private_profile_routing_note(memory_root))
+
+    # 群档案放最后(按群变,不影响前面缓存)
+    if profile_block:
+        parts.append(profile_block)
+
+    return "\n\n".join(parts)
 
 
 def _render_runtime_state(
     *,
-    adapter: str,
-    group_id: str,
-    self_id: str,
-    self_nickname: str | None,
     addressed_to_bot: bool,
     triggered_by: str,
     triggered_by_nickname: str | None,
     topic_hint: str | None,
     sender_blacklisted: bool = False,
 ) -> str:
+    """渲染 <runtime_state> 块:只保留每轮变化的字段。
+
+    2026-10-15 维护者立项:adapter/group_id/self 等会话级稳定信息已挪到系统提示
+    (见 _render_session_context),这里只保留 per-turn 变化的字段。
+    """
     nick = f" ({triggered_by_nickname})" if triggered_by_nickname else ""
     lines = [
         "<runtime_state>",
         "mode: reactive",
-        f"adapter: {adapter}",
-        f"group_id: {group_id}",
     ]
-    # `you` 是模型判「这条是不是冲我说的」的唯一锚点:At 段在 plain text 里回填成
-    # 裸 `@<id>`,persona/记忆侧通常只写了维护者的 id,不写这行模型就只能把自己的 id
-    # 当陌生账号,把 @ 自己判成 @ 别人。用 speaker 标签同一格式,好和 @、[bot] 行对齐。
-    if self_id:
-        lines.append(f"you: {_format_speaker_tag(self_nickname, self_id)}")
     # 寻址是插件手里的事实(真 @ / 唤起词 / 私聊),不该让模型从裸 `@<id>` 去猜。
     # 只在为真时渲染:缺这行 = 「归属未知,自己判」,不是「确定不是冲你说的」。
     if addressed_to_bot:
@@ -395,6 +472,9 @@ def build_passive_system_prompt(
     user_id: str,
     group_id: str | None,
     private_decision: bool = False,
+    profile_block: str | None = None,
+    group_profile_enabled: bool = False,
+    memory_root: str | None = None,
 ) -> str:
     """passive 路径的 system prompt:仅 Message Context 头。
 
@@ -416,6 +496,18 @@ def build_passive_system_prompt(
     head = "Message Context:\n" + "\n".join(ctx_lines)
     if private_decision:
         head += "\n\n" + _PRIVATE_DECISION_PROTOCOL_BLOCK
+    # 群记忆外挂(2026-10-14 定稿):群档案块拼在最末,字节稳定 per 群。
+    # 2026-10-15 补丁:群档案功能启用时注入记忆写入路由提示。群聊用完整版(三层),
+    # 私聊用简化版(两层,无群层面);功能关闭时不注入。路径根动态跟随 hermes_custom_dir。
+    if profile_block and memory_root:
+        # 路由提示放群档案前面:路由内容固定吃缓存,群档案按群变放最后
+        head += _build_group_profile_routing_note(memory_root) + "\n\n" + profile_block
+    elif profile_block:
+        # 有群档案但无 memory_root(测试场景):保持原样拼接
+        head += "\n\n" + profile_block
+    elif group_profile_enabled and is_private and memory_root:
+        # 私聊:功能启用但无群档案,注入简化版路由(无群层面)
+        head += _build_private_profile_routing_note(memory_root)
     return head
 
 
@@ -448,10 +540,6 @@ def _render_pinned_tasks_block(anchors: Sequence[Any], *, now_ms: int) -> str:
 
 def build_reactive_user_content(
     *,
-    adapter: str,
-    group_id: str,
-    self_id: str,
-    self_nickname: str | None,
     addressed_to_bot: bool,
     triggered_by: str,
     triggered_by_nickname: str | None,
@@ -460,7 +548,7 @@ def build_reactive_user_content(
     current_user_id: str,
     current_nickname: str | None,
     current_text: str,
-    current_image_urls: Sequence[str],
+    current_image_urls: Sequence[Sequence[str]],
     current_sticker_urls: Sequence[Sequence[str]] = (),
     sender_blacklisted: bool = False,
     pinned_anchors: Sequence[Any] = (),
@@ -469,16 +557,12 @@ def build_reactive_user_content(
 ) -> UserContent:
     """reactive user content: <runtime_state> + [pinned_tasks] + <recent_messages> + <current_message>。
 
-    runtime_state 从 system 搬到 user content 顶端,system 端只剩 byte-stable 的
-    decision_protocol。per-turn 变化字段(triggered_by/topic_hint)集中在 user 这一侧。
+    runtime_state 只保留 per-turn 变化字段(triggered_by/topic_hint/addressed_to_bot等);
+    会话级稳定信息(adapter/group_id/self)已挪到系统提示(见 _render_session_context)。
     pinned_anchors(凌晨批项4):在钉的委托锚,非空时渲染独立 <pinned_tasks> 块,
     不参与 recent_messages 的裁剪。
     """
     runtime_block = _render_runtime_state(
-        adapter=adapter,
-        group_id=group_id,
-        self_id=self_id,
-        self_nickname=self_nickname,
         addressed_to_bot=addressed_to_bot,
         triggered_by=triggered_by,
         triggered_by_nickname=triggered_by_nickname,
@@ -516,30 +600,14 @@ def build_reactive_user_content(
     if not current_image_urls and not sticker_groups:
         return text_block
 
-    parts: list[dict[str, Any]] = [{"type": "text", "text": text_block}]
-    for u in current_image_urls:
-        parts.append({"type": "image_url", "image_url": {"url": u}})
-    # 表情包与普通图片分开标注:占位文本里已有 [表情包],这里在图片前再补一个
-    # 近端标签,避免多图时把 sticker 和正常照片/截图混成同一语义。
-    # 2026-10-13 动图抽帧:帧组结构自配对——一张表情的所有帧装在同一组,
-    # 标签按组内位置生成([表情包 第i/N帧]),跨表情结构性不可能张冠李戴。
-    for frames in sticker_groups:
-        if len(frames) == 1:
-            parts.append({"type": "text", "text": "[表情包]"})
-            parts.append({"type": "image_url", "image_url": {"url": frames[0]}})
-        else:
-            n = len(frames)
-            for i, u in enumerate(frames):
-                parts.append({"type": "text", "text": f"[表情包 第{i + 1}/{n}帧,同一动图按时间顺序]"})
-                parts.append({"type": "image_url", "image_url": {"url": u}})
-    return parts
+    return _assemble_media_parts(text_block, current_image_urls, sticker_groups)
 
 
 def build_passive_user_content(
     *,
     recent_messages: Sequence[BufferedMessage],
     current_text: str,
-    current_image_urls: Sequence[str],
+    current_image_urls: Sequence[Sequence[str]],
     current_sticker_urls: Sequence[Sequence[str]] = (),
     plugin_note: str | None = None,
 ) -> UserContent:
@@ -562,10 +630,40 @@ def build_passive_user_content(
     if not current_image_urls and not sticker_groups:
         return text_block
 
+    return _assemble_media_parts(text_block, current_image_urls, sticker_groups)
+
+
+def _assemble_media_parts(
+    text_block: str,
+    image_groups: Sequence[Sequence[str]],
+    sticker_groups: Sequence[Sequence[str]],
+) -> list[dict[str, Any]]:
+    """文本块 + 普通图帧组 + 表情帧组 → 多模态 parts。
+
+    2026-10-15 帧组化(图片投送管线三模式):普通图片与表情统一帧组结构
+    (静图单帧,动图抽帧组)。帧组结构自配对防张冠李戴:一张图的所有帧装同一组,
+    标签按组内位置生成,跨图不可能错位。
+    - 普通图单帧:无标签直挂(与旧形态一致)
+    - 普通图多帧(动图):[动图 第i/N帧,同一动图按时间顺序]
+    - 表情:[表情包] / [表情包 第i/N帧,...]——占位文本里已有 [表情包],
+      近端再补标签,避免多图时与照片/截图混成同一语义
+    """
     parts: list[dict[str, Any]] = [{"type": "text", "text": text_block}]
-    for u in current_image_urls:
-        parts.append({"type": "image_url", "image_url": {"url": u}})
+    for frames in image_groups:
+        frames = [f for f in frames if f]
+        if not frames:
+            continue
+        if len(frames) == 1:
+            parts.append({"type": "image_url", "image_url": {"url": frames[0]}})
+        else:
+            n = len(frames)
+            for i, u in enumerate(frames):
+                parts.append({"type": "text", "text": f"[动图 第{i + 1}/{n}帧,同一动图按时间顺序]"})
+                parts.append({"type": "image_url", "image_url": {"url": u}})
     for frames in sticker_groups:
+        frames = [f for f in frames if f]
+        if not frames:
+            continue
         if len(frames) == 1:
             parts.append({"type": "text", "text": "[表情包]"})
             parts.append({"type": "image_url", "image_url": {"url": frames[0]}})

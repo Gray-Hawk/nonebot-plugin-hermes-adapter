@@ -83,9 +83,12 @@ Each per-image result has `available: true|false`. When unavailable, `reason` is
   evicted from the local cache; tell the user the image is gone, request a resend
 - `not_found` — the message_id is not in the DB anymore (past 30-day retention or
   hard row cap)
-- `too_large` — image exceeds 5 MB; ask user for a smaller version
-- `cap_exceeded` — your call totaled more than 25 MB or hit the per-call cap; retry
-  with fewer ids
+- `compress_failed` — image exceeded the fetch size gate and both compression ladder
+  steps still overshot; ask the user to send a smaller/compressed version
+- `cap_exceeded` — your call totaled more than 25 MB; retry with fewer ids
+
+Oversized images are compressed automatically (fetch ladder); animated images return
+multiple frames (up to the configured fetch frame cap) with per-frame markers.
 
 ## Output contract (reactive)
 

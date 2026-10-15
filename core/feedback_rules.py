@@ -1,7 +1,8 @@
 """分级反馈规则引擎(2026-10-13,维护者定案:规则文件化,可自定义)。
 
-规则来源:`hermes_custom_dir` 目录下的 `feedback_rules.json`,现读现用(保存即生效)。
-文件缺失/解析失败/规则为空 → 回退内置默认两条并 WARN(每进程只 WARN 一次)。
+规则来源:定制定居目录下的 `feedback_rules.json`,现读现用(保存即生效)。
+目录缺省=localstore 插件数据目录(2026-10-14 定稿);文件缺失/解析失败/规则为空
+→ 回退内置默认两条并 WARN(每进程只 WARN 一次)。
 
 文件格式(带版本号,未来顶层加 key 不炸旧文件):
 ```json
@@ -38,7 +39,7 @@ from pathlib import Path
 
 from nonebot import logger
 
-from ..config import plugin_config
+from ..config import resolve_custom_dir
 
 
 @dataclass
@@ -97,8 +98,8 @@ def _parse_rule(raw: dict) -> FeedbackRule | None:
 def load_rules() -> list[FeedbackRule]:
     """加载反馈规则。文件缺失/坏档/空规则 → 内置默认。现读现用,无缓存。"""
     global _warned
-    custom_dir = (plugin_config.hermes_custom_dir or "").strip()
-    path = Path(custom_dir).expanduser() / "feedback_rules.json" if custom_dir else None
+    custom_dir = resolve_custom_dir()
+    path = custom_dir / "feedback_rules.json" if custom_dir else None
     if path is None or not path.is_file():
         return _load_builtin()
 
