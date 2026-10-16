@@ -35,6 +35,9 @@ _DEFAULT_FETCH_GATE_BYTES = 2_000_000
 _DEFAULT_FETCH_LADDER: tuple[tuple[int, int], ...] = ((4096, 95), (4096, 70))
 _DEFAULT_FETCH_GIF_MAX_FRAMES = 10
 _DEFAULT_STICKER_GATE_BYTES = 200_000
+_DEFAULT_FORWARD_IMAGE_CAP = 30
+"""单条消息合并转发图的注册上限(2026-10-15 定案):超出截断 + WARN,按内容去重。
+转发图只注册发号、按需拉图,恒不内联(见规划书 §5 Q3 / §8)。"""
 
 _VALID_MODES = ("full", "semi", "off")
 
@@ -61,6 +64,8 @@ class MediaConfig:
     """拉图动图抽帧上限。"""
     sticker_gate_bytes: int = _DEFAULT_STICKER_GATE_BYTES
     """表情门控：不超过直出，超过强制走 fetch 梯度压缩（防巨型表情连发压预算）。"""
+    forward_image_cap: int = _DEFAULT_FORWARD_IMAGE_CAP
+    """单条消息合并转发图的注册上限。超出截断（按内容去重）+ WARN。转发图恒不内联。"""
     exemptions: dict[str, str] = field(default_factory=dict)
     """例外名单：用户 id → "off"(永不内联,可拉图) / "semi" / "full"。全局生效。"""
 
@@ -158,5 +163,6 @@ def load_media_config() -> MediaConfig:
         fetch_ladder=_parse_ladder(doc.get("fetch", {}).get("ladder") if isinstance(doc.get("fetch"), dict) else None, _DEFAULT_FETCH_LADDER, "fetch.ladder"),
         fetch_gif_max_frames=_int_field(doc, "fetch", "gif_max_frames", default=_DEFAULT_FETCH_GIF_MAX_FRAMES),
         sticker_gate_bytes=_int_field(doc, "sticker", "gate_bytes", default=_DEFAULT_STICKER_GATE_BYTES),
+        forward_image_cap=_int_field(doc, "forward_image_cap", default=_DEFAULT_FORWARD_IMAGE_CAP),
         exemptions=_parse_exemptions(doc.get("exemptions")),
     )

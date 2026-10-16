@@ -280,12 +280,14 @@ async def _fetch_all(urls: Sequence[str]) -> dict[str, bytes]:
 
 async def inline_image_frames(
     urls: Sequence[str], *, cfg: MediaConfig | None = None
-) -> list[list[str]]:
-    """图片内联统一入口:每张图 → 帧组(静图单帧,动图抽帧组),按输入顺序。
+) -> list[tuple[str, list[str]]]:
+    """图片内联统一入口:每张图 → (源 url, 帧组),按输入顺序。静图单帧,动图抽帧组。
 
     - 压缩参数:cfg.inline_ladder / inline_max_bytes / inline_gif_max_frames
     - 抓取失败/解码失败/梯度全级超限的图整组缺席(调用方据缺席数补占位符)
     - 无总量预算(维护者 2026-10-15 定:只有单图上限)
+    - 返回携带源 url:调用方按 url 反查寻址标签(m:id#idx),URL 级去重丢的是重复
+      url,号随 url 走,天然不会错位(见规划书 §8)。url 去重在函数内部做。
     """
     if not urls:
         return []
@@ -314,18 +316,19 @@ async def inline_image_frames(
                 continue
             encoded_map[u] = res
 
-    return [encoded_map[u] for u in ordered if u in encoded_map]
+    return [(u, encoded_map[u]) for u in ordered if u in encoded_map]
 
 
 async def inline_gif_frames(
     urls: Sequence[str], *, cfg: MediaConfig | None = None, max_frames: int | None = None
-) -> list[list[str]]:
+) -> list[tuple[str, list[str]]]:
     """通用抽帧内联通道(原表情专用 inline_sticker_frames,2026-10-15 通用化改名)。
 
-    每张图 → 帧组(动图采样帧,静态单帧)。帧数上限:max_frames 入参优先,
+    每张图 → (源 url, 帧组)(动图采样帧,静态单帧)。帧数上限:max_frames 入参优先,
     否则 cfg.inline_gif_max_frames(内联档缺省 5;拉图档 10 由调用方传入)。
     固定走内联档压缩参数;表情大图的压缩档由调用方按门控选档后借道
-    encode_image_frames,不经本函数。
+    encode_image_frames,不经本函数。返回携带源 url,供调用方反查寻址标签
+    (与 inline_image_frames 同构,去重在函数内部)。
     """
     if not urls:
         return []
@@ -353,4 +356,4 @@ async def inline_gif_frames(
             if res:
                 encoded_map[u] = res
 
-    return [encoded_map[u] for u in ordered if u in encoded_map]
+    return [(u, encoded_map[u]) for u in ordered if u in encoded_map]

@@ -18,6 +18,7 @@ from pathlib import Path
 from nonebot import logger
 
 from ..config import plugin_config, resolve_custom_dir
+from . import identity as _identity
 
 # 路径段白名单：适配器名/群号/QQ 号只许这些字符，异常值按档案缺失处理（防穿出目录）。
 _VALID_SEGMENT = re.compile(r"^[0-9A-Za-z_-]+$")
@@ -70,7 +71,8 @@ def sync_buddy_to_group(adapter: str | None, group_id: str | None, user_id: str 
         if custom_dir is None:
             return False
         group_path, people_dir = _profile_paths(custom_dir, adapter, group_id)
-        people_file = people_dir / f"{user_id}.md"
+        # 身份表挂钩（2026-10-15）：merged 小号的画像归主档文件
+        people_file = people_dir / f"{_identity.resolve_people_id(custom_dir, adapter, user_id)}.md"
         if not people_file.exists():
             return False  # 无画像，不自动补
         group_text = _read_text(group_path)
@@ -149,8 +151,9 @@ def _build_block(
     if group_text is None:
         return tuple(signature), None
     buddies: list[tuple[str, str]] = []
+    # 身份表挂钩（2026-10-15）：merged 小号读主档画像文件
     for qq in _parse_buddy_ids(group_text):
-        p = people_dir / f"{qq}.md"
+        p = people_dir / f"{_identity.resolve_people_id(custom_dir, adapter, qq)}.md"
         signature.append((str(p), _mtime(p)))
         text = _read_text(p)
         if text is not None:  # 群友文件缺失：跳过该人，不炸（定稿五.4）

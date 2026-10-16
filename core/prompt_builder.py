@@ -18,25 +18,59 @@ passive 模式:
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from datetime import datetime
 from typing import Any
 
 from .hermes_client import UserContent
-from .message_buffer import BufferedMessage
+from .message_buffer import (
+    BufferedMessage,
+    media_kind_word,
+    media_label,
+    render_media_summary,
+)
 
 
-def _format_speaker_tag(nickname: str | None, user_id: str) -> str:
+_WEEKDAY_CN = "一二三四五六日"
+
+
+def _current_time_str() -> str:
+    """时间提示器(维护者 2026-10-15 点的小功能):给模型准确的时间概念
+    (判断消息新鲜度/锚龄/早晚安语境)。位置不限定尾部——reactive 进
+    runtime_state 块(per-turn 字段的天然归属,开头同样是注意力强位),
+    passive 在 user content 开头单行。两处都是每轮必变内容,不影响缓存。"""
+    now = datetime.now()
+    return f"{now:%Y-%m-%d} 周{_WEEKDAY_CN[now.weekday()]} {now:%H:%M}"
+
+
+def _sanitize_tag_text(text: str) -> str:
+    """标签内嵌文本的定界符加固：半角 ()[]: 全角化（同引用归属标签的 _label_safe
+    思路）——身份表正主名是人手维护的 CSV 字段，混入结构字符会伪造标签边界。"""
+    for half, full in (("(", "\uff08"), (")", "\uff09"), ("[", "\uff3b"),
+                       ("]", "\uff3d"), (":", "\uff1a")):
+        text = text.replace(half, full)
+    return text.strip()
+
+
+def _format_speaker_tag(nickname: str | None, user_id: str,
+                        canonical: str | None = None) -> str:
     """渲染对话行的 speaker 标签。
 
     - 有真实昵称(且不与 user_id 相同) → `[user=Nick id=ID]`,LLM 可用 ID
       去匹配 SOUL.md / 系统设定里的稳定身份信息(维护者、白名单等)。
     - 昵称缺失或退回成 user_id → `[user=ID]`,避免 `[user=12345 id=12345]`
       这种字段重复噪音。
+    - canonical(身份表正主名,2026-10-15) 与当前昵称不同 →
+      `[user=Nick(正主名) id=ID]`,换昵称/跨群/小号都认得出是同一人。
     """
     nick = (nickname or "").strip()
+    canon = _sanitize_tag_text(canonical) if canonical else ""
+    suffix = f"({canon})" if canon and canon != nick else ""
     if not nick or nick == user_id:
+        if canon:
+            return f"[user={canon} id={user_id}]"
         return f"[user={user_id}]"
-    return f"[user={nick} id={user_id}]"
+    return f"[user={nick}{suffix} id={user_id}]"
 
 
 # 字段名与 hermes_client._DECISION_HINT 和 ActiveSessionManager.update_topic 对齐,
@@ -344,6 +378,8 @@ def _render_runtime_state(
     lines.append(f"triggered_by: {triggered_by}{nick}")
     if topic_hint:
         lines.append(f"topic_hint: {topic_hint}")
+    # 时间提示器压块尾(维护者 2026-10-15 定):块头字段保持字节稳定。
+    lines.append(f"current_time: {_current_time_str()}")
     lines.append("</runtime_state>")
     return "\n".join(lines)
 
@@ -408,6 +444,7 @@ def _render_recent_messages_block(
     recent_messages: Sequence[BufferedMessage],
     *,
     incremental: bool = False,
+    name_resolver: "Callable[[str], str | None] | None" = None,
 ) -> str:
     """渲染 <recent_messages> 块。recent_messages: 新→旧顺序;在 prompt 内反转为旧→新。
 
@@ -433,14 +470,22 @@ def _render_recent_messages_block(
         lines.append("(本块仅含尚未推送过的新消息;更早的对话见本会话历史记录)")
     for m in reversed(msgs):
         bot_prefix = "[bot] " if m.is_bot else ""
-        speaker_tag = _format_speaker_tag(m.nickname, m.user_id)
+        speaker_tag = _format_speaker_tag(
+            m.nickname, m.user_id,
+            canonical=name_resolver(m.user_id) if name_resolver else None)
         id_prefix = f"[m:{m.id}] " if m.id is not None else ""
         if m is expand_target:
             content = _expand_forward_preview(m.content, m.forward_content or "")
             rendered = _sanitize_history_content(content, max_chars=_MAX_EXPANDED_FORWARD_LINE_CHARS)
         else:
             rendered = _sanitize_history_content(m.content)
-        lines.append(f"{id_prefix}{bot_prefix}{speaker_tag}: {rendered}")
+        line = f"{id_prefix}{bot_prefix}{speaker_tag}: {rendered}"
+        # 行尾追加紧凑媒体清单(带全局连续 idx,号即 message_images 地址,
+        # 供按号拉图/指认)。占位带号不代表该图已内联——豁免/未内联行同样带号。
+        media_summary = render_media_summary(m)
+        if media_summary:
+            line += f" {media_summary}"
+        lines.append(line)
     lines.append("</recent_messages>")
     return "\n".join(lines)
 
@@ -548,12 +593,14 @@ def build_reactive_user_content(
     current_user_id: str,
     current_nickname: str | None,
     current_text: str,
-    current_image_urls: Sequence[Sequence[str]],
-    current_sticker_urls: Sequence[Sequence[str]] = (),
+    current_image_urls: Sequence[Any],
+    current_sticker_urls: Sequence[Any] = (),
+    current_message: BufferedMessage | None = None,
     sender_blacklisted: bool = False,
     pinned_anchors: Sequence[Any] = (),
     plugin_note: str | None = None,
     now_ms: int = 0,
+    name_resolver: "Callable[[str], str | None] | None" = None,
 ) -> UserContent:
     """reactive user content: <runtime_state> + [pinned_tasks] + <recent_messages> + <current_message>。
 
@@ -561,6 +608,12 @@ def build_reactive_user_content(
     会话级稳定信息(adapter/group_id/self)已挪到系统提示(见 _render_session_context)。
     pinned_anchors(凌晨批项4):在钉的委托锚,非空时渲染独立 <pinned_tasks> 块,
     不参与 recent_messages 的裁剪。
+
+    current_message: 当前消息的 buffer 行(可选)。给了且已回填 id 时,<current_message>
+    行补 `[m:ID] ` 前缀并追加紧凑媒体清单(与历史行同形),让当前消息的图也能被按号指认
+    (从 buffer 尾部取真实 id,零预测——见规划书 §8)。
+    current_image_urls / current_sticker_urls: 内联帧组,每项为 (寻址三元组, 帧列表) 或
+    裸帧列表;三元组 (kind, mid, idx) 用于给 parts 打全称标签 [图 m:ID#idx]。
     """
     runtime_block = _render_runtime_state(
         addressed_to_bot=addressed_to_bot,
@@ -569,13 +622,23 @@ def build_reactive_user_content(
         topic_hint=topic_hint,
         sender_blacklisted=sender_blacklisted,
     )
-    history_block = _render_recent_messages_block(recent_messages, incremental=True)
+    history_block = _render_recent_messages_block(
+        recent_messages, incremental=True, name_resolver=name_resolver)
     pinned_block = (
         _render_pinned_tasks_block(pinned_anchors, now_ms=now_ms) if pinned_anchors else ""
     )
 
-    current_tag = _format_speaker_tag(current_nickname, current_user_id)
-    current_block_text = f"<current_message>\n{current_tag}: {current_text}\n</current_message>"
+    current_tag = _format_speaker_tag(
+        current_nickname, current_user_id,
+        canonical=name_resolver(current_user_id) if name_resolver else None)
+    cur_prefix = ""
+    if current_message is not None and current_message.id is not None:
+        cur_prefix = f"[m:{current_message.id}] "
+    cur_line = f"{cur_prefix}{current_tag}: {current_text}"
+    cur_summary = render_media_summary(current_message) if current_message is not None else None
+    if cur_summary:
+        cur_line += f" {cur_summary}"
+    current_block_text = f"<current_message>\n{cur_line}\n</current_message>"
     if current_sticker_urls:
         current_block_text += _STICKER_MOOD_NOTE
 
@@ -596,11 +659,10 @@ def build_reactive_user_content(
         text_block += pinned_block + "\n\n"
     text_block += history_block + "\n\n" + current_block_text + reminder
 
-    sticker_groups = [list(g) for g in (current_sticker_urls or []) if g]
-    if not current_image_urls and not sticker_groups:
+    if not current_image_urls and not current_sticker_urls:
         return text_block
 
-    return _assemble_media_parts(text_block, current_image_urls, sticker_groups)
+    return _assemble_media_parts(text_block, current_image_urls, list(current_sticker_urls or []))
 
 
 def build_passive_user_content(
@@ -610,6 +672,7 @@ def build_passive_user_content(
     current_image_urls: Sequence[Sequence[str]],
     current_sticker_urls: Sequence[Sequence[str]] = (),
     plugin_note: str | None = None,
+    name_resolver: "Callable[[str], str | None] | None" = None,
 ) -> UserContent:
     """passive user content:可选 <recent_messages> + 当前文本(图片走多模态 parts)。
 
@@ -617,7 +680,8 @@ def build_passive_user_content(
     与未启用 perception 的私聊路径完全一致——调用方可统一走本函数,无需分支。
     """
     if recent_messages:
-        text_block = _render_recent_messages_block(recent_messages) + "\n\n" + current_text
+        text_block = _render_recent_messages_block(
+            recent_messages, name_resolver=name_resolver) + "\n\n" + current_text
     else:
         text_block = current_text
     if current_sticker_urls:
@@ -625,51 +689,81 @@ def build_passive_user_content(
     # 2026-10-13 分级反馈:插件提示便签贴文本尾
     if plugin_note:
         text_block += f"\n(插件小提示:{plugin_note})"
+    text_block = f"(当前时间: {_current_time_str()})\n\n" + text_block
 
-    sticker_groups = [list(g) for g in (current_sticker_urls or []) if g]
-    if not current_image_urls and not sticker_groups:
+    if not current_image_urls and not current_sticker_urls:
         return text_block
 
-    return _assemble_media_parts(text_block, current_image_urls, sticker_groups)
+    return _assemble_media_parts(text_block, current_image_urls, list(current_sticker_urls or []))
+
+
+def _normalize_media_group(item: Any) -> tuple[tuple[str, int, int] | None, list[str]]:
+    """媒体帧组归一化:(寻址三元组, 帧列表) 标注组 → 拆成 (addr, frames);
+    裸帧列表 → (None, frames)。空帧被滤掉。"""
+    if (
+        isinstance(item, tuple)
+        and len(item) == 2
+        and (item[0] is None or (isinstance(item[0], tuple) and len(item[0]) == 3))
+    ):
+        addr, frames = item
+        return addr, [f for f in frames if f]
+    return None, [f for f in item if f]
+
+
+def _media_frame_label(
+    addr: tuple[str, int, int] | None, i: int, n: int, kind_hint: str
+) -> str | None:
+    """帧组标签。
+
+    addr=(kind, mid, idx) → 带全 m:id#idx 寻址号:单帧 `[图 m:1#0]`,多帧沿用原帧
+    标签并冠以同号 `[动图 m:1#0 第i/N帧,同一动图按时间顺序]`(parts 与文本行分离,
+    必须带全 m:id,见规划书 §8)。addr=None(未反查到库行) → 退回基线通用标签(无号),
+    kind_hint=image/sticker 决定措辞;普通图单帧基线无标签,返回 None。
+    """
+    if addr is None:
+        if kind_hint == "sticker":
+            return "[表情包]" if n == 1 else f"[表情包 第{i + 1}/{n}帧,同一动图按时间顺序]"
+        return None if n == 1 else f"[动图 第{i + 1}/{n}帧,同一动图按时间顺序]"
+    kind, mid, idx = addr
+    if n == 1:
+        return media_label(kind, mid, idx)
+    word = "动图" if kind == "image" else media_kind_word(kind)
+    return f"[{word} m:{mid}#{idx} 第{i + 1}/{n}帧,同一动图按时间顺序]"
 
 
 def _assemble_media_parts(
     text_block: str,
-    image_groups: Sequence[Sequence[str]],
-    sticker_groups: Sequence[Sequence[str]],
+    image_groups: Sequence[Any],
+    sticker_groups: Sequence[Any],
 ) -> list[dict[str, Any]]:
     """文本块 + 普通图帧组 + 表情帧组 → 多模态 parts。
 
-    2026-10-15 帧组化(图片投送管线三模式):普通图片与表情统一帧组结构
-    (静图单帧,动图抽帧组)。帧组结构自配对防张冠李戴:一张图的所有帧装同一组,
-    标签按组内位置生成,跨图不可能错位。
-    - 普通图单帧:无标签直挂(与旧形态一致)
-    - 普通图多帧(动图):[动图 第i/N帧,同一动图按时间顺序]
-    - 表情:[表情包] / [表情包 第i/N帧,...]——占位文本里已有 [表情包],
-      近端再补标签,避免多图时与照片/截图混成同一语义
+    2026-10-15 帧组化(图片投送管线三模式);同批媒体统一寻址:每组帧前插一行
+    寻址标签(带全 m:id#idx,parts 与文本行分离必须带号)。帧组结构自配对防张冠李戴:
+    一张图的所有帧装同一组,标签按组内位置生成,跨图不可能错位。
+    每组项可为 (寻址三元组, 帧列表) 或裸帧列表(无号,退回基线标签)。
     """
     parts: list[dict[str, Any]] = [{"type": "text", "text": text_block}]
-    for frames in image_groups:
-        frames = [f for f in frames if f]
+    for item in image_groups:
+        addr, frames = _normalize_media_group(item)
         if not frames:
             continue
-        if len(frames) == 1:
+        n = len(frames)
+        if n == 1:
+            label = _media_frame_label(addr, 0, 1, "image")
+            if label:
+                parts.append({"type": "text", "text": label})
             parts.append({"type": "image_url", "image_url": {"url": frames[0]}})
         else:
-            n = len(frames)
             for i, u in enumerate(frames):
-                parts.append({"type": "text", "text": f"[动图 第{i + 1}/{n}帧,同一动图按时间顺序]"})
+                parts.append({"type": "text", "text": _media_frame_label(addr, i, n, "image")})
                 parts.append({"type": "image_url", "image_url": {"url": u}})
-    for frames in sticker_groups:
-        frames = [f for f in frames if f]
+    for item in sticker_groups:
+        addr, frames = _normalize_media_group(item)
         if not frames:
             continue
-        if len(frames) == 1:
-            parts.append({"type": "text", "text": "[表情包]"})
-            parts.append({"type": "image_url", "image_url": {"url": frames[0]}})
-        else:
-            n = len(frames)
-            for i, u in enumerate(frames):
-                parts.append({"type": "text", "text": f"[表情包 第{i + 1}/{n}帧,同一动图按时间顺序]"})
-                parts.append({"type": "image_url", "image_url": {"url": u}})
+        n = len(frames)
+        for i, u in enumerate(frames):
+            parts.append({"type": "text", "text": _media_frame_label(addr, i, n, "sticker")})
+            parts.append({"type": "image_url", "image_url": {"url": u}})
     return parts

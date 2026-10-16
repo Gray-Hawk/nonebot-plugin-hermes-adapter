@@ -226,6 +226,13 @@ plugin re-attaches it as a real image segment. Constraints:
 
 When the user refers to a past image (e.g. "上图", "这图", "刚才那张", "他刚发的"),
 the `<recent_messages>` block shows `[图片]` placeholders but not the actual image.
+Media addressing (2026-10-15): every addressable medium carries a per-image label —
+history lines append a compact manifest like `(图#0 #1 表情#2)` (idx runs continuous
+per message: images → stickers → quoted images → forward images); inlined image parts
+are preceded by a full label `[图 m:22371#0]`; quoted images appear as `(引用图#k)`
+inside the quote prefix, forward images as `[转发图#x]` inside forwarded blocks
+(registered but never inlined — fetch on demand). The label's m:id#idx is the exact
+address for recall.
 To see the image, follow this two-step protocol:
 
 1. **Identify the message.** Each line in `<recent_messages>` starts with `[m:<id>]` —
@@ -234,7 +241,9 @@ To see the image, follow this two-step protocol:
    - "我刚发的" → most recent image-bearing message from the current speaker
    - "他刚发的" → most recent image-bearing message from the user named in context
 2. **Fetch the bytes.** Call `get_message_images(message_ids=[<id>])`. The returned
-   ImageContent blocks become real visual input on your next LLM turn.
+   ImageContent blocks become real visual input on your next LLM turn. To fetch only
+   specific images of a multi-image message, pass the optional `idx=[...]` filter
+   (numbers from the line's media manifest, e.g. `(图#0 #1)` → idx 0/1).
 
 On follow-up turns the inlined window is trimmed, so the image-bearing line the user means
 may not appear in `<recent_messages>` at all. In that case, call `get_recent_messages` first
@@ -245,8 +254,9 @@ The `[m:<id>]` id is **stable** across turns — the same image always has the s
 unlike positional schemes (#1, #2, …) which shift when new messages arrive. Use it to
 anchor cross-turn references ("I analyzed m:1234 last turn, user is asking about it again").
 
-The `<current_message>` block does NOT carry `[m:<id>]` — the current turn hasn't been
-persisted yet. Only past messages have stable ids.
+The `<current_message>` block carries `[m:<id>]` when the triggering message is
+already persisted (the normal case — perception stores before the turn builds),
+plus the same media manifest suffix. Rare fallback (row not found) = no prefix.
 
 ### When to skip the tool
 

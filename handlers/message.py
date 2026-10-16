@@ -12,6 +12,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 import nonebot_plugin_alconna as alconna
 from nonebot import logger, on_message
@@ -26,6 +27,7 @@ from ..core.approvals import add_pending as approvals_add_pending
 from ..core.approvals import admin_user_ids
 from ..core.approvals import notify_admins as approvals_notify_admins
 from ..core.group_profile import build_group_profile_block, sync_buddy_to_group
+from ..core import identity
 from ..config import resolve_custom_dir
 from ..core.hermes_client import (
     ChatResult,
@@ -37,7 +39,11 @@ from ..core.hermes_client import (
 from ..core.image_inline import inline_gif_frames, inline_image_frames
 from ..core.media_config import MediaConfig, load_media_config
 from ..core.inflight import PendingEntry
-from ..core.message_buffer import BufferedMessage
+from ..core.message_buffer import (
+    BufferedMessage,
+    build_media_address_index,
+    media_kind_word,
+)
 from ..core.run_tracker import make_scope_key
 from ..core import task_notes
 from ..core.outbound import get_bot_nickname, send_local_files, send_text_with_media
@@ -735,7 +741,7 @@ def _collect_at_placeholders(
 # --- Phase B-1: 合并转发消息提取 ---
 
 
-def _node_summary(node: dict) -> str | None:
+def _node_summary(node: dict, *, image_labels=None) -> str | None:
     """将 OneBot get_forward_msg 返回的单条节点转成单行摘要。
 
     节点结构在不同 OneBot 实现端之间不完全统一,主要存在两种:
@@ -745,6 +751,9 @@ def _node_summary(node: dict) -> str | None:
       B) flat + message (旧 go-cqhttp / 部分 LLOneBot 版本):
          {"sender": {...}, "name": "...", "message": [...segments...]}
     本函数对二者都接;优先取 content,缺则取 message。
+
+    image_labels: 可选的 image 段标签迭代器(与 _node_image_urls 同序),给定时每个
+    image 段取一个标签(如 `[转发图#3]`);缺省则该段用 `[图片]`(兼容旧行为)。
 
     空内容节点返回 None(调用方跳过,避免裸 'Unknown: ' 行)。
     """
@@ -760,7 +769,10 @@ def _node_summary(node: dict) -> str | None:
             if text:
                 parts.append(text)
         elif seg_type == "image":
-            parts.append("[图片]")
+            if image_labels is not None:
+                parts.append(next(image_labels, "[图片]"))
+            else:
+                parts.append("[图片]")
         elif seg_type == "record":
             parts.append("[语音]")
         elif seg_type == "video":
@@ -782,16 +794,44 @@ def _node_summary(node: dict) -> str | None:
     return f"{nickname}: {joined}"
 
 
+def _node_image_urls(node: dict) -> list[str | None]:
+    """节点内 image 段的 url(按段序);无 url 的段给 None。
+
+    与 _node_summary 对同一段列表按同一顺序遍历,产出的标签一一对应(供转发图发号)。
+    取 data['url'](NapCat get_forward_msg 的 image 段带 url);拿不到就退 [图片] 占位。
+    """
+    urls: list[str | None] = []
+    segs = node.get("content") or node.get("message") or []
+    for seg in segs:
+        if not isinstance(seg, dict) or seg.get("type") != "image":
+            continue
+        data = seg.get("data", {}) if isinstance(seg.get("data"), dict) else {}
+        u = data.get("url")
+        urls.append(str(u) if u else None)
+    return urls
+
+
 async def _extract_forward_full(
     uni_msg: alconna.UniMessage,
     bot: Bot,
     *,
     adapter_name: str,
-) -> str | None:
-    """提取合并转发消息,返回 <forwarded_messages count="N">...</forwarded_messages> 块。
+    number_base: int | None = None,
+    cap: int | None = None,
+) -> tuple[str | None, list[str]]:
+    """提取合并转发消息,返回 (块文本, 转发图 URL 列表)。
 
-    仅支持 onebotv11/onebotv12。其他适配器返回 None(调用方自行降级)。
-    调用 get_forward_msg 失败时返回自闭合 fetch_failed 标签,不抛出。
+    块文本形如 <forwarded_messages count="N">...</forwarded_messages>;仅支持
+    onebotv11/onebotv12(其他适配器返回 (None, []));get_forward_msg 失败时返回
+    自闭合 fetch_failed 标签,不抛出。
+
+    number_base: 给定时启用转发图发号——把每个节点内 image 段原位渲染成
+    `[转发图#x]`(x = number_base + 本条消息转发图的连续编号),并把注册到的转发图
+    URL 按节点顺序返回,供入库 kind='forward_image'(规划书 §8)。同一次 get_forward_msg
+    响应内提取,不二次调用 API。为 None 时不发号、不注册,节点图保持 `[图片]`
+    (用于被引消息里的折叠转发:那些图不属本条消息,不占本条消息的 idx)。
+    cap: 本消息转发图注册上限;None 时现读 media_config.forward_image_cap。
+    超出上限按内容(URL)去重截断 + WARN。
     """
     # TODO(B-1.3): onebotv12 uses the same `get_forward_msg` API name based on OneBot
     # spec convergence, but this has not been verified against a live v12 deployment.
@@ -799,7 +839,7 @@ async def _extract_forward_full(
     # fetch_failed self-closing tag — degraded but non-crashing. Verify with a real
     # v12 adapter and either confirm or branch the call.
     if adapter_name not in {"onebotv11", "onebotv12"}:
-        return None
+        return None, []
 
     refs = uni_msg[alconna.Reference]
     ref_id: str | None = None
@@ -808,7 +848,7 @@ async def _extract_forward_full(
             ref_id = ref.id
             break
     if ref_id is None:
-        return None
+        return None, []
 
     try:
         resp = await bot.call_api("get_forward_msg", id=ref_id)
@@ -817,7 +857,7 @@ async def _extract_forward_full(
             f"[HERMES forward] get_forward_msg failed adapter={adapter_name} "
             f"ref_id={ref_id}: {type(exc).__name__}: {exc}"
         )
-        return '<forwarded_messages count="?" status="fetch_failed"/>'
+        return '<forwarded_messages count="?" status="fetch_failed"/>', []
 
     nodes: list = []
     if isinstance(resp, dict):
@@ -830,12 +870,35 @@ async def _extract_forward_full(
     max_nodes = plugin_config.hermes_forward_extract_max_nodes
     max_chars = plugin_config.hermes_forward_extract_max_chars
 
+    numbering = number_base is not None
+    effective_cap = 0
+    if numbering:
+        effective_cap = cap if cap is not None else load_media_config().forward_image_cap
+    seen_img_urls: set[str] = set()
+    registered: list[str] = []
+    img_truncated = False
+
     lines: list[str] = []
     total_chars = 0
     omitted = 0  # default: loop finished naturally, nothing hidden
 
     for i, node in enumerate(nodes):
-        summary = _node_summary(node)
+        if numbering:
+            image_labels: list[str] = []
+            for u in _node_image_urls(node):
+                if u is not None and u not in seen_img_urls and len(registered) >= effective_cap:
+                    # 超上限:该图不发号(占位),并记账避免同 url 反复告警。
+                    img_truncated = True
+                    seen_img_urls.add(u)
+                if u is None or u in seen_img_urls:
+                    image_labels.append("[图片]")
+                else:
+                    seen_img_urls.add(u)
+                    registered.append(u)
+                    image_labels.append(f"[转发图#{number_base + len(registered) - 1}]")
+            summary = _node_summary(node, image_labels=iter(image_labels))
+        else:
+            summary = _node_summary(node)
         if summary is None:
             continue
         next_len = total_chars + len(summary) + (1 if lines else 0)
@@ -856,11 +919,17 @@ async def _extract_forward_full(
                 lines.append(f"[...另有 {omitted} 条已省略]")
             break
 
+    if img_truncated:
+        logger.warning(
+            f"[HERMES forward] 转发图注册达上限 cap={effective_cap},超出节点图按 [图片] 占位"
+            "(只注册不内联,按需可拉)"
+        )
+
     if not lines:
-        return '<forwarded_messages count="?" status="fetch_failed"/>'
+        return '<forwarded_messages count="?" status="fetch_failed"/>', registered
 
     content = "\n".join(lines)
-    return f'<forwarded_messages count="{total_nodes}">\n{content}\n</forwarded_messages>'
+    return f'<forwarded_messages count="{total_nodes}">\n{content}\n</forwarded_messages>', registered
 
 
 # 自闭合 forwarded_messages 标签(fetch_failed / preview 两种变体共用此形态)。
@@ -919,6 +988,109 @@ def _forward_full_for_store(forward_full: str | None) -> str | None:
     if _FORWARD_SELF_CLOSING_RE.match(forward_full.strip()):
         return None
     return forward_full
+
+
+@dataclass
+class _RepliedMedia:
+    """被引消息的提取产物(perception 与触发 handler 共用同一条提取路径)。"""
+
+    sender_label: str = ""
+    text: str = ""
+    image_urls: list[str] = field(default_factory=list)
+    forward_full: str | None = None
+    msg_id: object = None
+
+
+async def _extract_replied_media(event: Event, bot: Bot, *, adapter_name: str) -> _RepliedMedia:
+    """抽取被引消息的发送者归属 / 文本 / 图片 / @ 占位 / 折叠转发块。
+
+    perception(priority=1)与触发 handler(priority=98)共用:一条消息的引用图必须
+    同源提取——此前只有触发轮临时并入载荷、不入库,历史行/召回拿不到(事故根因之一)。
+    异常一律吞没:提取失败只丢引用,不拖垮主流程。
+    被引消息若本身是折叠转发,块内节点图不注册发号(不属本条消息 idx),保持 [图片]。
+    """
+    out = _RepliedMedia()
+    if not (hasattr(event, "reply") and event.reply):
+        return out
+    # 发送者归属独立提取(见 helper docstring):归属提取失败只丢标签,不拖垮引用本体。
+    out.sender_label = _extract_replied_sender_label(event)
+    out.msg_id = getattr(event.reply, "message_id", None)
+    try:
+        replied_message = await alconna.UniMessage.generate(message=event.reply.message, bot=bot)
+        out.text = replied_message.extract_plain_text().strip()
+        out.image_urls = await _extract_image_urls(replied_message, bot, adapter_name)
+        replied_at = _collect_at_placeholders(replied_message)
+        if replied_at:
+            # 引用内历史@改写成「提及」,见 _rewrite_quoted_ats docstring
+            suffix = _rewrite_quoted_ats(replied_at)
+            out.text = (out.text + " " + suffix).strip() if out.text else suffix
+        replied_forward, _replied_fwd_imgs = await _extract_forward_full(
+            replied_message, bot, adapter_name=adapter_name
+        )
+        out.forward_full = replied_forward
+    except Exception as e:
+        logger.warning(f"[HERMES] 提取引用消息失败: {e}")
+    return out
+
+
+def _label_groups(
+    label_index: dict[str, tuple[str, int, int]],
+    pairs,
+) -> list[tuple[tuple[str, int, int] | None, list[str]]]:
+    """[(url, frames)] → [((kind, mid, idx)|None, frames)],按 url 反查寻址号。
+
+    去重丢的是重复 url(在 inline_* 内部),号随 url 走,天然不会错位(规划书 §8)。
+    """
+    return [(label_index.get(url), frames) for url, frames in pairs]
+
+
+def _absent_media_note(
+    label_index: dict[str, tuple[str, int, int]],
+    *,
+    requested: list[str],
+    succeeded: list[str],
+) -> str | None:
+    """请求内联但整组缺席的媒体条 → `(图#0 加载失败)` 标注串。
+
+    只对反查到库行(有号)的条目标注;无号的缺席交给调用方粗占位兜底(§8)。
+    """
+    done = set(succeeded)
+    notes: list[str] = []
+    seen: set[tuple[int, int]] = set()
+    for u in requested:
+        if u in done:
+            continue
+        addr = label_index.get(u)
+        if addr is None:
+            continue
+        kind, mid, idx = addr
+        if (mid, idx) in seen:
+            continue
+        seen.add((mid, idx))
+        notes.append(f"({media_kind_word(kind, compact=True)}#{idx} 加载失败)")
+    return " ".join(notes) if notes else None
+
+
+def _peek_current_message_row(adapter_name: str, is_private: bool, user_id: str, group_id):
+    """偷看 buffer 最新一行(不排除当前消息),给 passive 的当前消息媒体贴号用。
+
+    passive 的 recent 带 before_ts 排除了当前消息,故单独取一行;取不到返回 None
+    (贴号退化为无号,不阻断出站)。
+    """
+    if _mcp.message_buffer is None:
+        return None
+    try:
+        if is_private:
+            rows = _mcp.message_buffer.get_recent(
+                adapter=adapter_name, group_id=None, limit=1, owner_user_id=user_id
+            )
+        else:
+            rows = _mcp.message_buffer.get_recent(
+                adapter=adapter_name, group_id=group_id, limit=1
+            )
+        return rows[0] if rows else None
+    except Exception:
+        return None
 
 
 # Telegram `bot.get_file(file_id)` → URL 短期缓存。
@@ -994,6 +1166,11 @@ async def handle_perception(bot: Bot, event: Event):
     # 永远无法召回字节。是否当轮喂模型仍由 hermes_sticker_vision_enabled 门控,
     # 入库与内联是两件独立的事。
     sticker_urls = await _extract_sticker_urls(uni_msg, bot, adapter_name)
+    # 引用图也入库(kind='quote',规划书 §8):提取路径与触发 handler 同源。
+    # 此前 perception 不取引用——引用图只进触发轮临时载荷、不落库,历史行/召回拿不到
+    # (事故根因之一:图文混合的引用只呈递文字)。
+    replied = await _extract_replied_media(event, bot, adapter_name=adapter_name)
+    quote_image_urls = list(replied.image_urls)
     nickname = _extract_sender_nickname(event, adapter_name) or user_id
 
     # 文本太长截断
@@ -1018,13 +1195,18 @@ async def handle_perception(bot: Bot, event: Event):
         suffix = " ".join(at_placeholders)
         msg_text = (msg_text + " " + suffix) if msg_text else suffix
 
-    # B-1.1: 合并转发提取 (perception 入站存 summary 版,避免 buffer 膨胀)
-    forward_full = await _extract_forward_full(uni_msg, bot, adapter_name=adapter_name)
+    # B-1.1: 合并转发提取 (perception 入站存 summary 版,避免 buffer 膨胀)。
+    # 同一次 get_forward_msg 响应内兼收 image 段 URL(kind='forward_image',只注册发号、
+    # 不内联);base = own + sticker + quote,号即该图在本条 message_images 的 idx。
+    forward_base = len(image_urls) + len(sticker_urls) + len(quote_image_urls)
+    forward_full, forward_image_urls = await _extract_forward_full(
+        uni_msg, bot, adapter_name=adapter_name, number_base=forward_base
+    )
     if forward_full is not None:
         summary = _summarize_forward(forward_full)
         msg_text = f"{msg_text}\n{summary}" if msg_text else summary
 
-    if not msg_text and not image_urls:
+    if not msg_text and not image_urls and not quote_image_urls and not forward_image_urls:
         return
 
     now = _now_ms()
@@ -1042,6 +1224,8 @@ async def handle_perception(bot: Bot, event: Event):
                 content=msg_text,
                 image_urls=image_urls,
                 sticker_urls=sticker_urls,
+                quote_image_urls=quote_image_urls,
+                forward_image_urls=forward_image_urls,
                 is_bot=False,
                 forward_content=_forward_full_for_store(forward_full),
             )
@@ -1282,35 +1466,12 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         )
         matcher.skip()
 
-    # 引用消息提取
-    replied_text = ""
-    replied_image_urls: list[str] = []
-    replied_sender = ""
-    replied_msg_id = None  # 任务锚 quote 自动归并用(规划书§2.2)
-    if hasattr(event, "reply") and event.reply:
-        # 本部署补丁: 发送者归属独立提取(见 helper docstring),
-        # 放在引用本体提取之外——归属提取失败只丢标签,不拖垮引用文本/图片。
-        replied_sender = _extract_replied_sender_label(event)
-        replied_msg_id = getattr(event.reply, "message_id", None)
-        try:
-            replied_message = await alconna.UniMessage.generate(message=event.reply.message, bot=bot)
-            replied_text = replied_message.extract_plain_text().strip()
-            replied_image_urls = await _extract_image_urls(replied_message, bot, adapter_name)
-            replied_at = _collect_at_placeholders(replied_message)
-            if replied_at:
-                # 本部署补丁(雷②): 引用内历史@改写成「提及」,
-                # 见 _rewrite_quoted_ats docstring
-                suffix = _rewrite_quoted_ats(replied_at)
-                replied_text = (replied_text + " " + suffix).strip() if replied_text else suffix
-            # 引用折叠消息:被引 UniMessage 里的 forward 段带 id,直接展开内联。
-            # fetch_failed 自闭合变体也拼——「这里有个取不到的折叠」比空白强。
-            replied_forward = await _extract_forward_full(replied_message, bot, adapter_name=adapter_name)
-            if replied_forward is not None:
-                replied_text = f"{replied_text}\n{replied_forward}" if replied_text else replied_forward
-            if replied_image_urls and not replied_text:
-                replied_text = "[图片]"
-        except Exception as e:
-            logger.warning(f"[HERMES] 提取引用消息失败: {e}")
+    # 引用消息提取(与 perception 共用同一 helper:引用图入库/呈递必须同源)
+    replied = await _extract_replied_media(event, bot, adapter_name=adapter_name)
+    replied_text = replied.text
+    replied_image_urls: list[str] = list(replied.image_urls)
+    replied_sender = replied.sender_label
+    replied_msg_id = replied.msg_id  # 任务锚 quote 自动归并用(规划书§2.2)
 
     try:
         uni_msg = alconna.UniMessage.generate_without_reply(event=event, bot=bot)
@@ -1321,16 +1482,28 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # 低危⑬-②(2026-10-14 维护者定案):keyword-soft 判定的快照要在任何拼接之前取——
     # 引用前缀/占位/@回填/转发展开随后都会拼进 msg_text,那些文本不参与点火。
     keyword_match_text = msg_text
+    # 本条消息自身媒体先抽(own/sticker):引用图的号接在其后,故先算 base。
+    own_image_urls = await _extract_image_urls(uni_msg, bot, adapter_name)
+    # QQ 大表情包单独抽,不进普通 image_urls;是否喂模型由 hermes_sticker_vision_enabled 门控
+    sticker_urls = await _extract_sticker_urls(uni_msg, bot, adapter_name)
+    quote_base = len(own_image_urls) + len(sticker_urls)
     if replied_text:
         # 本部署补丁: 前缀带发送者归属,空标签回退旧格式;
         # 引用文本先过一道字面手打 @ 的改写(中危⑥,见 helper docstring)
         replied_text = _rewrite_quoted_literal_ats(replied_text)
+    # 引用块:引用带图即补图标记(修事故根因——旧条件 [图片] 只在引用纯图(无文字)时才补,
+    # 图文混合引用在文本层丢图标记,模型只能按位置猜)。号 = 该引用图在本条
+    # message_images 的全局 idx(kind='quote',续排在 own+sticker 之后)。见规划书 §8。
+    if replied_image_urls:
+        marks = " ".join(
+            f"({media_kind_word('quote')}#{quote_base + j})" for j in range(len(replied_image_urls))
+        )
+        replied_text = f"{replied_text} {marks}".strip() if replied_text else marks
+    if replied_text:
         msg_text = f"{_format_quote_prefix(replied_text, replied_sender)} {msg_text}".strip()
 
-    image_urls = await _extract_image_urls(uni_msg, bot, adapter_name)
-    image_urls.extend(replied_image_urls)
-    # QQ 大表情包单独抽,不进普通 image_urls;是否喂模型由 hermes_sticker_vision_enabled 门控
-    sticker_urls = await _extract_sticker_urls(uni_msg, bot, adapter_name)
+    # 内联载荷:当前消息自己的图 + 引用图(转发图恒不内联,Q3 定案);URL 去重交给内联入口。
+    image_urls = own_image_urls + replied_image_urls
     nickname = _extract_sender_nickname(event, adapter_name) or user_id
 
     # B-0: 非文本段占位拼到 msg_text 末尾。注意这里**不重复**对 replied_message 做
@@ -1355,10 +1528,14 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         suffix = " ".join(at_placeholders)
         msg_text = (msg_text + " " + suffix).strip() if msg_text else suffix
 
-    # B-1.1: 合并转发提取 (main path 用 full 版,LLM 当前 turn 看到展开后的转发内容)
-    # 在 keyword-stripping 之前追加:keyword 前缀作用于 msg_text 开头的手打文本,
-    # 转发块拼在末尾,startswith(kw) 仍能匹配前缀,strip 后转发块完整保留。
-    forward_full = await _extract_forward_full(uni_msg, bot, adapter_name=adapter_name)
+    # B-1.1: 合并转发提取 (main path 用 full 版,LLM 当前 turn 看到展开后的转发内容)。
+    # 同一次 get_forward_msg 响应内兼收转发图 URL 发号(kind='forward_image',只注册
+    # 不内联);base = own + sticker + quote,与 perception 侧同一编号。在 keyword-stripping
+    # 之前追加:keyword 前缀作用于 msg_text 开头的手打文本,转发块拼在末尾。
+    forward_base = quote_base + len(replied_image_urls)
+    forward_full, _forward_image_urls = await _extract_forward_full(
+        uni_msg, bot, adapter_name=adapter_name, number_base=forward_base
+    )
     if forward_full is not None:
         msg_text = f"{msg_text}\n{forward_full}" if msg_text else forward_full
         has_real_content = True
@@ -1787,6 +1964,11 @@ async def _run_passive_turn(
     # 2026-10-15 补丁:计算记忆根路径,用于路由提示动态跟随配置
     _custom_dir = resolve_custom_dir()
     _memory_root = str(_custom_dir / "memory" / adapter_name) if _custom_dir else None
+    # 身份表（2026-10-15）：发言者标签正主名注释，custom_dir 不可用/查不到都静默 None
+    _name_resolver = (
+        (lambda uid, _cd=_custom_dir, _ad=adapter_name: identity.resolve_display_name(_cd, _ad, uid))
+        if _custom_dir else None
+    )
     system_prompt = build_passive_system_prompt(
         adapter=adapter_name,
         is_private=is_private,
@@ -1805,6 +1987,10 @@ async def _run_passive_turn(
     # media_config 三模式(窗口=recent;passive 无 addressed 概念,按 True 传——
     # 群聊 passive 只在显式触发时被调用,等价于已被 @)。
     media_cfg = load_media_config()
+    # 媒体寻址:窗口行 + 当前行建 url→(kind,m:id,idx) 反向映射,内联收集照旧走 url,
+    # 收集完按 url 贴号(规划书 §8)。passive 的 recent 排除了当前消息,故单独偷看其行。
+    current_row = _peek_current_message_row(adapter_name, is_private, user_id, group_id)
+    label_index = build_media_address_index(list(recent) + ([current_row] if current_row else []))
     if is_private:
         inline_urls = list(image_urls)
     else:
@@ -1817,22 +2003,32 @@ async def _run_passive_turn(
             self_id=str(bot.self_id),
         )
     inlined = await inline_image_frames(inline_urls, cfg=media_cfg) if inline_urls else []
-    # 2026-10-13 动图抽帧:表情走专用通道,返回帧组(动图多帧/静态单帧),
+    # 2026-10-13 动图抽帧:表情走专用通道,返回 (url, 帧组)(动图多帧/静态单帧),
     # 帧组结构自配对防张冠李戴(见 image_inline.inline_gif_frames docstring)。
     sticker_inlined = (
         await inline_gif_frames(sticker_urls or [], cfg=media_cfg)
         if plugin_config.hermes_sticker_vision_enabled
         else []
     )
+    # 缺席补占位:请求内联但整组缺席的当前消息媒体,在其号上补「(图#k 加载失败)」(§8)。
+    absent_note = _absent_media_note(
+        label_index,
+        requested=list(image_urls) + list(sticker_urls or []),
+        succeeded=[u for u, _ in inlined] + [u for u, _ in sticker_inlined],
+    )
+    passive_text = text or " "
+    if absent_note:
+        passive_text = f"{passive_text} {absent_note}".strip()
     user_content = build_passive_user_content(
         recent_messages=recent,
-        current_text=text or " ",
-        current_image_urls=inlined,
-        current_sticker_urls=sticker_inlined,
+        current_text=passive_text,
+        current_image_urls=_label_groups(label_index, inlined),
+        current_sticker_urls=_label_groups(label_index, sticker_inlined),
         # 2026-10-13 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
         plugin_note="\n".join(
             task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, is_private, user_id, group_id))
         ) or None,
+        name_resolver=_name_resolver,
     )
 
     # 本部署补丁: 长任务旁白实时转发。旁白是本轮 turn 的附属
@@ -2087,6 +2283,11 @@ async def _run_reactive_turn(
     # 2026-10-15 补丁:计算记忆根路径,用于路由提示动态跟随配置
     _custom_dir = resolve_custom_dir()
     _memory_root = str(_custom_dir / "memory" / adapter_name) if _custom_dir else None
+    # 身份表（2026-10-15）：发言者标签正主名注释，custom_dir 不可用/查不到都静默 None
+    _name_resolver = (
+        (lambda uid, _cd=_custom_dir, _ad=adapter_name: identity.resolve_display_name(_cd, _ad, uid))
+        if _custom_dir else None
+    )
     system_prompt = build_reactive_system_prompt(
         # 群记忆外挂:群档案注入块(私聊/无档案返回 None,函数内静默跳过)
         profile_block=build_group_profile_block(adapter_name, group_id),
@@ -2123,6 +2324,13 @@ async def _run_reactive_turn(
     # 单点门控,三模式(full/semi/off)+例外名单由 media_config.yaml 现读现用。
     # 判定逻辑收口在 _collect_inline_image_urls;内联走帧组(静图单帧,动图抽帧)。
     media_cfg = load_media_config()
+    # 媒体寻址:窗口行 + 当前行建 url→(kind, m:id, idx) 反向映射(规划书 §8 渲染时反查)。
+    # 当前消息已由 perception(priority=1)先入库,recent_full[0] 即其真实行,零预测;
+    # 加一道 user_id 同源护栏:尾部若不是本触发发言者(极少数插队/接力场景),宁可不贴号。
+    current_row = (
+        recent_full[0] if (recent_full and recent_full[0].user_id == user_id) else None
+    )
+    label_index = build_media_address_index(recent_full)
     sticker_inlined = (
         await inline_gif_frames(sticker_urls or [], cfg=media_cfg)
         if plugin_config.hermes_sticker_vision_enabled
@@ -2139,8 +2347,17 @@ async def _run_reactive_turn(
         self_id=str(bot.self_id),
     )
     inlined_frames = await inline_image_frames(inline_urls, cfg=media_cfg) if inline_urls else []
-    if image_urls and not inlined_frames and "[图片]" not in text:
-        # 当前消息带图但未内联(模式 off/semi 窗口无 @/例外名单):必须补占位符,
+    # 缺席补占位:请求内联但整组缺席的当前消息媒体,在其号上补「(图#k 加载失败)」(§8);
+    # 反查不到号(未入库/例外)的缺席仍走下面的粗占位兜底。
+    absent_note = _absent_media_note(
+        label_index,
+        requested=list(image_urls) + list(sticker_urls or []),
+        succeeded=[u for u, _ in inlined_frames] + [u for u, _ in sticker_inlined],
+    )
+    if absent_note:
+        text = (text + " " + absent_note).strip() if text else absent_note
+    elif image_urls and not inlined_frames and "[图片]" not in text:
+        # 当前消息带图但未内联且无号可标(模式 off/semi 窗口无 @/例外名单):补粗占位,
         # 否则模型不知道图存在。纯图消息 text 为空,下游 current_text 兜底,这里幂等。
         text = (text + " [图片]").strip() if text else "[图片]"
     user_content = build_reactive_user_content(
@@ -2152,8 +2369,9 @@ async def _run_reactive_turn(
         current_user_id=user_id,
         current_nickname=nickname or user_id,
         current_text=text or "[图片]",
-        current_image_urls=inlined_frames,
-        current_sticker_urls=sticker_inlined,
+        current_image_urls=_label_groups(label_index, inlined_frames),
+        current_sticker_urls=_label_groups(label_index, sticker_inlined),
+        current_message=current_row,
         sender_blacklisted=sender_blacklisted,
         pinned_anchors=pinned_anchors,
         # 2026-10-13 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
@@ -2161,6 +2379,7 @@ async def _run_reactive_turn(
             task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, False, user_id, group_id))
         ) or None,
         now_ms=now_ms,
+        name_resolver=_name_resolver,
     )
 
     # 出站 prompt 体量:模型在 explicit @ 下静默时,第一件要排除的就是「上下文被

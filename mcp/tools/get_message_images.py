@@ -38,6 +38,13 @@ class GetMessageImagesInput(BaseModel):
         max_length=4,
         description="要取图字节的消息 id 列表;最多 4 个",
     )
+    idx: list[int] | None = Field(
+        default=None,
+        description=(
+            "可选:只取这些 idx 的图(对全部 message_ids 生效);不传=现状整条消息全拉。"
+            "idx 取自历史行/当前消息的媒体清单(如 `(图#0 #1 表情#2)` 里的号)。"
+        ),
+    )
     adapter: str | None = Field(default=None, description="可选防御性过滤")
     group_id: str | None = Field(default=None, description="可选防御性过滤")
 
@@ -110,6 +117,11 @@ async def get_message_images_impl(
         )
 
     metas = store.get_message_images_meta(inp.message_ids)
+    # Q5(2026-10-15 拍板):可选 idx 过滤——只拉指定号的图,省字节 + vision token,
+    # 且按号指认精确。不传=现状全拉(零回归)。scope 校验/大小门/抽帧逻辑不变。
+    if inp.idx is not None:
+        wanted = set(inp.idx)
+        metas = {mid: [m for m in lst if m["idx"] in wanted] for mid, lst in metas.items()}
     results: list[dict[str, Any]] = []
     content_blocks: list[Any] = []
     total_bytes = 0

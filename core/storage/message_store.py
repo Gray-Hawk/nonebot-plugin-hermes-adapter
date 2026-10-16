@@ -16,7 +16,7 @@ from typing import Any
 
 from nonebot import logger
 
-from ..message_buffer import BufferedMessage
+from ..message_buffer import BufferedMessage, iter_message_media
 
 # 写法上分两段:CREATE TABLE 之间用分号分隔的多 statement,
 # sqlite3 单次 execute 只接一条,逐条执行更稳。
@@ -113,18 +113,13 @@ class MessageStore:
                 ),
             )
             msg_id = cur.lastrowid
-            # 普通图与收藏表情共用一张表、同一段连续 idx 编号(普通图在前),
-            # kind 列区分语义。PK 是 (message_id, idx),idx 必须全局唯一,
-            # 所以 sticker 的 idx 从 len(image_urls) 起排。
-            for i, url in enumerate(msg.image_urls):
+            # 枚举序不变量:own → sticker → quote → forward,连续 idx。
+            # 枚举产物与渲染侧共用 iter_message_media,禁止两处各自拼序。
+            # kind 列区分语义,PK 是 (message_id, idx)。
+            for i, (kind, url) in enumerate(iter_message_media(msg)):
                 self._conn.execute(
-                    "INSERT INTO message_images (message_id, idx, url, sha256, mime_type, kind) VALUES (?, ?, ?, NULL, NULL, 'image')",
-                    (msg_id, i, url),
-                )
-            for j, url in enumerate(msg.sticker_urls):
-                self._conn.execute(
-                    "INSERT INTO message_images (message_id, idx, url, sha256, mime_type, kind) VALUES (?, ?, ?, NULL, NULL, 'sticker')",
-                    (msg_id, len(msg.image_urls) + j, url),
+                    "INSERT INTO message_images (message_id, idx, url, sha256, mime_type, kind) VALUES (?, ?, ?, NULL, NULL, ?)",
+                    (msg_id, i, url, kind),
                 )
             if msg.forward_content:
                 self._conn.execute(
@@ -176,11 +171,21 @@ class MessageStore:
         ).fetchall()
         urls_by_msg: dict[int, list[str]] = defaultdict(list)
         stickers_by_msg: dict[int, list[str]] = defaultdict(list)
+        quote_by_msg: dict[int, list[str]] = defaultdict(list)
+        fwdimg_by_msg: dict[int, list[str]] = defaultdict(list)
         for ir in img_rows:
-            if ir["kind"] == "sticker":
-                stickers_by_msg[ir["message_id"]].append(ir["url"])
+            kind = ir["kind"]
+            # 枚举序 kind → 各自的桶;未知 kind(理论上只有历史遗留)按普通图兜底,
+            # 保持旧库行为不变。
+            if kind == "sticker":
+                bucket = stickers_by_msg
+            elif kind == "quote":
+                bucket = quote_by_msg
+            elif kind == "forward_image":
+                bucket = fwdimg_by_msg
             else:
-                urls_by_msg[ir["message_id"]].append(ir["url"])
+                bucket = urls_by_msg
+            bucket[ir["message_id"]].append(ir["url"])
         fwd_rows = self._conn.execute(
             f"SELECT message_id, content FROM message_forwards WHERE message_id IN ({placeholders})",
             ids,
@@ -196,6 +201,8 @@ class MessageStore:
                 content=r["content"],
                 image_urls=urls_by_msg.get(r["id"], []),
                 sticker_urls=stickers_by_msg.get(r["id"], []),
+                quote_image_urls=quote_by_msg.get(r["id"], []),
+                forward_image_urls=fwdimg_by_msg.get(r["id"], []),
                 reply_to_ts=r["reply_to_ts"],
                 is_bot=bool(r["is_bot"]),
                 id=r["id"],
