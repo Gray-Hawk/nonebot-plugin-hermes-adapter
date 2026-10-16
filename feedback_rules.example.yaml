@@ -1,0 +1,59 @@
+# 分级反馈规则配置模板(schema v2,2026-10-16)
+#
+# 用法:把本文件复制到定制定居目录(缺省 = localstore 插件数据目录,与 messages.db 同目录)
+# 并改名为 feedback_rules.yaml,按需增删规则。文件现读现用,保存即生效、无需重启。
+# 旧 feedback_rules.json 已不再读取(存在只 WARN 提示迁移,不双轨)。
+#
+# 总闸:缺省不拦截——没有任何 relay/bounce 规则时,系统无任何拦截/接力行为。
+#
+# 字段说明:
+#   name         规则名(必填;便签去重键 + 日志标识)
+#   pattern      正则检出(可选;自带锚,不受 position 约束;与 keywords 并存,任一命中即算)
+#   keywords     关键词检出(可选,字符串列表)
+#   position     关键词命中位置:full 全文(缺省) | head 句首 | tail 句尾
+#                只约束 keywords;pattern 正则自带锚不受影响
+#   where        生效位置:reply 正式回复 | interim 旁白 | all 两者(缺省 reply)
+#   action       动作:note 便签(缺省) | confirm 离场确认轮 | relay 放行+接力 | bounce 拦截+重交
+#   note         action=note 必填;action=bounce 时作超限放行的便签文案
+#   prompt       后续轮提示词覆盖(confirm/relay/bounce 可选)
+#   cooldown_sec 同类事件去重窗口(note 缺省 24h;confirm 缺省 300s)
+#   match        特殊检出器(可选):envelope_json = 内置「信封 JSON 残片」硬形态检测;
+#                配 action=bounce 用,写了才拦截
+#
+# 标点符号规则行为不变:只后续提示(note 便签),不当场拦截。
+# confirm/relay/bounce 只对 reply 生效——旁白是过程文本,不当真触发后续轮。
+
+version: 2
+
+rules:
+  # --- 内置两条(缺省回退与这里同义,可直接照抄进本文件微调) ---
+
+  - name: doc-quote
+    pattern: "[「」]"
+    where: all
+    action: note
+    note: "群聊要求全角标点,你上一轮的消息里出现了直角引号「」,双引号请用“”。"
+    cooldown_sec: 86400
+
+  - name: departure-promise
+    pattern: "(稍后|回头|晚点|待会[儿]?|一会[儿]?|之后).{0,6}(汇报|告诉你|通知你|回复你|同步|更新)|(汇报|通知|告诉).{0,4}(稍后|回头|晚点|待会[儿]?|一会[儿]?)"
+    where: reply
+    action: confirm
+    cooldown_sec: 300
+
+  # --- schema v2 新能力示例(均按需启用,缺省不生效) ---
+
+  # 例 1:关键词 + 句尾定位,命中即放行+接力(premature「我去做 X」转成接任务回执)
+  # - name: action-promise
+  #   keywords: ["我去查", "我这就去", "稍后汇报"]
+  #   position: tail          # 只认句尾命中;full 则全文任一位置
+  #   where: reply
+  #   action: relay           # 回复照发 + 追加「继续执行轮」
+  #
+  # 例 2:信封 JSON 残片拦截+重交(类②;硬形态检测器,宁漏勿滥)
+  # - name: envelope-residue
+  #   match: envelope_json    # 内置硬形态:含 "should_reply" 但抠不出 / 抠出后仍残留字段名
+  #   where: reply
+  #   action: bounce          # 不投递该回复,立刻追加重交轮;第二次检出起放行残片
+  #   note: "上一轮回复混入了协议 JSON 残片(已拦截未投递),信封 JSON 只在轮末完整输出一次。"
+  #   cooldown_sec: 600

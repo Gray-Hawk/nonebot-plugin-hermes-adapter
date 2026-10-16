@@ -293,7 +293,8 @@ class Config(BaseModel):
     正式功能默认开启，与 messages.db 同目录，开箱即用；「选配 DIY 才手动配」的
     旧语义仅限 help 菜单那种边角功能，不适用于此）；显式配置 = 覆盖到指定路径。
     目录内按约定文件名发现各类自定义，现读现用：
-      - feedback_rules.json  分级反馈规则（见 core/feedback_rules.py 的格式说明）
+      - feedback_rules.yaml  分级反馈规则（见 core/feedback_rules.py 的格式说明；
+                             模板 feedback_rules.example.yaml；旧 .json 已不再读取）
       - memory/<适配器>/groups/<群号>.md、people/<QQ号>.md  群档案（见 core/group_profile.py）
     以后新增自定义类型只加约定文件名，不再加 .env 键。
     某文件缺失 → 对应功能回退内置/静默跳过，不影响其余。

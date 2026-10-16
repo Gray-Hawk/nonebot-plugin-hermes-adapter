@@ -38,7 +38,7 @@ from ..core.hermes_client import (
 )
 from ..core.image_inline import inline_gif_frames, inline_image_frames
 from ..core.media_config import MediaConfig, load_media_config
-from ..core.inflight import PendingEntry, make_inflight_key
+from ..core.inflight import PendingEntry, make_inflight_key, _SYNTHETIC_NICKNAME
 from ..core.message_buffer import (
     BufferedMessage,
     build_media_address_index,
@@ -306,8 +306,11 @@ def _rewrite_quoted_literal_ats(text: str) -> str:
 
 
 # --- 2026-10-13 错误分级反馈 + 离场确认轮(维护者合成方案;规则引擎见 core/feedback_rules.py) ---
-# 统一不拦截:命中 action=note 的规则 → 下一轮贴暗示便签;action=confirm → 追加离场确认轮。
-# 规则来自 hermes_custom_dir/feedback_rules.json,缺省回退内置两条。
+# 后续轮一族(2026-10-16 章一合族,Q1):规则命中 → 追加指定 prompt 的后续轮,prompt 分族——
+#   confirm 离场确认轮 | relay 继续执行轮(类①) | bounce 重交轮(类②);不并存两套机制。
+# 统一不拦截:命中 action=note 的规则 → 下一轮贴暗示便签;confirm/relay/bounce → 追加后续轮。
+# 规则来自 hermes_custom_dir/feedback_rules.yaml(schema v2),缺省回退内置两条。
+# 总闸:缺省不拦截——没有 relay/bounce 规则时,系统无任何拦截/接力行为。
 
 _DEPARTURE_CONFIRM_PROMPT = (
     "(系统核对:你上一条回复里出现了“稍后/回头再汇报”类措辞。"
@@ -318,6 +321,93 @@ _DEPARTURE_CONFIRM_PROMPT = (
 
 # (scope_key, rule_name) → 上次 confirm 点火时刻(按规则名各自冷却,互不影响)
 _confirm_fired_at: dict[tuple[tuple[str, str], str], float] = {}
+
+# 2026-10-16 打回机制增强(章一;规划书 项目文档库):
+# 类① 放行+接力 / 类② 拦截+重交。两类的防循环都靠同一套「同 scope 连续硬计数」结构
+# (仿 _confirm_fired_at 的 (key, kind) 形态)。私聊合成轮用真实 user_id,不在
+# _SYNTHETIC_USER_IDS 豁免内——身份豁免断不了链,只有硬计数能断(规划书 §3.2 第 5 条)。
+_RELAY_CHAIN_MAX = 2    # 类① 接力上限(维护者 2026-10-16 拍板 Q4):超限照发 + WARN
+_BOUNCE_CHAIN_MAX = 1   # 类② 重交上限(规划书 §3.3):第二次检出起放行残片 + 贴便签
+
+# (scope_key, kind) → 连续点火计数(kind ∈ {"relay", "bounce"};普通投递即归零)
+_chain_counts: dict[tuple[tuple[str, str], str], int] = {}
+
+# 类① 继续执行轮内建提示词(规则可用 prompt 覆盖)
+_CONTINUE_TASK_PROMPT = (
+    "(系统提示:你上一条回复是任务回执,不是最终结果。"
+    "现在实际执行该任务,完成后按正常流程(同一信封)输出最终回复)"
+)
+# 类② 重交轮内建提示词(规则可用 prompt 覆盖)
+_RESUBMIT_REPLY_PROMPT = (
+    "(系统提示:你上一条回复混入了协议 JSON 残片,已被拦截、未投递给用户。"
+    "请重新给出最终回复;信封 JSON 只在轮末完整输出一次,正文里不要再出现字段名)"
+)
+# 类② 重交链达上限时贴的便签文案(规则给了 note 就用规则的)
+_BOUNCE_LIMIT_NOTE = (
+    "上一轮回复里混入了协议 JSON 残片(已被拦截、可能已投递)。"
+    "信封 JSON 只在轮末完整输出一次,正文里不要再出现字段名。"
+)
+
+# 私聊排队汇总成批(条目 23,规划书章二,topic: 项目文档库 §4):
+# turn 收尾→接力的边界才是链式连发的真凶——slot 一释放,尾随消息就各自 try_enter
+# 成功、各自开一轮;而每个接力 turn 本身又是一整轮 LLM,期间新消息继续补货。
+# 修法:收尾发现 pending 非空时不立即 pop+refire,而是**先不释放 slot**、等一个聚合窗,
+# 窗内新到消息经 try_enter 自然入队并同委托人合并(现成机制),窗后一次性 pop 开轮。
+# 维护者 2026-10-16 拍板 Q5:**全量启用**(不限长 turn);窗长按候选区间 3-5s 定稿 4s
+# (对齐应答防抖量级:防抖 2.5s 只覆盖同 turn 内的碎片,治不了跨 turn 边界)。
+_QUEUE_AGGREGATE_WINDOW_SEC = 4.0
+
+
+def _chain_allow(key: tuple[str, str], kind: str, limit: int) -> bool:
+    """同 scope 连续计数未达上限 → 允许点火。"""
+    return _chain_counts.get((key, kind), 0) < limit
+
+
+def _chain_bump(key: tuple[str, str], kind: str) -> None:
+    _chain_counts[(key, kind)] = _chain_counts.get((key, kind), 0) + 1
+
+
+def _chain_reset(key: tuple[str, str], kind: str) -> None:
+    _chain_counts.pop((key, kind), None)
+
+
+def _fire_followup_turn(
+    *,
+    key: tuple[str, str],
+    tag: str,
+    prompt: str,
+    bot: Bot,
+    target,
+    adapter_name: str,
+    user_id: str,
+    group_id: str | None,
+    is_private: bool,
+) -> None:
+    """追加一发合成后续轮(create_task 排队,经 inflight 接力在本 turn 后跑,不并发)。
+
+    全族唯一出口(2026-10-16 Q1 合族):离场确认轮 / 类①继续执行轮 / 类②重交轮都走这里,
+    只换 tag 与 prompt。合成身份沿用现有约定:群聊 "system-check"(命中 _SYNTHETIC_USER_IDS
+    豁免),私聊真实 user_id + 昵称「系统核对」(不在豁免内,靠硬计数断链)。
+    """
+    logger.info(f"[HERMES feedback] 追加后续轮({tag}) {key}")
+    if is_private:
+        asyncio.create_task(
+            _handle_passive_path(
+                bot=bot, target=target, adapter_name=adapter_name,
+                user_id=user_id, nickname=_SYNTHETIC_NICKNAME, group_id=None,
+                text=prompt, image_urls=[], is_private=True,
+                now_ms=_now_ms(),
+            )
+        )
+    else:
+        asyncio.create_task(
+            _handle_reactive_path(
+                bot=bot, target=target, adapter_name=adapter_name,
+                user_id="system-check", nickname=_SYNTHETIC_NICKNAME, group_id=group_id,
+                text=prompt, image_urls=[], is_explicit_trigger=False,
+                addressed_to_bot=False, now_ms=_now_ms(), ephemeral=True,
+            )
+        )
 
 
 def _feedback_scope_key(adapter_name: str, is_private: bool, user_id: str, group_id: str | None) -> tuple[str, str]:
@@ -353,25 +443,11 @@ async def _fire_departure_confirm(
         logger.debug(f"[HERMES feedback] 确认轮冷却中,跳过 {key} rule={rule_name}")
         return
     _confirm_fired_at[mark] = now
-    logger.info(f"[HERMES feedback] 命中 confirm 规则 {rule_name},追加离场确认轮 {key}")
-    if is_private:
-        asyncio.create_task(
-            _handle_passive_path(
-                bot=bot, target=target, adapter_name=adapter_name,
-                user_id=user_id, nickname="系统核对", group_id=None,
-                text=prompt, image_urls=[], is_private=True,
-                now_ms=_now_ms(),
-            )
-        )
-    else:
-        asyncio.create_task(
-            _handle_reactive_path(
-                bot=bot, target=target, adapter_name=adapter_name,
-                user_id="system-check", nickname="系统核对", group_id=group_id,
-                text=prompt, image_urls=[], is_explicit_trigger=False,
-                addressed_to_bot=False, now_ms=_now_ms(), ephemeral=True,
-            )
-        )
+    _fire_followup_turn(
+        key=key, tag=f"confirm:{rule_name}", prompt=prompt,
+        bot=bot, target=target, adapter_name=adapter_name,
+        user_id=user_id, group_id=group_id, is_private=is_private,
+    )
 
 
 async def _post_send_feedback(
@@ -385,13 +461,19 @@ async def _post_send_feedback(
     group_id: str | None,
     is_private: bool,
     synthetic: bool = False,
+    not_final: bool = False,
 ) -> None:
     """发送成功后的分级反馈检查(2026-10-13 维护者合成方案,规则引擎驱动)。
 
-    - 逐条评估 feedback_rules 里 where=reply/all 的规则;
+    - 逐条评估 feedback_rules 里 where=reply/all 的规则(统一走 rule.matches:
+      正则 / keywords+position / match=envelope_json 三种检出);
     - note → 写下轮暗示便签(按规则冷却去重),不当轮打断;
-    - confirm → 按规则冷却追加离场确认轮。
-    synthetic=True(巡查/确认轮等系统轮)不触发——防确认轮自己的措辞再命中递归。
+    - confirm → 按规则冷却追加离场确认轮;
+    - relay(类①)→ 回复照发后再追加「继续执行轮」;not_final=true 同效(§3.4:
+      同轮同填时 not_final 优先续跑,background_task 便签照登记);
+    - bounce(类②)→ 不在这里处理:它是发送**前**的拦截(_maybe_intercept_bounce),
+      能走到本函数说明该回复已放行。
+    synthetic=True(巡查/确认轮等系统轮)不触发——防合成轮自己的措辞再命中递归。
     合成轮身份由调用方按 user_id 约定("system-check"/"timer"/"delivery")判定,
     不在 _handle/_run 签名上加参数。
     """
@@ -399,8 +481,9 @@ async def _post_send_feedback(
         return
     from ..core.feedback_rules import load_rules
 
+    relay_rule = None
     for rule in load_rules():
-        if rule.where not in ("reply", "all") or not rule.regex.search(reply_text):
+        if rule.where not in ("reply", "all") or not rule.matches(reply_text):
             continue
         if rule.action == "note":
             task_notes.push_plugin_note(
@@ -414,17 +497,101 @@ async def _post_send_feedback(
                 bot=bot, target=target, adapter_name=adapter_name,
                 user_id=user_id, group_id=group_id, is_private=is_private,
             )
+        elif rule.action == "relay" and relay_rule is None:
+            relay_rule = rule
+
+    # 类① 放行+接力:not_final 声明 或 命中 relay 规则 → 回复已发出,追加继续执行轮。
+    if not_final or relay_rule is not None:
+        if _chain_allow(key, "relay", _RELAY_CHAIN_MAX):
+            _chain_bump(key, "relay")
+            _fire_followup_turn(
+                key=key,
+                tag=f"relay:{relay_rule.name if relay_rule else 'not_final'}",
+                prompt=(relay_rule.prompt if relay_rule and relay_rule.prompt else _CONTINUE_TASK_PROMPT),
+                bot=bot, target=target, adapter_name=adapter_name,
+                user_id=user_id, group_id=group_id, is_private=is_private,
+            )
+        else:
+            # 达上限:回复照发(本函数本就在发送之后),只 WARN 不再接力。
+            _chain_reset(key, "relay")
+            logger.warning(
+                f"[HERMES feedback] 接力链达上限({_RELAY_CHAIN_MAX}),照发不接力 {key} "
+                f"tag={relay_rule.name if relay_rule else 'not_final'}"
+            )
+    else:
+        # 普通投递:接力链在此归零(「连续」接力的定义边界)。
+        _chain_reset(key, "relay")
+
+
+def _match_bounce_rule(reply_text: str):
+    """类②第一步:返回首条命中的 action=bounce 规则(where=reply/all),无则 None。
+
+    总闸:缺省不拦截——没有 action=bounce 的规则时恒 None,系统无任何拦截行为。
+    """
+    if not reply_text:
+        return None
+    from ..core.feedback_rules import load_rules
+
+    for rule in load_rules():
+        if rule.where in ("reply", "all") and rule.action == "bounce" and rule.matches(reply_text):
+            return rule
+    return None
+
+
+async def _maybe_intercept_bounce(
+    *,
+    key: tuple[str, str],
+    reply_text: str,
+    bot: Bot,
+    target,
+    adapter_name: str,
+    user_id: str,
+    group_id: str | None,
+    is_private: bool,
+) -> bool:
+    """类② 拦截+重交:命中 action=bounce 规则 → 不投递该回复,立刻追加重交轮。
+
+    返回 True = 已拦截(调用方必须直接 return,不许发送);False = 放行(照常发送)。
+    链条达上限(第二次检出起)→ 放行残片 + 按规则 note 贴便签下轮提醒 + WARN
+    (规划书 §3.3:"宁让残片漏一次,不无限重交")。
+    注意:合成轮身份豁免在这里**不适用**——重交轮自己再吐残片正是要放行的那一发,
+    身份豁免会把它变成静默死循环;断链靠硬计数。
+    """
+    rule = _match_bounce_rule(reply_text)
+    if rule is None:
+        # 干净投递:与类①「普通投递即归零」同规——链条只在「连续」检出时累计,
+        # 否则重交成功一次后,进程生命周期内的第二次泄漏会被直接放行(修于 max 终验)。
+        _chain_reset(key, "bounce")
+        return False
+    if not _chain_allow(key, "bounce", _BOUNCE_CHAIN_MAX):
+        _chain_reset(key, "bounce")
+        logger.warning(
+            f"[HERMES feedback] 重交链达上限({_BOUNCE_CHAIN_MAX}),残片放行并贴便签 {key} "
+            f"rule={rule.name}"
+        )
+        task_notes.push_plugin_note(
+            key, rule.name, rule.note or _BOUNCE_LIMIT_NOTE,
+            cooldown_sec=rule.cooldown_sec or 600.0,
+        )
+        return False
+    _chain_bump(key, "bounce")
+    _fire_followup_turn(
+        key=key, tag=f"bounce:{rule.name}", prompt=rule.prompt or _RESUBMIT_REPLY_PROMPT,
+        bot=bot, target=target, adapter_name=adapter_name,
+        user_id=user_id, group_id=group_id, is_private=is_private,
+    )
+    return True
 
 
 def _check_interim_feedback(key: tuple[str, str], segment: str) -> None:
     """旁白段的规则检测(2026-10-13,where=interim/all;仅 note 动作——旁白是过程
-    文本,命中 confirm 不当真,确认轮只跟正式回复)。"""
+    文本,命中 confirm/relay/bounce 不当真,后续轮只跟正式回复)。"""
     if not segment:
         return
     from ..core.feedback_rules import load_rules
 
     for rule in load_rules():
-        if rule.where in ("interim", "all") and rule.action == "note" and rule.regex.search(segment):
+        if rule.where in ("interim", "all") and rule.action == "note" and rule.matches(segment):
             task_notes.push_plugin_note(
                 key, rule.name, rule.note, cooldown_sec=rule.cooldown_sec or 24 * 3600
             )
@@ -2250,6 +2417,16 @@ async def _run_passive_turn(
             logger.warning(f"[HERMES passive] 检测到 submit_decision 形 JSON 残留,抠 reply_text 后发送(group={group_id})")
             reply_text = extracted
 
+    # 类②拦截点(passive,规划书 §3.3):reply_text 定稿后、extract_response_media 前。
+    # 命中 action=bounce 规则 → 不投递,立刻追加重交轮;缺省(无 bounce 规则)恒放行。
+    # 这里不套合成轮身份豁免:重交轮自己再吐残片正是「第二次检出放行」的那一发。
+    if await _maybe_intercept_bounce(
+        key=_fb_key, reply_text=reply_text, bot=bot, target=target,
+        adapter_name=adapter_name, user_id=user_id, group_id=group_id,
+        is_private=is_private,
+    ):
+        return result
+
     cleaned_text, extracted_media_urls, extracted_files = extract_response_media(reply_text)
     media_urls = list(result.media_urls) + [u for u in extracted_media_urls if u not in result.media_urls]
     # 本部署补丁(2026-10-08): 本地文件上传。client 层(普通文本路径)已收过一轮
@@ -2271,6 +2448,7 @@ async def _run_passive_turn(
         key=_fb_key, reply_text=cleaned_text, bot=bot, target=target,
         adapter_name=adapter_name, user_id=user_id, group_id=group_id,
         is_private=is_private, synthetic=user_id in _SYNTHETIC_USER_IDS,
+        not_final=bool((result.structured or {}).get("not_final")),
     )
     # 文件跟在文本消息之后上传(占位符在前作说明, 文件随后到达)。
     await send_local_files(bot=bot, target=target, file_paths=file_paths, adapter_name=adapter_name)
@@ -2790,6 +2968,15 @@ async def _run_reactive_turn(
         str(m.user_id) for m in recent
     }:
         at_user = str(_decision_at_id)
+    # 类②拦截点(reactive,规划书 §3.3):cleaned_reply_text 定稿后、send_text_with_media 前。
+    # 命中 action=bounce 规则 → 不投递该回复,立刻追加重交轮(不 mark_bot_replied、不入库)。
+    if await _maybe_intercept_bounce(
+        key=_fb_key, reply_text=cleaned_reply_text, bot=bot, target=target,
+        adapter_name=adapter_name, user_id=user_id, group_id=group_id,
+        is_private=False,
+    ):
+        return result
+
     sent = await send_text_with_media(
         bot=bot,
         target=target,
@@ -2810,6 +2997,7 @@ async def _run_reactive_turn(
             key=_fb_key, reply_text=cleaned_reply_text, bot=bot, target=target,
             adapter_name=adapter_name, user_id=user_id, group_id=group_id,
             is_private=False, synthetic=user_id in _SYNTHETIC_USER_IDS,
+            not_final=bool(decision.get("not_final")),
         )
 
     # 用 send 完成时的 wall clock,不复用入参 now_ms。
@@ -2974,6 +3162,32 @@ async def _run_reactive_turn(
     return result
 
 
+async def _pop_pending_after_aggregate_window(
+    key: tuple[str, str], *, after_ts: int, aggregate: bool
+) -> PendingEntry | None:
+    """turn 收尾取下一发:私聊被动路径先等一个聚合窗,把尾随消息并进同一条目。
+
+    条目 23 的实现点(规划书 §4.2)。设计要点:
+      - 还有 pending 时**不释放 slot**,先 await 聚合窗——窗内新到消息经 try_enter
+        自然落队、并入同委托人条目(_merge_pending_message);窗满再一次性 pop 开轮。
+        slot 一旦释放,尾随消息就会各自 try_enter 成功、各自开一轮,这正是要治的
+        「跨 turn 边界连发」——所以合并只能靠「不释放 slot + 窗内等待」达成。
+      - pending 为空(含只有过期条目)时立即返回,秒回场景零额外延迟。
+      - aggregate 只在私聊被动路径为 True:reactive 路径与群聊被动路径(active
+        session 关闭时的兜底)行为完全不变。
+      - pending_steer 回收条目在本 helper 之前已入队,天然并入,无需特判。
+
+    取队判据走 peek_next_pending(非破坏读,与 pop 同 stale 规则),确认有货才等窗。
+    """
+    assert _mcp.inflight is not None
+    if aggregate and _mcp.inflight.peek_next_pending(key, after_ts=after_ts) is not None:
+        logger.debug(
+            f"[HERMES queue-aggregate] 等聚合窗 {_QUEUE_AGGREGATE_WINDOW_SEC}s key={key}"
+        )
+        await asyncio.sleep(_QUEUE_AGGREGATE_WINDOW_SEC)
+    return _mcp.inflight.pop_next_pending(key, after_ts=after_ts)
+
+
 async def _handle_passive_path(
     *,
     bot: Bot,
@@ -3046,7 +3260,11 @@ async def _handle_passive_path(
         if not should_refire:
             _mcp.inflight.exit(key)
         else:
-            pending_entry = _mcp.inflight.pop_next_pending(key, after_ts=current_buffered.ts)
+            # 条目 23(规划书章二):私聊被动路径的收尾边界先过聚合窗——窗内尾随消息
+            # 并入同一条目后一次性开轮;窗内 slot 不释放(见 helper docstring)。
+            pending_entry = await _pop_pending_after_aggregate_window(
+                key, after_ts=current_buffered.ts, aggregate=is_private
+            )
             if pending_entry is None:
                 _mcp.inflight.exit(key)
             else:
@@ -3458,7 +3676,11 @@ async def _handle_reactive_path(
         if not should_refire_pending:
             _mcp.inflight.exit(key)
         else:
-            pending_entry = _mcp.inflight.pop_next_pending(key, after_ts=current_buffered.ts)
+            # 条目 23:群聊 reactive 路径**不启用**聚合窗(有群级防抖合并先例,
+            # 另行核实再说)——aggregate=False 走同一 helper 保持出队语义单点。
+            pending_entry = await _pop_pending_after_aggregate_window(
+                key, after_ts=current_buffered.ts, aggregate=False
+            )
             if pending_entry is None:
                 _mcp.inflight.exit(key)
             else:
@@ -3599,7 +3821,13 @@ async def _refire(
             # B012 豁免: try 侧异常已被上方 except 捕获记录,不存在被吞的活异常;
             # refire 是独立 create_task 的旁路接力,CancelledError 窗口仅停机时。
             return  # noqa: B012
-        pending_entry = _mcp.inflight.pop_next_pending(key, after_ts=trigger_msg.ts)
+        pending_entry = await _pop_pending_after_aggregate_window(
+            key,
+            after_ts=trigger_msg.ts,
+            # 条目 23:接力轮的收尾边界是链式连发的另一半——私聊被动接力同样过聚合窗
+            # (mode="passive" 且 group_id is None = 私聊);群聊接力/群聊被动保持不变。
+            aggregate=(mode == "passive" and group_id is None),
+        )
         if pending_entry:
             asyncio.create_task(
                 _refire(

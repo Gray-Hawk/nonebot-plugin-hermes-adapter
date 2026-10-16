@@ -110,8 +110,12 @@ In reactive mode, your reply MUST be a single `submit_decision` tool call:
   "release_anchor": "all",  // optional; commissioner user_id or "all", see task anchors below
   "answer_anchor": "12345", // optional; commissioner user_id or "all" — this reply answered that pinned task
   "anchor_merge": "12345",  // optional; starter user_id of the pinned task this message belongs to (merge, don't pin new)
-  "background_task": "调研 XX"  // optional; note for work you just dispatched to background —
+  "background_task": "调研 XX", // optional; note for work you just dispatched to background —
                                 // on completion the system wakes you and echoes this note
+  "not_final": false      // optional; true when this reply is NOT your final result but a task
+                          // acknowledgement — the plugin resends it as-is and immediately fires a
+                          // continue turn so you can actually do the work. Only when a task is
+                          // still pending; omit for chit-chat and wrapped-up turns
 }
 ```
 

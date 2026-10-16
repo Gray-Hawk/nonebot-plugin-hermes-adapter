@@ -101,6 +101,12 @@ def _strip_stickers_for_queue(msg: BufferedMessage) -> BufferedMessage:
     return replace(msg, sticker_urls=[], content=(msg.content + " [表情包]").strip())
 
 
+# 合成后续轮（离场确认/接力/重交）在私聊沿用真实 user_id 时的身份昵称。
+# 常量化原因（条目 23 语义定案 2026-10-16）：合并函数要凭它辨认「合成 fragment」
+# 给真人消息加身份分界，手抄字面量会漂移。
+_SYNTHETIC_NICKNAME = "系统核对"
+
+
 def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
     """排队消息并入旧条目(语义同防抖拼接)。
 
@@ -124,6 +130,13 @@ def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
     if new_text:
         if not same_user:
             new_text = f"{new.nickname or new.user_id}: {new_text}"
+        elif old.nickname == _SYNTHETIC_NICKNAME and new.nickname != _SYNTHETIC_NICKNAME:
+            # 条目 23 语义定案（2026-10-16 维护者拍板「做一个分界」）：合成后续轮
+            # （私聊顶真实 user_id、昵称「系统核对」）与真人消息按同委托人规则合并时，
+            # 真人部分必须带身份分界——合成 prompt 自带「(系统核对:」前缀，真人部分
+            # 不标会被读成系统指令的延续。反向（真人旧条目+合成新 fragment）不用标：
+            # 合成 prompt 文本自带头。
+            new_text = f"(用户留言: {new_text})"
         old_text = (old.content or "").strip()
         old.content = f"{old_text}\n{new_text}" if old_text else new_text
     # 只合并普通图片:委托带图接力后仍要看图是真实需求,sticker 见上方说明。
@@ -262,6 +275,24 @@ class InflightRegistry:
             return "queue_full"
         slot.commissions.append(entry)
         return "queued"
+
+    def peek_next_pending(self, key: tuple[str, str], *, after_ts: int) -> PendingEntry | None:
+        """非破坏读「下一发是谁」——与 pop_next_pending 同判据,但不摘除。
+
+        条目 23(私聊排队汇总成批,2026-10-16)用:turn 收尾要先知道槽里还有没有
+        下一发,才能决定要不要等聚合窗;而 pop 会把条目取走,判据只能是非破坏读。
+        stale 前缀(ts <= after_ts)按 pop 同规跳过、不返回。返回非 None 只表示
+        「有货」;真正的取队仍必须走 pop_next_pending。
+        """
+        slot = self._slots.get(key)
+        if slot is None:
+            return None
+        for entry in slot.commissions:
+            if entry.msg.ts > after_ts:
+                return entry
+        if slot.followup is not None and slot.followup.msg.ts > after_ts:
+            return slot.followup
+        return None
 
     def pop_next_pending(self, key: tuple[str, str], *, after_ts: int) -> PendingEntry | None:
         """取下一发接力。委托 FIFO 优先;没有委托才轮到闲聊跟进槽。

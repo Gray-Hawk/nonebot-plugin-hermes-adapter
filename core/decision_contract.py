@@ -124,6 +124,15 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         cn_note='string',
         cn_desc='离场任务便签:刚派出后台任务(子代理/后台进程)时\n    填一句任务摘要;完成时系统会叫醒你并把便签回投。便签让唤醒轮知道「在等谁」,\n    不派活不要填。填了便签的回合可以直接静默收尾,不必承诺「稍后汇报」',
     ),
+    DecisionFieldSpec(
+        name='not_final',
+        required=False,
+        en_note='boolean, optional',
+        en_desc='true when this reply is NOT your final result but a task acknowledgement: the plugin will resend your reply as-is and then immediately fire a continue turn so you can actually do the work and deliver the final answer in the normal flow. Set it only when a concrete task is still pending; omit it for chit-chat and wrapped-up turns',
+        cn_note='boolean',
+        cn_desc='这不是最终回复(仅在有明确未完成任务时填 true):插件会把你这条\n    原样发出(当作任务回执),随即立刻追加一发「继续执行轮」,让你真去干活、\n    完成后按正常流程输出最终回复。闲聊/正常收尾不要填;它与 background_task 语义\n    互斥(那个是后台已在跑、等系统唤醒),同轮同填时以 not_final 为准(先续跑,便签照登记)',
+        cn_desc_short='这不是最终回复,有未完成任务才填',
+    ),
 )
 
 

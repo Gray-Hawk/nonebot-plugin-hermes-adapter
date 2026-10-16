@@ -226,7 +226,7 @@ _PRIVATE_DECISION_PROTOCOL_BLOCK = (
     "你处于私聊对话。对方在等你回应,默认 should_reply=true。\n"
     "仅在消息完全没有可回应内容时(纯表情轰炸、无意义刷屏)才 false。\n"
     "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
-    + render_cn_field_lines(("should_reply", "reply_text"), short=True)
+    + render_cn_field_lines(("should_reply", "reply_text", "not_final"), short=True)
     + "最终输出必须是该 JSON 对象,不要在 JSON 外面再包文字;\n"
     "即使想用角色口吻说话,也必须把那段话放进 reply_text 字段里。\n"
     "</decision_protocol>"
