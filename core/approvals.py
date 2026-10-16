@@ -67,7 +67,10 @@ def add_pending(
 
 
 def pop_oldest() -> PendingApproval | None:
-    """取最旧的未过期条目(FIFO 应答);过期条目顺手剔除。"""
+    """取最旧的未过期条目(FIFO 应答);过期条目顺手剔除。
+
+    ⑪ 审计定案:插件内零调用;保留供回归脚本使用(技能侧 smoke_approvals.py)。
+    """
     for aid in sorted(_pending):
         entry = _pending[aid]
         if entry.expired:
@@ -105,7 +108,11 @@ def pending_count() -> int:
 
 
 def drop_expired() -> int:
-    """剔除全部过期条目,返回剔除数(sweeper/测试用)。"""
+    """剔除全部过期条目,返回剔除数(sweeper/测试用)。
+
+    ⑪ 审计定案:插件内零调用,保留勿删(全树含冒烟目录 grep 复核无直接调用;
+    随 pop_oldest 同批保留)。
+    """
     expired = [aid for aid, e in _pending.items() if e.expired]
     for aid in expired:
         del _pending[aid]

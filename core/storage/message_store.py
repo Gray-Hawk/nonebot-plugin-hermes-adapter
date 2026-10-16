@@ -294,8 +294,8 @@ class MessageStore:
     def known_groups(self) -> list[tuple[str, str]]:
         """返回所有已有消息的 (adapter, scope_id) 唯一集合。
 
-        scope_id:群聊 = group_id,私聊 = `@private:<user_id>`(与
-        MessageBuffer.is_private_key 同口径)。
+        scope_id:群聊 = group_id,私聊 = `@private:<user_id>`(私聊桶按
+        `@private:` 前缀判别)。
         """
         rows = self._conn.execute("SELECT DISTINCT adapter, group_id, user_id FROM messages").fetchall()
         seen: set[tuple[str, str]] = set()

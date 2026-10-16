@@ -22,6 +22,7 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any
 
+from .decision_contract import render_cn_field_lines, render_field_name_list
 from .hermes_client import UserContent
 from .message_buffer import (
     BufferedMessage,
@@ -29,6 +30,7 @@ from .message_buffer import (
     media_label,
     render_media_summary,
 )
+from .message_context import render_message_context_head
 
 
 _WEEKDAY_CN = "一二三四五六日"
@@ -83,28 +85,8 @@ _DECISION_PROTOCOL_BLOCK = (
     "<decision_protocol>\n"
     "你处于群活跃态。每条新消息都需要决定是否要插话。\n"
     "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
-    "  should_reply (boolean, required) — 是否要回复\n"
-    "  reply_text (string) — should_reply=true 时必填,留空表示静默\n"
-    "  topic_hint (string) — 简短话题标记(中文 OK),将带入下一轮 runtime_state\n"
-    "  should_exit_active (boolean) — 谨慎使用,见下方退出门槛\n"
-    "  at_user_id (string) — 要 @ 就给对方的 user_id(recent_messages 里某位发言者),"
-    "这是唯一 @ 途径。@ 是强提醒会弹通知,只有对方需要被明确通知时才给:点名提问的回答、\n"
-    "    委托受理/完成的回执、许久未发言者的应答。热聊中的即时接话不给\n"
-    "    (对方正在看,@ 是打扰)。多方混聊里「你回的人」常不是「触发本轮的人」,"
-    "给你实际回话对象的 id。不给 = 不 @;id 不在 recent 窗口内会被拒,同样不 @。\n"
-    "    你最清楚该不该 @,自己判断\n"
-    "  pin_anchor (boolean) — 委托判断轮专用:确认当前 @/私聊请求是需要后续跟踪的\n"
-    "    任务时给 true,把它钉进 <pinned_tasks>;玩笑、围观、一次性闲聊不要钉。\n"
-    "  release_anchor (string) — 松锚:值为委托人的 user_id 或 \"all\"。\n"
-    "    看到 <pinned_tasks> 里的锚已完结(任务办完/话题已漂)时设置,见下方任务锚节\n"
-    "  answer_anchor (string) — 标应答:本轮回复解答了某条在钉委托时,填委托人的\n"
-    "    user_id 或 \"all\";只填在钉锚里的 id,填错会被忽略并在下一轮提醒你\n"
-    "  anchor_merge (string) — 归并:当前消息属于某条在钉任务(补充/验收)时,填该\n"
-    "    任务发起者的 user_id;只填在钉锚的发起者 id,填错会被忽略并下轮提醒\n"
-    "  background_task (string) — 离场任务便签:刚派出后台任务(子代理/后台进程)时\n"
-    "    填一句任务摘要;完成时系统会叫醒你并把便签回投。便签让唤醒轮知道「在等谁」,\n"
-    "    不派活不要填。填了便签的回合可以直接静默收尾,不必承诺「稍后汇报」\n"
-    "\n"
+    + render_cn_field_lines()
+    + "\n"
     "对象归属(先决定这条是不是冲你说的,再走插话原则;命中一条「归你」就停,不再下挪):\n"
     "  - runtime_state 里有 `addressed_to_you: true` → 平台层面已经确认这条是冲你说的\n"
     "    (真 @ 了你 / 私聊),归属判断到此为止,直接走插话原则——不得再以\n"
@@ -244,9 +226,8 @@ _PRIVATE_DECISION_PROTOCOL_BLOCK = (
     "你处于私聊对话。对方在等你回应,默认 should_reply=true。\n"
     "仅在消息完全没有可回应内容时(纯表情轰炸、无意义刷屏)才 false。\n"
     "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
-    "  should_reply (boolean, required) — 是否要回复\n"
-    "  reply_text (string) — should_reply=true 时必填\n"
-    "最终输出必须是该 JSON 对象,不要在 JSON 外面再包文字;\n"
+    + render_cn_field_lines(("should_reply", "reply_text"), short=True)
+    + "最终输出必须是该 JSON 对象,不要在 JSON 外面再包文字;\n"
     "即使想用角色口吻说话,也必须把那段话放进 reply_text 字段里。\n"
     "</decision_protocol>"
 )
@@ -523,8 +504,10 @@ def build_passive_system_prompt(
 ) -> str:
     """passive 路径的 system prompt:仅 Message Context 头。
 
-    与 hermes_client.chat 的默认拼装字节一致(测试 test_passive_prompt_* 是约束),
-    用本函数统一构造能配合 build_passive_user_content 一起把会话历史挪到 user content。
+    头段与 hermes_client.chat 的默认分支同源(同为 core/message_context.py 的
+    render_message_context_head 输出,2026-10-16 同源化收口批:互锁从测试升级为
+    代码同源);用本函数统一构造能配合 build_passive_user_content 一起把会话历史
+    挪到 user content。
 
     历史块(0.1.6 群聊旁观注入)已搬到 user content(见 build_passive_user_content):
     1:1 私聊也走相同接口,recent=[] 时 user content 退化为纯文本/多模态 parts。
@@ -532,13 +515,9 @@ def build_passive_system_prompt(
     private_decision(本部署补丁:凌晨批项2): 私聊挂决策信封时
     在 Message Context 头后追加私聊版决策协议块(字节稳定 per session,缓存友好)。
     """
-    ctx_lines = [f"Platform: {adapter or 'unknown'}"]
-    ctx_lines.append("Chat Type: " + ("Private" if is_private else "Group"))
-    if user_id:
-        ctx_lines.append(f"User ID: {user_id}")
-    if not is_private and group_id:
-        ctx_lines.append(f"Group ID: {group_id}")
-    head = "Message Context:\n" + "\n".join(ctx_lines)
+    head = render_message_context_head(
+        adapter=adapter, is_private=is_private, user_id=user_id, group_id=group_id
+    )
     if private_decision:
         head += "\n\n" + _PRIVATE_DECISION_PROTOCOL_BLOCK
     # 群记忆外挂(2026-10-14 定稿):群档案块拼在最末,字节稳定 per 群。
@@ -646,9 +625,11 @@ def build_reactive_user_content(
     # 直接吐裸文本回复(典型表现:整段角色对白 0 个花括号)。把契约提示放到 user content
     # 最末,LLM 近因效应让它最难忘 —— 这一行不能改成 byte-stable system 的一部分,
     # 必须紧贴 current_message,才能在每个 turn 都重新"撞"一次模型。
+    # 字段单单一来源:core/decision_contract.py(render_field_name_list;审计确认5)。
     reminder = (
-        "\n\n请用 submit_decision JSON 对象回复(字段:should_reply / reply_text / "
-        "topic_hint / should_exit_active / at_user_id / pin_anchor / release_anchor / answer_anchor / anchor_merge / background_task),不要直接说话或扮演动作。"
+        "\n\n请用 submit_decision JSON 对象回复(字段:"
+        + render_field_name_list()
+        + "),不要直接说话或扮演动作。"
     )
     # 2026-10-13 分级反馈:插件提示便签贴 reminder 尾(近因位置,下轮即见即焚)
     if plugin_note:
@@ -671,6 +652,7 @@ def build_passive_user_content(
     current_text: str,
     current_image_urls: Sequence[Sequence[str]],
     current_sticker_urls: Sequence[Sequence[str]] = (),
+    current_message: BufferedMessage | None = None,
     plugin_note: str | None = None,
     name_resolver: "Callable[[str], str | None] | None" = None,
 ) -> UserContent:
@@ -678,12 +660,25 @@ def build_passive_user_content(
 
     recent_messages=[] 时退化为 chat() 默认拼装(纯字符串 / 单 part 多模态),
     与未启用 perception 的私聊路径完全一致——调用方可统一走本函数,无需分支。
+
+    current_message: 当前消息的 buffer 行(可选)。给了且已回填 id 时,当前文本行
+    补 `[m:ID] ` 前缀并追加紧凑媒体清单(与 reactive 的 cur_prefix/cur_summary
+    同形同源),让 passive(私聊/旧式部署)的当前消息图也能在文本层按号指认
+    (审计修复批 2026-10-16,疑似 C 维护者拍板=修)。
     """
+    # 当前消息行(与 reactive 同形):[m:ID] 前缀 + 紧凑媒体清单;取不到行/未回填
+    # id = 裸文本(贴号退化为无号,不阻断出站)。
+    cur_line = current_text
+    if current_message is not None and current_message.id is not None:
+        cur_line = f"[m:{current_message.id}] {cur_line}"
+    cur_summary = render_media_summary(current_message) if current_message is not None else None
+    if cur_summary:
+        cur_line = f"{cur_line} {cur_summary}"
     if recent_messages:
         text_block = _render_recent_messages_block(
-            recent_messages, name_resolver=name_resolver) + "\n\n" + current_text
+            recent_messages, name_resolver=name_resolver) + "\n\n" + cur_line
     else:
-        text_block = current_text
+        text_block = cur_line
     if current_sticker_urls:
         text_block += _STICKER_MOOD_NOTE
     # 2026-10-13 分级反馈:插件提示便签贴文本尾

@@ -1,0 +1,171 @@
+"""决策信封(submit_decision)字段契约的单一来源(2026-10-16 同源化收口批,审计确认5)。
+
+信封字段此前在四处各自手写:hermes_client 的 _DECISION_HINT(英文)、
+prompt_builder 的 _DECISION_PROTOCOL_BLOCK(中文主协议块)、同文件近因 reminder
+字段单、同文件私聊版协议块。加/改/删一个字段要人肉同步多处,漏一处模型侧与插件
+侧就行为分裂(技能台账已把「信封字段加/改/删必须同步」列为硬性规则,本模块把
+「字段清单」收口成一处)。
+
+只收口字段清单:协议块里的其余叙述(@ 规则、锚规则、流程说明、行动诚实/回复纪律
+等)仍原位保留在 prompt_builder;_DECISION_HINT 与协议块「两份都在场」的现状不变
+(行为零变化,只把内容来源收口)。
+
+各消费点渲染形态与收口前逐字节一致(2026-10-16 收口批 diff 核对):
+  - render_en_field_lines(): _DECISION_HINT 的字段行(英文,desc 在括号内);
+  - render_cn_field_lines(): 主协议块字段行(全集)/ 私聊版字段行(names 子集 + short);
+  - render_field_name_list(): 近因 reminder 的 slash 字段单。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class DecisionFieldSpec:
+    """一个字段的展示形态(中英双语)。
+
+    en_note / cn_note = 括号内的类型与必填标注(逐消费点手写形态原样搬入);
+    en_desc = 英文行括号内 ` — ` 之后的说明("");
+    cn_desc = 中文行括号外 ` — ` 之后的说明("" = 无,可含换行);
+    cn_desc_short = 私聊版简写说明("" = 回落 cn_desc)。
+    required 仅为字段元数据,渲染看各 note 原文。
+    """
+
+    name: str
+    required: bool
+    en_note: str
+    en_desc: str
+    cn_note: str
+    cn_desc: str
+    cn_desc_short: str = ""
+
+
+# 权威字段表:顺序 = 渲染顺序(reminder 字段单 / 协议块字段行都按此序)。
+DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
+    DecisionFieldSpec(
+        name='should_reply',
+        required=True,
+        en_note='boolean, required',
+        en_desc='',
+        cn_note='boolean, required',
+        cn_desc='是否要回复',
+    ),
+    DecisionFieldSpec(
+        name='reply_text',
+        required=False,
+        en_note='string, optional, required when should_reply=true',
+        en_desc='',
+        cn_note='string',
+        cn_desc='should_reply=true 时必填,留空表示静默',
+        cn_desc_short='should_reply=true 时必填',
+    ),
+    DecisionFieldSpec(
+        name='topic_hint',
+        required=False,
+        en_note='string, optional',
+        en_desc='',
+        cn_note='string',
+        cn_desc='简短话题标记(中文 OK),将带入下一轮 runtime_state',
+    ),
+    DecisionFieldSpec(
+        name='should_exit_active',
+        required=False,
+        en_note='boolean, optional',
+        en_desc='',
+        cn_note='boolean',
+        cn_desc='谨慎使用,见下方退出门槛',
+    ),
+    DecisionFieldSpec(
+        name='at_user_id',
+        required=False,
+        en_note='string, optional',
+        en_desc='@ a specific speaker from recent_messages by user_id as a strong notification. This is the ONLY way to @: absent or outside the recent window means NO @. Omit for ordinary in-conversation replies',
+        cn_note='string',
+        cn_desc='要 @ 就给对方的 user_id(recent_messages 里某位发言者),这是唯一 @ 途径。@ 是强提醒会弹通知,只有对方需要被明确通知时才给:点名提问的回答、\n    委托受理/完成的回执、许久未发言者的应答。热聊中的即时接话不给\n    (对方正在看,@ 是打扰)。多方混聊里「你回的人」常不是「触发本轮的人」,给你实际回话对象的 id。不给 = 不 @;id 不在 recent 窗口内会被拒,同样不 @。\n    你最清楚该不该 @,自己判断',
+    ),
+    DecisionFieldSpec(
+        name='pin_anchor',
+        required=False,
+        en_note='boolean, optional',
+        en_desc='commission judgement turns only: true pins the current request into <pinned_tasks>; omit/false for jokes or one-off chatter',
+        cn_note='boolean',
+        cn_desc='委托判断轮专用:确认当前 @/私聊请求是需要后续跟踪的\n    任务时给 true,把它钉进 <pinned_tasks>;玩笑、围观、一次性闲聊不要钉。',
+    ),
+    DecisionFieldSpec(
+        name='release_anchor',
+        required=False,
+        en_note='string, optional',
+        en_desc='commissioner user_id or "all" to unpin finished task anchors from <pinned_tasks>',
+        cn_note='string',
+        cn_desc='松锚:值为委托人的 user_id 或 "all"。\n    看到 <pinned_tasks> 里的锚已完结(任务办完/话题已漂)时设置,见下方任务锚节',
+    ),
+    DecisionFieldSpec(
+        name='answer_anchor',
+        required=False,
+        en_note='string, optional',
+        en_desc='commissioner user_id or "all": declare your reply answered that pinned task; unknown ids are rejected and echoed back next turn',
+        cn_note='string',
+        cn_desc='标应答:本轮回复解答了某条在钉委托时,填委托人的\n    user_id 或 "all";只填在钉锚里的 id,填错会被忽略并在下一轮提醒你',
+    ),
+    DecisionFieldSpec(
+        name='anchor_merge',
+        required=False,
+        en_note='string, optional',
+        en_desc='starter user_id of a pinned task this message belongs to: merges the sender into its participants instead of pinning new',
+        cn_note='string',
+        cn_desc='归并:当前消息属于某条在钉任务(补充/验收)时,填该\n    任务发起者的 user_id;只填在钉锚的发起者 id,填错会被忽略并下轮提醒',
+    ),
+    DecisionFieldSpec(
+        name='background_task',
+        required=False,
+        en_note='string, optional',
+        en_desc='a one-line note when you just dispatched background work (subagent/background process); on completion the system wakes you and echoes the note. Omit when nothing is running',
+        cn_note='string',
+        cn_desc='离场任务便签:刚派出后台任务(子代理/后台进程)时\n    填一句任务摘要;完成时系统会叫醒你并把便签回投。便签让唤醒轮知道「在等谁」,\n    不派活不要填。填了便签的回合可以直接静默收尾,不必承诺「稍后汇报」',
+    ),
+)
+
+
+def _render_line(
+    spec: DecisionFieldSpec, *, lang: str, short: bool = False
+) -> str:
+    """单字段行。
+
+    EN: `  name (note)` / `  name (note — desc)`;
+    CN: `  name (note)` / `  name (note) — desc`(desc 可含换行)。
+    """
+    if lang == "en":
+        if spec.en_desc:
+            return f"  {spec.name} ({spec.en_note} — {spec.en_desc})"
+        return f"  {spec.name} ({spec.en_note})"
+    note = spec.cn_note
+    desc = spec.cn_desc_short if short and spec.cn_desc_short else spec.cn_desc
+    line = f"  {spec.name} ({note})"
+    if desc:
+        line += f" — {desc}"
+    return line
+
+
+def render_en_field_lines() -> str:
+    """英文字段行(_DECISION_HINT 用),每行 `\n` 收尾。"""
+    return "".join(_render_line(f, lang="en") + "\n" for f in DECISION_FIELDS)
+
+
+def _select(names: tuple[str, ...] | None) -> tuple[DecisionFieldSpec, ...]:
+    if names is None:
+        return DECISION_FIELDS
+    wanted = set(names)
+    return tuple(f for f in DECISION_FIELDS if f.name in wanted)
+
+
+def render_cn_field_lines(
+    names: tuple[str, ...] | None = None, *, short: bool = False
+) -> str:
+    """中文字段行(主协议块 names=None;私聊版 names 子集 + short=True),每行 `\n` 收尾。"""
+    return "".join(_render_line(f, lang="cn", short=short) + "\n" for f in _select(names))
+
+
+def render_field_name_list() -> str:
+    """`a / b / c` 形态的字段名清单(近因 reminder 用)。"""
+    return " / ".join(f.name for f in DECISION_FIELDS)

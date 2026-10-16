@@ -42,6 +42,7 @@ from nonebot_plugin_apscheduler import scheduler
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
 from ..core import task_notes
+from ..core.inflight import make_inflight_key
 from ..core.routing import resolve_target
 from ..core.session import session_manager
 
@@ -172,7 +173,7 @@ async def _poll_session(
     entry = _mcp.bot_registry.get(adapter, scope, scope_id)
     if entry is None:
         return
-    if _mcp.inflight.is_inflight((adapter, f"{scope}:{scope_id}")):
+    if _mcp.inflight.is_inflight(make_inflight_key(adapter, is_private, user_id, group_id)):
         return
     try:
         bot = get_bot(entry.bot_self_id)
@@ -185,7 +186,7 @@ async def _poll_session(
     now_ms = int(time.time() * 1000)
     # 2026-10-13 分级反馈:模型离场时登记的任务便签随汇报轮回投(防压缩后忘记任务)。
     # 便签点火即消费——汇报失败也不还,下轮完成行(若有)用通用引导语兜底。
-    note_key = (adapter, f"private:{user_id}" if is_private else f"group:{group_id or ''}")
+    note_key = make_inflight_key(adapter, is_private, user_id, group_id)
     task_note = task_notes.pop_task_note(note_key)
     note_suffix = f'你离场时登记的任务便签:“{task_note}”。' if task_note else ""
     logger.info(

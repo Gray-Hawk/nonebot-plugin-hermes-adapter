@@ -19,6 +19,7 @@ from nonebot_plugin_apscheduler import scheduler
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
+from ..core.inflight import make_inflight_key
 from ..core.session import session_manager
 
 # 检查节奏:固定 60s。T1 本身是秒级可配,检查粒度不需要跟着细——
@@ -40,7 +41,7 @@ def register_session_idle_reset() -> None:
             idle_sec, now
         ):
             # 保护 1:inflight slot 在 = 有 turn 正在跑
-            key = (adapter, f"private:{user_id}" if is_private else f"group:{group_id}")
+            key = make_inflight_key(adapter, is_private, user_id, group_id)
             if _mcp.inflight.is_inflight(key):
                 logger.debug(f"[HERMES T1] skip {internal_id}: turn in-flight")
                 continue

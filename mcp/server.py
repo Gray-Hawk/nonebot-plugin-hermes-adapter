@@ -194,7 +194,7 @@ def build_mcp_app(
         group_id: str,
         text: str,
         image_urls: list[str] | None = None,
-        reply_to_msg_id: str | None = None,
+        reply_to_msg_id: str | None = None,  # 保留至 M2(占位透传,无消费者)
         task_id: str | None = None,
     ) -> PushMessageResult:
         """Send a message to a group via nonebot. Reactive context required."""
@@ -203,7 +203,7 @@ def build_mcp_app(
             group_id=group_id,
             text=text,
             image_urls=image_urls or [],
-            reply_to_msg_id=reply_to_msg_id,
+            reply_to_msg_id=reply_to_msg_id,  # 保留至 M2
             task_id=task_id,
         )
         result = await push_message_impl(
@@ -259,6 +259,7 @@ def build_mcp_app(
     @mcp.tool()
     async def get_message_images(
         message_ids: list[int],
+        idx: list[int] | None = None,
         adapter: str | None = None,
         group_id: str | None = None,
     ) -> list:
@@ -271,9 +272,13 @@ def build_mcp_app(
         Use after get_recent_messages identifies which message_id the user
         is referring to (e.g. '上图' → most recent msg with image_count > 0,
         '表情包' → sticker_count > 0).
+        Optional idx: only fetch those per-message image indexes (applies to all
+        message_ids; numbers come from the media manifest like `(图#0 #1)`).
+        Omit to fetch every image of the given messages.
         """
         inp = GetMessageImagesInput(
             message_ids=message_ids,
+            idx=idx,
             adapter=adapter,
             group_id=group_id,
         )

@@ -126,6 +126,9 @@ async def get_message_images_impl(
     content_blocks: list[Any] = []
     total_bytes = 0
     cap_exceeded_remaining = False
+    # ⑫-1(2026-10-16):配置挪出逐图循环——原先每张图现读一次 YAML 磁盘文件,
+    # 现单次调用读一次、循环内复用同一份快照(单次调用内配置一致性反而更好)。
+    media_cfg = load_media_config()
 
     # 严格按入参顺序处理;同条消息内按 idx 升序(get_message_images_meta 已按此排)
     for message_id in inp.message_ids:
@@ -184,7 +187,6 @@ async def get_message_images_impl(
             # 提示用户自行压缩,不扔进 LLM——这种情况的图通常不是正常图片)。
             # 动图不分大小一律抽帧(fetch 档帧数);表情 ≤sticker_gate 直出,
             # 超过强制压缩(防巨型表情连发压预算)。
-            media_cfg = load_media_config()
             blocks = await _encode_outbound(bytes_, real_mime, kind, media_cfg)
             if blocks is None:
                 results.append(

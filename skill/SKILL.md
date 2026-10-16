@@ -54,15 +54,19 @@ welcome.
 
 Pull the latest `limit` messages from a group buffer (capped at 50). Prefer the
 `<recent_messages>` block already inlined in your reactive prompt, but note that on
-follow-up turns that block may be a short trimmed window (newest few lines plus your own
-last line), not the full buffer — if the message you're looking for isn't in it, page back
-with this tool before concluding it doesn't exist. It's still context-expensive, so use it
-deliberately, not by default.
+follow-up turns that block may only carry the not-yet-pushed increment (a block header
+line says so), not the full buffer — if the message you're looking for isn't in it, page
+back with this tool before concluding it doesn't exist. It's still context-expensive, so
+use it deliberately, not by default.
 
 Each returned message carries:
 - `id` — DB primary key, stable across turns; pair with `get_message_images` to fetch images
 - `image_count` — number of regular images attached (0 = none)
 - `sticker_count` — number of QQ stickers (收藏表情) attached; recallable the same way
+- Note: `image_count` / `sticker_count` do **not** include quoted images or forward
+  images — those appear in the line's media manifest (e.g. `(引用#2 转发#3)`) instead.
+  The counter gap is a known view limitation (registered); don't take these counters as
+  the full media picture.
 - `text`, `user`, `ts`, `is_bot` — as before
 
 ### `get_message_images(message_ids, adapter?, group_id?)`
@@ -75,8 +79,9 @@ injection pipeline, so on your next LLM turn you'll **actually see** the images.
 Stickers are stored and recalled through the exact same pipeline. Their marker reads
 `[sticker for m:<id> idx=N]` instead of `[image for ...]` — treat sticker bytes as a
 mood/tone signal (same rule as inline stickers: don't describe or fact-check the meme
-itself unless the user asks). The per-image `kind` field in the JSON header is
-`"image"` or `"sticker"`.
+itself unless the user asks). The per-image `kind` field in the JSON header is one of
+`"image"`, `"sticker"`, `"quote"` (an image quoted by the message) or `"forward_image"`
+(an image inside a forwarded block the message shared).
 
 Each per-image result has `available: true|false`. When unavailable, `reason` is one of:
 - `cache_miss` — image was never fetched (URL expired before download) or has been
@@ -164,7 +169,7 @@ another bot's.
 
 When `<runtime_state>` carries `addressed_to_you: true`, the plugin has established from the
 platform itself that this message is aimed at you — a real @-mention of your account, a quote
-of one of your messages, a trigger keyword, or a platform event targeting you (e.g. a poke).
+of one of your messages, or a platform event targeting you (e.g. a poke).
 Ownership is not yours to re-litigate: never answer with
 "maybe they meant someone else" or "not sure this was for me". Staying silent is still fine
 when you have nothing to add or already answered the same question; doubting the addressee
@@ -245,10 +250,10 @@ To see the image, follow this two-step protocol:
    specific images of a multi-image message, pass the optional `idx=[...]` filter
    (numbers from the line's media manifest, e.g. `(图#0 #1)` → idx 0/1).
 
-On follow-up turns the inlined window is trimmed, so the image-bearing line the user means
-may not appear in `<recent_messages>` at all. In that case, call `get_recent_messages` first
-to locate the `[m:<id>]`, then `get_message_images`. Don't conclude "no image found" from a
-trimmed window alone.
+On follow-up turns `<recent_messages>` only carries the not-yet-pushed increment, so the
+image-bearing line the user means may not appear in it at all. In that case, call
+`get_recent_messages` first to locate the `[m:<id>]`, then `get_message_images`. Don't
+conclude "no image found" from the increment block alone.
 
 The `[m:<id>]` id is **stable** across turns — the same image always has the same label,
 unlike positional schemes (#1, #2, …) which shift when new messages arrive. Use it to
@@ -261,7 +266,8 @@ plus the same media manifest suffix. Rare fallback (row not found) = no prefix.
 ### When to skip the tool
 
 - The user did not reference an image — don't fetch (token cost).
-- `image_count == 0` on every recent message — tell the user directly, nothing to look at.
+- `image_count == 0` on every recent message (and no media manifest on any of them) —
+  tell the user directly, nothing to look at.
 - Identical image already fetched this turn — reuse the previous result.
 
 ## Forwarded message blocks
@@ -270,10 +276,13 @@ Group messages may contain `<forwarded_messages count="N">...</forwarded_message
 blocks, or self-closing summary / fetch-failed variants of the same tag. These blocks
 are transcript snapshots of a "merged forward" message the user shared:
 
-- `[图片] [语音] [视频] [文件:...]` placeholders **inside** the block have **no
-  retrievable URL**. Do not call `get_message_images` or any other media-recall tool
-  against media that only appears inside a forwarded block — the tool cannot return
-  forwarded media.
+- Images **inside** the block are numbered as `[转发图#x]` and **can** be recalled:
+  call `get_message_images` with the owning message's `id` (its `[m:<id>]` line prefix)
+  plus the `idx` shown for it in the line's media manifest (e.g. `(转发#3)` → `idx=[3]`).
+  Forward images are registered for numbered recall but never inlined by default —
+  fetch on demand.
+- `[语音] [视频] [文件:...]` placeholders **inside** the block have **no** retrievable
+  URL — do not call `get_message_images` for those.
 - Placeholders **outside** any forwarded block follow the normal retrieval rules.
 - `status="fetch_failed"` means a merged-forward message exists but the plugin could
   not expand it. Treat it as "the user shared a chat log, contents unknown."
@@ -291,5 +300,6 @@ are transcript snapshots of a "merged forward" message the user shared:
 - Don't assume `reply_to_msg_id` works — M1 does not implement it.
 - Don't call `get_message_images` speculatively for every reactive turn — only when the
   user's text actually references a past image. Each call costs bytes + an extra LLM turn.
-- Don't call `get_message_images` against placeholders that appear inside a
-  `<forwarded_messages>` block — those have no fetchable URL.
+- Don't call `get_message_images` against `[语音] [视频] [文件:...]` placeholders inside a
+  `<forwarded_messages>` block — those have no fetchable URL. Forward **images** there
+  (numbered `[转发图#x]`) are fine to fetch by number — see "Forwarded message blocks".

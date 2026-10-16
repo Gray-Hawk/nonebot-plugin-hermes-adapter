@@ -1,7 +1,7 @@
 """消息缓冲外观层。
 
 外部调用方 (handlers / prompt_builder / mcp tools) 仍然只看到 `MessageBuffer`
-这一类型,语义跟之前一致 (append / get_recent / known_groups + 私聊桶隔离)。
+这一类型,语义跟之前一致 (append / get_recent / counts_by_scope + 私聊桶隔离)。
 内部转调:
 - `MessageStore` (持久化 + autoincrement msg_id)
 - `ImageFetcher` (异步把消息里的 image_urls 抓回 ImageCache)
@@ -49,8 +49,9 @@ class BufferedMessage:
 # --- 媒体枚举序不变量(焊死) ---
 # 一条消息的 message_images idx 连续编号 = 普通图 → 表情包 → 引用图 → 转发图。
 # 写入侧(MessageStore.append 的 idx、MessageBuffer.append 给 fetcher 的 start_index)
-# 与渲染侧(历史行清单、parts 标签、转发块计数)共用下面这一份定义,禁止各处各自拼序。
-MEDIA_KINDS: tuple[str, ...] = ("image", "sticker", "quote", "forward_image")
+# 与渲染侧(历史行清单、parts 标签、转发块计数)共用同一序列——即下方
+# iter_message_media 的迭代顺序(原 MEDIA_KINDS 常量零引用已删,2026-10-16 审计⑪);
+# 禁止各处各自拼序。
 
 # kind → 中文种类词。compact 是历史行清单里的简称("图"/"表情"/"引用"/"转发"),
 # full 是 parts 全称标签里的写法("图"/"表情包"/"引用图"/"转发图")。
@@ -119,25 +120,6 @@ def render_media_summary(msg: "BufferedMessage") -> str | None:
     return "(" + " ".join(parts) + ")"
 
 
-_PRIVATE_KEY_PREFIX = "@private:"
-
-
-def _bucket_key(adapter: str, group_id: str | None, user_id: str | None) -> tuple[str, str]:
-    """私聊用 user_id 合成 scope_id,群聊用 group_id。
-
-    保留这个 helper 主要是兼容 MessageStore.known_groups 返回的合成 scope
-    以及 is_private_key 判别约定。
-    """
-    if group_id is None:
-        return (adapter, f"{_PRIVATE_KEY_PREFIX}{user_id or '?'}")
-    return (adapter, group_id)
-
-
-def is_private_key(key: tuple[str, str]) -> bool:
-    """判断 known_groups() 返回的 (adapter, scope_id) 是否为私聊桶。"""
-    return key[1].startswith(_PRIVATE_KEY_PREFIX)
-
-
 class MessageBuffer:
     """对外 API 不变;实现转调 MessageStore + ImageFetcher。"""
 
@@ -173,9 +155,6 @@ class MessageBuffer:
             before_ts=before_ts,
             owner_user_id=owner_user_id,
         )
-
-    def known_groups(self) -> list[tuple[str, str]]:
-        return self._store.known_groups()
 
     def counts_by_scope(self) -> dict[tuple[str, str], int]:
         return self._store.counts_by_scope()

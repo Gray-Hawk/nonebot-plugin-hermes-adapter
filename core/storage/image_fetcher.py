@@ -111,13 +111,6 @@ class ImageFetcher:
         if new_urls:
             self._wake.set()
 
-    def queue_size(self) -> int:
-        return len(self._queue)
-
-    def inflight_urls(self) -> int:
-        """诊断用:当前有多少 unique URL 在 pending(队列里 + worker 跑着的)。"""
-        return len(self._pending)
-
     async def start(self) -> None:
         if self._worker is not None:
             return

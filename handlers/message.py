@@ -38,7 +38,7 @@ from ..core.hermes_client import (
 )
 from ..core.image_inline import inline_gif_frames, inline_image_frames
 from ..core.media_config import MediaConfig, load_media_config
-from ..core.inflight import PendingEntry
+from ..core.inflight import PendingEntry, make_inflight_key
 from ..core.message_buffer import (
     BufferedMessage,
     build_media_address_index,
@@ -321,10 +321,8 @@ _confirm_fired_at: dict[tuple[tuple[str, str], str], float] = {}
 
 
 def _feedback_scope_key(adapter_name: str, is_private: bool, user_id: str, group_id: str | None) -> tuple[str, str]:
-    """反馈便签/确认轮的 scope key,与 inflight 键同形。"""
-    scope = "private" if is_private else "group"
-    scope_id = user_id if is_private else (group_id or "")
-    return (adapter_name, f"{scope}:{scope_id}")
+    """反馈便签/确认轮的 scope key:与 inflight 键同形(同一构造函数,勿手拼)。"""
+    return make_inflight_key(adapter_name, is_private, user_id, group_id)
 
 
 def _record_background_note(key: tuple[str, str], decision: dict, *, log_tag: str) -> None:
@@ -624,41 +622,58 @@ def _collect_inline_image_urls(
 ) -> list[str]:
     """按三模式收集本轮待内联的图片 URL(旧→新序;URL 级去重在编码入口做)。
 
-    - off: 全占位符,返回 [](例外名单不生效,统统不内联)。
+    - off: 全占位符,返回 [](例外名单不生效,统统不内联;条目 off/semi 也救不回)。
     - full: window_msgs(**增量窗口**,新→旧序)内所有图 + 当前消息图。
     - semi: 以最新消息为锚的前后窗口(window_msgs 是新→旧序,开头即当前消息
       紧邻段)内**存在 @bot**(当前消息 addressed 即满足;其余消息看 content
       里 `@<self_id>` 字面——self_id 运行时传入,不锚定任何平台账号格式)
       才内联窗口内图 + 当前消息图。
-    - 例外名单:条目为 off 的发言者其图永不内联(仍可被 get_message_images 拉图)。
+
+    例外名单(审计修复批 2026-10-16 实装,维护者补充拍板:只实装两档):
+    - 条目 off:该用户图永不内联(仍可被 get_message_images 拉图);
+    - 条目 semi:该用户图按半内联规则收窄——总 full 下不再恒收,只在 semi 窗口
+      命中时收,且范围限 2N+1 半窗;总 semi 下与默认一致;
+    - 无条目:跟随总模式。总模式 off 仍全灭(优先级最高,前面早退)。
+    (full 值不实装:解析层遇 full 按未支持值 WARN 跳过,见 media_config._parse_exemptions。)
+    当前消息同理按其发言者的有效模式判定。
     """
     if media_cfg.mode == "off":
         return []
 
-    def _exempt(uid: str) -> bool:
-        return media_cfg.exemption_for(uid) == "off"
+    def _eff_mode(uid: str) -> str:
+        """每用户有效模式:条目 semi 覆盖总模式;off 恒 off;无条目跟随总模式。"""
+        entry = media_cfg.exemption_for(uid)
+        if entry == "off":
+            return "off"
+        if entry == "semi":
+            return "semi"
+        return media_cfg.mode
+
+    # semi 窗口命中判定(沿用 addressed/窗口内 @bot 逻辑;总 full 下也现算——
+    # semi 条目的用户要按同一判定门收窄)。window_msgs 新→旧序:开头 2N+1 条=当前
+    # 消息及其前后窗口(当前消息未入库时为紧邻的前 N 条,多出的后 N 条近似无害)。
+    n = media_cfg.semi_window
+    window_len = min(len(window_msgs), 2 * n + 1) if n > 0 else 0
+    window = list(window_msgs[:window_len])
+    semi_hit = addressed_to_bot or any(f"@{self_id}" in (m.content or "") for m in window)
 
     out: list[str] = []
-    window_hit = False
-    if media_cfg.mode == "full":
-        # 新→旧序收集后反转:图 parts 按旧→新排,与 recent_messages 渲染序一致
-        for m in reversed(window_msgs):
-            if not _exempt(m.user_id):
-                out.extend(m.image_urls)
-        window_hit = True
-    elif media_cfg.mode == "semi":
-        n = media_cfg.semi_window
-        # window_msgs 新→旧序:开头 2N+1 条=当前消息及其前后窗口(当前消息未入库时
-        # 为紧邻的前 N 条,多出的后 N 条近似无害——窗口只为判定与取图)。
-        window = list(window_msgs[: 2 * n + 1]) if n > 0 else []
-        window_hit = addressed_to_bot or any(f"@{self_id}" in (m.content or "") for m in window)
-        if window_hit:
-            for m in reversed(window):
-                if not _exempt(m.user_id):
-                    out.extend(m.image_urls)
-    # 当前消息的图:full 恒收;semi 窗口命中(含当前消息 addressed)时收;
-    # 窗口未命中且未 addressed 则不收(没让 bot 看,图留占位符——可拉图)。
-    if not _exempt(current_user_id) and (media_cfg.mode == "full" or window_hit):
+    # 旧→新序收集:图 parts 按旧→新排,与 recent_messages 渲染序一致。
+    # 逐条按该行发言者的有效模式判定:off 跳过;semi 需窗口命中且落在 2N+1 半窗内
+    # (semi 语义本身的范围,follow 总模式 semi 时即现状);full(=无条目跟随总 full)
+    # 恒收,范围即整个 window_msgs。
+    for i in range(len(window_msgs) - 1, -1, -1):
+        m = window_msgs[i]
+        eff = _eff_mode(m.user_id)
+        if eff == "off":
+            continue
+        if eff == "semi" and (not semi_hit or i >= window_len):
+            continue
+        out.extend(m.image_urls)
+    # 当前消息的图(同样按发言者有效模式):full 恒收;semi 窗口命中时收;
+    # off / semi 未命中不收(没让 bot 看,图留占位符——可拉图)。
+    eff_cur = _eff_mode(current_user_id)
+    if eff_cur == "full" or (eff_cur == "semi" and semi_hit):
         for u in current_image_urls:
             if u not in out:
                 out.append(u)
@@ -811,6 +826,19 @@ def _node_image_urls(node: dict) -> list[str | None]:
     return urls
 
 
+# 折叠转发 get_forward_msg 的短 TTL 结果缓存(2026-10-16 同源化收口批,审计确认4):
+# 同一条消息的同一 ref 会被 perception(priority=1)与主 handler(priority=98)各调
+# 一次 _extract_forward_full;被引消息本身是折叠转发时那段还要再各调一次——同一
+# 事件最多 4 发 get_forward_msg,而两层拿到的是同一次 API 响应应有的同一结果。
+# 与 Telegram _resolved_url_cache 同款:模块级 dict + 单调时钟 TTL + 兜底清过期,
+# 生命周期靠 TTL 自然滚出(不是常驻存储)。键按 bot 实例 + ref_id,另含
+# number_base/cap 这两个决定输出形态的参数(两层口径一致=命中;未来漂移=只 miss)。
+_FORWARD_FULL_TTL_S = 60.0
+_forward_full_cache: dict[
+    tuple[object, str, int | None, int | None], tuple[str, tuple[str, ...], float]
+] = {}
+
+
 async def _extract_forward_full(
     uni_msg: alconna.UniMessage,
     bot: Bot,
@@ -828,7 +856,8 @@ async def _extract_forward_full(
     number_base: 给定时启用转发图发号——把每个节点内 image 段原位渲染成
     `[转发图#x]`(x = number_base + 本条消息转发图的连续编号),并把注册到的转发图
     URL 按节点顺序返回,供入库 kind='forward_image'(规划书 §8)。同一次 get_forward_msg
-    响应内提取,不二次调用 API。为 None 时不发号、不注册,节点图保持 `[图片]`
+    响应内提取,不二次调用 API;跨 matcher 的双调用由 _forward_full_cache 短 TTL
+    缓存兜住(2026-10-16 同源化收口批,审计确认4),不重复打 API。为 None 时不发号、不注册,节点图保持 `[图片]`
     (用于被引消息里的折叠转发:那些图不属本条消息,不占本条消息的 idx)。
     cap: 本消息转发图注册上限;None 时现读 media_config.forward_image_cap。
     超出上限按内容(URL)去重截断 + WARN。
@@ -849,6 +878,15 @@ async def _extract_forward_full(
             break
     if ref_id is None:
         return None, []
+
+    # 短 TTL 缓存命中即返(见 _forward_full_cache 注释)。键含 bot 对象本身:
+    # 同一连接下 perception 与主 handler 拿到的是同一 Bot 实例(离线冒烟里每次
+    # 新建的 FakeBot 实例天然隔离)。命中时返回新列表副本,不与缓存共享可变对象。
+    cache_key = (bot, ref_id, number_base, cap)
+    now_mono = time.monotonic()
+    cached = _forward_full_cache.get(cache_key)
+    if cached is not None and cached[2] > now_mono:
+        return cached[0], list(cached[1])
 
     try:
         resp = await bot.call_api("get_forward_msg", id=ref_id)
@@ -929,7 +967,14 @@ async def _extract_forward_full(
         return '<forwarded_messages count="?" status="fetch_failed"/>', registered
 
     content = "\n".join(lines)
-    return f'<forwarded_messages count="{total_nodes}">\n{content}\n</forwarded_messages>', registered
+    block = f'<forwarded_messages count="{total_nodes}">\n{content}\n</forwarded_messages>'
+    # 成功结果入缓存(失败/空块路径不落缓存,下一层照常重试)。
+    _forward_full_cache[cache_key] = (block, tuple(registered), now_mono + _FORWARD_FULL_TTL_S)
+    if len(_forward_full_cache) > 256:
+        expired = [k for k, (_b, _u, exp) in _forward_full_cache.items() if exp <= now_mono]
+        for k in expired:
+            _forward_full_cache.pop(k, None)
+    return block, registered
 
 
 # 自闭合 forwarded_messages 标签(fetch_failed / preview 两种变体共用此形态)。
@@ -1031,6 +1076,44 @@ async def _extract_replied_media(event: Event, bot: Bot, *, adapter_name: str) -
     except Exception as e:
         logger.warning(f"[HERMES] 提取引用消息失败: {e}")
     return out
+
+
+def _compose_quote_prefix(replied: _RepliedMedia, quote_base: int) -> str:
+    """(引用 …) 前缀的唯一拼装处:字面@改写 → 转发摘要 → 引用图标记 → 归属包装。
+
+    审计修复批(2026-10-16,疑似 B 维护者拍板=修):主 handler(当轮 current_message)
+    与 perception(入库 content)同源调用,保证「出入站同文本」——历史行里的引用
+    前缀与当轮呈递形态一致,换窗口/压缩后「谁引用了谁、引文是什么」不再丢失。
+    quote_base = 本条消息 own+sticker 图数;引用图号 (引用图#k) 接排其后
+    (kind='quote',与 message_images 的全局 idx 一致,见规划书 §8)。
+
+    纯图引用只给 (引用图#k) 标记,不再补裸 [图片]:标记自带可寻址号,已足够;
+    再补裸占位只会与标记重复且丢号(旧 L1310 [图片] 兜底的语义由标记继承)。
+    返回空串 = 无可呈递引用(无文本/转发/图),调用方不拼前缀。
+    """
+    replied_text = replied.text
+    if replied_text:
+        # 本部署补丁: 前缀带发送者归属,空标签回退旧格式;
+        # 引用文本先过一道字面手打 @ 的改写(中危⑥,见 _rewrite_quoted_literal_ats)
+        replied_text = _rewrite_quoted_literal_ats(replied_text)
+    # 引用折叠消息(维护者 2026-10-15 按审计建议 a 拍板):引用块里补单行摘要让内容可见,
+    # 不做全量内联(省 token)。fetch_failed 自闭合变体同样拼——「有个取不到的折叠」比空白强。
+    if replied.forward_full is not None:
+        fwd_note = replied.forward_full
+        if not _FORWARD_SELF_CLOSING_RE.match(fwd_note.strip()):
+            fwd_note = _summarize_forward(fwd_note)
+        replied_text = f"{replied_text} {fwd_note}".strip() if replied_text else fwd_note
+    # 引用块:引用带图即补图标记(修事故根因——旧条件 [图片] 只在引用纯图(无文字)时才补,
+    # 图文混合引用在文本层丢图标记,模型只能按位置猜)。号 = 该引用图在本条
+    # message_images 的全局 idx(kind='quote',续排在 own+sticker 之后)。见规划书 §8。
+    if replied.image_urls:
+        marks = " ".join(
+            f"({media_kind_word('quote')}#{quote_base + j})" for j in range(len(replied.image_urls))
+        )
+        replied_text = f"{replied_text} {marks}".strip() if replied_text else marks
+    if not replied_text:
+        return ""
+    return _format_quote_prefix(replied_text, replied.sender_label)
 
 
 def _label_groups(
@@ -1208,6 +1291,14 @@ async def handle_perception(bot: Bot, event: Event):
 
     if not msg_text and not image_urls and not quote_image_urls and not forward_image_urls:
         return
+
+    # 引用前缀(审计修复批,2026-10-16,疑似 B 维护者拍板=修):与主 handler 同源调
+    # _compose_quote_prefix——历史行/换窗口后「谁引用了谁、引文是什么」不再只活在当轮。
+    # 拼在文本截断与空内容闸门之后:前缀绝不被 hermes_perception_text_length 截掉,
+    # 也不改变「本条有无自身内容」的入库判定(纯引用空体消息维持不落库)。
+    quote_prefix = _compose_quote_prefix(replied, len(image_urls) + len(sticker_urls))
+    if quote_prefix:
+        msg_text = f"{quote_prefix} {msg_text}".strip()
 
     now = _now_ms()
     group_id = None if target.private else target.id
@@ -1468,9 +1559,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
 
     # 引用消息提取(与 perception 共用同一 helper:引用图入库/呈递必须同源)
     replied = await _extract_replied_media(event, bot, adapter_name=adapter_name)
-    replied_text = replied.text
     replied_image_urls: list[str] = list(replied.image_urls)
-    replied_sender = replied.sender_label
     replied_msg_id = replied.msg_id  # 任务锚 quote 自动归并用(规划书§2.2)
 
     try:
@@ -1487,27 +1576,19 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # QQ 大表情包单独抽,不进普通 image_urls;是否喂模型由 hermes_sticker_vision_enabled 门控
     sticker_urls = await _extract_sticker_urls(uni_msg, bot, adapter_name)
     quote_base = len(own_image_urls) + len(sticker_urls)
-    if replied_text:
-        # 本部署补丁: 前缀带发送者归属,空标签回退旧格式;
-        # 引用文本先过一道字面手打 @ 的改写(中危⑥,见 helper docstring)
-        replied_text = _rewrite_quoted_literal_ats(replied_text)
-    # 引用块:引用带图即补图标记(修事故根因——旧条件 [图片] 只在引用纯图(无文字)时才补,
-    # 图文混合引用在文本层丢图标记,模型只能按位置猜)。号 = 该引用图在本条
-    # message_images 的全局 idx(kind='quote',续排在 own+sticker 之后)。见规划书 §8。
-    if replied_image_urls:
-        marks = " ".join(
-            f"({media_kind_word('quote')}#{quote_base + j})" for j in range(len(replied_image_urls))
-        )
-        replied_text = f"{replied_text} {marks}".strip() if replied_text else marks
-    if replied_text:
-        msg_text = f"{_format_quote_prefix(replied_text, replied_sender)} {msg_text}".strip()
+    # 引用前缀拼装收口到 _compose_quote_prefix(审计修复批,2026-10-16,疑似 B):
+    # 与 perception(入库 content)同源调用——出入站同文本,历史行的引用前缀与
+    # 当轮 current_message 形态一致。
+    quote_prefix = _compose_quote_prefix(replied, quote_base)
+    if quote_prefix:
+        msg_text = f"{quote_prefix} {msg_text}".strip()
 
     # 内联载荷:当前消息自己的图 + 引用图(转发图恒不内联,Q3 定案);URL 去重交给内联入口。
     image_urls = own_image_urls + replied_image_urls
     nickname = _extract_sender_nickname(event, adapter_name) or user_id
 
     # B-0: 非文本段占位拼到 msg_text 末尾。注意这里**不重复**对 replied_message 做
-    # collect: 引用消息已通过 replied_text 走 (引用:...) 前缀进来,
+    # collect: 引用消息已通过引用前缀((引用:...) 形态)进来,
     # 引用里的 voice/video 用户感知较低,且会让占位重复堆叠。
     nontext_placeholders = _collect_nontext_placeholders(uni_msg)
     if nontext_placeholders:
@@ -1659,8 +1740,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         else plugin_config.hermes_reply_debounce_group_sec
     )
     if debounce_sec > 0 and not skip_debounce_for_commission:
-        scope_id = user_id if target.private else (group_id or "")
-        debounce_key = (adapter_name, f"{'private' if target.private else 'group'}:{scope_id}")
+        debounce_key = make_inflight_key(adapter_name, target.private, user_id, group_id)
         payload = dict(
             bot=bot,
             event=event,
@@ -2024,6 +2104,9 @@ async def _run_passive_turn(
         current_text=passive_text,
         current_image_urls=_label_groups(label_index, inlined),
         current_sticker_urls=_label_groups(label_index, sticker_inlined),
+        # 审计修复批 2026-10-16(疑似 C 拍板=修):当前消息行补 [m:ID] 前缀 + 媒体清单,
+        # 与 reactive 的 current_message 同形同源(行来自 L1999 偷看,已回填真实 id)。
+        current_message=current_row,
         # 2026-10-13 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
         plugin_note="\n".join(
             task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, is_private, user_id, group_id))
@@ -2083,7 +2166,7 @@ async def _run_passive_turn(
     # 阶段2b:runs 路迟到 steer 回收(被动路径)——私聊/passive 直说按委托排队,
     # 与既有 passive pending 语义一致;turn 结束后的 refire 自然接力。
     if result is not None and result.pending_steer:
-        _scope_key = (adapter_name, f"private:{user_id}" if is_private else f"group:{group_id}")
+        _scope_key = make_inflight_key(adapter_name, is_private, user_id, group_id)
         _mcp.inflight.try_enter(
             _scope_key,
             BufferedMessage(
@@ -2462,7 +2545,7 @@ async def _run_reactive_turn(
     # 语义,不顶掉 turn 期间新来的真实跟帖。
     if result is not None and result.pending_steer:
         _mcp.inflight.add_followup(
-            (adapter_name, f"group:{group_id}"),
+            make_inflight_key(adapter_name, False, user_id, group_id),
             PendingEntry(
                 msg=BufferedMessage(
                     ts=_now_ms(), adapter=adapter_name, group_id=group_id,
@@ -2471,6 +2554,10 @@ async def _run_reactive_turn(
                     reply_to_ts=None, is_bot=False,
                 ),
                 is_explicit_trigger=False,
+                # 迟到 steer 的出生轮语义:随条目走(2026-10-16 审计修复批:接力改读
+                # 条目自己的值后,这里同步盖出生轮的 ephemeral——冷窗关键词轮里上浮的
+                # steer 仍按无窗跑,不因接力方有窗而切换跑法,避免交接到无窗轮被吞)。
+                ephemeral=ephemeral,
             ),
         )
         logger.info(
@@ -2908,9 +2995,7 @@ async def _handle_passive_path(
     """
     assert _mcp.inflight is not None
 
-    scope_id = user_id if is_private else (group_id or "")
-    scope_prefix = "private" if is_private else "group"
-    key = (adapter_name, f"{scope_prefix}:{scope_id}")
+    key = make_inflight_key(adapter_name, is_private, user_id, group_id)
 
     current_buffered = BufferedMessage(
         ts=now_ms,
@@ -3275,7 +3360,7 @@ async def _handle_reactive_path(
             )
             return
 
-    key = (adapter_name, f"group:{group_id}")
+    key = make_inflight_key(adapter_name, False, user_id, group_id)
     current_buffered = BufferedMessage(
         ts=now_ms,
         adapter=adapter_name,
@@ -3303,6 +3388,9 @@ async def _handle_reactive_path(
         original_msg_id=event_msg_id,
         now_ms=now_ms,
         addressed_to_bot=addressed_to_bot,
+        # 疑似 A 修复(2026-10-16 审计修复批):条目自带 ephemeral——接力时按
+        # 「这条排队消息自己的无窗判定」跑,不再被发包 turn 的值污染。
+        ephemeral=ephemeral,
         commission=is_commission,  # 群聊只有平台确认冲 bot 的人类 @ 才进委托队列
     )
     if inflight_result != "entered":
@@ -3386,7 +3474,10 @@ async def _handle_reactive_path(
                         addressed_to_bot=pending_entry.addressed_to_bot,
                         depth=1,
                         mode="reactive",
-                        ephemeral=ephemeral,
+                        # 疑似 A 修复(2026-10-16 审计修复批):读条目自己的 ephemeral——
+                        # 此前透传发包 turn 的值,冷窗关键词 turn 里排队的 addressed
+                        # 委托会被以 ephemeral=True 跑掉(不读钉锚 + 二次 trigger 窗口)。
+                        ephemeral=pending_entry.ephemeral,
                         bot=bot,
                         target=target,
                         adapter_name=adapter_name,
@@ -3519,7 +3610,9 @@ async def _refire(
                     original_msg_id=pending_entry.original_msg_id,
                     depth=depth + 1,
                     mode=mode,
-                    ephemeral=ephemeral,
+                    # 疑似 A 修复(2026-10-16 审计修复批):链上每一跳都按「当前条目
+                    # 自己的 ephemeral」接力,不再把链首外层值一路透传下去。
+                    ephemeral=pending_entry.ephemeral,
                     bot=bot,
                     target=target,
                     adapter_name=adapter_name,

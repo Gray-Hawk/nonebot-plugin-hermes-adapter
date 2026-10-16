@@ -9,7 +9,8 @@
    user content 时弹出并贴到 current_message 附近——不拦截不当轮打断,
    错误已发出覆水难收,反馈回路让模型下轮自知。
 
-Key 与 inflight 同形:(adapter, "group:<id>" / "private:<id>")。
+Key 与 inflight 同形(构造统一走 core/inflight.make_inflight_key):
+(adapter, "group:<id>" / "private:<id>")。
 """
 
 from __future__ import annotations

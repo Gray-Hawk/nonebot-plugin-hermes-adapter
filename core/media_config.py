@@ -4,7 +4,9 @@
 项目文档库）：
 
 - 三模式：full 全内联 / semi 半内联（前后窗口内有 @bot 才内联）/ off 全占位符
-- 例外名单：按用户 id 覆盖内联行为（如 bot 账号永不内联），优先级低于总 mode
+- 例外名单：按用户 id 覆盖内联行为——off=永不内联（可拉图）/ semi=按半内联规则收窄；
+  优先级低于总 mode（总 off 全灭）。full 值不实装（2026-10-16 维护者补充拍板），
+  解析层遇 full 按未支持值 WARN 跳过
 - 压缩档、拉图大小门、抽帧帧数、表情门控全部在此，不进 .env
 
 格式约定（维护者 2026-10-15 定）：人改的配置一律 YAML（可注释），纯机器读的才用 JSON。
@@ -41,6 +43,11 @@ _DEFAULT_FORWARD_IMAGE_CAP = 30
 
 _VALID_MODES = ("full", "semi", "off")
 
+# 例外名单实装两档(2026-10-16 维护者补充拍板:full 值不实装,按未支持值跳过)。
+# off=该用户图永不内联(可拉图);semi=该用户图按半内联规则收窄
+# (总 full 下不再恒收,只在 semi 窗口命中时收;总 semi 下与默认一致)。
+_EXEMPTION_MODES = ("off", "semi")
+
 
 @dataclass(frozen=True)
 class MediaConfig:
@@ -67,7 +74,9 @@ class MediaConfig:
     forward_image_cap: int = _DEFAULT_FORWARD_IMAGE_CAP
     """单条消息合并转发图的注册上限。超出截断（按内容去重）+ WARN。转发图恒不内联。"""
     exemptions: dict[str, str] = field(default_factory=dict)
-    """例外名单：用户 id → "off"(永不内联,可拉图) / "semi" / "full"。全局生效。"""
+    """例外名单：用户 id → "off"(永不内联,可拉图) / "semi"(按半内联规则收窄——
+    总 full 下不再恒收,只在 semi 窗口命中时收;总 semi 下与默认一致)。全局生效。
+    full 值不实装,解析层按未支持值跳过。"""
 
     def exemption_for(self, user_id: str) -> str | None:
         """查例外名单；不在名单返回 None。总 mode=off 时调用方应先短路，不查名单。"""
@@ -95,19 +104,34 @@ def _parse_ladder(raw: Any, default: tuple[tuple[int, int], ...], name: str) -> 
     return tuple(steps)
 
 
+_last_exempt_warn: str = ""
+
+
 def _parse_exemptions(raw: Any) -> dict[str, str]:
-    """例外名单：{用户id: 模式}；id 只允许数字/字母/下划线/横线，模式非法跳过。"""
+    """例外名单：{用户id: 模式}；id 只允许数字/字母/下划线/横线。
+
+    实装两档(2026-10-16 维护者补充拍板):off / semi。其余值(含 full)按未支持值
+    跳过 + WARN;WARN 按内容去重——load_media_config 每轮现读现用,不去重会让
+    一个坏条目每轮回放一条告警刷屏(与文件级 WARN 同款去重风格)。
+    """
+    global _last_exempt_warn
     out: dict[str, str] = {}
     if not isinstance(raw, dict):
         return out
+    skipped: list[str] = []
     for k, v in raw.items():
         key = str(k).strip()
         if not key or not all(c.isalnum() or c in "_-" for c in key):
             continue
-        if isinstance(v, str) and v in _VALID_MODES:
+        if isinstance(v, str) and v in _EXEMPTION_MODES:
             out[key] = v
         else:
-            logger.warning(f"[HERMES media-config] 例外条目模式非法跳过 ({key!r}): {v!r}")
+            skipped.append(f"{key!r}: {v!r}")
+    if skipped:
+        warn = f"[HERMES media-config] 例外条目模式不支持,已跳过: {', '.join(skipped)}"
+        if warn != _last_exempt_warn:
+            logger.warning(warn)
+            _last_exempt_warn = warn
     return out
 
 

@@ -35,6 +35,7 @@ from ..core.hermes_client import (
     _try_parse_first_json_block,
     extract_response_media,
 )
+from ..core.inflight import make_inflight_key
 from ..core.outbound import send_local_files, send_text_with_media
 from ..core.routing import resolve_target
 from ..core.run_tracker import TrackedRun
@@ -49,9 +50,7 @@ _ZOMBIE_TTL_SEC = 24 * 3600
 
 
 def _inflight_key(row: TrackedRun) -> tuple[str, str]:
-    scope = "private" if row.is_private else "group"
-    scope_id = row.user_id if row.is_private else (row.group_id or "")
-    return (row.adapter, f"{scope}:{scope_id}")
+    return make_inflight_key(row.adapter, row.is_private, row.user_id, row.group_id)
 
 
 def _build_delivery(output: str, expect_structured: bool, recent_speakers: set[str]) -> tuple[str, str | None] | None:

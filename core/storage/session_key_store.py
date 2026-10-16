@@ -16,6 +16,7 @@ from pathlib import Path
 
 from nonebot import logger
 
+# updated_at 列:只写不读(保留至 M2);不改 DB 结构,存量库保持原样。
 _SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS session_keys (
@@ -64,6 +65,7 @@ class SessionKeyStore:
 
     def put(self, internal_id: str, session_key: str, generation: int, *, now: float) -> None:
         try:
+            # updated_at 只写不读(保留至 M2):随写入落库即可,无读点。
             self._conn.execute(
                 "INSERT INTO session_keys (internal_id, session_key, generation, updated_at) "
                 "VALUES (?, ?, ?, ?) "
