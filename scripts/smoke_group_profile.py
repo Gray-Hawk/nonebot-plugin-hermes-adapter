@@ -147,7 +147,7 @@ check(
     "<session_context>" in ctx_reactive
     and "adapter: onebotv11" in ctx_reactive
     and "group_id: 2000000001" in ctx_reactive
-    and "you: [user=Normi id=1000000001]" in ctx_reactive,
+    and "you: [id=1000000001 user=Normi]" in ctx_reactive,
     repr(ctx_reactive[:500]),
 )
 # reactive: 私聊省略 group_id 行
@@ -159,7 +159,7 @@ check(
     "<session_context>" in ctx_private
     and "adapter: onebotv11" in ctx_private
     and "group_id:" not in ctx_private
-    and "you: [user=Normi id=1000000001]" in ctx_private,
+    and "you: [id=1000000001 user=Normi]" in ctx_private,
     repr(ctx_private[:500]),
 )
 # reactive: 不传 adapter/self_id 时不注入
