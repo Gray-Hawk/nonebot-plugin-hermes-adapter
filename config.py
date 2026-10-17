@@ -259,6 +259,10 @@ class Config(BaseModel):
     用来阻断「我刚说完别人接话→我又凑一句」类型的过触发。
     0 = 关闭(回退到旧行为)。显式 @bot 不受影响,任何时候都会立刻进入决策。"""
 
+    hermes_prompt_timezone: str = ""
+    """M21(2026-10-17 维护者定案):喂给模型的时间戳时区覆盖,IANA 名(如 Asia/Shanghai)。
+    缺省空串=部署机本地时区(现状);部署机时区错误/跨区部署时在此覆盖,不动系统。"""
+
     # --- 应答防抖(本部署补丁:凌晨批项6,维护者拍板) ---
 
     hermes_reply_debounce_group_sec: float = 3.5
