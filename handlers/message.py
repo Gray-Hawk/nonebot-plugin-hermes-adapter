@@ -2776,6 +2776,9 @@ async def _run_reactive_turn(
                 # 条目自己的值后,这里同步盖出生轮的 ephemeral——冷窗关键词轮里上浮的
                 # steer 仍按无窗跑,不因接力方有窗而切换跑法,避免交接到无窗轮被吞)。
                 ephemeral=ephemeral,
+                # 2026-10-17 alive/56:打回收标记,refire 的 post-reply cooldown 闸门
+                # 放行——此文本已被 steer_run 收过一次,不是「刚说完接话」类过触发。
+                steer_recovered=True,
             ),
         )
         logger.info(
@@ -3336,6 +3339,7 @@ async def _handle_passive_path(
                         original_msg_id=pending_entry.original_msg_id,
                         depth=1,
                         mode="passive",
+                        steer_recovered=pending_entry.steer_recovered,
                         bot=bot,
                         target=target,
                         adapter_name=adapter_name,
@@ -3762,6 +3766,8 @@ async def _handle_reactive_path(
                         # 此前透传发包 turn 的值,冷窗关键词 turn 里排队的 addressed
                         # 委托会被以 ephemeral=True 跑掉(不读钉锚 + 二次 trigger 窗口)。
                         ephemeral=pending_entry.ephemeral,
+                        # 2026-10-17 alive/56:迟到 steer 回收标记透传(cooldown 豁免)。
+                        steer_recovered=pending_entry.steer_recovered,
                         bot=bot,
                         target=target,
                         adapter_name=adapter_name,
@@ -3780,6 +3786,7 @@ async def _refire(
     mode: str,
     addressed_to_bot: bool = False,
     ephemeral: bool = False,
+    steer_recovered: bool = False,
     bot: Bot,
     target,
     adapter_name: str,
@@ -3817,13 +3824,17 @@ async def _refire(
     # 关键场景:初发 turn 自己没回(submit_decision=silent)但期间 MCP push_message
     # 把 last_bot_reply_at 写了 → 仅靠入口处的闸门挡不住,因为 pending 是上一次
     # 入口处放进来的(进 pending 时还没写 mark)。在这里再判一次,把这条路径补严。
+    # 2026-10-17 alive/56:迟到 steer 回收条目(steer_recovered)豁免——它已被
+    # steer_run 收过一次(turn 边界上的真发言),本 turn 又恰好发了言,不豁免则
+    # 8s 窗必中、条目静默丢弃(当日受控实测实锤,丢弃原仅 DEBUG 不可见)。
     if (
         mode == "reactive"
         and group_id is not None
         and not is_explicit_trigger
+        and not steer_recovered
         and _in_post_reply_cooldown(adapter_name, str(group_id), refire_now_ms)
     ):
-        logger.debug(f"[HERMES reactive] refire skipped by post-reply cooldown (key={key} depth={depth})")
+        logger.info(f"[HERMES reactive] refire skipped by post-reply cooldown (key={key} depth={depth})")
         _release_slot_and_retry(key, adapter_name, trigger_msg.group_id is None, trigger_msg.user_id, trigger_msg.group_id)
         return
 
@@ -3907,6 +3918,8 @@ async def _refire(
                     # 疑似 A 修复(2026-10-16 审计修复批):链上每一跳都按「当前条目
                     # 自己的 ephemeral」接力,不再把链首外层值一路透传下去。
                     ephemeral=pending_entry.ephemeral,
+                    # 2026-10-17 alive/56:迟到 steer 回收标记沿链透传。
+                    steer_recovered=pending_entry.steer_recovered,
                     bot=bot,
                     target=target,
                     adapter_name=adapter_name,

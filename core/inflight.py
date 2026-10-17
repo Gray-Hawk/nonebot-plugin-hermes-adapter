@@ -75,6 +75,12 @@ class PendingEntry:
     # 二次 trigger 窗口)。默认 False 同样是安全方向:漏传按「有窗」跑,
     # 至多被 _run_reactive_turn 入口的 get_if_active 挡下,不会错误开新窗。
     ephemeral: bool = False
+    # 迟到 steer 回收标记(2026-10-17,alive/56):runs 轮收尾时随 completed 上浮的
+    # pending_steer 排回 pending 的条目。豁免理由=系统已收过它一次(steer_run 接受),
+    # 不是「bot 刚说完别人接话」类过触发,refire 的 post-reply cooldown 闸门放行。
+    # 不借 is_explicit_trigger(该字段已钉死为寻址事实,借它会继承破信封 raw 转发、
+    # transport 兜底文本等一串负资产)。合并处与 explicit 同规取 or,防并入后丢失。
+    steer_recovered: bool = False
 
 
 @dataclass
@@ -212,6 +218,9 @@ class InflightRegistry:
             slot.followup = entry
             return
         _merge_pending_message(slot.followup.msg, entry.msg)
+        # steer_recovered 与 explicit 同规取 or(2026-10-17,alive/56):迟到 steer
+        # 回收文本并入已有条目时豁免标记不丢,否则主修复场景之一仍被 cooldown 吞。
+        slot.followup.steer_recovered = slot.followup.steer_recovered or entry.steer_recovered
 
 
     def try_enter(
