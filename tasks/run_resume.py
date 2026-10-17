@@ -114,6 +114,37 @@ async def _resume_row(row: TrackedRun) -> None:
         _resume_inflight.discard(row.run_id)
 
 
+async def _drop_if_stale_completed(row: TrackedRun, tracker) -> bool:
+    """已终态(completed)且逾 _DELIVERY_CAP_SEC 的行直接丢弃删行(B 时效闸)。
+
+    2026-10-17 维护者拍板:B 闸原本只排在送达窗口之后(_resume_row_impl 主路径),
+    scope 长忙(窗口超时)或 bot 离线时永远轮不到执行,已终态超龄行会躺到 24h
+    僵尸清扫才走。抽成 helper 后在各保留分支前统一补闸。查询失败/未终态/
+    未超龄一律 False,调用方维持原保留语义不变。
+    """
+    try:
+        tgt = resolve_target(row.adapter, row.is_private, row.group_id)
+        headers = {"Authorization": f"Bearer {tgt.api_key}"} if tgt.api_key else {}
+        async with httpx.AsyncClient(timeout=tgt.timeout) as client:
+            resp = await client.get(f"{tgt.base_url}/v1/runs/{row.run_id}", headers=headers)
+        if resp.status_code != 200:
+            return False
+        status = str(resp.json().get("status") or "")
+        if status != "completed":
+            return False
+        age = int(_now_ms() / 1000 - row.started_at)
+        if age <= _DELIVERY_CAP_SEC:
+            return False
+        logger.warning(
+            f"[HERMES run-resume] 回复已逾送达时效({_DELIVERY_CAP_SEC}s),丢弃 "
+            f"run_id={row.run_id} scope={row.scope_key} age={age}s"
+        )
+        tracker.finish(row.run_id)
+        return True
+    except Exception:
+        return False
+
+
 async def _resume_row_impl(row: TrackedRun) -> None:
     tracker = _mcp.run_tracker
     assert tracker is not None
@@ -134,6 +165,9 @@ async def _resume_row_impl(row: TrackedRun) -> None:
     if entry is None:
         # 低危⑫(2026-10-14):送达窗口超时不再弃行——删行=completed 回复永久丢。
         # 保留行等下次启动再送;永远送不出去的真僵尸由启动 TTL 清扫兜底。
+        # 2026-10-17:保留前先过 B 时效闸(原只排在窗口之后,scope 长忙时轮不到)。
+        if await _drop_if_stale_completed(row, tracker):
+            return
         logger.warning(
             f"[HERMES run-resume] 送达窗口超时,保留行待下次启动 run_id={row.run_id} scope={row.scope_key}"
         )
@@ -141,6 +175,9 @@ async def _resume_row_impl(row: TrackedRun) -> None:
     try:
         bot = get_bot(entry.bot_self_id)
     except (KeyError, ValueError) as exc:
+        # 2026-10-17:bot 离线保留前同样先过 B 时效闸。
+        if await _drop_if_stale_completed(row, tracker):
+            return
         logger.warning(f"[HERMES run-resume] bot 离线,保留行待下次启动 run_id={row.run_id}: {exc}")
         return
 
