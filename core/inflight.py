@@ -34,6 +34,24 @@ MAX_PENDING_COMMISSIONS = 2
 MAX_PENDING_PER_USER = 1
 
 
+def make_inflight_key(
+    adapter: str, is_private: bool, user_id: str, group_id: str | None
+) -> tuple[str, str]:
+    """inflight/scope 键的单一构造函数(tuple 形)。
+
+    键形(2026-10-16 同源化收口批,审计确认6;此前 9+ 处逐字手拼):
+      - 群: (adapter, "group:<group_id>")
+      - 私聊: (adapter, "private:<user_id>")
+    group_id 缺省(None)回落空串;私聊恒用 user_id(group_id 不参与)。
+    消费方:InflightRegistry / 防抖键 / 反馈便签 scope / T1 空闲重置 /
+    delivery_poll / run_resume / proactive 点火前复查。字符串孪生形见
+    core/run_tracker.make_scope_key(冒号串,另行保留)。
+    """
+    scope = "private" if is_private else "group"
+    scope_id = user_id if is_private else (group_id or "")
+    return (adapter, f"{scope}:{scope_id}")
+
+
 @dataclass
 class PendingEntry:
     """In-flight 期间排队的消息及触发元数据。
@@ -44,6 +62,7 @@ class PendingEntry:
       - 它是否被平台确认为「冲 bot 说的」(寻址与触发是两个事实,不互相派生:
         synth 事件可以 explicit 而不寻址,trigger=all 下每条都 explicit 也不寻址)
       - 它的原始 adapter 侧 message_id(用于失败时贴 emoji notice)
+      - 它自己的 ephemeral 无窗判定(接力链按条目读,不再透传发包 turn 的值)
     """
 
     msg: BufferedMessage
@@ -51,6 +70,17 @@ class PendingEntry:
     original_msg_id: str | int | None = None
     # 默认 False 是安全方向:漏传只会让模型自己判归属,不会错误断言「这条冲你说的」。
     addressed_to_bot: bool = False
+    # 疑似 A 修复(2026-10-16 审计修复批):条目自带无窗判定——冷窗关键词 turn
+    # 运行中排队的 addressed 委托此前会被以 ephemeral=True 接力跑掉(不读钉锚 +
+    # 二次 trigger 窗口)。默认 False 同样是安全方向:漏传按「有窗」跑,
+    # 至多被 _run_reactive_turn 入口的 get_if_active 挡下,不会错误开新窗。
+    ephemeral: bool = False
+    # 迟到 steer 回收标记(2026-10-17,alive/56):runs 轮收尾时随 completed 上浮的
+    # pending_steer 排回 pending 的条目。豁免理由=系统已收过它一次(steer_run 接受),
+    # 不是「bot 刚说完别人接话」类过触发,refire 的 post-reply cooldown 闸门放行。
+    # 不借 is_explicit_trigger(该字段已钉死为寻址事实,借它会继承破信封 raw 转发、
+    # transport 兜底文本等一串负资产)。合并处与 explicit 同规取 or,防并入后丢失。
+    steer_recovered: bool = False
 
 
 @dataclass
@@ -77,6 +107,12 @@ def _strip_stickers_for_queue(msg: BufferedMessage) -> BufferedMessage:
     return replace(msg, sticker_urls=[], content=(msg.content + " [表情包]").strip())
 
 
+# 合成后续轮（离场确认/接力/重交）在私聊沿用真实 user_id 时的身份昵称。
+# 常量化原因（条目 23 语义定案 2026-10-16）：合并函数要凭它辨认「合成 fragment」
+# 给真人消息加身份分界，手抄字面量会漂移。
+_SYNTHETIC_NICKNAME = "系统核对"
+
+
 def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
     """排队消息并入旧条目(语义同防抖拼接)。
 
@@ -100,6 +136,13 @@ def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
     if new_text:
         if not same_user:
             new_text = f"{new.nickname or new.user_id}: {new_text}"
+        elif old.nickname == _SYNTHETIC_NICKNAME and new.nickname != _SYNTHETIC_NICKNAME:
+            # 条目 23 语义定案（2026-10-16 维护者拍板「做一个分界」）：合成后续轮
+            # （私聊顶真实 user_id、昵称「系统核对」）与真人消息按同委托人规则合并时，
+            # 真人部分必须带身份分界——合成 prompt 自带「(系统核对:」前缀，真人部分
+            # 不标会被读成系统指令的延续。反向（真人旧条目+合成新 fragment）不用标：
+            # 合成 prompt 文本自带头。
+            new_text = f"(用户留言: {new_text})"
         old_text = (old.content or "").strip()
         old.content = f"{old_text}\n{new_text}" if old_text else new_text
     # 只合并普通图片:委托带图接力后仍要看图是真实需求,sticker 见上方说明。
@@ -118,9 +161,9 @@ def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
 class InflightRegistry:
     """per-target 非阻塞 busy 标记 + 排队单元。
 
-    Key 约定:
-      - 群: ("adapter", "group:" + group_id)
-      - 私聊: ("adapter", "private:" + user_id)
+    Key 约定(构造统一走 make_inflight_key,勿手拼):
+      - 群: (adapter, "group:<group_id>")
+      - 私聊: (adapter, "private:<user_id>")
 
     入队规则:
       - 空 slot → 占位,返回 'entered'
@@ -175,6 +218,9 @@ class InflightRegistry:
             slot.followup = entry
             return
         _merge_pending_message(slot.followup.msg, entry.msg)
+        # steer_recovered 与 explicit 同规取 or(2026-10-17,alive/56):迟到 steer
+        # 回收文本并入已有条目时豁免标记不丢,否则主修复场景之一仍被 cooldown 吞。
+        slot.followup.steer_recovered = slot.followup.steer_recovered or entry.steer_recovered
 
 
     def try_enter(
@@ -186,6 +232,7 @@ class InflightRegistry:
         original_msg_id: str | int | None,
         now_ms: int,
         addressed_to_bot: bool = False,
+        ephemeral: bool = False,
         commission: bool = False,
     ) -> Literal["entered", "queued", "queue_full"]:
         """无 slot → 占位 started_at=now_ms,返回 'entered';否则按规则入队。"""
@@ -203,6 +250,7 @@ class InflightRegistry:
             is_explicit_trigger=is_explicit_trigger,
             original_msg_id=original_msg_id,
             addressed_to_bot=addressed_to_bot,
+            ephemeral=ephemeral,
         )
         if not commission:
             # 旁观闲聊也不 latest-wins 了(2026-10-13 维护者指出「正常任务会被打趣驱逐」):
@@ -212,6 +260,9 @@ class InflightRegistry:
                 _merge_pending_message(slot.followup.msg, current_msg)
                 slot.followup.is_explicit_trigger = slot.followup.is_explicit_trigger or is_explicit_trigger
                 slot.followup.addressed_to_bot = slot.followup.addressed_to_bot or addressed_to_bot
+                # ephemeral 与防抖合并且同规(两者皆无窗才无窗):任一片段来自
+                # 有窗语境,合并条目就按有窗跑——错开新窗比少跑一发更贵。
+                slot.followup.ephemeral = slot.followup.ephemeral and ephemeral
                 slot.followup.original_msg_id = original_msg_id
             else:
                 slot.followup = entry
@@ -222,6 +273,8 @@ class InflightRegistry:
                 _merge_pending_message(queued.msg, current_msg)
                 queued.is_explicit_trigger = queued.is_explicit_trigger or is_explicit_trigger
                 queued.addressed_to_bot = queued.addressed_to_bot or addressed_to_bot
+                # 同上:ephemeral 取与,防「一条有窗片段被无窗语义跑掉」。
+                queued.ephemeral = queued.ephemeral and ephemeral
                 queued.original_msg_id = original_msg_id
                 return "queued"
         if len(slot.commissions) >= MAX_PENDING_COMMISSIONS:
@@ -231,6 +284,24 @@ class InflightRegistry:
             return "queue_full"
         slot.commissions.append(entry)
         return "queued"
+
+    def peek_next_pending(self, key: tuple[str, str], *, after_ts: int) -> PendingEntry | None:
+        """非破坏读「下一发是谁」——与 pop_next_pending 同判据,但不摘除。
+
+        条目 23(私聊排队汇总成批,2026-10-16)用:turn 收尾要先知道槽里还有没有
+        下一发,才能决定要不要等聚合窗;而 pop 会把条目取走,判据只能是非破坏读。
+        stale 前缀(ts <= after_ts)按 pop 同规跳过、不返回。返回非 None 只表示
+        「有货」;真正的取队仍必须走 pop_next_pending。
+        """
+        slot = self._slots.get(key)
+        if slot is None:
+            return None
+        for entry in slot.commissions:
+            if entry.msg.ts > after_ts:
+                return entry
+        if slot.followup is not None and slot.followup.msg.ts > after_ts:
+            return slot.followup
+        return None
 
     def pop_next_pending(self, key: tuple[str, str], *, after_ts: int) -> PendingEntry | None:
         """取下一发接力。委托 FIFO 优先;没有委托才轮到闲聊跟进槽。

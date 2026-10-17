@@ -20,15 +20,19 @@ import json5  # type: ignore[import-untyped]
 from nonebot import logger
 
 from ..config import plugin_config
+from .decision_contract import render_en_field_lines
+from .media_patterns import _MD_IMAGE_PATTERN, _MEDIA_TAG_PATTERN
 from .media_whitelist import inline_local_media_images
+from .message_context import render_message_context_head
 from .routing import HermesTarget, default_target
 from .run_tracker import make_scope_key
 
 # user_content_override 期望形态:纯文本 或 OpenAI 多模态 parts 列表
 UserContent = str | list[dict[str, Any]]
 
-_MD_IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
-_MEDIA_TAG_PATTERN = re.compile(r"MEDIA:(\S+)")
+# 出站媒体引用形态正则(_MD_IMAGE_PATTERN / _MEDIA_TAG_PATTERN)的单一来源:
+# core/media_patterns.py(2026-10-16 同源化收口批,审计确认8)——与
+# media_whitelist 的内联收口共用同一组,任一侧形态改动即两侧同步。import 见文首。
 
 # Hermes apiserver 把 provider 端错误包成 502, body 形如:
 #   {"error": {"message": "Error code: 400 - {'error': {'message': '...'}}"}}
@@ -93,28 +97,13 @@ def _find_first_balanced_json_object(text: str) -> str | None:
     return None
 
 
+# 字段行单一来源:core/decision_contract.py(2026-10-16 同源化收口批,审计确认5);
+# 渲染形态与收口前逐字节一致。与中文协议块「两份都在场」的现状不变。
 _DECISION_HINT = (
     "\n\n=== STRUCTURED OUTPUT ===\n"
     "Your reply MUST be a single JSON object with these keys:\n"
-    "  should_reply (boolean, required)\n"
-    "  reply_text (string, optional, required when should_reply=true)\n"
-    "  topic_hint (string, optional)\n"
-    "  should_exit_active (boolean, optional)\n"
-    "  at_user_id (string, optional — @ a specific speaker from recent_messages "
-    "by user_id as a strong notification. This is the ONLY way to @: absent or "
-    "outside the recent window means NO @. Omit for ordinary in-conversation replies)\n"
-    "  pin_anchor (boolean, optional — commission judgement turns only: true pins the "
-    "current request into <pinned_tasks>; omit/false for jokes or one-off chatter)\n"
-    "  release_anchor (string, optional — commissioner user_id or \"all\" to unpin "
-    "finished task anchors from <pinned_tasks>)\n"
-    "  answer_anchor (string, optional — commissioner user_id or \"all\": declare your "
-    "reply answered that pinned task; unknown ids are rejected and echoed back next turn)\n"
-    "  anchor_merge (string, optional — starter user_id of a pinned task this message "
-    "belongs to: merges the sender into its participants instead of pinning new)\n"
-    "  background_task (string, optional — a one-line note when you just dispatched "
-    "background work (subagent/background process); on completion the system wakes "
-    "you and echoes the note. Omit when nothing is running)\n"
-    "Output ONLY the JSON object, no preamble, no postscript, no markdown fences.\n"
+    + render_en_field_lines()
+    + "Output ONLY the JSON object, no preamble, no postscript, no markdown fences.\n"
     "All string values MUST be single-line; escape line breaks inside strings as \\n (no raw newlines)."
 )
 
@@ -1014,13 +1003,15 @@ class HermesClient:
                 content = parts
 
         if system_prompt is None:
-            ctx_lines = [f"Platform: {adapter_name or 'unknown'}"]
-            ctx_lines.append("Chat Type: " + ("Private" if is_private else "Group"))
-            if user_id:
-                ctx_lines.append(f"User ID: {user_id}")
-            if not is_private and group_id:
-                ctx_lines.append(f"Group ID: {group_id}")
-            system_prompt = "Message Context:\n" + "\n".join(ctx_lines)
+            # 头段单一拼装处:core/message_context.py(2026-10-16 同源化收口批,
+            # 审计确认7);与 prompt_builder.build_passive_system_prompt 同源,
+            # 字节一致由代码同源保证(原先靠测试互锁)。
+            system_prompt = render_message_context_head(
+                adapter=adapter_name,
+                is_private=is_private,
+                user_id=user_id,
+                group_id=group_id,
+            )
 
         if expect_structured and structured_tool_name == "submit_decision":
             system_prompt = system_prompt + _DECISION_HINT

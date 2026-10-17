@@ -25,6 +25,7 @@ from nonebot_plugin_apscheduler import scheduler
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
+from ..core.inflight import make_inflight_key
 
 # 调度 tick 周期:实际触发节奏由 per-group 的 _next_check_at 控制(T2+T3 随机),
 # tick 只是驱动节拍,30s 粒度对分钟级 T2 足够。
@@ -77,7 +78,7 @@ async def _drain_patrol_queue(run_one) -> None:
             if _mcp.active_sessions is not None and _mcp.active_sessions.is_active(adapter, scope_id, recheck_ms):
                 logger.info(f"[HERMES proactive] 点火前复查: 窗口已活跃,本轮弃 {adapter}/{scope_id}")
                 continue
-            if _mcp.inflight is not None and _mcp.inflight.is_inflight((adapter, f"group:{scope_id}")):
+            if _mcp.inflight is not None and _mcp.inflight.is_inflight(make_inflight_key(adapter, False, "", scope_id)):
                 logger.info(f"[HERMES proactive] 点火前复查: turn 在跑,本轮弃 {adapter}/{scope_id}")
                 continue
             logger.info(f"[HERMES proactive] 串行点火: {adapter}/{scope_id} (队列余 {len(_patrol_queue)})")
@@ -126,7 +127,7 @@ def register_proactive_activation() -> None:
             # 触发条件三查:无活跃窗口、无 in-flight turn、窗口内有新消息
             if _mcp.active_sessions.is_active(adapter, scope_id, now_ms):
                 continue
-            if _mcp.inflight.is_inflight((adapter, f"group:{scope_id}")):
+            if _mcp.inflight.is_inflight(make_inflight_key(adapter, False, "", scope_id)):
                 continue
 
             since_ms = max(

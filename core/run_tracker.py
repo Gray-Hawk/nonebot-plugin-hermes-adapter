@@ -84,11 +84,21 @@ class RunTracker:
         mode: str,
         expect_structured: bool,
     ) -> None:
+        # H10 修复(2026-10-17):冲突改 ON CONFLICT DO UPDATE 只刷元数据——旧写法
+        # INSERT OR REPLACE 全行重置,同一 run_id 二次登记会把 last_seq/started_at
+        # 清零(事件流水位丢失,reattach 后旁白从头发一遍)。契约仍是「一 run 一
+        # upsert」,此处加固到误复用也不丢水位。
         self._conn.execute(
-            "INSERT OR REPLACE INTO active_runs "
+            "INSERT INTO active_runs "
             "(run_id, scope_key, adapter, is_private, user_id, group_id, bot_self_id,"
             " session_key, mode, expect_structured, last_seq, started_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(run_id) DO UPDATE SET"
+            " scope_key=excluded.scope_key, adapter=excluded.adapter,"
+            " is_private=excluded.is_private, user_id=excluded.user_id,"
+            " group_id=excluded.group_id, bot_self_id=excluded.bot_self_id,"
+            " session_key=excluded.session_key, mode=excluded.mode,"
+            " expect_structured=excluded.expect_structured",
             (
                 run_id, scope_key, adapter, int(is_private), user_id, group_id,
                 bot_self_id, session_key, mode, int(expect_structured), -1, time.time(),

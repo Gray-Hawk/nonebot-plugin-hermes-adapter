@@ -22,6 +22,7 @@ from pathlib import Path
 from nonebot import logger
 
 from ..config import plugin_config
+from .media_patterns import _MD_IMAGE_PATTERN, _MEDIA_TAG_PATTERN
 
 # 图片内联的尺寸上限, 与上游 _MEDIA_DATA_URL_MAX_BYTES 对齐(5MB)。
 _INLINE_IMAGE_MAX_BYTES = 5 * 1024 * 1024
@@ -35,10 +36,9 @@ _IMAGE_MIME = {
     ".bmp": "image/bmp",
 }
 
-# 与 hermes_client 的提取正则同形, 这里独立一份避免循环 import
-# (hermes_client 要 import 本模块做流式收口内联)。
-_MD_IMAGE_PATTERN = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
-_MEDIA_TAG_PATTERN = re.compile(r"MEDIA:(\S+)")
+# 出站媒体引用形态正则已收口至 core/media_patterns.py 单点定义(2026-10-16 同源化
+# 收口批,审计确认8):hermes_client 的提取与本模块的内联共用同一组,原先两文件各
+# 一份「为回避循环 import 独立一份」的形态消除。import 见文件头。
 
 
 def _default_roots() -> list[Path]:

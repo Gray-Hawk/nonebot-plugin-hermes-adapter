@@ -37,7 +37,7 @@ class PushMessageInput(BaseModel):
     group_id: str = Field(..., description="Group ID")
     text: str = Field(..., description="Reply text. Empty allowed only if image_urls non-empty.")
     image_urls: list[str] = Field(default_factory=list, description="Image URLs")
-    reply_to_msg_id: str | None = Field(default=None, description="(M1: 不使用,保留位)")
+    reply_to_msg_id: str | None = Field(default=None, description="(保留至 M2: 不使用,保留位)")
     task_id: str | None = Field(default=None, description="(M1: 不使用,M2 bg_tasks 接入)")
 
 
