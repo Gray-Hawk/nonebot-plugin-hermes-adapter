@@ -28,7 +28,8 @@ rules:
 ```
 
 防呆:每条 pattern 加载即 compile,坏规则跳过并 WARN(其余规则不受影响);
-正则别写灾难性回溯(嵌套量词),本文件不做运行时超时保护。
+嵌套量词(灾难性回溯形态)加载时静态拒收(2026-10-17 H6 修复);运行时仍无
+超时保护,未覆盖形态见 _DANGEROUS_NESTED_QUANT_RE 注释与乙方案备选。
 
 动作语义:
 - note:task_notes.push_plugin_note(kind=rule.name)——24h 同类去重由便签层承载。
@@ -64,6 +65,16 @@ _QUOTED_ENVELOPE_FIELD_RE = re.compile(
 
 # 关键词位置切句:中英句末标点 + 分号 + 换行(句首/句尾的「句」按此拆)。
 _SENTENCE_SPLIT_RE = re.compile(r"[。！？!?；;\n]+")
+
+# H6 修复(2026-10-17,维护者拍板甲方案):加载时静态预检灾难性回溯形态。
+# 检测「组内含 +/* 量词、组外又紧跟 +/* 量词」的嵌套量词(如 (a+)+、(\w+)*),
+# 命中即拒收该规则——这类写法在不匹配时指数爆炸,会同步卡死整个事件循环。
+# 首版从窄:只抓括号不嵌套的两层形态;(x|x)* 重叠分支、(a{2,})+ 花括号嵌套、
+# (a+(b+))+ 多层嵌套暂不抓(宁窄勿滥,误拒会让合法规则失效)。
+# 备选(未实施,乙方案):换装第三方 regex 库做运行时 timeout 保护——能覆盖全部
+# 回溯形态而非仅嵌套量词,代价是 venv 加依赖;需要时在 nb venv 装 regex 并改
+# matches() 传 timeout 即可。
+_DANGEROUS_NESTED_QUANT_RE = re.compile(r"\((?:\?[:=!]?)?[^()]*[+*][^()]*\)[+*]")
 
 _POSITIONS = ("full", "head", "tail")
 _MATCHES = ("", "envelope_json")
@@ -189,7 +200,11 @@ def _parse_rule(raw: dict) -> FeedbackRule | None:
         raw_pattern = raw.get("pattern")
         regex = None
         if raw_pattern:
-            regex = re.compile(str(raw_pattern))
+            pattern_str = str(raw_pattern)
+            # H6(2026-10-17):嵌套量词静态预检,灾难形态拒收(其余规则不受影响)。
+            if _DANGEROUS_NESTED_QUANT_RE.search(pattern_str):
+                raise ValueError("正则含嵌套量词,灾难性回溯风险,拒收该规则")
+            regex = re.compile(pattern_str)
         if regex is None and not keywords and match != "envelope_json":
             raise ValueError("规则没有任何检出手段(pattern/keywords/match)")
 

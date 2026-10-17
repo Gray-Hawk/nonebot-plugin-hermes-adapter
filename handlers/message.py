@@ -2443,6 +2443,15 @@ async def _run_passive_turn(
     else:
         # 防御:同一 Hermes session 之前跑过 reactive 时学到 submit_decision 契约,
         # 切回 passive 后仍可能吐 JSON。检测并抠 reply_text;不命中则用原 raw_text。
+        # 2026-10-17 闭环提醒(维护者定案):决策轮信封缺失(模型写了散文忘包 JSON,
+        # 区别于 transport 错误)→ 留便签下轮提醒,不靠人介入纠偏。
+        if use_private_decision and result.parse_failed and not result.is_transport_error:
+            task_notes.push_plugin_note(
+                _fb_key, "envelope_missing",
+                "系统提示:你上一轮的最终回复没有包 submit_decision JSON 信封(走了散文兜底)。"
+                "最终答复必须输出单个 JSON 对象,正文放进 reply_text 字段;过程想法走旁白即可。",
+                cooldown_sec=3600.0,
+            )
         reply_text = result.raw_text
         extracted = maybe_extract_decision_reply_text(reply_text)
         if extracted is not None:
@@ -2817,6 +2826,17 @@ async def _run_reactive_turn(
         if result.is_interrupted:
             logger.info(f"[HERMES reactive] turn 被终止,硬静默 (group={group_id})")
             return result
+        # 2026-10-17 闭环提醒(维护者定案):决策轮信封缺失(模型写散文忘包 JSON;
+        # 403/outage/interrupted/transport 均已提前分流,到这里是模型自己的形状问题)
+        # → 留便签下轮提醒,不靠人介入纠偏。
+        if result.parse_failed and not result.is_transport_error:
+            task_notes.push_plugin_note(
+                _feedback_scope_key(adapter_name, False, user_id, group_id),
+                "envelope_missing",
+                "系统提示:你上一轮的最终回复没有包 submit_decision JSON 信封(走了散文兜底)。"
+                "最终答复必须输出单个 JSON 对象,正文放进 reply_text 字段;过程想法走旁白即可。",
+                cooldown_sec=3600.0,
+            )
         # 上游 transport_error(5xx / 网络断 / 流被掐):raw_text 是服务端错误信息原文
         # (如 "Model generated invalid tool call: ..."),原文转发会把内部错误丢到群里
         # 既泄密又难看。换成 config 里的友好兜底文本;空串则静默。
@@ -3005,10 +3025,13 @@ async def _run_reactive_turn(
     # 窗口发言者集合内(防模型 @ 不在场的人);没给/非法就不 @。
     # 理由(维护者原话):@ 兜底本质是废弃机制,LLM 决策完全足够,兜底反而可能答错;
     # @ 是强提醒,漏 @ 无害、错 @ 才烦人。at_user 布尔字段随之废弃(协议契约已同步删除)。
+    # M8 修复(2026-10-17):校验集合从 recent(增量水位后新消息)改为 recent_full
+    # (缓冲窗全量)——模型上下文按全量渲染,旧口径下「上一轮刚发言、本轮没说话」
+    # 的在场者会被当不在场,@ 被静默丢弃(「在场」定义与模型视野错位)。
     _decision_at_id = decision.get("at_user_id")
     at_user: str | None = None
     if _decision_at_id is not None and str(_decision_at_id) in {
-        str(m.user_id) for m in recent
+        str(m.user_id) for m in recent_full
     }:
         at_user = str(_decision_at_id)
     # 类②拦截点(reactive,规划书 §3.3):cleaned_reply_text 定稿后、send_text_with_media 前。
