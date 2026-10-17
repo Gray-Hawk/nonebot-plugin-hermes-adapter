@@ -21,7 +21,11 @@ import re
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
+from nonebot import logger
+
+from ..config import plugin_config
 from .decision_contract import render_cn_field_lines, render_field_name_list
 from .hermes_client import UserContent
 from .message_buffer import (
@@ -34,14 +38,29 @@ from .message_context import render_message_context_head
 
 
 _WEEKDAY_CN = "一二三四五六日"
+_tz_warned = False  # M21:无效时区名 WARN 每进程一次
 
 
 def _current_time_str() -> str:
     """时间提示器(维护者 2026-10-15 点的小功能):给模型准确的时间概念
     (判断消息新鲜度/锚龄/早晚安语境)。位置不限定尾部——reactive 进
     runtime_state 块(per-turn 字段的天然归属,开头同样是注意力强位),
-    passive 在 user content 开头单行。两处都是每轮必变内容,不影响缓存。"""
-    now = datetime.now()
+    passive 在 user content 开头单行。两处都是每轮必变内容,不影响缓存。
+
+    M21(2026-10-17):时区可经 hermes_prompt_timezone 覆盖(IANA 名);
+    缺省空串=部署机本地时区(datetime.now(tz=None) 与裸 now() 同义,现状不变)。
+    坏时区名 WARN 一次回退本地(防配置 typo 静默错时间)。"""
+    tz = None
+    tz_name = plugin_config.hermes_prompt_timezone.strip()
+    if tz_name:
+        global _tz_warned
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            if not _tz_warned:
+                _tz_warned = True
+                logger.warning(f"[HERMES] hermes_prompt_timezone 无效时区名 {tz_name!r},回退部署机本地时区")
+    now = datetime.now(tz=tz)
     return f"{now:%Y-%m-%d} 周{_WEEKDAY_CN[now.weekday()]} {now:%H:%M}"
 
 

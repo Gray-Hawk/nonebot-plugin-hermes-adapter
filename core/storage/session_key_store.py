@@ -36,6 +36,13 @@ _SCHEMA_STATEMENTS = [
         updated_at   REAL    NOT NULL
     )
     """,
+    # 2026-10-17:/delay 暂停状态持久化(维护者确认要修)——原内存态重启即失效,
+    # 被暂停会话重启后悄悄恢复 T1 计时。
+    """
+    CREATE TABLE IF NOT EXISTS idle_paused (
+        internal_id  TEXT    PRIMARY KEY
+    )
+    """,
 ]
 
 
@@ -122,3 +129,25 @@ class SessionKeyStore:
             )
         except Exception as exc:
             logger.warning(f"[SESSION] 清理投递水位失败: {exc}")
+
+    # --- 2026-10-17:/delay 暂停状态持久化 ---
+
+    def load_idle_paused(self) -> set[str]:
+        """返回被 /delay 暂停 T1 的 internal_id 集合。读失败返回空集。"""
+        try:
+            rows = self._conn.execute("SELECT internal_id FROM idle_paused").fetchall()
+        except Exception as exc:
+            logger.warning(f"[SESSION] 读取 delay 暂停表失败,本次退化为纯内存: {exc}")
+            return set()
+        return {r[0] for r in rows}
+
+    def set_idle_paused(self, internal_id: str, paused: bool) -> None:
+        try:
+            if paused:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO idle_paused (internal_id) VALUES (?)", (internal_id,)
+                )
+            else:
+                self._conn.execute("DELETE FROM idle_paused WHERE internal_id=?", (internal_id,))
+        except Exception as exc:
+            logger.warning(f"[SESSION] 持久化 delay 暂停失败 ({internal_id}): {exc}")

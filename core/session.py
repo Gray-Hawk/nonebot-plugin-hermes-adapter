@@ -52,6 +52,8 @@ class SessionManager:
         for internal_id, (session_key, generation) in store.load_all().items():
             self._cache[internal_id] = session_key
             self._generation[internal_id] = generation
+        # 2026-10-17:/delay 暂停集合装回(原内存态重启即失效)。
+        self._idle_paused.update(store.load_idle_paused())
         now = time.time()
         seeded = 0
         for internal_id in self._cache:
@@ -334,13 +336,15 @@ class SessionManager:
         paused: bool,
     ) -> str:
         """/delay(paused=True)暂停 T1;/resume(paused=False)恢复并重置计时。
-        返回 internal_id 供日志用。"""
+        返回 internal_id 供日志用。2026-10-17 起持久化到 session_keys.db。"""
         internal_id = self._get_internal_id(adapter_name, is_private, user_id, group_id)
         if paused:
             self._idle_paused.add(internal_id)
         else:
             self._idle_paused.discard(internal_id)
             self._last_activity[internal_id] = time.time()
+        if self._store is not None:
+            self._store.set_idle_paused(internal_id, paused)
         return internal_id
 
     def idle_expired(

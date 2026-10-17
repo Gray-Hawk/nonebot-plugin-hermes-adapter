@@ -18,6 +18,8 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
+from nonebot import logger
+
 from .message_buffer import BufferedMessage
 
 # Refire 链最大深度。超过则清空队列并释放 slot,等下一个新触发。
@@ -312,8 +314,14 @@ class InflightRegistry:
         slot = self._slots.get(key)
         if slot is None:
             return None
+        # M23 修复(2026-10-17):陈旧条目丢弃补日志——丢弃本身是设计行为
+        # (防旧时间戳重复点火),但静默=观测盲区,无法区分「没有跟帖」与「跟帖被覆盖」。
+        dropped_comm = 0
         while slot.commissions and slot.commissions[0].msg.ts <= after_ts:
             slot.commissions.popleft()
+            dropped_comm += 1
+        if dropped_comm:
+            logger.info(f"[HERMES inflight] 丢弃 {dropped_comm} 条陈旧委托条目 key={key}(已被当前 turn 覆盖)")
         if slot.commissions:
             return slot.commissions.popleft()
         if slot.followup is not None:
@@ -321,6 +329,7 @@ class InflightRegistry:
             slot.followup = None
             if entry.msg.ts > after_ts:
                 return entry
+            logger.info(f"[HERMES inflight] 丢弃 1 条陈旧跟帖 key={key}(已被当前 turn 覆盖)")
         return None
 
     def pending_stats(self, key: tuple[str, str]) -> tuple[int, bool]:

@@ -334,6 +334,10 @@ _SALVAGE_SHOULD_REPLY_RE = re.compile(r'"should_reply"\s*:\s*(true|false)', re.I
 _SALVAGE_REPLY_TEXT_RE = re.compile(r'"reply_text"\s*:\s*"((?:[^"\\]|\\.)*)', re.DOTALL)
 _SALVAGE_TOPIC_HINT_RE = re.compile(r'"topic_hint"\s*:\s*"((?:[^"\\]|\\.)*)"')
 _SALVAGE_EXIT_ACTIVE_RE = re.compile(r'"should_exit_active"\s*:\s*(true|false)', re.IGNORECASE)
+# M1 收尾(2026-10-17 维护者拍板):not_final 入救补——布尔抠错概率低,丢失则
+# 回执发出但续跑轮没来=任务烂尾;其余字段(锚家族/at_user_id)抠错代价大于丢失,
+# 维持不认。
+_SALVAGE_NOT_FINAL_RE = re.compile(r'"not_final"\s*:\s*(true|false)', re.IGNORECASE)
 
 
 def _salvage_truncated_reply_text(text: str) -> dict[str, Any] | None:
@@ -377,6 +381,10 @@ def _salvage_truncated_reply_text(text: str) -> dict[str, Any] | None:
     m_exit = _SALVAGE_EXIT_ACTIVE_RE.search(text)
     if m_exit:
         out["should_exit_active"] = m_exit.group(1).lower() == "true"
+    # M1 收尾(2026-10-17):not_final 也捞——它丢了=回执发出但续跑轮没来=烂尾。
+    m_nf = _SALVAGE_NOT_FINAL_RE.search(text)
+    if m_nf:
+        out["not_final"] = m_nf.group(1).lower() == "true"
     return out
 
 
