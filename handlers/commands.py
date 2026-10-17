@@ -39,7 +39,11 @@ async def handle_clear(bot: Bot, event: Event, matcher: Matcher):
         matcher.skip()
 
     adapter_name = get_adapter_name(target)
-    user_id = event.get_user_id() or "user"
+    # H9 收紧(2026-10-17):取不到 user_id 不折叠 "user" 公共桶,命令不执行。
+    user_id = event.get_user_id()
+    if not user_id:
+        logger.warning(f"[HERMES] /clear 取不到 user_id,不执行 (adapter={adapter_name})")
+        return
     group_id = None if target.private else target.id
 
     session_manager.clear_session(
@@ -73,7 +77,11 @@ async def handle_delay(bot: Bot, event: Event, matcher: Matcher):
         return
 
     adapter_name = get_adapter_name(target)
-    user_id = event.get_user_id() or "user"
+    # H9 收紧(2026-10-17):同上,匿名事件不执行。
+    user_id = event.get_user_id()
+    if not user_id:
+        logger.warning(f"[HERMES] /delay 取不到 user_id,不执行 (adapter={adapter_name})")
+        return
     group_id = None if target.private else target.id
     internal_id = session_manager.set_idle_paused(adapter_name, target.private, user_id, group_id, True)
     logger.info(f"[HERMES] /delay: T1 计时已暂停 ({internal_id})")
@@ -88,7 +96,11 @@ async def handle_resume(bot: Bot, event: Event, matcher: Matcher):
         matcher.skip()
 
     adapter_name = get_adapter_name(target)
-    user_id = event.get_user_id() or "user"
+    # H9 收紧(2026-10-17):同上,匿名事件不执行。
+    user_id = event.get_user_id()
+    if not user_id:
+        logger.warning(f"[HERMES] /resume 取不到 user_id,不执行 (adapter={adapter_name})")
+        return
     group_id = None if target.private else target.id
     internal_id = session_manager.set_idle_paused(adapter_name, target.private, user_id, group_id, False)
     logger.info(f"[HERMES] /resume: T1 计时已恢复并重置 ({internal_id})")

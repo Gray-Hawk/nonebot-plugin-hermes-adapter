@@ -243,7 +243,9 @@ class ActiveSessionManager:
     ) -> bool:
         """记录 bot 在本群刚发出回复的时间戳、实际投出的媒体数与文本原文;session 缺失则 no-op。
 
-        不滑动 expires_at(滑动续期由 touch 负责)。handlers 在 reactive 模式 send 成功后
+        2026-10-17 M5 修复起:bot 发言同步滑动 TTL(expires_at=max(原值,now+TTL))——
+        与 last_strong_activation_at 的 T5 重算同口径;touch() 仍是日常续期入口。
+        handlers 在 reactive 模式 send 成功后
         调用,push_message 也调,供 post-reply cooldown 与同 turn 去重判定。
 
         text 用于判断后续 submit_decision 是否在复述刚发出去的话;不传(空串)时同 turn
@@ -261,6 +263,9 @@ class ActiveSessionManager:
         s.last_bot_reply_media = media_count
         s.last_bot_reply_text = text
         s.last_strong_activation_at = now_ms  # bot 发言 = 实质激活,T5 重新起算
+        # M5 修复(2026-10-17):bot 发言同步滑动 TTL——既已重算 T5,不续 TTL 自相矛盾;
+        # 旧口径下长 turn(超 TTL)收尾后窗口即死,紧随的跟帖接力被无窗 drop。
+        s.expires_at = max(s.expires_at, now_ms + self._ttl_ms)
         # 低危⑬-① 方案D(2026-10-14 维护者定案):answered 不再由本方法自动全覆盖标记——
         # 「答没答、答的是谁」模型自己最清楚,改由信封 answer_anchor 字段声明,
         # 走 mark_anchor_answered;插件端不再替模型做归属判断(旧逻辑:bot 答任何人

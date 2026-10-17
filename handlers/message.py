@@ -159,6 +159,21 @@ _MAX_NICKNAME_LEN = 24
 # 正常人不会起这种名片,见即没收(H4 修复,2026-10-16 维护者拍板)。
 _FORGED_ID_RE = re.compile(r"[iI]\s*[dD]\s*＝\s*\S+")
 
+# H7(2026-10-17):单例未装配 WARN 的节流状态(模块级,60s 一次)。
+_unassembled_warned_at = 0.0
+
+
+def _warn_unassembled_throttled(what: str) -> None:
+    """启动窗口期单例未装配的 WARN,60s 节流:防启动潮时消息逐条刷屏。"""
+    global _unassembled_warned_at
+    now = time.time()
+    if now - _unassembled_warned_at >= 60:
+        _unassembled_warned_at = now
+        logger.warning(
+            f"[HERMES] 运行时单例未装配({what}),消息暂不处理"
+            "——启动窗口期正常现象,若持续出现请查装配序列"
+        )
+
 
 def _sanitize_nickname(value) -> str | None:
     """清洗外部输入昵称,失败返 None。
@@ -1732,7 +1747,10 @@ async def _dispatch_chat(
 
 @receive_message.handle()
 async def handle_message(bot: Bot, event: Event, matcher: Matcher):
+    # H7 修复(2026-10-17):单例未装配(启动窗口期)原静默吞消息无日志——
+    # 排障时无法区分「没收到」与「装配未完成」。补 WARN,60s 节流防刷屏。
     if _mcp.message_buffer is None or _mcp.active_sessions is None:
+        _warn_unassembled_throttled("message_buffer/active_sessions")
         return
 
     try:
@@ -1741,7 +1759,13 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         matcher.skip()
 
     adapter_name = get_adapter_name(target)
-    user_id = event.get_user_id() or "user"
+    # H9 收紧(2026-10-17 维护者拍板):取不到 user_id 的匿名/异形事件(群匿名消息、
+    # 无发送者平台事件)不再折叠进公共 "user" 桶——共享 session/inflight/防抖键
+    # 有理论串话风险。QQ 正常消息恒有 id,取不到即不处理+WARN。
+    user_id = event.get_user_id()
+    if not user_id:
+        logger.warning(f"[HERMES] 事件取不到 user_id,不处理 (adapter={adapter_name})")
+        return
     if user_id == str(bot.self_id):
         matcher.skip()
 
@@ -2878,7 +2902,11 @@ async def _run_reactive_turn(
         # should_reply=false 决定,而那信号只以 JSON 形式存在,拿一段可能不该说的话去撞群
         # 比丢一条更糟,所以那种破法非显式 turn 仍静默。transport / persistence 错误的 raw
         # 是服务端报文,绝不当散文转发,故排除。
-        is_pure_prose = bool(raw) and not result.is_transport_error and '"should_reply"' not in raw
+        # M9 修复(2026-10-17):信封在场的嗅探从「含 "should_reply" 字面值」收紧为
+        # 「以 { 开头或存在 "should_reply": 键值形态」——旧口径下模型正文讨论协议
+        # (提及字段名)会被误判破信封,非显式 turn 静默吞话。
+        _looks_envelope = raw.strip().startswith("{") or bool(re.search(r'"should_reply"\s*:', raw))
+        is_pure_prose = bool(raw) and not result.is_transport_error and not _looks_envelope
         forward_raw = bool(raw) and (is_explicit_trigger or is_pure_prose)
         raw_preview = preview_raw(raw)
         logger.warning(

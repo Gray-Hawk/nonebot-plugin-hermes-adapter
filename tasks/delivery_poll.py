@@ -20,9 +20,10 @@ LLM turn 让 agent 自己汇报(群=reactive 临时 turn,私聊=passive turn)。
 每拍先拉 15 行小页;整页都比水位新(=行生产速度超过窗口)才加大页往回翻,
 直到盖住水位为止。空闲期开销与旧版一致,活跃期自动扩容。
 
-去重与播种:水位按 session_key 记。首轮轮询只播种不播报——nb 停机期间的完成不补播
-(会随下一条真实消息自然折叠进上下文),避免重启后给群刷一堆过期通知。水位是内存态,
-重启即清,语义同上。
+去重与播种:水位按 session_key 记。真·新会话(持久化库也无水位)首轮轮询只播种
+不播报——避免给群刷一堆过期通知。2026-10-17 M24 修复:水位持久化到
+session_keys.db(delivery_watermarks 表),重启装回——nb 重启期间完成的投递
+不再被播种盖掉(旧内存态语义),重启后下一拍即正常发现并唤起汇报轮。
 
 顺延不丢:目标不在 BotRegistry(重启后群里还没人说话)、bot 掉线、或有 turn 在跑时,
 本拍不推进水位,下一拍重扫重试。
@@ -56,7 +57,29 @@ _HTTP_TIMEOUT = 10
 
 # session_key -> 已扫描的最大行 id(含非投递行)。投递行的「已播报」由水位天然
 # 表达:水位只在成功唤起汇报 turn 后推进,未盖住的投递行必然 id > 水位。
+# M24(2026-10-17):水位持久化到 session_keys.db(delivery_watermarks 表)——
+# 原内存态重启即清,首轮播种会把重启期间的完成行盖在水位下永不播报。
+# 启动时装回;库读不到/写失败时退化为旧内存语义(每处均有 WARN)。
 _watermark: dict[str, int] = {}
+_watermark_loaded = False
+
+
+def _load_watermarks_once() -> None:
+    """首个 tick 懒装回持久化水位(装配序:register 时 store 可能未就绪)。"""
+    global _watermark_loaded
+    if _watermark_loaded:
+        return
+    _watermark_loaded = True
+    store = _mcp.session_key_store
+    if store is None:
+        return
+    _watermark.update(store.load_watermarks())
+
+
+def _persist_watermark(session_key: str, row_id: int) -> None:
+    store = _mcp.session_key_store
+    if store is not None:
+        store.put_watermark(session_key, row_id, now=time.time())
 
 _DELIVERY_ROW_KIND = "async_delegation_complete"
 
@@ -138,10 +161,13 @@ async def _poll_session(
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             seen = _watermark.get(session_key)
             if seen is None:
-                # 首轮:水位置当前页尖,存量不播报(见模块 docstring)
+                # 首轮:水位置当前页尖,存量不播报(见模块 docstring)。
+                # M24:仅对持久化库里也没有水位的真·新会话播种;库存水位直接跳过本分支。
                 probe = await fetch_page(client, 0, _PROBE_LIMIT)
                 if probe:
-                    _watermark[session_key] = max(_row_id(m) for m in probe)
+                    tip0 = max(_row_id(m) for m in probe)
+                    _watermark[session_key] = tip0
+                    _persist_watermark(session_key, tip0)
                 return
             fresh, tip, covered = await collect_fresh_rows(
                 lambda off, lim: fetch_page(client, off, lim), seen
@@ -163,6 +189,7 @@ async def _poll_session(
     if not deliveries:
         # 无新投递(含无新行):扫描水位照常推进到页尖
         _watermark[session_key] = tip
+        _persist_watermark(session_key, tip)
         return
 
     # 投递目标与并发检查:任一不满足就顺延下一拍(不推进水位,下拍重扫重试,不丢)
@@ -183,6 +210,7 @@ async def _poll_session(
 
     # 确认能发才推进水位:fire-and-forget 的 turn 失败与否不再回捞(与 T2 同一约定)
     _watermark[session_key] = tip
+    _persist_watermark(session_key, tip)
     now_ms = int(time.time() * 1000)
     # 2026-10-13 分级反馈:模型离场时登记的任务便签随汇报轮回投(防压缩后忘记任务)。
     # 便签点火即消费——汇报失败也不还,下轮完成行(若有)用通用引导语兜底。
@@ -238,6 +266,7 @@ def register_delivery_poll() -> None:
 
     @scheduler.scheduled_job("interval", seconds=interval, id="hermes_delivery_poll")
     async def _tick() -> None:
+        _load_watermarks_once()
         known_keys = set()
         for internal_id, adapter, is_private, user_id, group_id, session_key in session_manager.known_sessions():
             known_keys.add(session_key)
@@ -250,8 +279,13 @@ def register_delivery_poll() -> None:
                 session_key=session_key,
             )
         # 清掉已不存在会话的水位条目(/clear 换代、T1 重置后旧 key 不再出现)
-        for key in list(_watermark):
-            if key not in known_keys:
-                del _watermark[key]
+        # M24:内存与持久化库同步清。
+        stale_keys = [key for key in list(_watermark) if key not in known_keys]
+        for key in stale_keys:
+            del _watermark[key]
+        if stale_keys:
+            store = _mcp.session_key_store
+            if store is not None:
+                store.delete_watermarks(stale_keys)
 
     logger.info(f"[HERMES] 后台任务完成投递轮询已启用: 间隔 {interval}s")
