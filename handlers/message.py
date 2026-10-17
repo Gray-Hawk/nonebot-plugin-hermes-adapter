@@ -3821,18 +3821,18 @@ async def _refire(
 
     # B: refire 路径同款 post-reply cooldown 闸门。
     # 仅对非显式触发生效——explicit pending(如 @bot)须穿透 cooldown 直达 chat()。
-    # 关键场景:初发 turn 自己没回(submit_decision=silent)但期间 MCP push_message
-    # 把 last_bot_reply_at 写了 → 仅靠入口处的闸门挡不住,因为 pending 是上一次
-    # 入口处放进来的(进 pending 时还没写 mark)。在这里再判一次,把这条路径补严。
-    # 2026-10-17 alive/56:迟到 steer 回收条目(steer_recovered)豁免——它已被
-    # steer_run 收过一次(turn 边界上的真发言),本 turn 又恰好发了言,不豁免则
-    # 8s 窗必中、条目静默丢弃(当日受控实测实锤,丢弃原仅 DEBUG 不可见)。
+    # 2026-10-17 alive/56 续:判定时刻从「接力起跑」改为「跟帖到达」——旧口径下
+    # 本 turn 一发回复 last_bot_reply_at 即刷新,refire 必撞 8s 窗,等于把全部
+    # 「turn 在跑期间到达的合法跟帖」接力一律静默吞掉(当日受控群两轮实测实锤;
+    # 跟帖到达时已过入口闸,是合法排队,该不该再答应交接力轮的 submit_decision
+    # 自决,而不是被闸门越权替模型决定)。steer_recovered 仍单列豁免:回收条目
+    # 的 ts 是回收时刻(网关只还回文本,拿不到原到达时刻),按到达时刻判仍会误拦。
     if (
         mode == "reactive"
         and group_id is not None
         and not is_explicit_trigger
         and not steer_recovered
-        and _in_post_reply_cooldown(adapter_name, str(group_id), refire_now_ms)
+        and _in_post_reply_cooldown(adapter_name, str(group_id), trigger_msg.ts)
     ):
         logger.info(f"[HERMES reactive] refire skipped by post-reply cooldown (key={key} depth={depth})")
         _release_slot_and_retry(key, adapter_name, trigger_msg.group_id is None, trigger_msg.user_id, trigger_msg.group_id)
