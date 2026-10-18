@@ -1,4 +1,4 @@
-"""fire-and-forget 后台任务统一出口（本部署补丁）。
+"""fire-and-forget 后台任务统一出口(本部署补丁)。
 
 裸 asyncio.create_task 不持引用有两个后果：task 可能被 GC 提前回收；
 协程在进 try 之前炸掉时只剩一句 "Task exception was never retrieved"，

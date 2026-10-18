@@ -73,7 +73,7 @@ async def _hermes_m1_startup():
     await start_mcp_server()
     _driver.on_shutdown(stop_mcp_server)
     _driver.on_shutdown(stop_storage)
-    # 挂起审批装回后延迟重发管理员通知(本部署补丁, best-effort):
+    # 挂起审批装回后延迟重发管理员通知(本部署补丁:best-effort):
     # 通知随旧进程死了,装回的条目管理员可能从没见过;条目本身已在,/approve 可答。
     from .core.approvals import pending_count as _approvals_pending_count
     from .core.approvals import renotify_pending as _approvals_renotify
