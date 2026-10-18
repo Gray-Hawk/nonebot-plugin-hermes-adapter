@@ -117,22 +117,43 @@ async def _handle_member_join(bot: Bot, event) -> None:
     )
 
 
+# 昵称解析短 TTL 缓存(本部署补丁):戳一戳/入群事件此前每次都实时打 API
+# (no_cache=True),刷屏/入群潮时调用放大。TTL 内同一 (群, 用户) 复用结果;
+# 失败回退不落缓存,下次事件自然重试。
+_NICKNAME_TTL_S = 300.0
+_NICKNAME_CACHE_MAX = 512
+_nickname_cache: dict[tuple[str, str], tuple[str, float]] = {}
+
+
 async def _resolve_nickname(bot: Bot, *, user_id: str, group_id):
     """OneBot v11 API 拿昵称,失败 fallback 用 user_id 字符串。"""
+    key = (str(group_id) if group_id else "", user_id)
+    now = time.monotonic()
+    cached = _nickname_cache.get(key)
+    if cached is not None and cached[1] > now:
+        return cached[0]
     try:
         if group_id:
             info = await bot.call_api(
                 "get_group_member_info",
                 group_id=int(group_id),
                 user_id=int(user_id),
-                no_cache=True,
             )
-            return info.get("card") or info.get("nickname") or user_id
-        info = await bot.call_api("get_stranger_info", user_id=int(user_id))
-        return info.get("nickname") or user_id
+            nickname = info.get("card") or info.get("nickname") or user_id
+        else:
+            info = await bot.call_api("get_stranger_info", user_id=int(user_id))
+            nickname = info.get("nickname") or user_id
     except Exception as e:
         logger.debug(f"[HERMES notice] nickname resolve failed for {user_id}: {e}")
         return user_id
+    if len(_nickname_cache) >= _NICKNAME_CACHE_MAX:
+        for k in [k for k, (_n, exp) in _nickname_cache.items() if exp <= now]:
+            _nickname_cache.pop(k, None)
+        if len(_nickname_cache) >= _NICKNAME_CACHE_MAX:
+            for k in list(_nickname_cache)[: _NICKNAME_CACHE_MAX // 4]:
+                _nickname_cache.pop(k, None)
+    _nickname_cache[key] = (nickname, now + _NICKNAME_TTL_S)
+    return nickname
 
 
 def _build_target(*, adapter_name: str, user_id: str, group_id):

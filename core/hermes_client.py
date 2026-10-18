@@ -330,14 +330,24 @@ def extract_response_media(text: str) -> tuple[str, list[str], list[str]]:
     return cleaned.strip(), media_urls, file_paths
 
 
-_SALVAGE_SHOULD_REPLY_RE = re.compile(r'"should_reply"\s*:\s*(true|false)', re.IGNORECASE)
-_SALVAGE_REPLY_TEXT_RE = re.compile(r'"reply_text"\s*:\s*"((?:[^"\\]|\\.)*)', re.DOTALL)
-_SALVAGE_TOPIC_HINT_RE = re.compile(r'"topic_hint"\s*:\s*"((?:[^"\\]|\\.)*)"')
-_SALVAGE_EXIT_ACTIVE_RE = re.compile(r'"should_exit_active"\s*:\s*(true|false)', re.IGNORECASE)
+# M19 修复:救补判据原只认双引号键——单引号键(json5 合法)叠加截断时整条回复
+# 丢失。键名引号形态双收;字符串值按开引号配对回捕。
+def _salvage_bool_re(key: str) -> re.Pattern:
+    return re.compile(rf"[\"']{key}[\"']\s*:\s*(true|false)", re.IGNORECASE)
+
+
+_SALVAGE_SHOULD_REPLY_RE = _salvage_bool_re("should_reply")
+_SALVAGE_REPLY_TEXT_RE = re.compile(
+    r"[\"']reply_text[\"']\s*:\s*(?P<q>[\"'])(?P<v>(?:\\.|(?!(?P=q)).)*)(?P=q)?", re.DOTALL
+)
+_SALVAGE_TOPIC_HINT_RE = re.compile(
+    r"[\"']topic_hint[\"']\s*:\s*(?P<q>[\"'])(?P<v>(?:\\.|(?!(?P=q)).)*)(?P=q)?", re.DOTALL
+)
+_SALVAGE_EXIT_ACTIVE_RE = _salvage_bool_re("should_exit_active")
 # M1 收尾(2026-10-17 维护者拍板):not_final 入救补——布尔抠错概率低,丢失则
 # 回执发出但续跑轮没来=任务烂尾;其余字段(锚家族/at_user_id)抠错代价大于丢失,
 # 维持不认。
-_SALVAGE_NOT_FINAL_RE = re.compile(r'"not_final"\s*:\s*(true|false)', re.IGNORECASE)
+_SALVAGE_NOT_FINAL_RE = _salvage_bool_re("not_final")
 
 
 def _salvage_truncated_reply_text(text: str) -> dict[str, Any] | None:
@@ -353,12 +363,12 @@ def _salvage_truncated_reply_text(text: str) -> dict[str, Any] | None:
     决定翻成插话,抢答别人的对话比丢一条回复更糟。读不出布尔值时才默认 True
     (reply_text 存在说明模型本来打算说话)。
     """
-    if not text or '"should_reply"' not in text:
+    if not text or ('"should_reply"' not in text and "'should_reply'" not in text):
         return None
     m = _SALVAGE_REPLY_TEXT_RE.search(text)
     if m is None:
         return None
-    raw_val = m.group(1)
+    raw_val = m.group("v")
     escaped_val = raw_val.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
     try:
         val = json.loads(f'"{escaped_val}"')
@@ -377,7 +387,7 @@ def _salvage_truncated_reply_text(text: str) -> dict[str, Any] | None:
     # 都会连带丢掉话题跟踪与退场判断 —— 而带图 turn 恰恰是最常触发救补的那些。
     m_topic = _SALVAGE_TOPIC_HINT_RE.search(text)
     if m_topic:
-        out["topic_hint"] = m_topic.group(1)
+        out["topic_hint"] = m_topic.group("v")
     m_exit = _SALVAGE_EXIT_ACTIVE_RE.search(text)
     if m_exit:
         out["should_exit_active"] = m_exit.group(1).lower() == "true"
@@ -684,13 +694,53 @@ class InterimSegmenter:
         return "".join(self._seg)
 
 
-class StreamHttpError(Exception):
-    """流式分支的非 200 响应;携带 status 与 body 让主流程走统一错误归纳。"""
+# M16 修复:进程级共享 AsyncClient 连接池复用——原实现每轮/每次探测新建 client,
+# 高频群聊下每 turn 一次 TCP+TLS 握手。插件单 event loop,httpx.AsyncClient 并发
+# 安全;超时一律请求级传参(与旧 client 级超时同语义)。shutdown 经
+# close_shared_http_client()(插件 __init__ 注册)释放。
+_shared_http_client: httpx.AsyncClient | None = None
 
-    def __init__(self, status: int, body: str) -> None:
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _shared_http_client
+    if _shared_http_client is None or _shared_http_client.is_closed:
+        _shared_http_client = httpx.AsyncClient()
+    return _shared_http_client
+
+
+async def close_shared_http_client() -> None:
+    global _shared_http_client
+    if _shared_http_client is not None and not _shared_http_client.is_closed:
+        try:
+            await _shared_http_client.aclose()
+        except Exception:
+            pass
+    _shared_http_client = None
+
+
+# M15 修复:429 重试读 Retry-After——原实现固定 sleep(1),上游改节奏不跟随。
+def _parse_retry_after(raw: str | None) -> float | None:
+    """Retry-After 头解析:数字秒(上游实测形态),非法/缺失返回 None。钳制 0.5~30s。"""
+    if not raw:
+        return None
+    try:
+        val = float(raw.strip())
+    except (TypeError, ValueError):
+        return None
+    return min(30.0, max(0.5, val))
+
+
+class StreamHttpError(Exception):
+    """流式分支的非 200 响应;携带 status 与 body 让主流程走统一错误归纳。
+
+    M15:retry_after 携带响应的 Retry-After 秒数(仅 429 等限流响应有)。
+    """
+
+    def __init__(self, status: int, body: str, retry_after: float | None = None) -> None:
         super().__init__(f"stream HTTP {status}")
         self.status = status
         self.body = body
+        self.retry_after = retry_after
 
 
 class RunsEventParser:
@@ -1072,19 +1122,30 @@ class HermesClient:
                     url, payload, headers, tgt.timeout, session_key, interim_callback
                 )
                 return raw_text, rotated, None, ""
-            async with httpx.AsyncClient(timeout=tgt.timeout) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                if resp.status_code != 200:
-                    raise StreamHttpError(resp.status_code, resp.text)
-                data = resp.json()
-                rotated = rotated_session_key(resp.headers.get("X-Hermes-Session-Id"), session_key)
+            client = _get_http_client()
+            resp = await client.post(url, json=payload, headers=headers, timeout=tgt.timeout)
+            if resp.status_code != 200:
+                raise StreamHttpError(resp.status_code, resp.text, retry_after=_parse_retry_after(resp.headers.get("Retry-After")))
+            data = resp.json()
+            rotated = rotated_session_key(resp.headers.get("X-Hermes-Session-Id"), session_key)
             if not (data.get("choices") or []):
-                # 期望结构化但响应空:这是结构性失败而非"模型选择不回复"
+                # M18 修复:choices 为空是结构性失败,与 expect_structured 无关——原实现
+                # 只在 expect_structured=True 时打标,False 时空串被当正常回复吞掉。
+                logger.warning(
+                    f"[HERMES] upstream returned empty choices (expect_structured={expect_structured})"
+                )
                 return "", rotated, ChatResult(
-                    raw_text="", parse_failed=expect_structured,
+                    raw_text="", parse_failed=True,
                 ), ""
             msg = (data.get("choices") or [{}])[0].get("message") or {}
-            return msg.get("content") or "", rotated, None, ""
+            content = msg.get("content") or ""
+            if not content:
+                # M18:content 空同样留痕(行为不变,仅观测)——上游异常与模型静默
+                # 此前不可区分。
+                logger.warning(
+                    f"[HERMES] upstream returned empty content (expect_structured={expect_structured})"
+                )
+            return content, rotated, None, ""
 
         # 阶段2d(维护者定案「丢了就贴」前置):429 满额先自动重试一次(Retry-After: 1s),
         # 再 429 才归纳上抛——贴表情是「重试也进不去」的兜底,不是一见 429 就躺。
@@ -1096,8 +1157,10 @@ class HermesClient:
             except StreamHttpError as exc:
                 if exc.status == 429 and not _rl_retried:
                     _rl_retried = True
-                    logger.warning("[HERMES] 429 满额,1s 后自动重试一次")
-                    await asyncio.sleep(1)
+                    # M15:优先跟随上游 Retry-After,缺失回落 1s 旧值。
+                    delay = exc.retry_after if exc.retry_after is not None else 1.0
+                    logger.warning(f"[HERMES] 429 满额,{delay:g}s 后自动重试一次")
+                    await asyncio.sleep(delay)
                     continue
                 # 流式分支的非 200:与非流式同一套归纳(含 403 硬标记),保证错误面一致。
                 return _transport_failure(exc.status, exc.body)
@@ -1225,20 +1288,20 @@ class HermesClient:
         """
         seg = InterimSegmenter()
         rotated: str | None = None
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            async with client.stream("POST", url, json=payload, headers=headers) as resp:
-                if resp.status_code != 200:
-                    body = (await resp.aread()).decode("utf-8", "replace")
-                    raise StreamHttpError(resp.status_code, body)
-                rotated = rotated_session_key(resp.headers.get("X-Hermes-Session-Id"), session_key)
-                async for line in resp.aiter_lines():
-                    interim = seg.feed(line)
-                    if interim is None:
-                        continue
-                    try:
-                        await interim_callback(interim)
-                    except Exception:
-                        logger.warning("[HERMES] 旁白转发失败(不影响主 turn)", exc_info=True)
+        client = _get_http_client()
+        async with client.stream("POST", url, json=payload, headers=headers, timeout=timeout) as resp:
+            if resp.status_code != 200:
+                body = (await resp.aread()).decode("utf-8", "replace")
+                raise StreamHttpError(resp.status_code, body, retry_after=_parse_retry_after(resp.headers.get("Retry-After")))
+            rotated = rotated_session_key(resp.headers.get("X-Hermes-Session-Id"), session_key)
+            async for line in resp.aiter_lines():
+                interim = seg.feed(line)
+                if interim is None:
+                    continue
+                try:
+                    await interim_callback(interim)
+                except Exception:
+                    logger.warning("[HERMES] 旁白转发失败(不影响主 turn)", exc_info=True)
         # 流式下上游不做 _resolve_media_to_data_urls(只在非流式响应路径),
         # 本地图片在这里按插件白名单补内联, 让 raw_text 形态与非流式一致(2026-10-08 补丁)。
         return inline_local_media_images(seg.final_text()), rotated
@@ -1250,12 +1313,13 @@ class HermesClient:
         approve/approved/allow 上游别名映射到 once。409 = 无挂中审批(已答/已超时)。
         """
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(
-                    f"{tgt.base_url}/v1/runs/{run_id}/approval",
-                    json={"choice": choice},
-                    headers=self.get_headers(api_key=tgt.api_key),
-                )
+            client = _get_http_client()
+            resp = await client.post(
+                f"{tgt.base_url}/v1/runs/{run_id}/approval",
+                json={"choice": choice},
+                headers=self.get_headers(api_key=tgt.api_key),
+                timeout=15,
+            )
             if resp.status_code == 200:
                 return True, str(resp.json().get("choice") or choice)
             try:
@@ -1269,11 +1333,12 @@ class HermesClient:
     async def get_run_status(self, *, tgt: HermesTarget, run_id: str) -> dict | None:
         """GET /v1/runs/{id} 取 run 状态(阶段3a),失败返回 None。"""
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(
-                    f"{tgt.base_url}/v1/runs/{run_id}",
-                    headers=self.get_headers(api_key=tgt.api_key),
-                )
+            client = _get_http_client()
+            resp = await client.get(
+                f"{tgt.base_url}/v1/runs/{run_id}",
+                headers=self.get_headers(api_key=tgt.api_key),
+                timeout=15,
+            )
             if resp.status_code != 200:
                 return None
             data = resp.json()
@@ -1284,12 +1349,13 @@ class HermesClient:
     async def stop_run(self, *, tgt: HermesTarget, run_id: str) -> bool:
         """POST /v1/runs/{id}/stop 协作式终止(阶段3b),返回是否被受理(2xx)。"""
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(
-                    f"{tgt.base_url}/v1/runs/{run_id}/stop",
-                    json={},
-                    headers=self.get_headers(api_key=tgt.api_key),
-                )
+            client = _get_http_client()
+            resp = await client.post(
+                f"{tgt.base_url}/v1/runs/{run_id}/stop",
+                json={},
+                headers=self.get_headers(api_key=tgt.api_key),
+                timeout=15,
+            )
             return resp.status_code in (200, 202)
         except Exception:
             return False
@@ -1304,12 +1370,13 @@ class HermesClient:
         """
         headers = self.get_headers(api_key=tgt.api_key)
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(
-                    f"{tgt.base_url}/v1/runs/{run_id}/steer",
-                    json={"input": text},
-                    headers=headers,
-                )
+            client = _get_http_client()
+            resp = await client.post(
+                f"{tgt.base_url}/v1/runs/{run_id}/steer",
+                json={"input": text},
+                headers=headers,
+                timeout=15,
+            )
             if resp.status_code != 200:
                 logger.debug(f"[HERMES] steer 被拒 run_id={run_id} http={resp.status_code}")
                 return False
@@ -1319,7 +1386,7 @@ class HermesClient:
             return False
 
     async def _submit_run_with_replay(
-        self, client: httpx.AsyncClient, tgt: HermesTarget, body: dict, submit_headers: dict
+        self, client: httpx.AsyncClient, tgt: HermesTarget, body: dict, submit_headers: dict, timeout: int
     ):
         """POST /v1/runs 带一次网络类重试(低危⑧, 2026-10-14)。
 
@@ -1330,7 +1397,7 @@ class HermesClient:
         """
         for attempt in (1, 2):
             try:
-                return await client.post(f"{tgt.base_url}/v1/runs", json=body, headers=submit_headers)
+                return await client.post(f"{tgt.base_url}/v1/runs", json=body, headers=submit_headers, timeout=timeout)
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
                 if attempt == 2:
                     raise
@@ -1344,8 +1411,8 @@ class HermesClient:
         本部署补丁(runs 迁移阶段1):旧路中断=断连接,runs 路
         中断必须显式 stop,否则孤儿 run 在 gateway 继续占槽跑完。"""
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(f"{base_url}/v1/runs/{run_id}/stop", json={}, headers=headers)
+            client = _get_http_client()
+            await client.post(f"{base_url}/v1/runs/{run_id}/stop", json={}, headers=headers, timeout=10)
         except Exception:
             logger.warning(f"[HERMES] runs stop 止损失败 run_id={run_id}(孤儿 run 将自行跑完)", exc_info=True)
 
@@ -1387,62 +1454,62 @@ class HermesClient:
         run_id = ""
         tracker = None
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await self._submit_run_with_replay(client, tgt, body, submit_headers)
-                if resp.status_code not in (200, 202):
-                    raise StreamHttpError(resp.status_code, resp.text)
-                run_id = str(resp.json().get("run_id") or "")
-                if resp.json().get("replayed"):
-                    # 同键重放认领:首次提交的应答丢过,网关把原 run 还回来了
-                    logger.warning(f"[HERMES] runs 提交重放认领 (run_id={run_id})")
-                if not run_id:
-                    raise StreamHttpError(202, f"missing run_id: {resp.text[:200]}")
-                # 阶段2a:登记在跑 run(nb 重启后 run_resume 按此行 reattach 续跑)。
-                # bot_self_id 缺失(旧调用点未传)时不登记——resume 找不到 bot 投不出去,
-                # 登记了也是死行;缺 id 只发生在非 handler 直调的探测场景。
-                from .. import mcp as _mcp  # 延迟导入防环(mcp 装配在 handlers 之后)
+            client = _get_http_client()
+            resp = await self._submit_run_with_replay(client, tgt, body, submit_headers, timeout)
+            if resp.status_code not in (200, 202):
+                raise StreamHttpError(resp.status_code, resp.text, retry_after=_parse_retry_after(resp.headers.get("Retry-After")))
+            run_id = str(resp.json().get("run_id") or "")
+            if resp.json().get("replayed"):
+                # 同键重放认领:首次提交的应答丢过,网关把原 run 还回来了
+                logger.warning(f"[HERMES] runs 提交重放认领 (run_id={run_id})")
+            if not run_id:
+                raise StreamHttpError(202, f"missing run_id: {resp.text[:200]}")
+            # 阶段2a:登记在跑 run(nb 重启后 run_resume 按此行 reattach 续跑)。
+            # bot_self_id 缺失(旧调用点未传)时不登记——resume 找不到 bot 投不出去,
+            # 登记了也是死行;缺 id 只发生在非 handler 直调的探测场景。
+            from .. import mcp as _mcp  # 延迟导入防环(mcp 装配在 handlers 之后)
 
-                tracker = _mcp.run_tracker
-                if tracker is not None and scope.get("bot_self_id"):
-                    tracker.upsert(
-                        run_id=run_id,
-                        scope_key=make_scope_key(
-                            scope["adapter"], scope["is_private"], scope["user_id"], scope["group_id"]
-                        ),
-                        adapter=scope["adapter"],
-                        is_private=scope["is_private"],
-                        user_id=scope["user_id"],
-                        group_id=scope["group_id"],
-                        bot_self_id=scope["bot_self_id"],
-                        session_key=session_key,
-                        mode=scope["mode"],
-                        expect_structured=bool(scope["expect_structured"]),
-                    )
-                # 订阅略早于执行器注册是上游支持的 race 窗口(events 处理器内置等待)
-                async with client.stream(
-                    "GET", f"{tgt.base_url}/v1/runs/{run_id}/events", headers=headers
-                ) as ev:
-                    if ev.status_code != 200:
-                        raise StreamHttpError(ev.status_code, (await ev.aread()).decode("utf-8", "replace"))
-                    async for line in ev.aiter_lines():
-                        interim = parser.feed(line)
-                        if interim and interim_callback is not None:
-                            try:
-                                await interim_callback(interim)
-                            except Exception:
-                                logger.warning("[HERMES] 旁白转发失败(不影响主 turn)", exc_info=True)
-                        # 阶段3c:审批挂起帧即时上交(command 已脱敏;回调失败不拖垮主 turn)
-                        if parser.approval is not None and approval_callback is not None:
-                            approval, parser.approval = parser.approval, None
-                            try:
-                                await approval_callback(approval)
-                            except Exception:
-                                logger.warning("[HERMES] 审批通知回调失败(不影响主 turn)", exc_info=True)
-                        # 粗粒度写库:旁白帧与终态帧才更新 last_seq(delta 高频不写)
-                        if tracker is not None and parser.last_seq >= 0 and (interim or parser.terminal):
-                            tracker.update_seq(run_id, parser.last_seq)
-                        if parser.terminal:
-                            break
+            tracker = _mcp.run_tracker
+            if tracker is not None and scope.get("bot_self_id"):
+                tracker.upsert(
+                    run_id=run_id,
+                    scope_key=make_scope_key(
+                        scope["adapter"], scope["is_private"], scope["user_id"], scope["group_id"]
+                    ),
+                    adapter=scope["adapter"],
+                    is_private=scope["is_private"],
+                    user_id=scope["user_id"],
+                    group_id=scope["group_id"],
+                    bot_self_id=scope["bot_self_id"],
+                    session_key=session_key,
+                    mode=scope["mode"],
+                    expect_structured=bool(scope["expect_structured"]),
+                )
+            # 订阅略早于执行器注册是上游支持的 race 窗口(events 处理器内置等待)
+            async with client.stream(
+                "GET", f"{tgt.base_url}/v1/runs/{run_id}/events", headers=headers, timeout=timeout
+            ) as ev:
+                if ev.status_code != 200:
+                    raise StreamHttpError(ev.status_code, (await ev.aread()).decode("utf-8", "replace"), retry_after=_parse_retry_after(ev.headers.get("Retry-After")))
+                async for line in ev.aiter_lines():
+                    interim = parser.feed(line)
+                    if interim and interim_callback is not None:
+                        try:
+                            await interim_callback(interim)
+                        except Exception:
+                            logger.warning("[HERMES] 旁白转发失败(不影响主 turn)", exc_info=True)
+                    # 阶段3c:审批挂起帧即时上交(command 已脱敏;回调失败不拖垮主 turn)
+                    if parser.approval is not None and approval_callback is not None:
+                        approval, parser.approval = parser.approval, None
+                        try:
+                            await approval_callback(approval)
+                        except Exception:
+                            logger.warning("[HERMES] 审批通知回调失败(不影响主 turn)", exc_info=True)
+                    # 粗粒度写库:旁白帧与终态帧才更新 last_seq(delta 高频不写)
+                    if tracker is not None and parser.last_seq >= 0 and (interim or parser.terminal):
+                        tracker.update_seq(run_id, parser.last_seq)
+                    if parser.terminal:
+                        break
         except Exception:
             # 超时/连接/解析任何异常:孤儿 run 止损后原样上抛,chat() except 链归纳
             if run_id:
@@ -1491,12 +1558,12 @@ class HermesClient:
     async def fetch_capabilities(self) -> dict[str, Any]:
         """取 /v1/capabilities;任何失败都返回空 dict —— 探测不能阻塞启动。"""
         try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(f"{self.api_url}/v1/capabilities", headers=self.get_headers())
-                if resp.status_code != 200:
-                    return {}
-                data = resp.json()
-                return data if isinstance(data, dict) else {}
+            client = _get_http_client()
+            resp = await client.get(f"{self.api_url}/v1/capabilities", headers=self.get_headers(), timeout=5)
+            if resp.status_code != 200:
+                return {}
+            data = resp.json()
+            return data if isinstance(data, dict) else {}
         except Exception:
             return {}
 
@@ -1509,9 +1576,9 @@ class HermesClient:
         tgt = target or default_target()
         try:
             headers = self.get_headers(api_key=tgt.api_key)
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(f"{tgt.base_url}/v1/models", headers=headers)
-                return resp.status_code == 200
+            client = _get_http_client()
+            resp = await client.get(f"{tgt.base_url}/v1/models", headers=headers, timeout=5)
+            return resp.status_code == 200
         except Exception:
             return False
 

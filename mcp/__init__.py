@@ -127,6 +127,11 @@ def init_runtime_state() -> None:
     if run_tracker is None:
         # 阶段2a:在跑 run 跟踪,同样是「重启必须还在」的运行时状态,同目录分文件。
         run_tracker = RunTracker(db_path=db_path.parent / "active_runs.db")
+    # 挂起审批持久化(本部署补丁):与上面的运行时状态同目录分文件,装回未过期
+    # 条目;/approve 应答路径重启后仍可答(上游审批还在窗口期内等应答)。
+    from ..core.approvals import bind_storage as _approvals_bind_storage
+
+    _approvals_bind_storage(db_path.parent / "pending_approvals.json")
     if image_cache is None:
         cache_dir_str = plugin_config.hermes_image_cache_dir or ""
         cache_dir = Path(cache_dir_str) if cache_dir_str else _default_image_cache_dir()
@@ -235,9 +240,24 @@ async def start_mcp_server() -> None:
     _uvicorn_server = server
     _server_task = asyncio.create_task(server.serve(), name="hermes-mcp-server")
     _server_task.add_done_callback(_on_server_task_done)
-    # 注:create_task 立刻返回,uvicorn 还在异步绑定端口;此 log 仅声明意图,
-    # 真正起来 / 失败由 _on_server_task_done 捕获或 uvicorn 自身 stderr 日志反映。
     logger.info(f"[HERMES MCP] starting on {plugin_config.hermes_mcp_host}:{plugin_config.hermes_mcp_port}")
+    # 启动期反馈(本部署补丁):等 uvicorn 实际完成端口绑定再落 listening——此前
+    # starting 只是声明意图,绑定失败只能靠 task done 回调/stderr 反映,启动期无定论。
+    for _ in range(30):
+        if server.started:
+            logger.info(
+                f"[HERMES MCP] listening on {plugin_config.hermes_mcp_host}:{plugin_config.hermes_mcp_port}"
+            )
+            break
+        if _server_task.done():
+            # 异常明细由 _on_server_task_done 打;这里补一句启动期定论
+            logger.error(
+                f"[HERMES MCP] 绑定 {plugin_config.hermes_mcp_host}:{plugin_config.hermes_mcp_port} 失败,服务未启动"
+            )
+            break
+        await asyncio.sleep(0.1)
+    else:
+        logger.warning("[HERMES MCP] 3s 内未确认绑定完成,服务仍在后台起跑;后续异常由 done 回调捕获")
 
 
 async def stop_mcp_server() -> None:

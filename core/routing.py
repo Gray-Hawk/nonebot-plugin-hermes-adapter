@@ -14,6 +14,7 @@ from __future__ import annotations
 import hmac
 from dataclasses import dataclass
 
+from ..adapter_norm import normalize_adapter_name
 from ..config import HermesEndpoint, plugin_config
 
 _DEFAULT_LABEL = "default"
@@ -179,11 +180,11 @@ def resolve_caller_scope(authorization_header: str | None) -> CallerScope | None
 
 
 def _normalize_adapter(raw: str) -> str:
-    """与 utils.get_adapter_name 的归一化保持一致(测试钉住这个等价关系)。
+    """归一化单一来源在 adapter_norm 模块(与 utils.get_adapter_name 同源)。
 
     这里不 import utils:那会把 alconna 拉进 core 层。
     """
-    return raw.lower().replace(" ", "").replace(".", "") or "unknown"
+    return normalize_adapter_name(raw)
 
 
 def validate_endpoints() -> list[str]:
