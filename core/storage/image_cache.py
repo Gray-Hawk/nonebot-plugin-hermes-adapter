@@ -41,6 +41,37 @@ def _ext_to_mime(ext: str) -> str:
     return _EXT_TO_MIME.get(ext.lower(), "application/octet-stream")
 
 
+def _mount_opts_for(path: Path) -> str | None:
+    """M31:找 path 所属挂载点的选项串(取最长前缀匹配)。
+
+    非 Linux(/proc/self/mounts 不存在)或读取失败返回 None——检测不到就闭嘴,
+    不影响主流程。
+    """
+    try:
+        target = str(path.resolve())
+        best_mount = ""
+        best_opts: str | None = None
+        with open("/proc/self/mounts", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                fields = line.split()
+                if len(fields) < 4:
+                    continue
+                # mounts 里空格转义为 \040 形态
+                mount_point = fields[1].replace("\\040", " ")
+                if (
+                    mount_point != "/"
+                    and target != mount_point
+                    and not target.startswith(mount_point + "/")
+                ):
+                    continue
+                if len(mount_point) >= len(best_mount):
+                    best_mount = mount_point
+                    best_opts = fields[3]
+        return best_opts
+    except OSError:
+        return None
+
+
 class ImageCache:
     """SHA256 命名的扁平目录,LRU 按 atime。"""
 
@@ -48,6 +79,15 @@ class ImageCache:
         self._dir = Path(cache_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._quota = quota_bytes
+        # M31:挂载选项自检。noatime 下读文件不刷 atime,LRU 名义上退化——但本插件
+        # 全部读路径都经 get_bytes 的显式 os.utime 触探(显式 utime 不受 noatime
+        # 抑制),atime 仍由应用层维护;淘汰排序另按 max(atime, mtime) 加固兜底。
+        opts = _mount_opts_for(self._dir)
+        if opts and "noatime" in opts.split(","):
+            logger.info(
+                "[image_cache] 挂载选项含 noatime:LRU 依赖 get_bytes 的显式 utime 触探"
+                "(本插件读路径全经它),淘汰排序已按 max(atime, mtime) 加固"
+            )
 
     def put(self, raw_bytes: bytes, mime_type: str) -> str:
         """存字节,返回 sha256。已存在的 sha 跳过写。"""
@@ -102,15 +142,17 @@ class ImageCache:
                 st = p.stat()
             except OSError:
                 continue
-            entries.append((p, st.st_size, st.st_atime))
+            entries.append((p, st.st_size, st.st_atime, st.st_mtime))
             total += st.st_size
 
         if total <= self._quota:
             return 0
 
-        entries.sort(key=lambda e: e[2])  # atime asc → 最老在前
+        # M31:新近度取 max(atime, mtime)——atime 失灵(noatime/触探失败)时退化为
+        # 写入序,至少是有界确定行为,不至于近似任意删。
+        entries.sort(key=lambda e: max(e[2], e[3]))  # 最老在前
         deleted = 0
-        for p, size, _atime in entries:
+        for p, size, _atime, _mtime in entries:
             try:
                 p.unlink()
                 deleted += size

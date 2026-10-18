@@ -38,7 +38,11 @@ class WindowStore:
 
     def __init__(self, db_path: Path) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(db_path))
+        # M30 修复:check_same_thread=False,与 MessageStore/SessionKeyStore
+        # 的加固对齐——NoneBot driver 可能在多 thread 上访问 ASGI 应用;写入方只有
+        # event loop 一个,本参数只为放宽 sqlite3 模块自身的线程检查。手动 commit
+        # 语义保持不变。
+        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         # 低危⑫(2026-10-14):WAL 标配 synchronous=NORMAL(同 run_tracker,镜像库
         # 不需要每提交 fsync)。
