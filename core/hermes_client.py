@@ -1138,14 +1138,17 @@ class HermesClient:
                     raw_text="", parse_failed=True,
                 ), ""
             msg = (data.get("choices") or [{}])[0].get("message") or {}
-            content = msg.get("content") or ""
-            if not content:
+            # 注意:本变量绝不可命名为 content——content 是外层 chat() 的局部,
+            # 闭包内任何对该名的赋值都会让全函数域的 content 读点(runs/流式分支)
+            # 变成 UnboundLocalError(有生产事故先例)。
+            final_content = msg.get("content") or ""
+            if not final_content:
                 # M18:content 空同样留痕(行为不变,仅观测)——上游异常与模型静默
                 # 此前不可区分。
                 logger.warning(
                     f"[HERMES] upstream returned empty content (expect_structured={expect_structured})"
                 )
-            return content, rotated, None, ""
+            return final_content, rotated, None, ""
 
         # 阶段2d(维护者定案「丢了就贴」前置):429 满额先自动重试一次(Retry-After: 1s),
         # 再 429 才归纳上抛——贴表情是「重试也进不去」的兜底,不是一见 429 就躺。
@@ -1179,7 +1182,7 @@ class HermesClient:
                     is_transport_error=True,
                 )
             except Exception as exc:
-                logger.error(f"[HERMES] API 请求异常: {exc}")
+                logger.error(f"[HERMES] API 请求异常: {exc}", exc_info=True)
                 return ChatResult(
                     raw_text=f"⚠️ AI 服务异常: {exc}",
                     parse_failed=True,
