@@ -490,8 +490,27 @@ class Config(BaseModel):
     默认 96(冷汗),刻意与 ack(341)和已移除的旧 busy(97/擦汗)都不同 id,
     语义不混淆。"""
 
+    hermes_approval_expiry_sec: int = 300
+    """本部署补丁: /approve 挂起审批的本条超时秒数。与上游 gateway 的
+    approvals.timeout 是孪生配置,两边无同步机制——上游改了这里要跟着改。
+    到期条目应答时按「已超时」处理,重启装回时也按它剔除死单。"""
+
 
 plugin_config = get_plugin_config(Config)
+
+# resolve_custom_dir 的兜底 WARN 按形态每进程去重(本部署补丁):该函数被各功能
+# 「现读现用」高频调用,不节流会刷屏;但完全静默时配置拼错只在启动期 WARN 一闪而过,
+# 运行期只剩「回退内置」的表象。
+_resolve_warned: set[str] = set()
+
+
+def _resolve_warn_once(kind: str, text: str) -> None:
+    if kind in _resolve_warned:
+        return
+    _resolve_warned.add(kind)
+    from nonebot import logger
+
+    logger.warning(text)
 
 
 def resolve_custom_dir() -> "Path | None":
@@ -501,10 +520,18 @@ def resolve_custom_dir() -> "Path | None":
     插件数据目录（与 messages.db 同目录）。群档案的开关独立控制
     （hermes_group_profile_enabled），不在此收口。
     返回 None = 不可用，调用方按无定制处理（回退内置/静默跳过）。
+    兜底链的每次回退都打 WARN(每进程每形态一次),不再是静默兜底。
     """
     raw = (plugin_config.hermes_custom_dir or "").strip()
     if raw:
-        return Path(raw).expanduser()
+        path = Path(raw).expanduser()
+        if not path.is_dir():
+            _resolve_warn_once(
+                "custom_dir_missing",
+                f"[HERMES] hermes_custom_dir 指向的目录不可用: {path};"
+                "定制功能(规则/群档案/媒体配置等)将回退内置默认",
+            )
+        return path
     try:
         import nonebot_plugin_localstore as store
 
@@ -515,6 +542,17 @@ def resolve_custom_dir() -> "Path | None":
             # 兜底：插件未经插件管理器加载（单测/脚本直 import）时调用栈识别
             # 会抛 RuntimeError，退化为按名取 BASE_DATA_DIR/nonebot_plugin_hermes——
             # 与正路默认解析结果一致，只是不吃重映射。
-            return store.get_data_dir("nonebot_plugin_hermes")
+            path = store.get_data_dir("nonebot_plugin_hermes")
+            _resolve_warn_once(
+                "localstore_by_name",
+                f"[HERMES] localstore 调用栈识别失败,定制目录按名解析为 {path}"
+                "(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告",
+            )
+            return path
     except Exception:
+        _resolve_warn_once(
+            "localstore_missing",
+            "[HERMES] localstore 不可用且未配置 hermes_custom_dir:"
+            "定制功能全部回退内置默认(不产生任何定制文件)",
+        )
         return None

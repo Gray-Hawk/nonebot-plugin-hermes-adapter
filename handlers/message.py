@@ -46,6 +46,8 @@ from ..core.message_buffer import (
 )
 from ..core.run_tracker import make_scope_key
 from ..core import task_notes
+from ..core.bg_tasks import spawn_bg_task
+from ..core.feedback_rules import load_rules
 from ..core.outbound import get_bot_nickname, send_local_files, send_text_with_media
 from ..core.prompt_builder import (
     _format_speaker_tag,
@@ -351,6 +353,25 @@ _DEPARTURE_CONFIRM_PROMPT = (
 # (scope_key, rule_name) → 上次 confirm 点火时刻(按规则名各自冷却,互不影响)
 _confirm_fired_at: dict[tuple[tuple[str, str], str], float] = {}
 
+# 内存兜底(本部署补丁):这类冷却/计数标记表只增不减,长跑缓慢泄漏。淘汰时长
+# 刻意远超任何实用冷却(confirm 缺省 300s),只作内存边界,不改变冷却语义。
+_MARK_KEEP_SEC = 48 * 3600
+_MARK_MAX = 512
+
+
+def _sweep_ts_marks(table: dict, cutoff: float, *, companions: tuple[dict, ...] = ()) -> None:
+    """淘汰 ts 早于 cutoff 的条目(同步清 companion 表同键);仍超容量再按 ts 从旧到新削。"""
+    if len(table) <= _MARK_MAX:
+        return
+    dropped = [k for k, ts in table.items() if ts < cutoff]
+    if len(table) - len(dropped) > _MARK_MAX:
+        rest = sorted((k for k in table if k not in dropped), key=lambda k: table[k])
+        dropped += rest[: len(table) - len(dropped) - _MARK_MAX // 2]
+    for k in dropped:
+        table.pop(k, None)
+        for c in companions:
+            c.pop(k, None)
+
 # 2026-10-16 打回机制增强(章一;规划书 项目文档库):
 # 类① 放行+接力 / 类② 拦截+重交。两类的防循环都靠同一套「同 scope 连续硬计数」结构
 # (仿 _confirm_fired_at 的 (key, kind) 形态)。私聊合成轮用真实 user_id,不在
@@ -360,6 +381,9 @@ _BOUNCE_CHAIN_MAX = 1   # 类② 重交上限(规划书 §3.3):第二次检出�
 
 # (scope_key, kind) → 连续点火计数(kind ∈ {"relay", "bounce"};普通投递即归零)
 _chain_counts: dict[tuple[tuple[str, str], str], int] = {}
+# (scope_key, kind) → 最近一次点火时刻(内存兜底淘汰用,不参与计数语义;
+# 值保持 int 不变,既有回归按整数断言)
+_chain_touched: dict[tuple[tuple[str, str], str], float] = {}
 
 # 类① 继续执行轮内建提示词(规则可用 prompt 覆盖)
 _CONTINUE_TASK_PROMPT = (
@@ -394,10 +418,14 @@ def _chain_allow(key: tuple[str, str], kind: str, limit: int) -> bool:
 
 def _chain_bump(key: tuple[str, str], kind: str) -> None:
     _chain_counts[(key, kind)] = _chain_counts.get((key, kind), 0) + 1
+    _chain_touched[(key, kind)] = time.time()
+    # 链条计数只在「连续点火」期间有意义,对端不再说话的残留按闲置淘汰
+    _sweep_ts_marks(_chain_touched, time.time() - 3600, companions=(_chain_counts,))
 
 
 def _chain_reset(key: tuple[str, str], kind: str) -> None:
     _chain_counts.pop((key, kind), None)
+    _chain_touched.pop((key, kind), None)
 
 
 def _fire_followup_turn(
@@ -420,7 +448,7 @@ def _fire_followup_turn(
     """
     logger.info(f"[HERMES feedback] 追加后续轮({tag}) {key}")
     if is_private:
-        asyncio.create_task(
+        spawn_bg_task(
             _handle_passive_path(
                 bot=bot, target=target, adapter_name=adapter_name,
                 user_id=user_id, nickname=_SYNTHETIC_NICKNAME, group_id=None,
@@ -429,7 +457,7 @@ def _fire_followup_turn(
             )
         )
     else:
-        asyncio.create_task(
+        spawn_bg_task(
             _handle_reactive_path(
                 bot=bot, target=target, adapter_name=adapter_name,
                 user_id="system-check", nickname=_SYNTHETIC_NICKNAME, group_id=group_id,
@@ -472,6 +500,7 @@ async def _fire_departure_confirm(
         logger.debug(f"[HERMES feedback] 确认轮冷却中,跳过 {key} rule={rule_name}")
         return
     _confirm_fired_at[mark] = now
+    _sweep_ts_marks(_confirm_fired_at, now - _MARK_KEEP_SEC)
     _fire_followup_turn(
         key=key, tag=f"confirm:{rule_name}", prompt=prompt,
         bot=bot, target=target, adapter_name=adapter_name,
@@ -508,8 +537,6 @@ async def _post_send_feedback(
     """
     if synthetic or not reply_text:
         return
-    from ..core.feedback_rules import load_rules
-
     relay_rule = None
     for rule in load_rules():
         if rule.where not in ("reply", "all") or not rule.matches(reply_text):
@@ -559,8 +586,6 @@ def _match_bounce_rule(reply_text: str):
     """
     if not reply_text:
         return None
-    from ..core.feedback_rules import load_rules
-
     for rule in load_rules():
         if rule.where in ("reply", "all") and rule.action == "bounce" and rule.matches(reply_text):
             return rule
@@ -617,8 +642,6 @@ def _check_interim_feedback(key: tuple[str, str], segment: str) -> None:
     文本,命中 confirm/relay/bounce 不当真,后续轮只跟正式回复)。"""
     if not segment:
         return
-    from ..core.feedback_rules import load_rules
-
     for rule in load_rules():
         if rule.where in ("interim", "all") and rule.action == "note" and rule.matches(segment):
             task_notes.push_plugin_note(
@@ -1030,8 +1053,11 @@ def _node_image_urls(node: dict) -> list[str | None]:
 # 生命周期靠 TTL 自然滚出(不是常驻存储)。键按 bot 实例 + ref_id,另含
 # number_base/cap 这两个决定输出形态的参数(两层口径一致=命中;未来漂移=只 miss)。
 _FORWARD_FULL_TTL_S = 60.0
+# 键按 bot 身份(self_id)而非 Bot 对象本体(本部署补丁):以对象做键会把死实例
+# 锚在 dict 里不释放,重连换新实例后旧条目也永远 miss。无 self_id 的调用方
+# (离线冒烟的 FakeBot)退化 id(bot),实例天然隔离的语义不变。
 _forward_full_cache: dict[
-    tuple[object, str, int | None, int | None], tuple[str, tuple[str, ...], float]
+    tuple[str, str, int | None, int | None], tuple[str, tuple[str, ...], float]
 ] = {}
 
 
@@ -1075,10 +1101,9 @@ async def _extract_forward_full(
     if ref_id is None:
         return None, []
 
-    # 短 TTL 缓存命中即返(见 _forward_full_cache 注释)。键含 bot 对象本身:
-    # 同一连接下 perception 与主 handler 拿到的是同一 Bot 实例(离线冒烟里每次
-    # 新建的 FakeBot 实例天然隔离)。命中时返回新列表副本,不与缓存共享可变对象。
-    cache_key = (bot, ref_id, number_base, cap)
+    # 短 TTL 缓存命中即返(见 _forward_full_cache 注释)。命中时返回新列表副本,
+    # 不与缓存共享可变对象。
+    cache_key = (str(getattr(bot, "self_id", "") or id(bot)), ref_id, number_base, cap)
     now_mono = time.monotonic()
     cached = _forward_full_cache.get(cache_key)
     if cached is not None and cached[2] > now_mono:
@@ -3292,7 +3317,7 @@ def _release_slot_and_retry(key, adapter_name: str, is_private: bool, user_id: s
     if _mcp.run_tracker is not None:
         from ..tasks.run_resume import retry_scope_deliveries
 
-        asyncio.create_task(retry_scope_deliveries(adapter_name, is_private, user_id, group_id))
+        spawn_bg_task(retry_scope_deliveries(adapter_name, is_private, user_id, group_id))
 
 
 async def _handle_passive_path(
@@ -3381,7 +3406,7 @@ async def _handle_passive_path(
             if pending_entry is None:
                 _release_slot_and_retry(key, adapter_name, is_private, user_id, group_id)
             else:
-                asyncio.create_task(
+                spawn_bg_task(
                     _refire(
                         key=key,
                         trigger_msg=pending_entry.msg,
@@ -3801,7 +3826,7 @@ async def _handle_reactive_path(
             if pending_entry is None:
                 _release_slot_and_retry(key, adapter_name, False, user_id, group_id)
             else:
-                asyncio.create_task(
+                spawn_bg_task(
                     _refire(
                         key=key,
                         trigger_msg=pending_entry.msg,
@@ -3957,7 +3982,7 @@ async def _refire(
             aggregate=False,
         )
         if pending_entry:
-            asyncio.create_task(
+            spawn_bg_task(
                 _refire(
                     key=key,
                     trigger_msg=pending_entry.msg,

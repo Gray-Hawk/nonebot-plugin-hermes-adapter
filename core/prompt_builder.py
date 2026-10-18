@@ -551,13 +551,14 @@ def build_passive_system_prompt(
     # 私聊用简化版(两层,无群层面);功能关闭时不注入。路径根动态跟随 hermes_custom_dir。
     if profile_block and memory_root:
         # 路由提示放群档案前面:路由内容固定吃缓存,群档案按群变放最后
-        head += _build_group_profile_routing_note(memory_root) + "\n\n" + profile_block
+        # (分隔统一 \n\n:此前路由提示前缺空行会与前块粘连)
+        head += "\n\n" + _build_group_profile_routing_note(memory_root) + "\n\n" + profile_block
     elif profile_block:
         # 有群档案但无 memory_root(测试场景):保持原样拼接
         head += "\n\n" + profile_block
     elif group_profile_enabled and is_private and memory_root:
         # 私聊:功能启用但无群档案,注入简化版路由(无群层面)
-        head += _build_private_profile_routing_note(memory_root)
+        head += "\n\n" + _build_private_profile_routing_note(memory_root)
     return head
 
 

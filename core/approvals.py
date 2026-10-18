@@ -7,6 +7,10 @@ RunsEventParser 捕获 → turn 的 approval_callback → 本模块登记 + 私�
 设计要点:
 - 挂起条目本地自增序号 + FIFO 应答(/approve <choice> 答最旧一条);
   上游 approvals.timeout(默认约 300s)到期后条目作废,应答时懒剔除;
+  本条超时秒数走配置 hermes_approval_expiry_sec(与上游孪生,需人工保持一致);
+- 挂起集合持久化到插件数据目录 pending_approvals.json(增删即写,原子替换),
+  重启装回未过期条目并延迟重发管理员通知(best-effort)——纯内存时重启全丢,
+  窗口期内到达的审批管理员永远看不到;
 - 通知走 OneBot send_private_msg 直发(私聊 Target 构造在 BotRegistry 外没有
   现成路由,且本平台取向=OneBot 为底);非 onebotv11 适配器记日志跳过(安全回退);
 - 群聊侧不发任何审批消息(审批是管理员私事);
@@ -17,13 +21,19 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from nonebot import logger
 
-# 与上游 approvals.timeout 同量级;到期条目应答时按「已超时」处理
-APPROVAL_EXPIRY_SEC = 300
+from ..config import plugin_config
+
+
+def _approval_expiry_sec() -> int:
+    """本条超时秒数(现读配置)。与上游 gateway approvals.timeout 孪生,无同步机制。"""
+    return plugin_config.hermes_approval_expiry_sec
 
 
 @dataclass
@@ -40,11 +50,87 @@ class PendingApproval:
 
     @property
     def expired(self) -> bool:
-        return time.time() - self.ts > APPROVAL_EXPIRY_SEC
+        return time.time() - self.ts > _approval_expiry_sec()
 
 
 _pending: dict[int, PendingApproval] = {}
 _seq = itertools.count(1)
+
+# 挂起集合持久化(本部署补丁):纯内存时重启全丢,窗口期内到达的审批管理员
+# 永远看不到、只能等上游超时自动拒绝。绑定存储后增删即写盘;启动装回未过期条目。
+_store_path: Path | None = None
+
+
+def bind_storage(path: Path) -> int:
+    """绑定挂起审批的持久化文件并装回未过期条目,返回装回条数。
+
+    由运行时装配(init_runtime_state)在启动期调用一次。读档失败/格式不对
+    按空档处理并 WARN——审批是附属通道,持久化故障不拖垮启动。
+    """
+    global _store_path, _seq
+    _store_path = path
+    if not path.exists():
+        return 0
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(rows, list):
+            raise ValueError("存档顶层不是数组")
+    except Exception as exc:
+        logger.warning(f"[HERMES approval] 挂起审批存档读取失败,按空档处理: {exc}")
+        return 0
+    restored = 0
+    max_id = 0
+    for row in rows:
+        try:
+            entry = PendingApproval(
+                approval_id=int(row["approval_id"]),
+                run_id=str(row["run_id"]),
+                adapter=str(row["adapter"]),
+                scope_desc=str(row["scope_desc"]),
+                command=str(row["command"]),
+                choices=[str(c) for c in row["choices"]],
+                is_private=bool(row.get("is_private", False)),
+                group_id=(str(row["group_id"]) if row.get("group_id") is not None else None),
+                ts=float(row["ts"]),
+            )
+        except Exception:
+            continue
+        if entry.expired:
+            continue
+        _pending[entry.approval_id] = entry
+        max_id = max(max_id, entry.approval_id)
+        restored += 1
+    if max_id:
+        _seq = itertools.count(max_id + 1)
+    if restored:
+        logger.info(f"[HERMES approval] 从存档装回 {restored} 条未过期挂起审批")
+    return restored
+
+
+def _persist() -> None:
+    """把当前挂起集合写盘(tmp+replace 原子写)。失败只 WARN 不抛。"""
+    if _store_path is None:
+        return
+    try:
+        rows = [
+            {
+                "approval_id": e.approval_id,
+                "run_id": e.run_id,
+                "adapter": e.adapter,
+                "scope_desc": e.scope_desc,
+                "command": e.command,
+                "choices": e.choices,
+                "is_private": e.is_private,
+                "group_id": e.group_id,
+                "ts": e.ts,
+            }
+            for e in _pending.values()
+        ]
+        tmp = _store_path.with_name(_store_path.name + ".tmp")
+        tmp.write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(_store_path)
+    except Exception as exc:
+        logger.warning(f"[HERMES approval] 挂起审批写盘失败(内存态仍可用,重启即丢): {exc}")
 
 # 低危⑬(2026-10-14):/approve 应答互斥锁。peek 与 acknowledge 之间夹着 ack RPC
 # 的 await,两把并发 /approve 会 peek 到同一条目→重复应答、第二条目被跳过。
@@ -63,6 +149,7 @@ def add_pending(
         is_private=is_private, group_id=group_id,
     )
     _pending[entry.approval_id] = entry
+    _persist()
     return entry
 
 
@@ -71,15 +158,19 @@ def pop_oldest() -> PendingApproval | None:
 
     ⑪ 审计定案:插件内零调用;保留供回归脚本使用(技能侧 smoke_approvals.py)。
     """
+    changed = False
+    result: PendingApproval | None = None
     for aid in sorted(_pending):
         entry = _pending[aid]
-        if entry.expired:
-            del _pending[aid]
-            continue
         del _pending[aid]
-        return entry
+        changed = True
+        if not entry.expired:
+            result = entry
+            break
+    if changed:
+        _persist()
     # 全过期则清空报告 None
-    return None
+    return result
 
 
 def peek_oldest() -> PendingApproval | None:
@@ -89,18 +180,26 @@ def peek_oldest() -> PendingApproval | None:
     先删条目再 POST,网络/HTTP 失败条目即丢、409 与断网不可区分无法重试。
     现在由 handle_approve peek → 应答成功才 acknowledge 删除;失败留单可重试。
     """
+    changed = False
+    result: PendingApproval | None = None
     for aid in sorted(_pending):
         entry = _pending[aid]
         if entry.expired:
             del _pending[aid]
+            changed = True
             continue
-        return entry
-    return None
+        result = entry
+        break
+    if changed:
+        _persist()
+    return result
 
 
 def acknowledge(approval_id: int) -> None:
     """应答成功后删单(不存在的 id 安全 no-op)。"""
-    _pending.pop(approval_id, None)
+    if approval_id in _pending:
+        del _pending[approval_id]
+        _persist()
 
 
 def pending_count() -> int:
@@ -116,6 +215,8 @@ def drop_expired() -> int:
     expired = [aid for aid, e in _pending.items() if e.expired]
     for aid in expired:
         del _pending[aid]
+    if expired:
+        _persist()
     return len(expired)
 
 
@@ -129,7 +230,7 @@ def build_admin_notice(entry: PendingApproval) -> str:
         f"命令: {entry.command or '(无命令详情)'}\n"
         f"选项: {choices}\n"
         f"回复 /approve once 批准一次;/approve deny 拒绝;/approve session 本会话放行;"
-        f"/approve always 永久放行。(约 300s 不答自动超时拒绝)"
+        f"/approve always 永久放行。(约 {_approval_expiry_sec()}s 不答自动超时拒绝)"
     )
 
 
@@ -156,4 +257,34 @@ async def notify_admins(*, bot, adapter_name: str, entry: PendingApproval, admin
             sent += 1
         except Exception as exc:
             logger.warning(f"[HERMES approval] 审批通知发送失败 admin={uid}: {exc}")
+    return sent
+
+
+async def renotify_pending(*, admin_users: set[str], delay_sec: float = 20.0) -> int:
+    """启动后延迟重发未过期挂起审批的管理员通知(best-effort,返回送达数)。
+
+    重启装回的条目管理员此前可能根本没看到(通知随旧进程死了)。等 NapCat
+    连接建立后再发;找不到 onebotv11 bot 或发送失败只记日志,不拖垮启动。
+    条目本身留在 _pending,/approve 随时可答。
+    """
+    await asyncio.sleep(delay_sec)
+    if not _pending:
+        return 0
+    from nonebot import get_bots
+
+    from ..adapter_norm import normalize_adapter_name
+
+    bots = [
+        b for b in get_bots().values()
+        if normalize_adapter_name(getattr(b.adapter, "get_name", lambda: "")()) == "onebotv11"
+    ]
+    if not bots:
+        logger.info("[HERMES approval] 重发审批通知时无 onebotv11 bot 在线,跳过(条目仍在,/approve 可答)")
+        return 0
+    sent = 0
+    for aid in sorted(_pending):
+        entry = _pending[aid]
+        if entry.expired:
+            continue
+        sent += await notify_admins(bot=bots[0], adapter_name="onebotv11", entry=entry, admin_users=admin_users)
     return sent

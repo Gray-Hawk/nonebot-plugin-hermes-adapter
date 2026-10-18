@@ -62,6 +62,9 @@ _TRUNCATION_SUFFIX = "\n\n…（消息过长,已截断）"
 
 # Bot self-nickname per process (per bot.self_id). Used for forward-node "name" field.
 # get_login_info is an extra OneBot RPC; cache result for the lifetime of the process.
+# 内存兜底(本部署补丁):插序容量上限,超了把最旧的一批削掉——self_id 集合实际
+# 很小,这只是防长跑/异常重连下缓慢膨胀的边界。
+_NICKNAME_CACHE_MAX = 256
 _bot_nickname_cache: dict[str, str] = {}
 
 
@@ -83,6 +86,9 @@ async def get_bot_nickname(bot: Bot) -> str:
             nickname = raw.strip()
     except Exception as exc:
         logger.debug(f"[OUTBOUND] get_login_info failed (self_id={self_id}): {exc}")
+    if len(_bot_nickname_cache) >= _NICKNAME_CACHE_MAX:
+        for k in list(_bot_nickname_cache)[: _NICKNAME_CACHE_MAX // 4]:
+            _bot_nickname_cache.pop(k, None)
     _bot_nickname_cache[self_id] = nickname
     return nickname
 

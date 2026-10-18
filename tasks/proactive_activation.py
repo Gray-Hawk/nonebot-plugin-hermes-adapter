@@ -25,6 +25,7 @@ from nonebot_plugin_apscheduler import scheduler
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
+from ..core.bg_tasks import spawn_bg_task
 from ..core.inflight import make_inflight_key
 
 # 调度 tick 周期:实际触发节奏由 per-group 的 _next_check_at 控制(T2+T3 随机),
@@ -186,7 +187,7 @@ def register_proactive_activation() -> None:
         global _patrol_running
         if _patrol_queue and not _patrol_running:
             _patrol_running = True
-            asyncio.create_task(_drain_patrol_queue(_handle_reactive_path))
+            spawn_bg_task(_drain_patrol_queue(_handle_reactive_path))
 
     logger.info(
         f"[HERMES] T2 定时隐性激活已启用: 间隔 {interval}s"

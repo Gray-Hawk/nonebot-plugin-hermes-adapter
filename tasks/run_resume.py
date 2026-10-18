@@ -32,6 +32,7 @@ from nonebot import get_bot, logger
 
 from .. import mcp as _mcp
 from ..config import plugin_config
+from ..core.bg_tasks import spawn_bg_task
 from ..core.hermes_client import (
     RunsEventParser,
     _try_parse_first_json_block,
@@ -100,7 +101,7 @@ async def resume_active_runs() -> None:
         return
     logger.info(f"[HERMES run-resume] 启动恢复: {len(rows)} 个在跑 run 待 reattach")
     for row in rows:
-        asyncio.create_task(_resume_row(row))
+        spawn_bg_task(_resume_row(row))
 
 
 async def _resume_row(row: TrackedRun) -> None:
@@ -328,4 +329,4 @@ async def retry_scope_deliveries(adapter_name: str, is_private: bool, user_id: s
         f"private={is_private} user={user_id} group={group_id} rows={len(rows)}"
     )
     for row in rows:
-        asyncio.create_task(_resume_row(row))
+        spawn_bg_task(_resume_row(row))

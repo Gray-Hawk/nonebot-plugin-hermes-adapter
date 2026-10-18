@@ -1,6 +1,7 @@
 import nonebot_plugin_alconna as alconna
 from nonebot.adapters import Event
 
+from .adapter_norm import normalize_adapter_name
 from .config import plugin_config
 
 
@@ -11,11 +12,13 @@ def get_adapter_name(source) -> str:
       - `alconna.Target` (`.adapter` 是 str) — 消息处理路径主用
       - `nonebot.adapters.Bot` (`.adapter` 是 Adapter 实例,有 classmethod `get_name()`)
         — notice handler 路径用,因为还没有 alconna 消息上下文构造 Target
+
+    归一化与 core/routing._normalize_adapter 同源(adapter_norm 模块)。
     """
     adapter = getattr(source, "adapter", "") or ""
     if hasattr(adapter, "get_name"):
         adapter = adapter.get_name()
-    return adapter.lower().replace(" ", "").replace(".", "") or "unknown"
+    return normalize_adapter_name(adapter)
 
 
 def check_isolation(event: Event, target: alconna.Target) -> bool:

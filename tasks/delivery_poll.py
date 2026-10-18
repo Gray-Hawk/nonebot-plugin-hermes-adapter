@@ -42,6 +42,7 @@ from nonebot_plugin_apscheduler import scheduler
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
+from ..core.bg_tasks import spawn_bg_task
 from ..core import task_notes
 from ..core.inflight import make_inflight_key
 from ..core.routing import resolve_target
@@ -224,7 +225,7 @@ async def _poll_session(
     if is_private:
         from ..handlers.message import _handle_passive_path
 
-        asyncio.create_task(
+        spawn_bg_task(
             _handle_passive_path(
                 bot=bot,
                 target=entry.target,
@@ -241,7 +242,7 @@ async def _poll_session(
     else:
         from ..handlers.message import _handle_reactive_path
 
-        asyncio.create_task(
+        spawn_bg_task(
             _handle_reactive_path(
                 bot=bot,
                 target=entry.target,
