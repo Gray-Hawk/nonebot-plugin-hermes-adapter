@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 
 from nonebot import logger
@@ -46,6 +47,25 @@ _SCHEMA_STATEMENTS = [
 ]
 
 
+# M32 修复:session key 映射的持久化/装载失败从 WARN 升级为 ERROR 并
+# 写清后果——原 WARN 混在日常噪音里,防护静默失效(重启退回派生 key、钉回已关闭的
+# 父会话,正是本模块要防的故障形态)。300s 节流防 disk-full 类持续失败刷屏。
+# 契约不变:失败降级为不持久化,绝不抛。
+_FAIL_LOGGED_AT: dict[str, float] = {}
+_FAIL_LOG_THROTTLE_SEC = 300.0
+
+
+def _log_store_failure(op: str, exc: Exception, detail: str = "") -> None:
+    now = time.monotonic()
+    if now - _FAIL_LOGGED_AT.get(op, -1e9) < _FAIL_LOG_THROTTLE_SEC:
+        return
+    _FAIL_LOGGED_AT[op] = now
+    logger.error(
+        f"[SESSION] {op}失败{detail}: {exc} —— 持久化防护失效,"
+        f"重启后将退回派生 key,可能钉回已关闭的父会话(本模块要防的故障形态)"
+    )
+
+
 class SessionKeyStore:
     """internal_id → session key 的持久化映射。失败降级为不持久化,绝不抛。"""
 
@@ -76,7 +96,7 @@ class SessionKeyStore:
         try:
             rows = self._conn.execute("SELECT internal_id, session_key, generation FROM session_keys").fetchall()
         except Exception as exc:
-            logger.warning(f"[SESSION] 读取 session key 映射失败,本次退化为纯内存: {exc}")
+            _log_store_failure("读取 session key 映射", exc, ",本次退化为纯内存")
             return {}
         return {r["internal_id"]: (r["session_key"], r["generation"]) for r in rows}
 
@@ -91,7 +111,7 @@ class SessionKeyStore:
                 (internal_id, session_key, generation, now),
             )
         except Exception as exc:
-            logger.warning(f"[SESSION] 持久化 session key 失败 ({internal_id}): {exc}")
+            _log_store_failure("持久化 session key", exc, f" ({internal_id})")
 
     # --- M24(2026-10-17):投递轮询水位持久化 ---
 

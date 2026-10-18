@@ -95,37 +95,52 @@ class MessageStore:
         self._closed = True
 
     def append(self, msg: BufferedMessage) -> int | None:
-        """写入消息,回填 msg.id。失败返回 None 但不抛。"""
+        """写入消息,回填 msg.id。失败返回 None 但不抛。
+
+        M28 修复:主行 + 图片行 + 转发行圈成一个显式事务——连接是
+        autocommit(isolation_level=None),逐语句各自提交,中途崩溃会留「有消息缺图」
+        的半截行。
+        """
         try:
-            cur = self._conn.execute(
-                "INSERT INTO messages "
-                "(ts, adapter, group_id, user_id, nickname, content, is_bot, reply_to_ts) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    msg.ts,
-                    msg.adapter,
-                    msg.group_id,
-                    msg.user_id,
-                    msg.nickname,
-                    msg.content,
-                    1 if msg.is_bot else 0,
-                    msg.reply_to_ts,
-                ),
-            )
-            msg_id = cur.lastrowid
-            # 枚举序不变量:own → sticker → quote → forward,连续 idx。
-            # 枚举产物与渲染侧共用 iter_message_media,禁止两处各自拼序。
-            # kind 列区分语义,PK 是 (message_id, idx)。
-            for i, (kind, url) in enumerate(iter_message_media(msg)):
-                self._conn.execute(
-                    "INSERT INTO message_images (message_id, idx, url, sha256, mime_type, kind) VALUES (?, ?, ?, NULL, NULL, ?)",
-                    (msg_id, i, url, kind),
+            self._conn.execute("BEGIN")
+            try:
+                cur = self._conn.execute(
+                    "INSERT INTO messages "
+                    "(ts, adapter, group_id, user_id, nickname, content, is_bot, reply_to_ts) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        msg.ts,
+                        msg.adapter,
+                        msg.group_id,
+                        msg.user_id,
+                        msg.nickname,
+                        msg.content,
+                        1 if msg.is_bot else 0,
+                        msg.reply_to_ts,
+                    ),
                 )
-            if msg.forward_content:
-                self._conn.execute(
-                    "INSERT INTO message_forwards (message_id, content) VALUES (?, ?)",
-                    (msg_id, msg.forward_content),
-                )
+                msg_id = cur.lastrowid
+                # 枚举序不变量:own → sticker → quote → forward,连续 idx。
+                # 枚举产物与渲染侧共用 iter_message_media,禁止两处各自拼序。
+                # kind 列区分语义,PK 是 (message_id, idx)。
+                for i, (kind, url) in enumerate(iter_message_media(msg)):
+                    self._conn.execute(
+                        "INSERT INTO message_images (message_id, idx, url, sha256, mime_type, kind) VALUES (?, ?, ?, NULL, NULL, ?)",
+                        (msg_id, i, url, kind),
+                    )
+                if msg.forward_content:
+                    self._conn.execute(
+                        "INSERT INTO message_forwards (message_id, content) VALUES (?, ?)",
+                        (msg_id, msg.forward_content),
+                    )
+            except BaseException:
+                # 任何一步失败整体回滚,不留半截消息行。
+                try:
+                    self._conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
+            self._conn.execute("COMMIT")
             msg.id = msg_id
             return msg_id
         except sqlite3.Error as exc:

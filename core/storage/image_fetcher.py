@@ -31,6 +31,21 @@ _MAGIC_TO_MIME: list[tuple[bytes, str]] = [
 ]
 
 
+# M29 修复:临时性失败(网络层/超时/5xx/429)的延迟重排队档位——
+# 原实现 max_attempts 烧完即弃,一次网络抖动就让 sha256 永久 NULL(QQ URL 几天
+# 后过期,届时再抓不回来)。重排队期间 pending 行原位保留,新提交同 URL 照常挂靠。
+_REQUEUE_DELAYS_S = (60.0, 300.0)
+
+
+def _is_transient_error(exc: BaseException) -> bool:
+    """M29:临时性失败判定。HTTP 4xx(429 除外)是永久结论(链坏/越权/过期),
+    重排队无意义;网络层/超时/5xx/429 及其余未分类异常按临时处理——延迟重抓的
+    代价只是几次空跑,丢图的代价是 sha 永久 NULL,两害相权选重抓。"""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    return True
+
+
 def _sniff_image_mime(data: bytes) -> str | None:
     """Return a normalized image MIME if the byte head matches a known magic,
     else None. WebP needs both RIFF header + WEBP at offset 8.
@@ -70,6 +85,9 @@ class ImageFetcher:
         self._queue_max = queue_max
         self._queue: deque[str] = deque()
         self._pending: dict[str, list[tuple[int, int]]] = {}
+        # M29:重排队轮次记账(url → 已排档数)与延迟任务句柄(stop 时取消)。
+        self._rounds: dict[str, int] = {}
+        self._delayed: set[asyncio.Task] = set()
         self._wake: asyncio.Event = asyncio.Event()
         self._stop: asyncio.Event = asyncio.Event()
         self._worker: asyncio.Task | None = None
@@ -104,6 +122,7 @@ class ImageFetcher:
             while len(self._queue) >= self._queue_max:
                 dropped = self._queue.popleft()
                 pending = self._pending.pop(dropped, [])
+                self._rounds.pop(dropped, None)
                 logger.warning(
                     f"[image_fetcher] queue full, dropped url={dropped[:80]} with {len(pending)} pending writes"
                 )
@@ -129,6 +148,11 @@ class ImageFetcher:
             self._worker.cancel()
             logger.warning("[image_fetcher] worker did not stop within 5s; cancelled")
         self._worker = None
+        # M29:取消在途的延迟重排队任务,防停机后睡醒了往已停的队列里塞。
+        for task in self._delayed:
+            task.cancel()
+        self._delayed.clear()
+        self._rounds.clear()
         if self._client is not None:
             try:
                 await self._client.aclose()
@@ -160,6 +184,8 @@ class ImageFetcher:
 
     async def _fetch_one(self, url: str) -> None:
         last_err: str | None = None
+        last_exc: BaseException | None = None
+        transient = True
         for attempt in range(1, self._max_attempts + 1):
             try:
                 assert self._client is not None, "fetcher not started"
@@ -172,21 +198,56 @@ class ImageFetcher:
                         f"non-image: ct={resp.headers.get('content-type')!r} "
                         f"head={bytes_[:16].hex() if bytes_ else 'empty'}"
                     )
+                    transient = False  # 非图判定是永久结论,重排队无意义
                     break
                 sha = self._cache.put(bytes_, mime)
                 pending = self._pending.pop(url, [])
+                self._rounds.pop(url, None)
                 for message_id, idx in pending:
                     self._store.update_image_sha(message_id, idx, sha, mime)
                 return
             except Exception as exc:
+                last_exc = exc
                 last_err = repr(exc)
                 if attempt < self._max_attempts:
                     await asyncio.sleep(0.2 * attempt)  # 简单线性退避
+        if last_exc is not None:
+            transient = _is_transient_error(last_exc)
+        # M29:临时性失败不立刻放弃,按 _REQUEUE_DELAYS_S 排档延迟重排队;
+        # pending 行原位保留(重抓成功时仍按原 (msg_id, idx) 回填)。
+        round_no = self._rounds.get(url, 0)
+        if transient and round_no < len(_REQUEUE_DELAYS_S) and not self._stop.is_set():
+            delay = _REQUEUE_DELAYS_S[round_no]
+            self._rounds[url] = round_no + 1
+            self._schedule_requeue(url, delay)
+            logger.info(
+                f"[image_fetcher] fetch failed (transient), requeue in {delay:.0f}s "
+                f"(round {round_no + 1}/{len(_REQUEUE_DELAYS_S)}) url={url[:80]}: {last_err}"
+            )
+            return
+        self._rounds.pop(url, None)
         pending = self._pending.pop(url, [])
         logger.warning(
             f"[image_fetcher] fetch failed url={url[:80]} "
             f"pending={len(pending)} after {self._max_attempts} attempts: {last_err}"
         )
+
+    def _schedule_requeue(self, url: str, delay: float) -> None:
+        """M29 补偿通道:delay 秒后把 url 塞回队列尾部。句柄入 _delayed,stop 时取消。"""
+
+        async def _later() -> None:
+            try:
+                await asyncio.sleep(delay)
+                if self._stop.is_set() or url not in self._pending:
+                    return
+                self._queue.append(url)
+                self._wake.set()
+            except asyncio.CancelledError:
+                pass
+
+        task = asyncio.create_task(_later(), name="hermes-image-fetcher-requeue")
+        self._delayed.add(task)
+        task.add_done_callback(self._delayed.discard)
 
     @staticmethod
     def _resolve_mime(content_type: str | None, bytes_: bytes) -> str | None:
