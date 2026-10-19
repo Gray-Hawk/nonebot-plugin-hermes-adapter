@@ -283,7 +283,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
     )
     await send_local_files(bot=bot, target=entry.target, file_paths=file_paths, adapter_name=row.adapter)
     if sent and not row.is_private and row.group_id and _mcp.active_sessions is not None:
-        if _mcp.active_sessions.get_if_active(row.adapter, row.group_id, _now_ms()) is not None:
+        if _mcp.active_sessions.get_if_trigger_alive(row.adapter, row.group_id, _now_ms()) is not None:
             _mcp.active_sessions.mark_bot_replied(
                 row.adapter, row.group_id, now_ms=_now_ms(),
                 media_count=len(media_urls) + len(file_paths), text=cleaned,

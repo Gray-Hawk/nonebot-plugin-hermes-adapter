@@ -75,7 +75,7 @@ class PendingEntry:
     # 疑似 A 修复(2026-10-16 审计修复批):条目自带无窗判定——冷窗关键词 turn
     # 运行中排队的 addressed 委托此前会被以 ephemeral=True 接力跑掉(不读钉锚 +
     # 二次 trigger 窗口)。默认 False 同样是安全方向:漏传按「有窗」跑,
-    # 至多被 _run_reactive_turn 入口的 get_if_active 挡下,不会错误开新窗。
+    # 至多被 _run_reactive_turn 入口的 get_if_trigger_alive 挡下,不会错误开新窗。
     ephemeral: bool = False
     # 迟到 steer 回收标记(2026-10-17,alive/56):runs 轮收尾时随 completed 上浮的
     # pending_steer 排回 pending 的条目。豁免理由=系统已收过它一次(steer_run 接受),

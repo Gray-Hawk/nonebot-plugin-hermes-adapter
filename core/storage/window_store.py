@@ -106,6 +106,7 @@ def session_to_payload(s) -> dict[str, Any]:
         "last_bot_reply_media": s.last_bot_reply_media,
         "last_bot_reply_text": (s.last_bot_reply_text or "")[:_REPLY_TEXT_CAP],
         "last_strong_activation_at": s.last_strong_activation_at,
+        "generation": s.generation,
         "anchor_master": _anchor(s.anchor_master),
         "anchor_guest": _anchor(s.anchor_guest),
     }
@@ -160,6 +161,7 @@ def session_from_payload(adapter: str, group_id: str, payload: dict[str, Any]):
         last_bot_reply_media=int(payload.get("last_bot_reply_media") or 0),
         last_bot_reply_text=str(payload.get("last_bot_reply_text") or ""),
         last_strong_activation_at=int(payload.get("last_strong_activation_at") or 0),
+        generation=int(payload.get("generation") or 0),
         anchor_master=_anchor(payload.get("anchor_master")),
         anchor_guest=_anchor(payload.get("anchor_guest")),
     )

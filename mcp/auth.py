@@ -105,7 +105,7 @@ def validate_push_context(
         PushContextError: 任一前置不满足;调用方映射 HTTP 422。
     """
     assert_scope_allows(adapter, group_id, scope)
-    if not active_sessions.is_active(adapter, group_id, now_ms):
+    if not active_sessions.is_alive_for_trigger(adapter, group_id, now_ms):
         raise PushContextError(f"no active reactive session for ({adapter}, {group_id})")
     if bot_registry.get(adapter, "group", group_id) is None:
         raise PushContextError(f"unknown target ({adapter}, {group_id}) — wait for next group message to repopulate")

@@ -223,7 +223,7 @@ async def _poll_session(
     )
     # 延迟导入:handlers 依赖 mcp 运行时单例,模块级互 import 会成环
     if is_private:
-        from ..handlers.message import _handle_passive_path
+        from ..handlers.message_relay import _handle_passive_path
 
         spawn_bg_task(
             _handle_passive_path(
@@ -240,7 +240,7 @@ async def _poll_session(
             )
         )
     else:
-        from ..handlers.message import _handle_reactive_path
+        from ..handlers.message_relay import _handle_reactive_path
 
         spawn_bg_task(
             _handle_reactive_path(

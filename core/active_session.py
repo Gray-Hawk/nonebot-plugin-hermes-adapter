@@ -62,8 +62,8 @@ class ActiveSession:
     topic_hint: str | None = None
     last_bot_reply_at: int = 0
     """bot 最近一次在本群发出 reactive 回复的 ms 时间戳。0 = 本窗口期未回复过。
-    用作 handlers 的 post-reply cooldown 判定。再次 trigger() 时清零,避免跨窗口
-    残留状态把新一轮对话的第一条非显式消息直接 skip 掉。"""
+    用作 handlers 的 post-reply cooldown 判定。续期保留,cooldown 基准跨触发存活;
+    死窗新建才归零,避免跨窗口残留状态把新一轮对话的第一条非显式消息直接 skip 掉。"""
 
     last_bot_reply_media: int = 0
     """上一次回复实际投出去的媒体数。同 turn 去重闸门据此区分「重复答案」与
@@ -83,20 +83,24 @@ class ActiveSession:
     # (commissioner ∈ hermes_admin_users)只被维护者自己的新委托顶;客人槽全客人
     # 共享,顶锚需满足三条件之一(旧锚已应答/超龄/已被 release,见 pin_anchor)。
     # 窗口死(TTL/T5/should_exit_active)= session 实例销毁,锚随窗死;
-    # trigger() 换实例时两槽随记录carry-over(answered 标记骑在记录上,不丢)。
+    # 活窗续期复用同一实例,两槽天然保留。
     anchor_master: AnchorRecord | None = None
     anchor_guest: AnchorRecord | None = None
 
-    # 本部署补丁: 租约计数从实例级移到 key 级(管理器
-    # _leases 字典),实例上不再有 inflight_turns 字段。旧设计里 trigger() 换新实例
-    # 会把计数清零,in-flight turn 的保护落不到新窗口上(排查记录见
-    # 项目文档库 2026-10-02 节)。
+    # 世代号:活窗被显式 trigger 续期时 +1。收窗双重比对(实例同一性+世代号)
+    # 用——turn 期间窗被续期即新世代,旧 turn 的 should_exit_active 收不动续期后的窗。
+    generation: int = 0
 
-    def is_alive(self, now_ms: int) -> bool:
+    # 本部署补丁: 租约计数从实例级移到 key 级(管理器
+    # _leases 字典),实例上不再有 inflight_turns 字段。旧设计里 trigger() 每次
+    # 换实例会把计数清零,in-flight turn 的保护落不到新窗口上;key 级挂点后
+    # 续不换/新建都不影响租约(排查记录见 项目文档库 2026-10-02 节)。
+
+    def is_alive_ttl(self, now_ms: int) -> bool:
         """纯 TTL 判活:expires_at 未到期。
 
         租约不在实例上 —— 要判「窗口还活着」(TTL 或租约任一成立)请用
-        ActiveSessionManager.is_alive(adapter, group_id, now_ms)。"""
+        ActiveSessionManager.is_alive_with_lease(adapter, group_id, now_ms)。"""
         return self.expires_at > now_ms
 
 
@@ -106,12 +110,13 @@ class ActiveSessionManager:
     线程安全:**否**。预设单线程 asyncio 事件循环,不要从背景线程访问。
     租约(key 级,本部署补丁 2026-10-02):`begin_turn` / `end_turn` 之间该
     (adapter, group_id) 一律算活着。计数挂在管理器的 `_leases` 字典上而非
-    session 实例上 —— trigger() 换新实例不丢租约,in-flight turn 的保护跟着群走。
-    `is_active` / `get_if_active` / `touch` / `sweep_expired` 都尊重它。
+    session 实例上 —— 续不换后 trigger 原地续期、死窗新建都不动租约计数,
+    in-flight turn 的保护跟着群走。
+    `is_alive_for_trigger` / `get_if_trigger_alive` / `touch` / `sweep_expired` 都尊重它。
     GC 策略:不在读路径自动剔除过期 session,由 Task 16 的 cron 调 sweep_expired()
-    定期清理。读 API 中:`is_active` / `touch` / `get_if_active` 是 TTL 感知的;
+    定期清理。读 API 中:`is_alive_for_trigger` / `touch` / `get_if_trigger_alive` 是 TTL 感知的;
     `get()` 是裸访问,**返回过期 session**——仅用于调试 / 日志,handler 应优先用
-    is_active / get_if_active。
+    is_alive_for_trigger / get_if_trigger_alive。
     """
 
     def __init__(self, default_ttl_sec: int = 300, t5_sec: int = 0) -> None:
@@ -137,7 +142,7 @@ class ActiveSessionManager:
         restored = 0
         for adapter, group_id, payload, _ in store.load_all():
             s = session_from_payload(adapter, group_id, payload)
-            if not s.is_alive(now_ms) or self._beyond_t5(s, now_ms):
+            if not s.is_alive_ttl(now_ms) or self._beyond_t5(s, now_ms):
                 store.delete(adapter, group_id)
                 continue
             self._sessions[(adapter, group_id)] = s
@@ -158,7 +163,7 @@ class ActiveSessionManager:
     def _beyond_t5(self, s: ActiveSession, now_ms: int) -> bool:
         """T5 封顶:窗口仅靠隐式续期吊着的时间超过 T5 即视为不活跃。
 
-        判断放读路径(is_active / get_if_active)而非 sweep cron:窗口被隐式续期的
+        判断放读路径(is_alive_for_trigger / get_if_trigger_alive)而非 sweep cron:窗口被隐式续期的
         前提是消息在流动,每条隐式激活都必经这两个读 API,判断点天然在此;没消息时
         窗口按 TTL 自然过期,T5 无需介入。超 T5 后不做物理删除,expires_at 不再被
         touch 推动,窗口随 TTL 自然死、由 sweep 清理。"""
@@ -176,6 +181,21 @@ class ActiveSessionManager:
         now_ms: int,
         topic_hint: str | None = None,
     ) -> ActiveSession:
+        key = (adapter, group_id)
+        old = self._sessions.get(key)
+        if old is not None and self.is_alive_with_lease(adapter, group_id, now_ms):
+            # 活窗续期复用同一实例(TTL 或租约任一即活;不看 T5——显式触发本身
+            # 会重算 last_strong_activation_at,T5 随之解开)。锚双槽与
+            # last_bot_reply_* 天然保留在同实例上,无需搬运。
+            old.triggered_by = user_id
+            old.topic_hint = topic_hint  # 直接赋值,None 即清空,与新建语义一致
+            old.last_active_at = now_ms
+            old.expires_at = now_ms + self._ttl_ms
+            old.last_strong_activation_at = now_ms
+            old.generation += 1
+            self._persist(old)
+            return old
+        # 无窗或死窗(TTL 与租约都过期):新建实例。锚随旧窗死,不继承。
         s = ActiveSession(
             adapter=adapter,
             group_id=group_id,
@@ -186,21 +206,13 @@ class ActiveSessionManager:
             topic_hint=topic_hint,
             last_strong_activation_at=now_ms,
         )
-        # 本部署补丁(凌晨批项4): trigger 换实例时委托锚
-        # carry-over——否则客人的每条 @ 都借「换实例」顶掉维护者槽,双槽规则形同虚设。
-        # answered 标记骑在 AnchorRecord 上,不依赖旧实例的 last_bot_reply_at
-        # (后者按既有设计随换实例清零,供 cooldown 用,不动)。
-        old = self._sessions.get((adapter, group_id))
-        if old is not None:
-            s.anchor_master = old.anchor_master
-            s.anchor_guest = old.anchor_guest
-        self._sessions[(adapter, group_id)] = s
+        self._sessions[key] = s
         self._persist(s)
         return s
 
     def touch(self, adapter: str, group_id: str, now_ms: int) -> ActiveSession | None:
         s = self._sessions.get((adapter, group_id))
-        if s is None or not self.is_alive(adapter, group_id, now_ms):
+        if s is None or not self.is_alive_with_lease(adapter, group_id, now_ms):
             return None
         if self._beyond_t5(s, now_ms):
             # T5 封顶:隐式续期到此为止,窗口停在当前 expires_at 自然死
@@ -213,23 +225,23 @@ class ActiveSessionManager:
     def get(self, adapter: str, group_id: str) -> ActiveSession | None:
         """裸访问,**不检查 TTL**——可能返回已过期 session。
 
-        多数 handler 应改用 `get_if_active` 或先 `is_active` 校验。本方法保留是为了
+        多数 handler 应改用 `get_if_trigger_alive` 或先 `is_alive_for_trigger` 校验。本方法保留是为了
         调试 / 日志场景需要观测已过期但尚未被 sweep 的 session。
         """
         return self._sessions.get((adapter, group_id))
 
-    def get_if_active(self, adapter: str, group_id: str, now_ms: int) -> ActiveSession | None:
+    def get_if_trigger_alive(self, adapter: str, group_id: str, now_ms: int) -> ActiveSession | None:
         """TTL 感知的 get:只在 session 存在且未过期时返回。T5 封顶同样视为不活跃。"""
         s = self._sessions.get((adapter, group_id))
-        if s is None or not self.is_alive(adapter, group_id, now_ms) or self._beyond_t5(s, now_ms):
+        if s is None or not self.is_alive_with_lease(adapter, group_id, now_ms) or self._beyond_t5(s, now_ms):
             return None
         return s
 
-    def is_active(self, adapter: str, group_id: str, now_ms: int) -> bool:
+    def is_alive_for_trigger(self, adapter: str, group_id: str, now_ms: int) -> bool:
         s = self._sessions.get((adapter, group_id))
         return (
             s is not None
-            and self.is_alive(adapter, group_id, now_ms)
+            and self.is_alive_with_lease(adapter, group_id, now_ms)
             and not self._beyond_t5(s, now_ms)
         )
 
@@ -420,11 +432,11 @@ class ActiveSessionManager:
     ) -> builtins.list[AnchorRecord]:
         """取本群当前在钉的委托锚(维护者槽在前),懒式超龄剔除(硬寿命上限)。
 
-        只读活跃窗口:get_if_active 口径,过期/T5 封顶的窗口视为无锚。
+        只读活跃窗口:get_if_trigger_alive 口径,过期/T5 封顶的窗口视为无锚。
         超龄剔除是原地写(槽位置 None),与「窗口死锚随窗死」互补:
         前者管「窗口还活着但锚太旧」,后者管「窗口没了」。
         """
-        s = self.get_if_active(adapter, group_id, now_ms)
+        s = self.get_if_trigger_alive(adapter, group_id, now_ms)
         if s is None:
             return []
         out: builtins.list[AnchorRecord] = []
@@ -446,24 +458,23 @@ class ActiveSessionManager:
         """该群当前在跑的 turn 租约数(本部署补丁 2026-10-02, key 级)。"""
         return self._leases.get((adapter, group_id), 0)
 
-    def is_alive(self, adapter: str, group_id: str, now_ms: int) -> bool:
+    def is_alive_with_lease(self, adapter: str, group_id: str, now_ms: int) -> bool:
         """TTL 或租约任一成立即活(不看 T5 —— T5 是「值不值得听」,租约是「还在干活」)。
 
-        状态展示 / 工具过滤 / sweep 用这个口径;实例上的 `ActiveSession.is_alive`
+        状态展示 / 工具过滤 / sweep 用这个口径;实例上的 `ActiveSession.is_alive_ttl`
         是纯 TTL,别混用。
         """
         s = self._sessions.get((adapter, group_id))
         return s is not None and (
-            s.is_alive(now_ms) or self._leases.get((adapter, group_id), 0) > 0
+            s.is_alive_ttl(now_ms) or self._leases.get((adapter, group_id), 0) > 0
         )
 
     def begin_turn(self, adapter: str, group_id: str) -> tuple[str, str]:
         """占用租约,返回令牌(key),`end_turn` 凭令牌归还。
 
         本部署补丁: 计数挂在 key 上而非实例上 ——
-        turn 跑期间 trigger() 换新实例不丢租约,收尾的 touch / mark_bot_replied /
-        宽限垫都落在当前实例上,修掉「in-flight 期间换实例导致新窗失去保护被
-        sweep、pending 触发被吞」(排查记录见 项目文档库)。
+        turn 跑期间 trigger() 对活窗原地续期复用实例,租约不丢;收尾的 touch /
+        mark_bot_replied / 宽限垫都落在当前实例上(排查记录见 项目文档库)。
 
         session 不存在时也照常计数(不新建窗口):ephemeral turn 期间被别人的显式
         触发开出的新窗、以及本 turn 自己「发言即开窗」开出的窗,都因此受保护到
@@ -480,10 +491,11 @@ class ActiveSessionManager:
 
         `lease=None`(调用方没走 reactive 分支)→ no-op。
 
-        宽限垫给**当前**实例(按 key 查):turn 跑期间 trigger() 可能换过实例,
-        垫给旧实例等于没垫(本部署补丁 2026-10-02)。
+        宽限垫给**当前**实例(按 key 查)。续不换落地后,turn 持有的 session
+        引用与字典当前实例恒为同一对象,本注释保留的机制描述仍成立(本部署补丁
+        2026-10-02)。
 
-        为什么要垫:pending 里的消息紧接着就要在 refire 入口做 get_if_active,而这
+        为什么要垫:pending 里的消息紧接着就要在 refire 入口做 get_if_trigger_alive,而这
         条路径上"窗口刚好在交接的这一瞬过期"是真实存在的 —— 交接跨一次事件循环跳转,
         期间 cron sweep 也可能扫过。按剩余量垫到一个**小**的下限,既盖住交接,又不会
         把「turn 结束后重新计时」变成「turn 结束后再送一整个 TTL」:后者对
@@ -516,20 +528,22 @@ class ActiveSessionManager:
             self._persist(s)
 
     def end(self, adapter: str, group_id: str) -> None:
-        """按 key 无条件收窗。turn 内表达"这轮谈完了"请用 `end_if_current`。"""
+        """按 key 无条件收窗。turn 内表达"这轮谈完了"请用 `end_if_current_generation`。"""
         self._sessions.pop((adapter, group_id), None)
         self._drop(adapter, group_id)
 
-    def end_if_current(self, session: ActiveSession) -> bool:
-        """只在字典里仍是这个实例时收窗;返回是否真的收了。
+    def end_if_current_generation(self, session: ActiveSession, generation: int) -> bool:
+        """只在字典里仍是这个实例、且世代号未变时收窗;返回是否真的收了。
 
-        turn 跑期间可能有别人的显式触发调过 `trigger()`,字典里已经换成一个**新**窗口
-        (还带着它自己排在 pending 里的那条 @)。本 turn 的 should_exit_active 说的是
-        "我这轮谈完了",无权把后来那个窗口一起弹掉 —— 按 key 收窗会让那个人的 @ 在
-        refire 入口的 get_if_active 处静默蒸发,用户侧只看到一个 busy 表情。
+        世代号保护:turn 跑期间若有别人的显式触发调过 `trigger()`,活窗被原地
+        续期,世代号 +1。本 turn 持有的 (session, generation) 是旧世代对,
+        与当前 (实例, 世代号) 不再匹配,收窗请求自然失效——否则旧 turn 的
+        should_exit_active 会把续期后的新窗一起弹掉,别人那条排在 pending 里
+        等 refire 的 @ 会在 get_if_trigger_alive 处静默蒸发,用户侧只看到
+        一个 busy 表情。
         """
         key = (session.adapter, session.group_id)
-        if self._sessions.get(key) is not session:
+        if self._sessions.get(key) is not session or session.generation != generation:
             return False
         del self._sessions[key]
         self._drop(*key)
@@ -544,7 +558,7 @@ class ActiveSessionManager:
         expired = [
             s
             for key, s in self._sessions.items()
-            if not s.is_alive(now_ms) and self._leases.get(key, 0) <= 0
+            if not s.is_alive_ttl(now_ms) and self._leases.get(key, 0) <= 0
         ]
         for s in expired:
             self._sessions.pop((s.adapter, s.group_id), None)

@@ -349,7 +349,7 @@ class Config(BaseModel):
     hermes_active_session_t5_sec: int = 0
     """T5: 活跃窗口仅靠隐式续期(touch)的最长存活时间(秒)。自最后一次实质激活
     (显式触发 trigger / bot 发言 mark_bot_replied)起算,超 T5 后窗口在读路径
-    (is_active / get_if_active)视为不活跃,随后按 TTL 自然过期。0 = 禁用。
+    (is_alive_for_trigger / get_if_trigger_alive)视为不活跃,随后按 TTL 自然过期。0 = 禁用。
     应大于 hermes_active_session_ttl_sec,否则等效于「窗口只能活 T5」(启动时 WARN)。"""
 
     hermes_proactive_interval_sec: int = 0
