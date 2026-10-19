@@ -280,6 +280,12 @@ class Config(BaseModel):
     """群档案（群记忆外挂）开关（2026-10-14 维护者定稿），缺省开。
     false = 群档案注入静默关闭；其余定制功能（feedback_rules 等）不受影响。"""
 
+    hermes_prompt_dump_enabled: bool = False
+    """system_prompt 全文留痕开关（排障用），缺省关。
+    true = 每轮发送前的完整 system_prompt 按「最新一份」落盘
+    <custom_dir>/prompt_dumps/private|group/<平台>_<id>.txt（SHA 变了才覆写）；
+    落盘内容含画像与主机路径，仅存本地，排查完记得关回。"""
+
     # --- 黑名单(本部署补丁) ---
 
     hermes_blacklist: dict[str, list[str]] = {}

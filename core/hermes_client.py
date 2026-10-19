@@ -24,6 +24,7 @@ from .decision_contract import render_en_field_lines
 from .media_patterns import _MD_IMAGE_PATTERN, _MEDIA_TAG_PATTERN
 from .media_whitelist import inline_local_media_images
 from .message_context import render_message_context_head
+from .prompt_dump import maybe_dump_system_prompt
 from .routing import HermesTarget, default_target
 from .run_tracker import make_scope_key
 
@@ -1073,6 +1074,16 @@ class HermesClient:
 
         if expect_structured and structured_tool_name == "submit_decision":
             system_prompt = system_prompt + _DECISION_HINT
+
+        # 全文留痕(排障开关,默认关):截留在最终成形后、通道分流前,
+        # 两模式与 Completions/Runs 两通道抓到的是同一份真实上发字节。
+        maybe_dump_system_prompt(
+            adapter_name=adapter_name,
+            is_private=is_private,
+            user_id=user_id,
+            group_id=group_id,
+            system_prompt=system_prompt,
+        )
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
