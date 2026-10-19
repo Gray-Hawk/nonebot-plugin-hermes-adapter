@@ -14,7 +14,7 @@ require("nonebot_plugin_localstore")
 
 from .config import Config, plugin_config
 
-__version__ = "0.5.4"
+__version__ = "0.1.0"
 
 __plugin_meta__ = PluginMetadata(
     name="Hermes Agent",
@@ -70,6 +70,10 @@ async def _hermes_m1_startup():
 
     init_runtime_state()
     await start_storage()
+    # system_prompt 留痕开关装载(启动装载+缓存;热载指令随配置专项接入)
+    from .core.prompt_dump import init_prompt_dump
+
+    init_prompt_dump()
     await start_mcp_server()
     _driver.on_shutdown(stop_mcp_server)
     _driver.on_shutdown(stop_storage)
