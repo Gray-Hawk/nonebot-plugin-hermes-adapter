@@ -330,7 +330,7 @@ def extract_response_media(text: str) -> tuple[str, list[str], list[str]]:
     return cleaned.strip(), media_urls, file_paths
 
 
-# M19 修复:救补判据原只认双引号键——单引号键(json5 合法)叠加截断时整条回复
+# 救补判据原只认双引号键——单引号键(json5 合法)叠加截断时整条回复
 # 丢失。键名引号形态双收;字符串值按开引号配对回捕。
 def _salvage_bool_re(key: str) -> re.Pattern:
     return re.compile(rf"[\"']{key}[\"']\s*:\s*(true|false)", re.IGNORECASE)
@@ -694,7 +694,7 @@ class InterimSegmenter:
         return "".join(self._seg)
 
 
-# M16 修复:进程级共享 AsyncClient 连接池复用——原实现每轮/每次探测新建 client,
+# 进程级共享 AsyncClient 连接池复用——原实现每轮/每次探测新建 client,
 # 高频群聊下每 turn 一次 TCP+TLS 握手。插件单 event loop,httpx.AsyncClient 并发
 # 安全;超时一律请求级传参(与旧 client 级超时同语义)。shutdown 经
 # close_shared_http_client()(插件 __init__ 注册)释放。
@@ -718,7 +718,7 @@ async def close_shared_http_client() -> None:
     _shared_http_client = None
 
 
-# M15 修复:429 重试读 Retry-After——原实现固定 sleep(1),上游改节奏不跟随。
+# 429 重试读 Retry-After——原实现固定 sleep(1),上游改节奏不跟随。
 def _parse_retry_after(raw: str | None) -> float | None:
     """Retry-After 头解析:数字秒(上游实测形态),非法/缺失返回 None。钳制 0.5~30s。"""
     if not raw:
@@ -733,7 +733,7 @@ def _parse_retry_after(raw: str | None) -> float | None:
 class StreamHttpError(Exception):
     """流式分支的非 200 响应;携带 status 与 body 让主流程走统一错误归纳。
 
-    M15:retry_after 携带响应的 Retry-After 秒数(仅 429 等限流响应有)。
+    retry_after 携带响应的 Retry-After 秒数(仅 429 等限流响应有)。
     """
 
     def __init__(self, status: int, body: str, retry_after: float | None = None) -> None:
@@ -829,7 +829,7 @@ class RunsEventParser:
             self.terminal = True
             return None
         if event == "run.interrupted":
-            # 2026-10-13 审核修复(低危⑨): 网关关停/owner 失联会把 run 打成
+            # 网关关停/owner 失联会把 run 打成
             # interrupted,终态集与网关 TERMINAL_STATUSES 对齐,别落成「事件流提前
             # 关闭」的传输错误文案——按取消同语义硬静默处理。
             self.interrupted = True
@@ -1129,7 +1129,7 @@ class HermesClient:
             data = resp.json()
             rotated = rotated_session_key(resp.headers.get("X-Hermes-Session-Id"), session_key)
             if not (data.get("choices") or []):
-                # M18 修复:choices 为空是结构性失败,与 expect_structured 无关——原实现
+                # choices 为空是结构性失败,与 expect_structured 无关——原实现
                 # 只在 expect_structured=True 时打标,False 时空串被当正常回复吞掉。
                 logger.warning(
                     f"[HERMES] upstream returned empty choices (expect_structured={expect_structured})"
@@ -1143,7 +1143,7 @@ class HermesClient:
             # 变成 UnboundLocalError(有生产事故先例)。
             final_content = msg.get("content") or ""
             if not final_content:
-                # M18:content 空同样留痕(行为不变,仅观测)——上游异常与模型静默
+                # content 空同样留痕(行为不变,仅观测)——上游异常与模型静默
                 # 此前不可区分。
                 logger.warning(
                     f"[HERMES] upstream returned empty content (expect_structured={expect_structured})"
@@ -1160,7 +1160,7 @@ class HermesClient:
             except StreamHttpError as exc:
                 if exc.status == 429 and not _rl_retried:
                     _rl_retried = True
-                    # M15:优先跟随上游 Retry-After,缺失回落 1s 旧值。
+                    # 优先跟随上游 Retry-After,缺失回落 1s 旧值。
                     delay = exc.retry_after if exc.retry_after is not None else 1.0
                     logger.warning(f"[HERMES] 429 满额,{delay:g}s 后自动重试一次")
                     await asyncio.sleep(delay)

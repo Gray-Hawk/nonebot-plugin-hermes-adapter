@@ -31,14 +31,14 @@ _MAGIC_TO_MIME: list[tuple[bytes, str]] = [
 ]
 
 
-# M29 修复:临时性失败(网络层/超时/5xx/429)的延迟重排队档位——
+# 临时性失败(网络层/超时/5xx/429)的延迟重排队档位——
 # 原实现 max_attempts 烧完即弃,一次网络抖动就让 sha256 永久 NULL(QQ URL 几天
 # 后过期,届时再抓不回来)。重排队期间 pending 行原位保留,新提交同 URL 照常挂靠。
 _REQUEUE_DELAYS_S = (60.0, 300.0)
 
 
 def _is_transient_error(exc: BaseException) -> bool:
-    """M29:临时性失败判定。HTTP 4xx(429 除外)是永久结论(链坏/越权/过期),
+    """临时性失败判定。HTTP 4xx(429 除外)是永久结论(链坏/越权/过期),
     重排队无意义;网络层/超时/5xx/429 及其余未分类异常按临时处理——延迟重抓的
     代价只是几次空跑,丢图的代价是 sha 永久 NULL,两害相权选重抓。"""
     if isinstance(exc, httpx.HTTPStatusError):
@@ -85,7 +85,7 @@ class ImageFetcher:
         self._queue_max = queue_max
         self._queue: deque[str] = deque()
         self._pending: dict[str, list[tuple[int, int]]] = {}
-        # M29:重排队轮次记账(url → 已排档数)与延迟任务句柄(stop 时取消)。
+        # 重排队轮次记账(url → 已排档数)与延迟任务句柄(stop 时取消)。
         self._rounds: dict[str, int] = {}
         self._delayed: set[asyncio.Task] = set()
         self._wake: asyncio.Event = asyncio.Event()
@@ -148,7 +148,7 @@ class ImageFetcher:
             self._worker.cancel()
             logger.warning("[image_fetcher] worker did not stop within 5s; cancelled")
         self._worker = None
-        # M29:取消在途的延迟重排队任务,防停机后睡醒了往已停的队列里塞。
+        # 取消在途的延迟重排队任务,防停机后睡醒了往已停的队列里塞。
         for task in self._delayed:
             task.cancel()
         self._delayed.clear()
@@ -213,7 +213,7 @@ class ImageFetcher:
                     await asyncio.sleep(0.2 * attempt)  # 简单线性退避
         if last_exc is not None:
             transient = _is_transient_error(last_exc)
-        # M29:临时性失败不立刻放弃,按 _REQUEUE_DELAYS_S 排档延迟重排队;
+        # 临时性失败不立刻放弃,按 _REQUEUE_DELAYS_S 排档延迟重排队;
         # pending 行原位保留(重抓成功时仍按原 (msg_id, idx) 回填)。
         round_no = self._rounds.get(url, 0)
         if transient and round_no < len(_REQUEUE_DELAYS_S) and not self._stop.is_set():
@@ -233,7 +233,7 @@ class ImageFetcher:
         )
 
     def _schedule_requeue(self, url: str, delay: float) -> None:
-        """M29 补偿通道:delay 秒后把 url 塞回队列尾部。句柄入 _delayed,stop 时取消。"""
+        """补偿通道:delay 秒后把 url 塞回队列尾部。句柄入 _delayed,stop 时取消。"""
 
         async def _later() -> None:
             try:

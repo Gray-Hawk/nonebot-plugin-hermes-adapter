@@ -84,7 +84,7 @@ class RunTracker:
         mode: str,
         expect_structured: bool,
     ) -> None:
-        # H10 修复(2026-10-17):冲突改 ON CONFLICT DO UPDATE 只刷元数据——旧写法
+        # 冲突改 ON CONFLICT DO UPDATE 只刷元数据——旧写法
         # INSERT OR REPLACE 全行重置,同一 run_id 二次登记会把 last_seq/started_at
         # 清零(事件流水位丢失,reattach 后旁白从头发一遍)。契约仍是「一 run 一
         # upsert」,此处加固到误复用也不丢水位。

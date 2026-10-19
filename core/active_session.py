@@ -79,7 +79,7 @@ class ActiveSession:
     T5 判据:窗口仅靠隐式 touch 续期时,now - 本字段 > T5 即在读路径视为不活跃。
     0 = 本窗口期无实质激活(不可能——trigger 建窗时即赋值,防御用)。"""
 
-    # 本部署补丁(凌晨批项4): 委托锚双槽。维护者槽
+    # 本部署补丁: 委托锚双槽。维护者槽
     # (commissioner ∈ hermes_admin_users)只被维护者自己的新委托顶;客人槽全客人
     # 共享,顶锚需满足三条件之一(旧锚已应答/超龄/已被 release,见 pin_anchor)。
     # 窗口死(TTL/T5/should_exit_active)= session 实例销毁,锚随窗死;
@@ -294,7 +294,7 @@ class ActiveSessionManager:
         max_age_ms: int,
         now_ms: int,
     ) -> bool:
-        """钉委托锚(本部署补丁:凌晨批项4)。返回是否钉上。
+        """钉委托锚(本部署补丁)。返回是否钉上。
 
         双槽规则(设计见 项目文档库 锚系统各节):
         - 委托人 ∈ master_ids → 维护者槽,无条件顶自己的旧锚;

@@ -72,7 +72,7 @@ async def _drain_patrol_queue(run_one) -> None:
         while _patrol_queue:
             adapter, scope_id, kwargs = _patrol_queue.popleft()
             _patrol_queued.discard((adapter, scope_id))
-            # 2026-10-13 审核修复(巡查迟到闸门,维护者定案): 入队到点火可能隔几分钟
+            # 巡查迟到闸门: 入队到点火可能隔几分钟
             # (串行队列前车未走),期间窗口转活跃/有 turn 在跑 → 本轮直接弃。
             # tick 入口的检查只是便宜前置过滤,这道才是执行时的真实闸门。
             recheck_ms = int(time.time() * 1000)

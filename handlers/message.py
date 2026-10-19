@@ -51,12 +51,12 @@ from .message_feedback import _ack_scope
 receive_message = on_message(rule=Rule(_ignore_rule), priority=98, block=True)
 
 
-# 本部署补丁(凌晨批项2): hermes_group_trigger 作废模式的
+# 本部署补丁: hermes_group_trigger 作废模式的
 # 告警去重(每模式只 WARN 一次,重启清空)。
 _TRIGGER_MODE_DEPRECATED_WARNED: set[str] = set()
 
 
-# 本部署补丁: 应答防抖(凌晨批项6,维护者拍板)。
+# 本部署补丁: 应答防抖。
 # 设计见 项目文档库「方案:应答防抖」。
 # 要点:perception 在 priority=1 无条件写 buffer,turn 上下文从 buffer 拉,
 # 所以延迟起跑的 turn 自动看到防抖期内到达的所有碎片,触发载荷只需管归属。
@@ -247,7 +247,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # (真 @ / 引用 bot 的消息)。它随消息进 prompt 的 runtime_state,
     # 让归属判断不必从回填的裸 `@<id>` 去猜。
     #
-    # 本部署补丁(凌晨批项2 全隐式化): hermes_group_trigger 的
+    # 本部署补丁: hermes_group_trigger 的
     # at/all/keyword 三模式作废,收敛为 keyword-soft 单路径;群聊侧
     # is_explicit_trigger 重定义 = addressed_to_bot——下游所有 explicit 挂点
     # (开窗 / ack emoji / 解析兜底转发 / 图片门控旁路 / cooldown 旁路 / 裁剪豁免)
@@ -256,7 +256,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     is_explicit_trigger = False
     addressed_to_bot = False
     keyword_soft_hit = False  # keyword-soft 全文命中(隐式激活)
-    # 凌晨批项3 黑名单:名单账号(按群配置)的消息不置 explicit/addressed——
+    # 黑名单:名单账号(按群配置)的消息不置 explicit/addressed——
     # 它们的 @ 降级为普通隐式信号,从入口消解 AI 互聊循环的燃料;消息照常入
     # buffer、窗口内跟帖照常可见(人类委托「去跟 X 说」的会话能继续)。
     sender_blacklisted = _is_blacklisted(group_id, user_id)
@@ -276,7 +276,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         if trigger_mode != "keyword-soft" and trigger_mode not in _TRIGGER_MODE_DEPRECATED_WARNED:
             _TRIGGER_MODE_DEPRECATED_WARNED.add(trigger_mode)
             logger.warning(
-                f"[HERMES] hermes_group_trigger={trigger_mode!r} 已作废(凌晨批项2 全隐式化,"
+                f"[HERMES] hermes_group_trigger={trigger_mode!r} 已作废(全隐式化,"
                 "收敛 keyword-soft 单路径):@/引用 只作寻址与开窗信号,不再强制回复"
             )
         addressed_to_bot = is_mentioned and not sender_blacklisted
@@ -329,7 +329,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             f"{'reactive' if plugin_config.hermes_active_session_enabled else 'passive'}"
         )
 
-    # --- 应答防抖(本部署补丁:凌晨批项6) ---
+    # --- 应答防抖(本部署补丁) ---
     # 首条触发:登记状态 → 进 ack scope 秒贴 emoji → 睡满防抖窗 → 拿合并后载荷 dispatch。
     # 期内碎片:同人拼接/跨人替换 + 顺延截止(受 max_wait 硬上限)后立即返回,不另起 turn。
     # 防抖期间不占 inflight slot;T2 定时/投递轮询不经过本 handler,天然不防抖。

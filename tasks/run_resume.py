@@ -252,7 +252,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
             tracker.finish(row.run_id)
             return
         output = str(status_body.get("output") or "")
-    # 2026-10-13 审核修复(BUG1): 终态闸只对「真订阅过事件流」的路径生效——
+    # 终态闸只对「真订阅过事件流」的路径生效——
     # 停机期间已终态的 run 从未喂过帧,parser.terminal 恒 False,旧代码在这里
     # 把已从 status_body 捞出的 output 拦死:不补发、不删行,行变僵尸每次启动重演。
     if streamed and not parser.terminal:

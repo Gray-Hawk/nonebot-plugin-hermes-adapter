@@ -176,7 +176,7 @@ def pop_oldest() -> PendingApproval | None:
 def peek_oldest() -> PendingApproval | None:
     """非破坏性读最旧的未过期条目(过期顺手剔除)。
 
-    2026-10-13 审核修复(中危⑦): /approve 应答改「先看后确认」——旧 pop_oldest
+    /approve 应答改「先看后确认」——旧 pop_oldest
     先删条目再 POST,网络/HTTP 失败条目即丢、409 与断网不可区分无法重试。
     现在由 handle_approve peek → 应答成功才 acknowledge 删除;失败留单可重试。
     """

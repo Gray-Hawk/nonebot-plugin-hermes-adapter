@@ -89,7 +89,7 @@ class Config(BaseModel):
 
     # --- 触发模式 ---
     hermes_group_trigger: str = "keyword-soft"
-    """群聊触发方式(本部署补丁:凌晨批项2 全隐式化):
+    """群聊触发方式(本部署补丁):
     at / all / keyword 三模式已作废,收敛为 keyword-soft 单路径——
     真 @bot / 引用 bot = 寻址事实(addressed_to_bot,开窗 + 进决策,不再强制回复);
     关键词全文命中 = 隐式激活(不点名、不开窗只续期,窗口外跑临时 turn),推最近
@@ -260,10 +260,10 @@ class Config(BaseModel):
     0 = 关闭(回退到旧行为)。显式 @bot 不受影响,任何时候都会立刻进入决策。"""
 
     hermes_prompt_timezone: str = ""
-    """M21(2026-10-17 维护者定案):喂给模型的时间戳时区覆盖,IANA 名(如 Asia/Shanghai)。
+    """喂给模型的时间戳时区覆盖,IANA 名(如 Asia/Shanghai)。
     缺省空串=部署机本地时区(现状);部署机时区错误/跨区部署时在此覆盖,不动系统。"""
 
-    # --- 应答防抖(本部署补丁:凌晨批项6,维护者拍板) ---
+    # --- 应答防抖(本部署补丁) ---
 
     hermes_reply_debounce_group_sec: float = 3.5
     """应答防抖(群聊,秒):消息触发后不立即起 turn,先等 N 秒合并连发碎片——
@@ -308,7 +308,7 @@ class Config(BaseModel):
     """群档案（群记忆外挂）开关（2026-10-14 维护者定稿），缺省开。
     false = 群档案注入静默关闭；其余定制功能（feedback_rules 等）不受影响。"""
 
-    # --- 黑名单(本部署补丁:凌晨批项3,维护者拍板) ---
+    # --- 黑名单(本部署补丁) ---
 
     hermes_blacklist: dict[str, list[str]] = {}
     """黑名单:{群号: [账号QQ, ...]}。名单账号的消息不置 explicit/addressed——
@@ -318,7 +318,7 @@ class Config(BaseModel):
     代码不硬断。仅群聊生效;私聊不受名单影响。.env 写 JSON,如
     HERMES_BLACKLIST={"2000000001": ["1000000002"]}"""
 
-    # --- 委托锚(本部署补丁:凌晨批项4,维护者拍板) ---
+    # --- 委托锚(本部署补丁) ---
 
     hermes_anchor_max_age_sec: int = 150
     """委托锚的硬寿命上限(秒):锚龄超过即自动松掉,防「模型一直忘了松」。

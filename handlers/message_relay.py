@@ -49,7 +49,7 @@ _chain_counts: dict[tuple[tuple[str, str], str], int] = {}
 # 值保持 int 不变,既有回归按整数断言)
 _chain_touched: dict[tuple[tuple[str, str], str], float] = {}
 
-# 私聊排队汇总成批(条目 23,规划书章二,topic: 项目文档库 §4):
+# 私聊排队汇总成批:
 # turn 收尾→接力的边界才是链式连发的真凶——slot 一释放,尾随消息就各自 try_enter
 # 成功、各自开一轮;而每个接力 turn 本身又是一整轮 LLM,期间新消息继续补货。
 # 修法:收尾发现 pending 非空时不立即 pop+refire,而是**先不释放 slot**、等一个聚合窗,
@@ -115,7 +115,7 @@ async def _pop_pending_after_aggregate_window(
 ) -> PendingEntry | None:
     """turn 收尾取下一发:私聊被动路径先等一个聚合窗,把尾随消息并进同一条目。
 
-    条目 23 的实现点(规划书 §4.2)。设计要点:
+    私聊排队汇总成批的实现点。设计要点:
       - 还有 pending 时**不释放 slot**,先 await 聚合窗——窗内新到消息经 try_enter
         自然落队、并入同委托人条目(_merge_pending_message);窗满再一次性 pop 开轮。
         slot 一旦释放,尾随消息就会各自 try_enter 成功、各自开一轮,这正是要治的
@@ -222,7 +222,7 @@ async def _handle_passive_path(
         if not should_refire:
             _release_slot_and_retry(key, adapter_name, is_private, user_id, group_id)
         else:
-            # 条目 23(规划书章二):私聊被动路径的收尾边界先过聚合窗——窗内尾随消息
+            # 私聊被动路径的收尾边界先过聚合窗——窗内尾随消息
             # 并入同一条目后一次性开轮;窗内 slot 不释放(见 helper docstring)。
             pending_entry = await _pop_pending_after_aggregate_window(
                 # 2026-10-16 维护者拍板:私聊聚合窗回退止血——当日三连 bug(m:id 错标/
@@ -359,13 +359,13 @@ async def _try_steer_followup(
     留槽走接力。
     run 已收尾(409)/无 live run/网络异常 → 留在槽里走 pending,语义与旧路完全一致。
 
-    2026-10-13 审核修复(中危②): 改 peek/settle——条目在 steer 全程不离槽,
+    改 peek/settle——条目在 steer 全程不离槽,
     期间 turn 收尾由 pop_next_pending 捡走接力,不再存在「离槽-恢复」的静默吞消息路径。
     注入文本是 await 前的快照:期间若有新跟帖并入(合并发生在同一个 entry 上),
     结算时内容对不上就不摘——并入内容留在槽里走 pending 接力(注入过的前缀会重复
     一次,但零丢失;丢失与重复的代价不对称,选重复)。
     """
-    # 常备探针(2026-10-14 维护者定案保留,详见 local-mods 修改 25):入口与各早退口
+    # 常备探针:入口与各早退口
     # 全部 INFO 级留痕——现网 INFO 级别下原 DEBUG 分支不可见,无法区分
     # 「未被调用」与「调用后静默早退」。日志标记 [HERMES steer探针]。
     logger.info(
@@ -515,7 +515,7 @@ async def _handle_reactive_path(
     current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id)
 
     is_commission = addressed_to_bot and user_id not in set(plugin_config.hermes_known_bots)
-    # 2026-10-13 审核修复(巡查迟到闸门,维护者定案): droppable=True 的合成轮(巡查)
+    # 巡查迟到闸门: droppable=True 的合成轮(巡查)
     # 撞在跑 turn 直接丢弃——「巡查天生可弃」,不占 followup 槽不接力,否则活跃期
     # 巡查会在用户 turn 结束后不请自来。投递轮询等不可弃合成轮不传此标记。
     if droppable and _mcp.inflight.is_inflight(key):
@@ -536,7 +536,7 @@ async def _handle_reactive_path(
     if inflight_result != "entered":
         # 阶段2b:非委托跟帖在 runs 通道下先尝 steer 注入在跑 turn(成功即不排队);
         # 委托/带媒体/旧路/run 已收尾被拒 → 一律维持原 pending 语义。
-        # 2026-10-13 审核修复(中危①): 排除 ephemeral——定时巡查(user=timer)、
+        # 排除 ephemeral——定时巡查(user=timer)、
         # 任务投递(user=delivery)这类合成输入也是非委托纯文本,此前会被原样注入
         # 用户进行中的 turn(合成提示词污染对话),且被消费后不再走 pending。
         if (
@@ -549,7 +549,7 @@ async def _handle_reactive_path(
             return
         # 入队是 coalesce 的正常语义,但必须可观测:这条分支早先对 bystander 完全静默,
         # 一串消息集体没反应时日志里只剩 cooldown_check,查不出去向。
-        # 常备探针(2026-10-14 维护者定案保留,详见 local-mods 修改 25):DEBUG→INFO 并
+        # 常备探针:DEBUG→INFO 并
         # 补 steer 门各条件取值,定位「queued 后未走 steer」时卡在哪一项。
         logger.info(
             f"[HERMES steer探针] queued behind in-flight turn "
@@ -599,7 +599,7 @@ async def _handle_reactive_path(
         if not should_refire_pending:
             _release_slot_and_retry(key, adapter_name, False, user_id, group_id)
         else:
-            # 条目 23:群聊 reactive 路径**不启用**聚合窗(有群级防抖合并先例,
+            # 群聊 reactive 路径**不启用**聚合窗(有群级防抖合并先例,
             # 另行核实再说)——aggregate=False 走同一 helper 保持出队语义单点。
             pending_entry = await _pop_pending_after_aggregate_window(
                 key, after_ts=current_buffered.ts, aggregate=False
@@ -613,7 +613,7 @@ async def _handle_reactive_path(
                         trigger_msg=pending_entry.msg,
                         is_explicit_trigger=pending_entry.is_explicit_trigger,
                         original_msg_id=pending_entry.original_msg_id,
-                        # 2026-10-13 审核修复(中危⑤): 补上接力透传——此前这条 finally 链路
+                        # 补上接力透传——此前这条 finally 链路
                         # 丢 addressed_to_bot,排队委托 refire 起跑后 addressed 门控全失效
                         # (图片不内联/归属标记缺行);passive 侧与递归链本来就传。
                         addressed_to_bot=pending_entry.addressed_to_bot,
@@ -755,7 +755,7 @@ async def _refire(
         pending_entry = await _pop_pending_after_aggregate_window(
             key,
             after_ts=trigger_msg.ts,
-            # 条目 23:接力轮的收尾边界是链式连发的另一半——私聊被动接力同样过聚合窗
+            # 接力轮的收尾边界是链式连发的另一半——私聊被动接力同样过聚合窗
             # (mode="passive" 且 group_id is None = 私聊);群聊接力/群聊被动保持不变。
             # 2026-10-16 维护者拍板:私聊聚合窗回退止血(同 _handle_passive_path 处注释),
             # 深层拆批渲染立项落地前统一不等窗。

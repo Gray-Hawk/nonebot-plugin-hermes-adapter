@@ -86,7 +86,7 @@ def _msg_at_only_other_users(uni_msg: alconna.UniMessage, bot_self_id: str) -> b
 
 
 def _is_blacklisted(group_id: str | None, user_id: str) -> bool:
-    """黑名单判定(本部署补丁:凌晨批项3)。
+    """黑名单判定(本部署补丁)。
 
     仅群聊生效(名单按群分组);私聊不受名单影响——私聊是显式对话,
     「不主动对话」语义不适用。
@@ -269,7 +269,7 @@ _QUOTED_LITERAL_ATALL_RE = re.compile(r"@全体(?:成员)?")
 
 
 def _rewrite_quoted_literal_ats(text: str) -> str:
-    """引用文本里字面手打的「@QQ号」/「@全体」改写「提及」(2026-10-13 审核修复 中危⑥)。
+    """引用文本里字面手打的「@QQ号」/「@全体」改写「提及」。
 
     _rewrite_quoted_ats 只覆盖 At 段派生的占位;手打进文本的 @数字 不经过它,
     会字面命中决策协议「@<id>=@你」规则——群 200000003 事故的同形态残余面。

@@ -42,7 +42,7 @@ def _ext_to_mime(ext: str) -> str:
 
 
 def _mount_opts_for(path: Path) -> str | None:
-    """M31:找 path 所属挂载点的选项串(取最长前缀匹配)。
+    """找 path 所属挂载点的选项串(取最长前缀匹配)。
 
     非 Linux(/proc/self/mounts 不存在)或读取失败返回 None——检测不到就闭嘴,
     不影响主流程。
@@ -79,7 +79,7 @@ class ImageCache:
         self._dir = Path(cache_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._quota = quota_bytes
-        # M31:挂载选项自检。noatime 下读文件不刷 atime,LRU 名义上退化——但本插件
+        # 挂载选项自检。noatime 下读文件不刷 atime,LRU 名义上退化——但本插件
         # 全部读路径都经 get_bytes 的显式 os.utime 触探(显式 utime 不受 noatime
         # 抑制),atime 仍由应用层维护;淘汰排序另按 max(atime, mtime) 加固兜底。
         opts = _mount_opts_for(self._dir)
@@ -148,7 +148,7 @@ class ImageCache:
         if total <= self._quota:
             return 0
 
-        # M31:新近度取 max(atime, mtime)——atime 失灵(noatime/触探失败)时退化为
+        # 新近度取 max(atime, mtime)——atime 失灵(noatime/触探失败)时退化为
         # 写入序,至少是有界确定行为,不至于近似任意删。
         entries.sort(key=lambda e: max(e[2], e[3]))  # 最老在前
         deleted = 0

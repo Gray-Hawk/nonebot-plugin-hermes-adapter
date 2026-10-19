@@ -110,7 +110,7 @@ def _strip_stickers_for_queue(msg: BufferedMessage) -> BufferedMessage:
 
 
 # 合成后续轮（离场确认/接力/重交）在私聊沿用真实 user_id 时的身份昵称。
-# 常量化原因（条目 23 语义定案 2026-10-16）：合并函数要凭它辨认「合成 fragment」
+# 常量化原因：合并函数要凭它辨认「合成 fragment」
 # 给真人消息加身份分界，手抄字面量会漂移。
 _SYNTHETIC_NICKNAME = "系统核对"
 
@@ -126,7 +126,7 @@ def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
     只折算成一个 [表情包] 文本占位拼进内容,URL 不进场——槽内条目永无
     sticker_urls,steer 媒体检查不会被毒化。
 
-    2026-10-13 审核修复(中危③): 归属不再被后到者覆盖——旧实现无条件
+    归属不再被后到者覆盖——旧实现无条件
     old.nickname = new.nickname,跨发送者合并(followup 槽)会渲染出「昵称是B
     id是A」的错配发言者。现在 nickname 只在同发送者合并时刷新;跨发送者拼接的
     文本带「昵称: 」前缀,归属信息不丢也不错配。
@@ -139,7 +139,7 @@ def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
         if not same_user:
             new_text = f"{new.nickname or new.user_id}: {new_text}"
         elif old.nickname == _SYNTHETIC_NICKNAME and new.nickname != _SYNTHETIC_NICKNAME:
-            # 条目 23 语义定案（2026-10-16 维护者拍板「做一个分界」）：合成后续轮
+            # 合成后续轮
             # （私聊顶真实 user_id、昵称「系统核对」）与真人消息按同委托人规则合并时，
             # 真人部分必须带身份分界——合成 prompt 自带「(系统核对:」前缀，真人部分
             # 不标会被读成系统指令的延续。反向（真人旧条目+合成新 fragment）不用标：
@@ -187,7 +187,7 @@ class InflightRegistry:
     def peek_followup(self, key: tuple[str, str]) -> PendingEntry | None:
         """非破坏性读 followup 槽条目(无则 None)。
 
-        2026-10-13 审核修复(中危②): steer 注入改「先看后确认」——旧 take/restore
+        steer 注入改「先看后确认」——旧 take/restore
         组合在 await steer_run(最长 15s)期间条目已离槽,turn 若此时收尾,槽被
         exit 删除、restore 静默吞条目(消息既未注入也不 refire)。peek 模式下条目
         全程在槽:期间 turn 收尾会由 pop_next_pending 正常捡走接力,零丢失路径。
@@ -290,7 +290,7 @@ class InflightRegistry:
     def peek_next_pending(self, key: tuple[str, str], *, after_ts: int) -> PendingEntry | None:
         """非破坏读「下一发是谁」——与 pop_next_pending 同判据,但不摘除。
 
-        条目 23(私聊排队汇总成批,2026-10-16)用:turn 收尾要先知道槽里还有没有
+        私聊排队汇总成批用:turn 收尾要先知道槽里还有没有
         下一发,才能决定要不要等聚合窗;而 pop 会把条目取走,判据只能是非破坏读。
         stale 前缀(ts <= after_ts)按 pop 同规跳过、不返回。返回非 None 只表示
         「有货」;真正的取队仍必须走 pop_next_pending。
@@ -314,7 +314,7 @@ class InflightRegistry:
         slot = self._slots.get(key)
         if slot is None:
             return None
-        # M23 修复(2026-10-17):陈旧条目丢弃补日志——丢弃本身是设计行为
+        # 陈旧条目丢弃补日志——丢弃本身是设计行为
         # (防旧时间戳重复点火),但静默=观测盲区,无法区分「没有跟帖」与「跟帖被覆盖」。
         dropped_comm = 0
         while slot.commissions and slot.commissions[0].msg.ts <= after_ts:

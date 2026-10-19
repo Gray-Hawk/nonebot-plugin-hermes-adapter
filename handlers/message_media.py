@@ -92,8 +92,8 @@ async def _extract_sticker_urls(uni_msg: alconna.UniMessage, bot: Bot, adapter_n
     return urls
 
 
-# 本部署补丁(图片投送管线三模式): 取代 2026-09-29 修改3 的
-# addressed 单点门控。设计与参数定案见 项目文档库。
+# 本部署补丁(图片投送管线三模式): 取代早期
+# addressed 单点门控。
 def _collect_inline_image_urls(
     media_cfg: MediaConfig,
     *,

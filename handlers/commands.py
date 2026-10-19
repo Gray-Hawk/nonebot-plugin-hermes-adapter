@@ -571,7 +571,7 @@ async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna
                 choice=choice,
             )
             if ok:
-                # 2026-10-13 审核修复(中危⑦): 先应答后删单——失败留单,管理员可重试
+                # 先应答后删单——失败留单,管理员可重试
                 approvals_acknowledge(entry.approval_id)
     if entry is None:
         await alconna.UniMessage("当前没有挂起的审批(可能已超时自动拒绝)").send(target=target, bot=bot)

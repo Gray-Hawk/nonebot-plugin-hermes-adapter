@@ -38,7 +38,7 @@ from .message_context import render_message_context_head
 
 
 _WEEKDAY_CN = "一二三四五六日"
-_tz_warned = False  # M21:无效时区名 WARN 每进程一次
+_tz_warned = False  # 无效时区名 WARN 每进程一次
 
 
 def _current_time_str() -> str:
@@ -47,7 +47,7 @@ def _current_time_str() -> str:
     runtime_state 块(per-turn 字段的天然归属,开头同样是注意力强位),
     passive 在 user content 开头单行。两处都是每轮必变内容,不影响缓存。
 
-    M21(2026-10-17):时区可经 hermes_prompt_timezone 覆盖(IANA 名);
+    时区可经 hermes_prompt_timezone 覆盖(IANA 名);
     缺省空串=部署机本地时区(datetime.now(tz=None) 与裸 now() 同义,现状不变)。
     坏时区名 WARN 一次回退本地(防配置 typo 静默错时间)。"""
     tz = None
@@ -244,7 +244,7 @@ _DECISION_PROTOCOL_BLOCK = (
     "</decision_protocol>"
 )
 
-# 本部署补丁(凌晨批项2): 私聊版决策协议。私聊没有活跃窗/
+# 本部署补丁: 私聊版决策协议。私聊没有活跃窗/
 # 退场/@归属那套群聊概念,协议刻意从简:私聊是显式对话,默认该回,只为
 # 无实质内容的消息留沉默口。解析失败时插件侧回 raw_text(私聊静默更像故障)。
 _PRIVATE_DECISION_PROTOCOL_BLOCK = (
@@ -377,7 +377,7 @@ def _render_runtime_state(
     # 只在为真时渲染:缺这行 = 「归属未知,自己判」,不是「确定不是冲你说的」。
     if addressed_to_bot:
         lines.append("addressed_to_you: true")
-    # 本部署补丁(凌晨批项3): 黑名单标记。名单账号的 @
+    # 本部署补丁: 黑名单标记。名单账号的 @
     # 在入口层已降级(不置 addressed),这行告诉模型「当前发言者在名单里」,
     # 按协议条款默认静默、有委托例外。
     if sender_blacklisted:
@@ -538,7 +538,7 @@ def build_passive_system_prompt(
     历史块(0.1.6 群聊旁观注入)已搬到 user content(见 build_passive_user_content):
     1:1 私聊也走相同接口,recent=[] 时 user content 退化为纯文本/多模态 parts。
 
-    private_decision(本部署补丁:凌晨批项2): 私聊挂决策信封时
+    private_decision(本部署补丁): 私聊挂决策信封时
     在 Message Context 头后追加私聊版决策协议块(字节稳定 per session,缓存友好)。
     """
     head = render_message_context_head(
@@ -567,7 +567,7 @@ _MAX_ANCHOR_TEXT_CHARS = 120
 
 
 def _render_pinned_tasks_block(anchors: Sequence[Any], *, now_ms: int) -> str:
-    """渲染 <pinned_tasks> 委托锚块(本部署补丁:凌晨批项4)。
+    """渲染 <pinned_tasks> 委托锚块(本部署补丁)。
 
     每行:📌 [id=QQ user=昵称] (年龄): 委托文本摘要。年龄给模型「新鲜度」
     直读量,自行降权;块与 <recent_messages> 正文视觉隔开,防止锚被误读成
@@ -612,7 +612,7 @@ def build_reactive_user_content(
 
     runtime_state 只保留 per-turn 变化字段(triggered_by/topic_hint/addressed_to_bot等);
     会话级稳定信息(adapter/group_id/self)已挪到系统提示(见 _render_session_context)。
-    pinned_anchors(凌晨批项4):在钉的委托锚,非空时渲染独立 <pinned_tasks> 块,
+    pinned_anchors:在钉的委托锚,非空时渲染独立 <pinned_tasks> 块,
     不参与 recent_messages 的裁剪。
 
     current_message: 当前消息的 buffer 行(可选)。给了且已回填 id 时,<current_message>

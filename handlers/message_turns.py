@@ -354,7 +354,7 @@ async def _run_passive_turn(
             )
         )
 
-    # 本部署补丁(凌晨批项2): 私聊挂 submit_decision 决策信封
+    # 本部署补丁: 私聊挂 submit_decision 决策信封
     # (全隐式化:私聊不再「硬必回」,模型按私聊版协议自决,无实质内容可静默)。
     # 群聊 passive(active_session=off 的旧部署形态)维持 raw_text 直发不动。
     use_private_decision = is_private
@@ -550,7 +550,7 @@ async def _run_passive_turn(
             )
         return result
 
-    # 本部署补丁(凌晨批项2): 私聊决策信封解析成功时按信封走——
+    # 本部署补丁: 私聊决策信封解析成功时按信封走——
     # should_reply=false 即静默(私聊不再硬必回)。解析失败回 raw_text:私聊是显式
     # 对话,静默更像故障;并保留既有防御性抠取(模型可能吐了破信封)。
     # 2026-10-13 分级反馈:background_task 便签登记(静默轮也登记)。
@@ -731,11 +731,11 @@ async def _run_reactive_turn(
         self_id=str(bot.self_id),
         self_nickname=self_nickname,
     )
-    # 本部署补丁(凌晨批项3): 黑名单标记进 runtime_state。
+    # 本部署补丁: 黑名单标记进 runtime_state。
     # 在 turn 内按 (group_id, user_id) 重算而非从 handler 透传——refire/pending
     # 接力链不用为此加字段。
     sender_blacklisted = _is_blacklisted(group_id, user_id)
-    # 本部署补丁(凌晨批项4): 取在钉委托锚(懒式超龄剔除)。
+    # 本部署补丁: 取在钉委托锚(懒式超龄剔除)。
     # 2026-10-13 改手动单轨后,入口不再自动钉锚;这里只会读到「之前判断轮已确认
     # 并 pin 成功」的锚。ephemeral 临时 session 不注册进管理器,天然无锚。
     pinned_anchors: list[AnchorRecord] = []
@@ -1062,7 +1062,7 @@ async def _run_reactive_turn(
     _record_background_note(_fb_key, decision, log_tag="reactive")
     if decision.get("topic_hint"):
         _mcp.active_sessions.update_topic(adapter_name, group_id, str(decision["topic_hint"]))
-    # 本部署补丁(凌晨批项4): 模型可控松锚。值=委托人
+    # 本部署补丁: 模型可控松锚。值=委托人
     # user_id 或 "all"(bool true 宽容视同 all)。ephemeral 无注册窗口,
     # release 按 key 查管理器,自然 no-op。
     release_anchor = decision.get("release_anchor")
@@ -1253,7 +1253,7 @@ async def _run_reactive_turn(
         # 2026-10-13 队列化定案:委托锚改手动单轨——入口不再自动钉,只有本轮
         # submit_decision 显式 pin_anchor=true 且回复真发出去了才钉。放在 mark_bot_replied
         # 之后,避免新锚立刻被自己的发言标成 answered;should_exit_active 不钉。
-        # 2026-10-13 审核修复(中危④): 去掉 ephemeral 排除——ephemeral 在 handler 入口
+        # 去掉 ephemeral 排除——ephemeral 在 handler 入口
         # 按「开窗前」的 in_active_window 算,冷窗下「@bot+关键词」的委托轮恒 ephemeral=True,
         # 但入口 trigger() 已开真窗口,旧门把这支永远挡在钉锚外且无日志。真正的闸门是
         # 下面的 get_if_trigger_alive:没窗(ephemeral 沉默/窗已死)自然钉不上,有窗就该能钉。
@@ -1314,8 +1314,8 @@ async def _run_reactive_turn(
                         text=(text or "")[:200],
                         ts=now_ms,
                     ),
-                    # 2026-10-13 审核修复(BUG2): master_ids 必须拆前缀——
-                    # hermes_admin_users 是「adapter:id」复合键(修改19 统一),
+                    # master_ids 必须拆前缀——
+                    # hermes_admin_users 是「adapter:id」复合键,
                     # 而 commissioner_id 是裸 user_id,直接比恒不命中,维护者槽形同虚设。
                     # 复用 approvals 同款拆法:只取当前适配器名下的裸 id,跨平台不串。
                     master_ids=set(admin_user_ids(set(plugin_config.hermes_admin_users), adapter_name)),

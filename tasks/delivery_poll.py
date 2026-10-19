@@ -21,7 +21,7 @@ LLM turn 让 agent 自己汇报(群=reactive 临时 turn,私聊=passive turn)。
 直到盖住水位为止。空闲期开销与旧版一致,活跃期自动扩容。
 
 去重与播种:水位按 session_key 记。真·新会话(持久化库也无水位)首轮轮询只播种
-不播报——避免给群刷一堆过期通知。2026-10-17 M24 修复:水位持久化到
+不播报——避免给群刷一堆过期通知。水位持久化到
 session_keys.db(delivery_watermarks 表),重启装回——nb 重启期间完成的投递
 不再被播种盖掉(旧内存态语义),重启后下一拍即正常发现并唤起汇报轮。
 
@@ -58,7 +58,7 @@ _HTTP_TIMEOUT = 10
 
 # session_key -> 已扫描的最大行 id(含非投递行)。投递行的「已播报」由水位天然
 # 表达:水位只在成功唤起汇报 turn 后推进,未盖住的投递行必然 id > 水位。
-# M24(2026-10-17):水位持久化到 session_keys.db(delivery_watermarks 表)——
+# 水位持久化到 session_keys.db(delivery_watermarks 表)——
 # 原内存态重启即清,首轮播种会把重启期间的完成行盖在水位下永不播报。
 # 启动时装回;库读不到/写失败时退化为旧内存语义(每处均有 WARN)。
 _watermark: dict[str, int] = {}
@@ -163,7 +163,7 @@ async def _poll_session(
             seen = _watermark.get(session_key)
             if seen is None:
                 # 首轮:水位置当前页尖,存量不播报(见模块 docstring)。
-                # M24:仅对持久化库里也没有水位的真·新会话播种;库存水位直接跳过本分支。
+                # 仅对持久化库里也没有水位的真·新会话播种;库存水位直接跳过本分支。
                 probe = await fetch_page(client, 0, _PROBE_LIMIT)
                 if probe:
                     tip0 = max(_row_id(m) for m in probe)
@@ -280,7 +280,7 @@ def register_delivery_poll() -> None:
                 session_key=session_key,
             )
         # 清掉已不存在会话的水位条目(/clear 换代、T1 重置后旧 key 不再出现)
-        # M24:内存与持久化库同步清。
+        # 内存与持久化库同步清。
         stale_keys = [key for key in list(_watermark) if key not in known_keys]
         for key in stale_keys:
             del _watermark[key]
