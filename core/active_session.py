@@ -16,7 +16,7 @@ _TURN_END_GRACE_MS = 10_000
 
 @dataclass
 class Participant:
-    """任务参与者(任务锚重构,2026-10-14):平权、有序,首位恒为发起者。"""
+    """任务参与者(任务锚重构):平权、有序,首位恒为发起者。"""
 
     user_id: str
     nickname: str | None
@@ -25,13 +25,13 @@ class Participant:
 
 @dataclass
 class AnchorRecord:
-    """任务锚(2026-10-14 任务化重构,原「委托锚」):一桩被钉住的委托任务,
+    """任务锚(任务化重构,原「委托锚」):一桩被钉住的委托任务,
     随窗口存活,渲染进 <pinned_tasks> 块供续发轮定位任务来源。
 
     按任务组织而非按人:同任务的补充/验收 merge 进同一条锚,参与者平权累积;
     发起者恒为 participants[0],任务句柄=发起者 id(release/answer/merge 的
     引用值)。answered=「该任务已应答」:模型信封 answer_anchor 声明置位,
-    merge 进新输入时程控重置为 False(维护者定案:防遗漏回复)。客人槽顶锚规则
+    merge 进新输入时程控重置为 False(防遗漏回复)。客人槽顶锚规则
     照旧认 answered——旧任务已应答,锚剩余价值低,可被顶。
     """
 
@@ -79,8 +79,8 @@ class ActiveSession:
     T5 判据:窗口仅靠隐式 touch 续期时,now - 本字段 > T5 即在读路径视为不活跃。
     0 = 本窗口期无实质激活(不可能——trigger 建窗时即赋值,防御用)。"""
 
-    # 本部署补丁: 委托锚双槽。维护者槽
-    # (commissioner ∈ hermes_admin_users)只被维护者自己的新委托顶;客人槽全客人
+    # 本部署补丁: 委托锚双槽。管理员槽
+    # (commissioner ∈ hermes_admin_users)只被管理员自己的新委托顶;客人槽全客人
     # 共享,顶锚需满足三条件之一(旧锚已应答/超龄/已被 release,见 pin_anchor)。
     # 窗口死(TTL/T5/should_exit_active)= session 实例销毁,锚随窗死;
     # 活窗续期复用同一实例,两槽天然保留。
@@ -94,7 +94,7 @@ class ActiveSession:
     # 本部署补丁: 租约计数从实例级移到 key 级(管理器
     # _leases 字典),实例上不再有 inflight_turns 字段。旧设计里 trigger() 每次
     # 换实例会把计数清零,in-flight turn 的保护落不到新窗口上;key 级挂点后
-    # 续不换/新建都不影响租约(排查记录见 项目文档库 2026-10-02 节)。
+    # 续不换/新建都不影响租约(排查记录见 项目文档库)。
 
     def is_alive_ttl(self, now_ms: int) -> bool:
         """纯 TTL 判活:expires_at 未到期。
@@ -108,7 +108,7 @@ class ActiveSessionManager:
     """滑动 TTL 状态机,跟踪哪些 (adapter, group_id) 处于 reactive 监听窗口。
 
     线程安全:**否**。预设单线程 asyncio 事件循环,不要从背景线程访问。
-    租约(key 级,本部署补丁 2026-10-02):`begin_turn` / `end_turn` 之间该
+    租约(key 级,本部署补丁):`begin_turn` / `end_turn` 之间该
     (adapter, group_id) 一律算活着。计数挂在管理器的 `_leases` 字典上而非
     session 实例上 —— 续不换后 trigger 原地续期、死窗新建都不动租约计数,
     in-flight turn 的保护跟着群走。
@@ -255,7 +255,7 @@ class ActiveSessionManager:
     ) -> bool:
         """记录 bot 在本群刚发出回复的时间戳、实际投出的媒体数与文本原文;session 缺失则 no-op。
 
-        2026-10-17 M5 修复起:bot 发言同步滑动 TTL(expires_at=max(原值,now+TTL))——
+        bot 发言同步滑动 TTL(expires_at=max(原值,now+TTL))——
         与 last_strong_activation_at 的 T5 重算同口径;touch() 仍是日常续期入口。
         handlers 在 reactive 模式 send 成功后
         调用,push_message 也调,供 post-reply cooldown 与同 turn 去重判定。
@@ -275,10 +275,10 @@ class ActiveSessionManager:
         s.last_bot_reply_media = media_count
         s.last_bot_reply_text = text
         s.last_strong_activation_at = now_ms  # bot 发言 = 实质激活,T5 重新起算
-        # M5 修复(2026-10-17):bot 发言同步滑动 TTL——既已重算 T5,不续 TTL 自相矛盾;
+        # bot 发言同步滑动 TTL——既已重算 T5,不续 TTL 自相矛盾;
         # 旧口径下长 turn(超 TTL)收尾后窗口即死,紧随的跟帖接力被无窗 drop。
         s.expires_at = max(s.expires_at, now_ms + self._ttl_ms)
-        # 低危⑬-① 方案D(2026-10-14 维护者定案):answered 不再由本方法自动全覆盖标记——
+        # answered 不再由本方法自动全覆盖标记——
         # 「答没答、答的是谁」模型自己最清楚,改由信封 answer_anchor 字段声明,
         # 走 mark_anchor_answered;插件端不再替模型做归属判断(旧逻辑:bot 答任何人
         # 都把所有锚标 answered,客人槽保护期形同虚设)。
@@ -297,7 +297,7 @@ class ActiveSessionManager:
         """钉委托锚(本部署补丁)。返回是否钉上。
 
         双槽规则(设计见 项目文档库 锚系统各节):
-        - 委托人 ∈ master_ids → 维护者槽,无条件顶自己的旧锚;
+        - 委托人 ∈ master_ids → 管理员槽,无条件顶自己的旧锚;
         - 否则客人槽:空槽直接钉;旧锚「已应答 / 超龄」才可顶,都不满足则不顶
           (旧锚 open 且新鲜 = 正在给 A 干活,B 的委托轮本身是 addressed 全量轮
           不亏上下文,代价不对称,不为 1-2% 的交错形态硬顶)。
@@ -371,7 +371,7 @@ class ActiveSessionManager:
         return marked
 
     def pinned_participant_ids(self, adapter: str, group_id: str, now_ms: int, max_age_ms: int) -> set[str]:
-        """全部在钉锚的全体参与者 id 集合(steer 资格判定用,任务化重构 2026-10-14)。
+        """全部在钉锚的全体参与者 id 集合(steer 资格判定用,任务化重构 )。
 
         走 get_anchors(懒式超龄剔除)口径:过期/超龄锚的参与者不再有资格。
         """
@@ -401,10 +401,10 @@ class ActiveSessionManager:
         nickname: str | None,
         now_ms: int,
     ) -> bool:
-        """把发送者并入指定任务的锚(任务化重构 2026-10-14)。返回是否并入。
+        """把发送者并入指定任务的锚(任务化重构 )。返回是否并入。
 
         participants 追加去重(同人刷新昵称);**answered 程控重置为 False**
-        (维护者定案:merge 进新输入=任务重新打开,防遗漏回复;答完由模型
+        (merge 进新输入=任务重新打开,防遗漏回复;答完由模型
         answer_anchor 手动标回)。直接操作传入的 session 实例(与 pin_anchor 同约定)。
         """
         for slot in ("anchor_master", "anchor_guest"):
@@ -430,7 +430,7 @@ class ActiveSessionManager:
         *,
         max_age_ms: int,
     ) -> builtins.list[AnchorRecord]:
-        """取本群当前在钉的委托锚(维护者槽在前),懒式超龄剔除(硬寿命上限)。
+        """取本群当前在钉的委托锚(管理员槽在前),懒式超龄剔除(硬寿命上限)。
 
         只读活跃窗口:get_if_trigger_alive 口径,过期/T5 封顶的窗口视为无锚。
         超龄剔除是原地写(槽位置 None),与「窗口死锚随窗死」互补:
@@ -455,7 +455,7 @@ class ActiveSessionManager:
         return out
 
     def lease_count(self, adapter: str, group_id: str) -> int:
-        """该群当前在跑的 turn 租约数(本部署补丁 2026-10-02, key 级)。"""
+        """该群当前在跑的 turn 租约数(本部署补丁, key 级)。"""
         return self._leases.get((adapter, group_id), 0)
 
     def is_alive_with_lease(self, adapter: str, group_id: str, now_ms: int) -> bool:
@@ -492,8 +492,7 @@ class ActiveSessionManager:
         `lease=None`(调用方没走 reactive 分支)→ no-op。
 
         宽限垫给**当前**实例(按 key 查)。续不换落地后,turn 持有的 session
-        引用与字典当前实例恒为同一对象,本注释保留的机制描述仍成立(本部署补丁
-        2026-10-02)。
+        引用与字典当前实例恒为同一对象,本注释保留的机制描述仍成立(本部署补丁)。
 
         为什么要垫:pending 里的消息紧接着就要在 refire 入口做 get_if_trigger_alive,而这
         条路径上"窗口刚好在交接的这一瞬过期"是真实存在的 —— 交接跨一次事件循环跳转,

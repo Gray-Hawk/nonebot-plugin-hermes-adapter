@@ -4,10 +4,9 @@
 """
 
 import time
-from contextlib import asynccontextmanager
 
 from nonebot import logger
-from nonebot.adapters import Bot, Event
+from nonebot.adapters import Bot
 
 from ..config import plugin_config
 from ..core import task_notes
@@ -17,8 +16,8 @@ from ..core.feedback_rules import load_rules
 from ..core.inflight import make_inflight_key
 
 
-# --- 2026-10-13 错误分级反馈 + 离场确认轮(维护者合成方案;规则引擎见 core/feedback_rules.py) ---
-# 后续轮一族(2026-10-16 章一合族,Q1):规则命中 → 追加指定 prompt 的后续轮,prompt 分族——
+# --- 错误分级反馈 + 离场确认轮(规则引擎见 core/feedback_rules.py) ---
+# 后续轮一族:规则命中 → 追加指定 prompt 的后续轮,prompt 分族——
 #   confirm 离场确认轮 | relay 继续执行轮(类①) | bounce 重交轮(类②);不并存两套机制。
 # 统一不拦截:命中 action=note 的规则 → 下一轮贴暗示便签;confirm/relay/bounce → 追加后续轮。
 # 规则来自 hermes_custom_dir/feedback_rules.yaml(schema v2),缺省回退内置两条。
@@ -56,11 +55,11 @@ def _sweep_ts_marks(table: dict, cutoff: float, *, companions: tuple[dict, ...] 
             c.pop(k, None)
 
 
-# 2026-10-16 打回机制增强(章一;规划书 项目文档库):
+# 打回机制增强(章一;规划书 项目文档库):
 # 类① 放行+接力 / 类② 拦截+重交。两类的防循环都靠同一套「同 scope 连续硬计数」结构
 # (仿 _confirm_fired_at 的 (key, kind) 形态)。私聊合成轮用真实 user_id,不在
 # _SYNTHETIC_USER_IDS 豁免内——身份豁免断不了链,只有硬计数能断(规划书 §3.2 第 5 条)。
-_RELAY_CHAIN_MAX = 2    # 类① 接力上限(维护者 2026-10-16 拍板 Q4):超限照发 + WARN
+_RELAY_CHAIN_MAX = 2    # 类① 接力上限:超限照发 + WARN
 _BOUNCE_CHAIN_MAX = 1   # 类② 重交上限(规划书 §3.3):第二次检出起放行残片 + 贴便签
 
 
@@ -139,7 +138,7 @@ async def _post_send_feedback(
     synthetic: bool = False,
     not_final: bool = False,
 ) -> None:
-    """发送成功后的分级反馈检查(2026-10-13 维护者合成方案,规则引擎驱动)。
+    """发送成功后的分级反馈检查(规则引擎驱动)。
 
     - 逐条评估 feedback_rules 里 where=reply/all 的规则(统一走 rule.matches:
       正则 / keywords+position / match=envelope_json 三种检出);
@@ -256,7 +255,7 @@ async def _maybe_intercept_bounce(
 
 
 def _check_interim_feedback(key: tuple[str, str], segment: str) -> None:
-    """旁白段的规则检测(2026-10-13,where=interim/all;仅 note 动作——旁白是过程
+    """旁白段的规则检测(where=interim/all;仅 note 动作——旁白是过程
     文本,命中 confirm/relay/bounce 不当真,后续轮只跟正式回复)。"""
     if not segment:
         return
@@ -265,117 +264,6 @@ def _check_interim_feedback(key: tuple[str, str], segment: str) -> None:
             task_notes.push_plugin_note(
                 key, rule.name, rule.note, cooldown_sec=rule.cooldown_sec or 24 * 3600
             )
-
-
-_ACK_CANCEL_UNSUPPORTED_WARNED: set[str] = set()
-"""Bot self_id 集合: 已经 WARN 过"撤销 emoji 在此 OneBot 实现端不支持"的 bot。
-
-模块级 dedupe, 避免每个 turn 都刷 WARN。重启清空 (set), 不持久。"""
-
-
-@asynccontextmanager
-async def _ack_scope(
-    bot: Bot,
-    event: Event,
-    *,
-    adapter_name: str,
-    is_explicit_trigger: bool,
-    is_private: bool,
-):
-    """B-0: OneBot v11 emoji ack 回执 (set 进 / clear 出)。
-
-    适用条件 (全部满足):
-      - hermes_ack_feedback_enabled = True
-      - is_explicit_trigger = True (仅用户主动 @ bot, bystander/notice 不贴)
-      - adapter_name = 'onebotv11'
-      - is_private = False (QQ NT 协议:emoji reactions 是群聊 only,
-        私聊调 set_msg_emoji_like 实现端会 raise "只支持群聊消息")
-      - event.message_id 可取
-
-    撤销路径两套兼容:
-      - LLOneBot 风格: 独立 endpoint `unset_msg_emoji_like`
-      - NapCat 风格:   同 endpoint `set_msg_emoji_like` 加 set=False
-    先试 LLOneBot 路径, 失败 fallback NapCat 路径。
-
-    silently-fail 路径: 任何 API 错误吞掉, 绝不阻塞真实回复。
-    set 失败 → 不尝试 clear (避免无意义错误日志); set 成功 → clear 在 finally 内,
-    chat() 抛异常 / 取消 / Ctrl-C 都会触发清理。
-
-    **已知限制**: 老版本 LLOneBot (< 大约 2024 中) 两条撤销路径都不支持
-    (unset endpoint 不存在, set=False 也不被识别)——emoji 会持久存在,
-    我们一次性 WARN 告知用户、建议升级 / 切 NapCat / 接受持久标记。
-
-    notice 触发的 synthesized 路径 (戳一戳/入群) 不进入本 scope——它们没有'原消息'可贴。
-    """
-    enabled = (
-        plugin_config.hermes_ack_feedback_enabled
-        and is_explicit_trigger
-        and adapter_name == "onebotv11"
-        and not is_private
-    )
-    if not enabled:
-        yield
-        return
-
-    msg_id = getattr(event, "message_id", None)
-    if msg_id is None:
-        yield
-        return
-
-    emoji_id = plugin_config.hermes_ack_emoji_id
-    set_ok = False
-    try:
-        # 添加表情两边一致: set_msg_emoji_like(message_id, emoji_id) 即可
-        # (NapCat 的 set 参数 Optional 默认 true, LLOneBot 无该参数)。
-        await bot.call_api("set_msg_emoji_like", message_id=msg_id, emoji_id=emoji_id)
-        set_ok = True
-    except Exception as e:
-        logger.debug(f"[HERMES ack] set failed (msg_id={msg_id} emoji_id={emoji_id}): {e}")
-
-    try:
-        yield
-    finally:
-        if set_ok:
-            # 撤销表情两边风格不同:
-            #   - LLOneBot: 独立 endpoint `unset_msg_emoji_like`
-            #   - NapCat:   同 endpoint `set_msg_emoji_like` 加 set=False
-            # 先试 LLOneBot 路径, 失败 fallback 到 NapCat 路径。两边都不识别就静默。
-            cleared = False
-            unset_unsupported = False
-            try:
-                await bot.call_api("unset_msg_emoji_like", message_id=msg_id, emoji_id=emoji_id)
-                cleared = True
-            except Exception as e:
-                err_str = str(e).lower()
-                # OneBot 标准 retcode 1404 = "不支持的 api"; 不同实现端也可能用 "unsupported"
-                # 或直接走 retcode != 0 + message 含 "不支持". 字串兜底, 即使匹配漏了
-                # 也只是少一次 WARN, 主功能不受影响。
-                unset_unsupported = "1404" in err_str or "unsupported" in err_str or "不支持" in err_str
-                logger.debug(f"[HERMES ack] unset failed (LLOneBot path, msg_id={msg_id}): {e}")
-            if not cleared:
-                try:
-                    await bot.call_api(
-                        "set_msg_emoji_like",
-                        message_id=msg_id,
-                        emoji_id=emoji_id,
-                        set=False,
-                    )
-                except Exception as e:
-                    logger.debug(f"[HERMES ack] clear-via-set=false failed (NapCat path, msg_id={msg_id}): {e}")
-                else:
-                    # set=False 没抛错。但如果是老 LLOneBot, 它会接受请求却不真正撤销
-                    # (LLOneBot 早期 set 参数不识别)。和 unset 不支持是同一类版本陈旧问题——
-                    # 一次性 WARN 告知用户。NapCat / 新 LLOneBot 不会进这个分支
-                    # (走 unset 那条已 cleared=True)。
-                    if unset_unsupported:
-                        bot_id = str(bot.self_id)
-                        if bot_id not in _ACK_CANCEL_UNSUPPORTED_WARNED:
-                            _ACK_CANCEL_UNSUPPORTED_WARNED.add(bot_id)
-                            logger.warning(
-                                f"[HERMES ack] bot {bot_id} 所在 OneBot 实现端不支持撤销 emoji "
-                                f"(unset_msg_emoji_like 1404; set=False 也可能空转)。emoji 将永久标记。"
-                                f"建议: 升级 LLOneBot / 改用 NapCat / 设 HERMES_ACK_FEEDBACK_ENABLED=false。"
-                            )
 
 
 def _make_approval_notify(

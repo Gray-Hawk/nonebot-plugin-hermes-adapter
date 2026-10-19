@@ -16,7 +16,7 @@ ScopeT = Literal["private", "group"]
 class BotEntry:
     bot_self_id: str
     target: Any  # nonebot_plugin_alconna.Target,只存内存
-    last_seen_at: int  # ms;只写不读,保留至 M2(M2 持久化判定时用)
+    last_seen_at: int  # ms;只写不读
 
 
 class BotRegistry:
@@ -35,7 +35,7 @@ class BotRegistry:
         self._entries[(adapter, scope, scope_id)] = BotEntry(
             bot_self_id=bot_self_id,
             target=target,
-            last_seen_at=ts,  # 保留至 M2
+            last_seen_at=ts,
         )
 
     def get(self, adapter: str, scope: ScopeT, scope_id: str) -> BotEntry | None:

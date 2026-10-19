@@ -55,7 +55,7 @@ _TOTAL_RESULT_MAX_BYTES = 25 * 1024 * 1024  # 25MB
 async def _encode_outbound(
     bytes_: bytes, real_mime: str | None, kind: str, cfg: MediaConfig
 ) -> list[tuple[bytes, str]] | None:
-    """拉图出站编码(2026-10-15 维护者定稿):返回 (bytes, mime) 帧列表;失败 None。
+    """拉图出站编码:返回 (bytes, mime) 帧列表;失败 None。
 
     - 动图:一律抽帧(fetch 档 gif_max_frames),帧按 fetch 梯度逐帧编码
     - 表情:≤ sticker_gate_bytes 原样直出(小图无害);超过强制 fetch 梯度压缩
@@ -99,7 +99,7 @@ async def get_message_images_impl(
       compress_failed — 撞大小门后两级压缩仍超限(提示用户自行压缩重发)
       cap_exceeded    — 累计字节超 25MB
       not_found       — message_id 在 DB 不存在,**或不在调用方范围内**
-    2026-10-15 拉图出站压缩:静图撞 fetch 大小门走梯度压缩,动图一律抽帧,
+    拉图出站压缩:静图撞 fetch 大小门走梯度压缩,动图一律抽帧,
     表情超 sticker 门控强制压缩(见 _encode_outbound)。
     """
     # 范围判定必须按行做:入参的 adapter/group_id 是调用方自报的(而且是可选的),
@@ -117,7 +117,7 @@ async def get_message_images_impl(
         )
 
     metas = store.get_message_images_meta(inp.message_ids)
-    # Q5(2026-10-15 拍板):可选 idx 过滤——只拉指定号的图,省字节 + vision token,
+    # 可选 idx 过滤——只拉指定号的图,省字节 + vision token,
     # 且按号指认精确。不传=现状全拉(零回归)。scope 校验/大小门/抽帧逻辑不变。
     if inp.idx is not None:
         wanted = set(inp.idx)
@@ -126,7 +126,7 @@ async def get_message_images_impl(
     content_blocks: list[Any] = []
     total_bytes = 0
     cap_exceeded_remaining = False
-    # ⑫-1(2026-10-16):配置挪出逐图循环——原先每张图现读一次 YAML 磁盘文件,
+    # ⑫-1:配置挪出逐图循环——原先每张图现读一次 YAML 磁盘文件,
     # 现单次调用读一次、循环内复用同一份快照(单次调用内配置一致性反而更好)。
     media_cfg = load_media_config()
 

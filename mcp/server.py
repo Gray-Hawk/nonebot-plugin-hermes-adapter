@@ -194,7 +194,7 @@ def build_mcp_app(
         group_id: str,
         text: str,
         image_urls: list[str] | None = None,
-        reply_to_msg_id: str | None = None,  # 保留至 M2(占位透传,无消费者)
+        reply_to_msg_id: str | None = None,
         task_id: str | None = None,
     ) -> PushMessageResult:
         """Send a message to a group via nonebot. Reactive context required."""
@@ -203,7 +203,7 @@ def build_mcp_app(
             group_id=group_id,
             text=text,
             image_urls=image_urls or [],
-            reply_to_msg_id=reply_to_msg_id,  # 保留至 M2
+            reply_to_msg_id=reply_to_msg_id,
             task_id=task_id,
         )
         result = await push_message_impl(

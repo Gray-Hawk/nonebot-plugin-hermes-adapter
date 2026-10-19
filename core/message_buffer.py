@@ -50,7 +50,7 @@ class BufferedMessage:
 # 一条消息的 message_images idx 连续编号 = 普通图 → 表情包 → 引用图 → 转发图。
 # 写入侧(MessageStore.append 的 idx、MessageBuffer.append 给 fetcher 的 start_index)
 # 与渲染侧(历史行清单、parts 标签、转发块计数)共用同一序列——即下方
-# iter_message_media 的迭代顺序(原 MEDIA_KINDS 常量零引用已删,2026-10-16 审计⑪);
+# iter_message_media 的迭代顺序(原 MEDIA_KINDS 常量零引用已删);
 # 禁止各处各自拼序。
 
 # kind → 中文种类词。compact 是历史行清单里的简称("图"/"表情"/"引用"/"转发"),

@@ -1,4 +1,4 @@
-"""决策信封(submit_decision)字段契约的单一来源(2026-10-16 同源化收口批,审计确认5)。
+"""决策信封(submit_decision)字段契约的单一来源。
 
 信封字段此前在四处各自手写:hermes_client 的 _DECISION_HINT(英文)、
 prompt_builder 的 _DECISION_PROTOCOL_BLOCK(中文主协议块)、同文件近因 reminder
@@ -10,7 +10,7 @@ prompt_builder 的 _DECISION_PROTOCOL_BLOCK(中文主协议块)、同文件近�
 等)仍原位保留在 prompt_builder;_DECISION_HINT 与协议块「两份都在场」的现状不变
 (行为零变化,只把内容来源收口)。
 
-各消费点渲染形态与收口前逐字节一致(2026-10-16 收口批 diff 核对):
+各消费点渲染形态与收口前逐字节一致(收口批 diff 核对):
   - render_en_field_lines(): _DECISION_HINT 的字段行(英文,desc 在括号内);
   - render_cn_field_lines(): 主协议块字段行(全集)/ 私聊版字段行(names 子集 + short);
   - render_field_name_list(): 近因 reminder 的 slash 字段单。

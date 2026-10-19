@@ -39,7 +39,7 @@ async def handle_clear(bot: Bot, event: Event, matcher: Matcher):
         matcher.skip()
 
     adapter_name = get_adapter_name(target)
-    # H9 收紧(2026-10-17):取不到 user_id 不折叠 "user" 公共桶,命令不执行。
+    # 取不到 user_id 不折叠 "user" 公共桶,命令不执行。
     user_id = event.get_user_id()
     if not user_id:
         logger.warning(f"[HERMES] /clear 取不到 user_id,不执行 (adapter={adapter_name})")
@@ -77,7 +77,7 @@ async def handle_delay(bot: Bot, event: Event, matcher: Matcher):
         return
 
     adapter_name = get_adapter_name(target)
-    # H9 收紧(2026-10-17):同上,匿名事件不执行。
+    # 同上,匿名事件不执行。
     user_id = event.get_user_id()
     if not user_id:
         logger.warning(f"[HERMES] /delay 取不到 user_id,不执行 (adapter={adapter_name})")
@@ -96,7 +96,7 @@ async def handle_resume(bot: Bot, event: Event, matcher: Matcher):
         matcher.skip()
 
     adapter_name = get_adapter_name(target)
-    # H9 收紧(2026-10-17):同上,匿名事件不执行。
+    # 同上,匿名事件不执行。
     user_id = event.get_user_id()
     if not user_id:
         logger.warning(f"[HERMES] /resume 取不到 user_id,不执行 (adapter={adapter_name})")
@@ -156,12 +156,12 @@ _HELP_MENU_SEP = "---"
 
 
 def load_help_menu_decor(path: str) -> tuple[str | None, str | None]:
-    """读取 /help 自定义头尾(2026-10-13 维护者拍板:只自定义头尾,独立文件)。
+    """读取 /help 自定义头尾(只自定义头尾,独立文件)。
 
     返回 (header, footer);任一为 None 表示该段回退内置。文件不存在/读取失败/
     内容为空时整体回退并 WARN,/help 不挂。文件现读现发,保存即生效。
     格式:第一行单独 --- 分隔;之前是头,之后是尾;没有 --- 则整个文件只当头。
-    注意(低危⑬,2026-10-14):头尾内容里不能再出现单独一行的 ---(会被当分隔符),
+    注意头尾内容里不能再出现单独一行的 ---(会被当分隔符),
     文件里有多行 --- 时只按第一行切并 WARN 提醒。
     """
     if not path:
@@ -245,7 +245,7 @@ async def handle_help(bot: Bot, event: Event, matcher: Matcher):
     user_id = event.get_user_id() or ""
     is_admin = f"{adapter_name}:{user_id}" in plugin_config.hermes_admin_users
 
-    # 低危⑬(2026-10-14):菜单文件读取挪出事件循环(同步 IO 会堵住其他消息处理)
+    # 菜单文件读取挪出事件循环(同步 IO 会堵住其他消息处理)
     header, footer = await asyncio.to_thread(load_help_menu_decor, plugin_config.hermes_help_menu_file)
     help_text = build_help_text(target.private, is_admin, header=header, footer=footer)
     await alconna.UniMessage(help_text).send(target=target, bot=bot)
@@ -257,7 +257,7 @@ status_command = on_command("hermes-status", force_whitespace=True, priority=88,
 
 @status_command.handle()
 async def handle_status(bot: Bot, event: Event, matcher: Matcher):
-    """打印插件 M1-mem 运行时状态:MCP / 活跃 session / buffer / registry。"""
+    """打印插件 运行时状态:MCP / 活跃 session / buffer / registry。"""
     target = alconna.get_target()
     if not check_isolation(event, target):
         matcher.skip()
@@ -305,7 +305,7 @@ def build_status_lines(now_ms: int) -> list[str]:
         for s in _mcp.active_sessions.list():
             # 按管理器 is_alive_with_lease(TTL + key 级租约)而非 ttl_left>0:正在跑长 turn 的群
             # 带着租约,窗口虽已过 TTL 但仍在监听 —— 诊断命令把它藏起来,恰好藏掉了
-            # 最需要看见的那一个。(本部署补丁 2026-10-02: 租约改 key 级)
+            # 最需要看见的那一个。(本部署补丁: 租约改 key 级)
             if not _mcp.active_sessions.is_alive_with_lease(s.adapter, s.group_id, now_ms):
                 continue
             active_count += 1
@@ -451,7 +451,7 @@ async def handle_run_stop(bot: Bot, event: Event, matcher: Matcher):
     else:
         await alconna.UniMessage(f"终止请求未被受理: {live.run_id}(run 可能已自行结束)").send(target=target, bot=bot)
 
-# --- /reasoning(2026-10-14 维护者定案,管理员;全局推理档位快切) ---
+# --- /reasoning(管理员;全局推理档位快切) ---
 # 链路:hermes config set 原子改写 config.yaml → api_server 每请求现读 → 即时全局生效,
 # gateway 与 nb 均无需重启;chat/completions 与 runs 通道共用同一回退路径。
 reasoning_command = on_command("reasoning", force_whitespace=True, priority=88, block=True)
@@ -561,7 +561,7 @@ async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna
             f"用法: /approve <once|session|always|deny>(当前挂起 {approvals_pending_count()} 条)"
         ).send(target=target, bot=bot)
         return
-    # 低危⑬(2026-10-14):看→答→删全程持锁,两把并发 /approve 不会 peek 到同一条目
+    # 看→答→删全程持锁,两把并发 /approve 不会 peek 到同一条目
     async with approvals_answer_lock:
         entry = approvals_peek_oldest()
         if entry is not None:

@@ -227,14 +227,14 @@ async def send_text_with_media(
     text: str,
     media_urls: Sequence[str] = (),
     at_user_id: str | None = None,
-    reply_to_msg_id: str | None = None,  # 保留至 M2(函数体未使用)
+    reply_to_msg_id: str | None = None,
     adapter_name: str | None = None,
 ) -> bool:
     """组装并发送一条消息,返回是否发送成功。
 
     - target 是 alconna Target(只在内存可用)
     - 群聊默认在文本前加 At(at_user_id);为 None 不 at
-    - reply_to_msg_id: 保留至 M2。alconna Reply 段在多 adapter 下兼容性不一,
+    - reply_to_msg_id: 保留位。alconna Reply 段在多 adapter 下兼容性不一,
       当前不强制使用;保留此参数供未来兼容扩展(noqa: ARG001 直到接入)。
     - 空消息(text='' 且无有效媒体——http/https URL 或可解码的 data:image)直接返回
       False 不发,防 Task 12 push 路径在 Hermes 回空时构造空 UniMessage 发送出去。

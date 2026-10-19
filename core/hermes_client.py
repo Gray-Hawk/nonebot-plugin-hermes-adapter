@@ -2,7 +2,7 @@
 Hermes API Server HTTP 客户端
 
 通过 /v1/chat/completions 与 Hermes Agent 通信。
-M1-mem 路径 B(P0-spike 决策):tools/tool_choice 被 Hermes 吞掉,改用 system prompt 强约束 + JSON5 容错解析。
+tools/tool_choice 被 Hermes 吞掉,改用 system prompt 强约束 + JSON5 容错解析。
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from .run_tracker import make_scope_key
 UserContent = str | list[dict[str, Any]]
 
 # 出站媒体引用形态正则(_MD_IMAGE_PATTERN / _MEDIA_TAG_PATTERN)的单一来源:
-# core/media_patterns.py(2026-10-16 同源化收口批,审计确认8)——与
+# core/media_patterns.py——与
 # media_whitelist 的内联收口共用同一组,任一侧形态改动即两侧同步。import 见文首。
 
 # Hermes apiserver 把 provider 端错误包成 502, body 形如:
@@ -97,7 +97,7 @@ def _find_first_balanced_json_object(text: str) -> str | None:
     return None
 
 
-# 字段行单一来源:core/decision_contract.py(2026-10-16 同源化收口批,审计确认5);
+# 字段行单一来源:core/decision_contract.py;
 # 渲染形态与收口前逐字节一致。与中文协议块「两份都在场」的现状不变。
 _DECISION_HINT = (
     "\n\n=== STRUCTURED OUTPUT ===\n"
@@ -231,7 +231,7 @@ def _summarize_error_body(body: str) -> tuple[str, int | None]:
 
 
 def _transport_failure(status: int, body: str) -> "ChatResult":
-    """非 200 响应的统一归纳(本部署补丁 2026-10-08 抽出, 非流式/流式分支共用)。
+    """非 200 响应的统一归纳(本部署补丁抽出, 非流式/流式分支共用)。
 
     403 识别:外层 HTTP 状态或 502 包裹的内层 status 任一为 403 即打
     is_forbidden_error 硬标记,handler 层据此硬静默(防 key 失效/额度耗尽时
@@ -295,7 +295,7 @@ def extract_response_media(text: str) -> tuple[str, list[str], list[str]]:
     """从 Hermes 回复中提取 markdown 图片 / MEDIA: 标签 URL,返回 (清洗后文本, URL 列表, 本地文件路径列表)。
 
     两种标签同一套分流规则:http(s) 与 data:image/…;base64 进媒体列表;
-    主机本地路径(本部署补丁 2026-10-08 起)进 file_paths 供 send_local_files
+    主机本地路径(本部署补丁起)进 file_paths 供 send_local_files
     上传文件本体(白名单判定在发送侧), 文本原位仍留 [生成了文件: 文件名]
     占位——上传被白名单拒绝时用户仍能看到提示, 上传成功时占位符即说明文字;
     其余 data: 非图片 payload 直接去掉。
@@ -344,7 +344,7 @@ _SALVAGE_TOPIC_HINT_RE = re.compile(
     r"[\"']topic_hint[\"']\s*:\s*(?P<q>[\"'])(?P<v>(?:\\.|(?!(?P=q)).)*)(?P=q)?", re.DOTALL
 )
 _SALVAGE_EXIT_ACTIVE_RE = _salvage_bool_re("should_exit_active")
-# M1 收尾(2026-10-17 维护者拍板):not_final 入救补——布尔抠错概率低,丢失则
+# not_final 入救补——布尔抠错概率低,丢失则
 # 回执发出但续跑轮没来=任务烂尾;其余字段(锚家族/at_user_id)抠错代价大于丢失,
 # 维持不认。
 _SALVAGE_NOT_FINAL_RE = _salvage_bool_re("not_final")
@@ -391,7 +391,7 @@ def _salvage_truncated_reply_text(text: str) -> dict[str, Any] | None:
     m_exit = _SALVAGE_EXIT_ACTIVE_RE.search(text)
     if m_exit:
         out["should_exit_active"] = m_exit.group(1).lower() == "true"
-    # M1 收尾(2026-10-17):not_final 也捞——它丢了=回执发出但续跑轮没来=烂尾。
+    # not_final 也捞——它丢了=回执发出但续跑轮没来=烂尾。
     m_nf = _SALVAGE_NOT_FINAL_RE.search(text)
     if m_nf:
         out["not_final"] = m_nf.group(1).lower() == "true"
@@ -547,7 +547,7 @@ _PROVIDER_ERROR_MARKERS = (
     "invalid_request_error",
 )
 
-# 上游 turn_failure_copy 的鉴权失败引导文案 (2026-10-09 实测线上模型 5h 额度 403):
+# 上游 turn_failure_copy 的鉴权失败引导文案 (实测线上模型 5h 额度 403):
 #   "{label} rejected your API key, so the model can't be reached. ...\n\nProvider said: HTTP 403: ..."
 # "HTTP 403" 被挪到第二段,老前缀正则失配,报错被当正常回复发进群。
 # 认完整固定句式而非锚定开头:该句式只由上游失败路径生成,模型正常回复不会逐字产出。
@@ -563,7 +563,7 @@ _PROVIDER_AUTH_COPY_RE = re.compile(
 #    \n\nProvider said: Connection error."
 # 认 CLI 指令残片而非 lead 句(lead 带 {label}/{attempts} 模板参数且上游会演进):
 # 面向 QQ 的正常回复绝不会教用户敲 hermes CLI。非重试家族(model_not_found /
-# format_error / ssl / policy_blocked 等)刻意不覆盖——它们语义不同,维护者未拍板。
+# format_error / ssl / policy_blocked 等)刻意不覆盖——它们语义不同,尚未拍板。
 _PROVIDER_OUTAGE_COPY_RE = re.compile(
     r"hermes\s+fallback\s+add"
     r"|send\s+/retry[^\n]{0,80}?switch\s+models\s+with\s+/model",
@@ -582,7 +582,7 @@ def is_provider_error_text(text: str) -> bool:
     老形态:前缀与特征词必须同时命中:只认前缀会把正经聊到状态码的回复误伤,只认特征词会把
     讨论报错本身的对话误伤 —— 而误伤的代价是把用户想要的回答换成一句兜底。
     新形态(鉴权引导文案):固定句式直接命中,不再要求特征词。
-    本部署补丁(2026-10-11): 暂不可用引导文案家族同理会骗过前两道,直接认 CLI 残片。
+    本部署补丁:暂不可用引导文案家族同理会骗过前两道,直接认 CLI 残片。
     """
     if not text:
         return False
@@ -633,7 +633,7 @@ _INTERIM_MIN_CHARS = 2
 class InterimSegmenter:
     """SSE 行流 → 旁白段切分 + 最终回复累积。纯逻辑无网络依赖,可单测。
 
-    实测时序(2026-10-08 对生产 api_server 探测): agent 每轮工具调用前的旁白
+    实测时序(对生产 api_server 探测): agent 每轮工具调用前的旁白
     content delta 完整流出之后, 该轮的 hermes.tool.progress(status=running) 帧
     才到达。因此以 running 帧为段界: 帧到时把累积缓冲作为一段旁白吐出; EOS 时
     剩余缓冲即最终回复。无工具的 turn 没有 running 帧, 整段=最终回复,
@@ -672,7 +672,7 @@ class InterimSegmenter:
             # 其余带名事件帧(approval.request / hermes.status 等)一律不消费。
             # approval.request 的 payload 带 choices=["once","session",...](list[str]),
             # 漏到下方会被当 chat chunk 解析, choices[0].get 抛 AttributeError
-            # ('str' object has no attribute 'get'), 2026-10-12 实证炸断 SSE。
+            # ('str' object has no attribute 'get') 实证炸断 SSE。
             return None
         # 普通 chat.completion.chunk(无 event 名): 只取 content delta, reasoning 等丢弃
         choices = payload.get("choices") if isinstance(payload, dict) else None
@@ -866,7 +866,7 @@ class ChatResult:
     structured: dict[str, Any] | None = None
     media_urls: list[str] = field(default_factory=list)
     file_paths: list[str] = field(default_factory=list)
-    """本部署补丁(2026-10-08): 回复里引用到的本地文件路径(MEDIA:/path 等),
+    """本部署补丁: 回复里引用到的本地文件路径(MEDIA:/path 等),
     供 handler 层 send_local_files 上传文件本体。白名单判定在发送侧。"""
     parse_failed: bool = False
     """期望结构化输出但解析失败(JSON 提取不到 / json5 解析报错 / 非 dict 类型)。"""
@@ -1061,7 +1061,7 @@ class HermesClient:
                 content = parts
 
         if system_prompt is None:
-            # 头段单一拼装处:core/message_context.py(2026-10-16 同源化收口批,
+            # 头段单一拼装处:core/message_context.py(同源化收口批,
             # 审计确认7);与 prompt_builder.build_passive_system_prompt 同源,
             # 字节一致由代码同源保证(原先靠测试互锁)。
             system_prompt = render_message_context_head(
@@ -1089,7 +1089,7 @@ class HermesClient:
         headers = self.get_headers(session_key, memory_key, api_key=tgt.api_key)
         runs_pending_steer = ""
 
-        # 低危⑧(2026-10-14):幂等键每轮只造一次,429 自动重试与提交段网络重试都
+        # 幂等键每轮只造一次,429 自动重试与提交段网络重试都
         # 复用同一键——网关 lost-acceptance 重放只认同键同指纹,每试一次换键等于
         # 名不副实,还会在提交应答丢失时放大出孤儿 run。
         turn_idem_key = f"turn-{uuid.uuid4().hex}"
@@ -1150,7 +1150,7 @@ class HermesClient:
                 )
             return final_content, rotated, None, ""
 
-        # 阶段2d(维护者定案「丢了就贴」前置):429 满额先自动重试一次(Retry-After: 1s),
+        # 阶段2d(「丢了就贴」前置):429 满额先自动重试一次(Retry-After: 1s),
         # 再 429 才归纳上抛——贴表情是「重试也进不去」的兜底,不是一见 429 就躺。
         _rl_retried = False
         while True:
@@ -1238,15 +1238,15 @@ class HermesClient:
             logger.warning(
                 f"[HERMES] 上游以 200 返回了 provider 报错,按传输失败处理 (raw_len={len(raw_text)} preview={preview!r})"
             )
-            # 本部署补丁(2026-10-08): 文本形态 "HTTP 403: ..." 的 provider 鉴权错误
+            # 本部署补丁:文本形态 "HTTP 403: ..." 的 provider 鉴权错误
             # 同样打硬标记,handler 硬静默。
-            # 2026-10-09 扩展:引导文案形态 ("...rejected your API key... Provider said: HTTP 403: ...")
+            # 扩展:引导文案形态 ("...rejected your API key... Provider said: HTTP 403: ...")
             # 的 403 不在开头,此处已认定是 provider 报错,全文搜 "HTTP 403" 即可,无误伤面。
             forbidden = bool(
                 re.match(r"^\s*HTTP\s+403\b", raw_text, re.IGNORECASE)
                 or re.search(r"\bHTTP\s+403\b", raw_text, re.IGNORECASE)
             )
-            # 本部署补丁(2026-10-11): 暂不可用引导文案家族打独立硬标记,
+            # 本部署补丁:暂不可用引导文案家族打独立硬标记,
             # handler 与 403 同口径硬静默。
             outage = is_provider_outage_text(raw_text)
             return _out(ChatResult(
@@ -1306,7 +1306,7 @@ class HermesClient:
                 except Exception:
                     logger.warning("[HERMES] 旁白转发失败(不影响主 turn)", exc_info=True)
         # 流式下上游不做 _resolve_media_to_data_urls(只在非流式响应路径),
-        # 本地图片在这里按插件白名单补内联, 让 raw_text 形态与非流式一致(2026-10-08 补丁)。
+        # 本地图片在这里按插件白名单补内联, 让 raw_text 形态与非流式一致(补丁)。
         return inline_local_media_images(seg.final_text()), rotated
 
     async def respond_approval(self, *, tgt: HermesTarget, run_id: str, choice: str) -> tuple[bool, str]:
@@ -1391,7 +1391,7 @@ class HermesClient:
     async def _submit_run_with_replay(
         self, client: httpx.AsyncClient, tgt: HermesTarget, body: dict, submit_headers: dict, timeout: int
     ):
-        """POST /v1/runs 带一次网络类重试(低危⑧, 2026-10-14)。
+        """POST /v1/runs 带一次网络类重试。
 
         同一 Idempotency-Key 下重试是安全的:首次若已被网关接纳但应答丢失
         (lost-acceptance),重试命中网关幂等库,原样 202 归还同一 run_id
@@ -1443,7 +1443,7 @@ class HermesClient:
           提交段网络重试全程复用):网络抖动重交=网关重放同一 run,不重复开;
         - 错误面与流式分支对齐:提交/订阅非 2xx 抛 StreamHttpError,超时/连接/其他
           异常向上抛(chat() except 链统一接管),抛出前对 run 发 stop 止损;
-        - 图片等 content parts 原样透传(2026-10-13 实测 runs 转发给 provider)。
+        - 图片等 content parts 原样透传(实测 runs 转发给 provider)。
         """
         body = {
             "input": [{"role": "user", "content": content}],

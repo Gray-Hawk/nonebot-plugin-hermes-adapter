@@ -1,6 +1,6 @@
 """群档案（群记忆外挂）：按「适配器+群号」读取策展式纯文本档案，拼成字节稳定的注入块。
 
-设计定稿：项目文档库（2026-10-14 详细定稿）
+设计定稿：项目文档库（详细定稿）
 要点：
 - 存储：<hermes_custom_dir>/memory/<适配器>/groups/<群号>.md、people/<QQ号>.md
 - 群友行：群档案内单独一行 "群友: 1000000004, 1000000005"（冒号兼容全角，分隔兼容中文逗号）
@@ -26,7 +26,7 @@ _VALID_SEGMENT = re.compile(r"^[0-9A-Za-z_-]+$")
 # 群友行：「群友」+ 冒号（兼容全角）+ QQ 号列表（分隔兼容中文逗号与空白）。
 _BUDDY_LINE = re.compile(r"^群友\s*[:：]\s*(\S.*)$")
 
-# 单群注入块体积上限（2026-10-14 维护者拍板）：超限只 WARN 不截断。
+# 单群注入块体积上限：超限只 WARN 不截断。
 _MAX_BLOCK_CHARS = 4000
 
 # key=(adapter, group_id) → (签名, 注入块|None)。签名=涉及文件 (路径, mtime) 元组，
@@ -57,7 +57,7 @@ def _parse_buddy_ids(group_text: str) -> list[str]:
 
 
 def sync_buddy_to_group(adapter: str | None, group_id: str | None, user_id: str | None) -> bool:
-    """发言者已有画像但不在群友行时，自动补进群友行（2026-10-15 维护者定案）。
+    """发言者已有画像但不在群友行时，自动补进群友行。
 
     每次群消息入站时检查：user_id 在 people/ 目录有画像，但不在当前群友行，
     则自动加入群友行。返回是否有实际更新。
@@ -71,7 +71,7 @@ def sync_buddy_to_group(adapter: str | None, group_id: str | None, user_id: str 
         if custom_dir is None:
             return False
         group_path, people_dir = _profile_paths(custom_dir, adapter, group_id)
-        # 身份表挂钩（2026-10-15）：merged 小号的画像归主档文件
+        # 身份表挂钩：merged 小号的画像归主档文件
         people_file = people_dir / f"{_identity.resolve_people_id(custom_dir, adapter, user_id)}.md"
         if not people_file.exists():
             return False  # 无画像，不自动补
@@ -124,7 +124,7 @@ def _assemble(group_text: str, buddies: list[tuple[str, str]]) -> str:
 
 
 def _profile_paths(custom_dir: Path, adapter: str, group_id: str) -> tuple[Path, Path]:
-    """档案路径构造的唯一收口（2026-10-14 维护者注：文件结构后续可能调整，
+    """档案路径构造的唯一收口（文件结构后续可能调整，
     改结构只动这个函数）。返回 (群档案路径, 群友画像目录)。"""
     base = custom_dir / "memory" / adapter
     return base / "groups" / f"{group_id}.md", base / "people"
@@ -138,7 +138,7 @@ def _build_block(
     if custom_dir is None:
         return (), None  # 开关关闭或解析失败：不缓存，下轮重试
     group_path, people_dir = _profile_paths(custom_dir, adapter, group_id)
-    # 2026-10-15 补丁：档案不存在时自动创建基础模板，避免"群档案丢失"漏洞
+    # 本部署补丁:档案不存在时自动创建基础模板，避免"群档案丢失"漏洞
     if not group_path.exists():
         try:
             group_path.parent.mkdir(parents=True, exist_ok=True)
@@ -151,7 +151,7 @@ def _build_block(
     if group_text is None:
         return tuple(signature), None
     buddies: list[tuple[str, str]] = []
-    # 身份表挂钩（2026-10-15）：merged 小号读主档画像文件
+    # 身份表挂钩：merged 小号读主档画像文件
     for qq in _parse_buddy_ids(group_text):
         p = people_dir / f"{_identity.resolve_people_id(custom_dir, adapter, qq)}.md"
         signature.append((str(p), _mtime(p)))
@@ -175,7 +175,7 @@ def build_group_profile_block(adapter: str | None, group_id: str | None) -> str 
     """
     try:
         if not plugin_config.hermes_group_profile_enabled:
-            return None  # 功能开关关闭（缺省开，2026-10-14 维护者定稿）
+            return None  # 功能开关关闭（缺省开）
         if not (adapter and group_id and _valid_segment(adapter) and _valid_segment(group_id)):
             return None
         key = (adapter, group_id)

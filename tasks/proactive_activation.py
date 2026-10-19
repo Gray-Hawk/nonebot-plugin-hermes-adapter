@@ -35,7 +35,7 @@ _TICK_SEC = 30
 _next_check_at: dict[tuple[str, str], float] = {}
 _last_check_at: dict[tuple[str, str], float] = {}
 
-# 阶段2c(维护者 2026-10-13 定案,原话「巡查必须异步了,同步模式会一瞬间挤占好几个
+# 阶段2c(原话「巡查必须异步了,同步模式会一瞬间挤占好几个
 # 队列」):巡查改全局串行队列——到龄群进队列去重,全局同一时刻最多 1 发巡查
 # turn 在跑;失败(含 429)即弃不重试,下轮 T2 自然再查。
 # 旧形态是同 tick 多群到龄就 create_task 并发点火,每发捏着一个 gateway 全局槽
@@ -72,7 +72,7 @@ async def _drain_patrol_queue(run_one) -> None:
         while _patrol_queue:
             adapter, scope_id, kwargs = _patrol_queue.popleft()
             _patrol_queued.discard((adapter, scope_id))
-            # 巡查迟到闸门: 入队到点火可能隔几分钟
+            # 入队到点火可能隔几分钟
             # (串行队列前车未走),期间窗口转活跃/有 turn 在跑 → 本轮直接弃。
             # tick 入口的检查只是便宜前置过滤,这道才是执行时的真实闸门。
             recheck_ms = int(time.time() * 1000)
@@ -174,7 +174,7 @@ def register_proactive_activation() -> None:
                     group_id=scope_id,
                     text=_PROACTIVE_PROMPT,
                     image_urls=[],
-                    is_explicit_trigger=False,
+                    is_direct=False,
                     addressed_to_bot=False,
                     now_ms=now_ms,
                     ephemeral=True,

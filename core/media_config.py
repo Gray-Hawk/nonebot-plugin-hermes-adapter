@@ -1,15 +1,15 @@
 """媒体投送配置：`<hermes_custom_dir>/media_config.yaml`，现读现用（保存即生效）。
 
-2026-10-15 维护者定稿「图片投送管线三模式改造」的配置载体（设计定案与施工规划见
+「图片投送管线三模式改造」的配置载体（设计定案与施工规划见
 项目文档库）：
 
 - 三模式：full 全内联 / semi 半内联（前后窗口内有 @bot 才内联）/ off 全占位符
 - 例外名单：按用户 id 覆盖内联行为——off=永不内联（可拉图）/ semi=按半内联规则收窄；
-  优先级低于总 mode（总 off 全灭）。full 值不实装（2026-10-16 维护者补充拍板），
+  优先级低于总 mode（总 off 全灭）。full 值不实装，
   解析层遇 full 按未支持值 WARN 跳过
 - 压缩档、拉图大小门、抽帧帧数、表情门控全部在此，不进 .env
 
-格式约定（维护者 2026-10-15 定）：人改的配置一律 YAML（可注释），纯机器读的才用 JSON。
+格式约定：人改的配置一律 YAML（可注释），纯机器读的才用 JSON。
 
 纪律：文件缺失/坏档 → 全默认值（WARN 一次，内容变化才再警告）；字段类型错
 按字段回退默认。此文件只读不写，任何字段缺失都有缺省。
@@ -27,7 +27,7 @@ from ..config import resolve_custom_dir
 
 _CONFIG_FILENAME = "media_config.yaml"
 
-# 缺省值（2026-10-15 维护者拍板）
+# 缺省值
 _DEFAULT_MODE = "semi"
 _DEFAULT_SEMI_WINDOW = 3
 _DEFAULT_INLINE_LADDER: tuple[tuple[int, int], ...] = ((2048, 80), (1024, 70))
@@ -38,12 +38,12 @@ _DEFAULT_FETCH_LADDER: tuple[tuple[int, int], ...] = ((4096, 95), (4096, 70))
 _DEFAULT_FETCH_GIF_MAX_FRAMES = 10
 _DEFAULT_STICKER_GATE_BYTES = 200_000
 _DEFAULT_FORWARD_IMAGE_CAP = 30
-"""单条消息合并转发图的注册上限(2026-10-15 定案):超出截断 + WARN,按内容去重。
+"""单条消息合并转发图的注册上限:超出截断 + WARN,按内容去重。
 转发图只注册发号、按需拉图,恒不内联(见规划书 §5 Q3 / §8)。"""
 
 _VALID_MODES = ("full", "semi", "off")
 
-# 例外名单实装两档(2026-10-16 维护者补充拍板:full 值不实装,按未支持值跳过)。
+# 例外名单实装两档。
 # off=该用户图永不内联(可拉图);semi=该用户图按半内联规则收窄
 # (总 full 下不再恒收,只在 semi 窗口命中时收;总 semi 下与默认一致)。
 _EXEMPTION_MODES = ("off", "semi")
@@ -110,7 +110,7 @@ _last_exempt_warn: str = ""
 def _parse_exemptions(raw: Any) -> dict[str, str]:
     """例外名单：{用户id: 模式}；id 只允许数字/字母/下划线/横线。
 
-    实装两档(2026-10-16 维护者补充拍板):off / semi。其余值(含 full)按未支持值
+    实装两档:off / semi。其余值(含 full)按未支持值
     跳过 + WARN;WARN 按内容去重——load_media_config 每轮现读现用,不去重会让
     一个坏条目每轮回放一条告警刷屏(与文件级 WARN 同款去重风格)。
     """

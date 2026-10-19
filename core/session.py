@@ -33,7 +33,7 @@ class SessionManager:
         """internal_id -> 最后一次 chat() 完成 / push_message 成功的 epoch 秒"""
         self._idle_paused: set[str] = set()
         """被 /delay 暂停 T1 计时的 internal_id"""
-        # 增量推送水位(2026-10-12 维护者立项):internal_id -> (session_key, 已推最大消息 id)。
+        # 增量推送水位:internal_id -> (session_key, 已推最大消息 id)。
         # 内存态即可——nb 重启丢水位的代价只是每群首 turn 全量重推一次,无副作用。
         self._push_watermark: dict[str, tuple[str, int]] = {}
 
@@ -43,7 +43,7 @@ class SessionManager:
         未绑定时整个管理器退化成纯内存,行为不变——但那样重启会退回派生 key,
         既复活被 /clear 掉的会话,也会把已被上游压缩关闭的父会话重新钉上。
 
-        载入后做 T1 全量播种(2026-10-01 定案):所有已知会话以开机时刻为活动
+        载入后做 T1 全量播种(定案):所有已知会话以开机时刻为活动
         基准,重启后沉默满 T1 即被自动清掉。不设 generation 门槛——T1 上线后
         generation 本来就快速上涨,gen=0 条件会迅速失效成摆设;反复清理的代价
         仅为本地计数器 +1(不上游、无消息、无 LLM 调用),可接受。
@@ -52,7 +52,7 @@ class SessionManager:
         for internal_id, (session_key, generation) in store.load_all().items():
             self._cache[internal_id] = session_key
             self._generation[internal_id] = generation
-        # 2026-10-17:/delay 暂停集合装回(原内存态重启即失效)。
+        # /delay 暂停集合装回(原内存态重启即失效)。
         self._idle_paused.update(store.load_idle_paused())
         now = time.time()
         seeded = 0
@@ -244,7 +244,7 @@ class SessionManager:
         self.get_session_key(adapter_name, is_private, user_id, group_id)
         logger.info(f"[SESSION] 会话已重置: {internal_id} (generation={gen})")
 
-    # --- 增量推送水位(2026-10-12 维护者立项,仅群聊 reactive 使用) ---
+    # --- 增量推送水位(仅群聊 reactive 使用) ---
 
     def get_push_watermark(
         self, adapter_name: str, user_id: str, group_id: str
@@ -336,7 +336,7 @@ class SessionManager:
         paused: bool,
     ) -> str:
         """/delay(paused=True)暂停 T1;/resume(paused=False)恢复并重置计时。
-        返回 internal_id 供日志用。2026-10-17 起持久化到 session_keys.db。"""
+        返回 internal_id 供日志用。持久化到 session_keys.db。"""
         internal_id = self._get_internal_id(adapter_name, is_private, user_id, group_id)
         if paused:
             self._idle_paused.add(internal_id)

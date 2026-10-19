@@ -1,11 +1,11 @@
-"""分级反馈规则引擎(2026-10-13,维护者定案:规则文件化,可自定义;2026-10-16 schema v2)。
+"""分级反馈规则引擎(规则文件化,可自定义;schema v2)。
 
 规则来源:定制目录下的 `feedback_rules.yaml`,现读现用(保存即生效)。
-目录缺省=localstore 插件数据目录(2026-10-14 定稿);文件缺失/解析失败/规则为空
+目录缺省=localstore 插件数据目录(定稿);文件缺失/解析失败/规则为空
 → 回退内置默认两条并 WARN(每进程只 WARN 一次)。
 
-2026-10-16 章三迁移:旧 `feedback_rules.json` 不再读取——存在时 WARN 提示迁移,
-不双轨并行。人改的配置一律 YAML(可注释,维护者既定约定;媒体侧 media_config.yaml
+章三迁移:旧 `feedback_rules.json` 不再读取——存在时 WARN 提示迁移,
+不双轨并行。人改的配置一律 YAML(可注释,媒体侧 media_config.yaml
 先例)。模板见插件根目录 `feedback_rules.example.yaml`。
 
 文件格式(schema v2,带版本号;顶层加 key 不炸旧文件):
@@ -28,7 +28,7 @@ rules:
 ```
 
 防呆:每条 pattern 加载即 compile,坏规则跳过并 WARN(其余规则不受影响);
-嵌套量词(灾难性回溯形态)加载时静态拒收(2026-10-17 H6 修复);运行时仍无
+嵌套量词(灾难性回溯形态)加载时静态拒收;运行时仍无
 超时保护,未覆盖形态见 _DANGEROUS_NESTED_QUANT_RE 注释与乙方案备选。
 
 动作语义:
@@ -38,7 +38,7 @@ rules:
   接力硬计数,上限 2 次,超限照发并 WARN。
 - bounce:回复不投递,追加重交轮;同 scope 连续计数,第二次检出起放行残片 + 贴便签。
 - confirm/relay/bounce 只对 reply 生效——旁白是过程文本,不当真触发后续轮。
-- 总闸(维护者 2026-10-16 定):缺省不拦截——没有任何 relay/bounce 规则时,
+- 总闸:缺省不拦截——没有任何 relay/bounce 规则时,
   系统无任何拦截/接力行为。
 """
 
@@ -66,7 +66,7 @@ _QUOTED_ENVELOPE_FIELD_RE = re.compile(
 # 关键词位置切句:中英句末标点 + 分号 + 换行(句首/句尾的「句」按此拆)。
 _SENTENCE_SPLIT_RE = re.compile(r"[。！？!?；;\n]+")
 
-# H6 修复(2026-10-17,维护者拍板甲方案):加载时静态预检灾难性回溯形态。
+# 加载时静态预检灾难性回溯形态。
 # 检测「组内含 +/* 量词、组外又紧跟 +/* 量词」的嵌套量词(如 (a+)+、(\w+)*),
 # 命中即拒收该规则——这类写法在不匹配时指数爆炸,会同步卡死整个事件循环。
 # 首版从窄:只抓括号不嵌套的两层形态;(x|x)* 重叠分支、(a{2,})+ 花括号嵌套、
@@ -108,7 +108,7 @@ class FeedbackRule:
         return False
 
 
-# 内置默认规则(2026-10-13 维护者合成方案的两条首发)。pattern 用窄表,宁可漏不可滥。
+# 内置默认规则。pattern 用窄表,宁可漏不可滥。
 # 落盘形态(=feedback_rules.example.yaml 的注释版)与这里逐字段同义。
 _BUILTIN_RULES = (
     {
@@ -201,7 +201,7 @@ def _parse_rule(raw: dict) -> FeedbackRule | None:
         regex = None
         if raw_pattern:
             pattern_str = str(raw_pattern)
-            # H6(2026-10-17):嵌套量词静态预检,灾难形态拒收(其余规则不受影响)。
+            # 嵌套量词静态预检,灾难形态拒收(其余规则不受影响)。
             if _DANGEROUS_NESTED_QUANT_RE.search(pattern_str):
                 raise ValueError("正则含嵌套量词,灾难性回溯风险,拒收该规则")
             regex = re.compile(pattern_str)

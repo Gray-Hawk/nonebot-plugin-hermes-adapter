@@ -1,6 +1,6 @@
 """push_message: Hermes 反向调用,nonebot 主动发送一条消息到群。
 
-约束(M1):
+约束:
   - (adapter, group_id) 必须有活跃 reactive session
   - BotRegistry 必须有该 (adapter, group_id) 的 Target
 不满足任一条件返回 422 等价错误(由 FastMCP 序列化为 isError=true)。
@@ -106,7 +106,7 @@ async def push_message_impl(
         return PushMessageResult(ok=False, error=str(exc))
 
     # 防御:即使 validate 通过了,这里二次 get 之间存在理论 TOCTOU 窗口
-    # (registry 没 TTL,M1 内不会自动 evict,但 python -O 下 assert 会被剥除,
+    # (registry 没 TTL,短期内不会自动 evict,但 python -O 下 assert 会被剥除,
     # 走 if 而非 assert 保 push_message 整体错误面收敛在 PushMessageResult 里)
     entry = bot_registry.get(inp.adapter, "group", inp.group_id)
     if entry is None:
