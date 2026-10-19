@@ -303,10 +303,10 @@ def build_status_lines(now_ms: int) -> list[str]:
     active_details: list[str] = []
     if _mcp.active_sessions is not None:
         for s in _mcp.active_sessions.list():
-            # 按管理器 is_alive(TTL + key 级租约)而非 ttl_left>0:正在跑长 turn 的群
+            # 按管理器 is_alive_with_lease(TTL + key 级租约)而非 ttl_left>0:正在跑长 turn 的群
             # 带着租约,窗口虽已过 TTL 但仍在监听 —— 诊断命令把它藏起来,恰好藏掉了
             # 最需要看见的那一个。(本部署补丁 2026-10-02: 租约改 key 级)
-            if not _mcp.active_sessions.is_alive(s.adapter, s.group_id, now_ms):
+            if not _mcp.active_sessions.is_alive_with_lease(s.adapter, s.group_id, now_ms):
                 continue
             active_count += 1
             ttl_left = max(0, (s.expires_at - now_ms) // 1000)
@@ -571,7 +571,7 @@ async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna
                 choice=choice,
             )
             if ok:
-                # 2026-10-13 审核修复(中危⑦): 先应答后删单——失败留单,管理员可重试
+                # 先应答后删单——失败留单,管理员可重试
                 approvals_acknowledge(entry.approval_id)
     if entry is None:
         await alconna.UniMessage("当前没有挂起的审批(可能已超时自动拒绝)").send(target=target, bot=bot)

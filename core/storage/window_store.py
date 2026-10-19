@@ -38,7 +38,7 @@ class WindowStore:
 
     def __init__(self, db_path: Path) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        # M30 修复:check_same_thread=False,与 MessageStore/SessionKeyStore
+        # check_same_thread=False,与 MessageStore/SessionKeyStore
         # 的加固对齐——NoneBot driver 可能在多 thread 上访问 ASGI 应用;写入方只有
         # event loop 一个,本参数只为放宽 sqlite3 模块自身的线程检查。手动 commit
         # 语义保持不变。
@@ -106,6 +106,7 @@ def session_to_payload(s) -> dict[str, Any]:
         "last_bot_reply_media": s.last_bot_reply_media,
         "last_bot_reply_text": (s.last_bot_reply_text or "")[:_REPLY_TEXT_CAP],
         "last_strong_activation_at": s.last_strong_activation_at,
+        "generation": s.generation,
         "anchor_master": _anchor(s.anchor_master),
         "anchor_guest": _anchor(s.anchor_guest),
     }
@@ -160,6 +161,7 @@ def session_from_payload(adapter: str, group_id: str, payload: dict[str, Any]):
         last_bot_reply_media=int(payload.get("last_bot_reply_media") or 0),
         last_bot_reply_text=str(payload.get("last_bot_reply_text") or ""),
         last_strong_activation_at=int(payload.get("last_strong_activation_at") or 0),
+        generation=int(payload.get("generation") or 0),
         anchor_master=_anchor(payload.get("anchor_master")),
         anchor_guest=_anchor(payload.get("anchor_guest")),
     )

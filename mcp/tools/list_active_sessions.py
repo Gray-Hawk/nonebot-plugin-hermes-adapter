@@ -38,7 +38,7 @@ async def list_active_sessions_impl(
 
     `ActiveSessionManager.list()` 本身不做 TTL 过滤(它是裸 dict 扫描);
     Task 16 的 cron sweep_expired 周期性清理(默认 30s/次),意味着 list 与 sweep
-    之间存在最长 30s 的"陈旧条目"窗口。本工具在工具层主动按 `is_alive` 过滤,确保
+    之间存在最长 30s 的"陈旧条目"窗口。本工具在工具层主动按 `is_alive_with_lease` 过滤,确保
     Hermes 拿到的"活跃"列表与 push_message 的 validate_push_context 口径一致——
     避免 Hermes 看到一个陈旧 session、立刻 push、然后 422。反过来同样重要:正在跑
     长 turn 的群带着 turn 租约(窗口不判过期),这里必须跟着算活的,否则 Hermes 会
@@ -64,6 +64,6 @@ async def list_active_sessions_impl(
         # 别群的 triggered_by / topic_hint 本身就是不该外流的信息。
         # scope=None(认不出调用方)过滤掉一切。
         # 本部署补丁: 租约改 key 级,判活换管理器口径(TTL+租约)
-        if active_sessions.is_alive(r.adapter, r.group_id, now_ms) and scope is not None and scope.allows(r.adapter, r.group_id)
+        if active_sessions.is_alive_with_lease(r.adapter, r.group_id, now_ms) and scope is not None and scope.allows(r.adapter, r.group_id)
     ]
     return ListActiveSessionsResult(sessions=views)

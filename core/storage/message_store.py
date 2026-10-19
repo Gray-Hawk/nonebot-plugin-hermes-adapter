@@ -97,7 +97,7 @@ class MessageStore:
     def append(self, msg: BufferedMessage) -> int | None:
         """写入消息,回填 msg.id。失败返回 None 但不抛。
 
-        M28 修复:主行 + 图片行 + 转发行圈成一个显式事务——连接是
+        主行 + 图片行 + 转发行圈成一个显式事务——连接是
         autocommit(isolation_level=None),逐语句各自提交,中途崩溃会留「有消息缺图」
         的半截行。
         """

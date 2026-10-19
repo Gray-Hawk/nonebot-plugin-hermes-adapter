@@ -27,7 +27,7 @@ _SCHEMA_STATEMENTS = [
         updated_at   REAL    NOT NULL
     )
     """,
-    # M24 修复(2026-10-17):投递轮询水位持久化。原内存态重启即清+首轮播种跳过
+    # 投递轮询水位持久化。原内存态重启即清+首轮播种跳过
     # 存量——nb 重启期间完成的子代理投递行被盖在水位下永不播报(维护者实测「重启后
     # 投递轮不到」)。落本库:水位本就按 session_key 记,与映射表同生命周期。
     """
@@ -47,7 +47,7 @@ _SCHEMA_STATEMENTS = [
 ]
 
 
-# M32 修复:session key 映射的持久化/装载失败从 WARN 升级为 ERROR 并
+# session key 映射的持久化/装载失败从 WARN 升级为 ERROR 并
 # 写清后果——原 WARN 混在日常噪音里,防护静默失效(重启退回派生 key、钉回已关闭的
 # 父会话,正是本模块要防的故障形态)。300s 节流防 disk-full 类持续失败刷屏。
 # 契约不变:失败降级为不持久化,绝不抛。
@@ -113,7 +113,7 @@ class SessionKeyStore:
         except Exception as exc:
             _log_store_failure("持久化 session key", exc, f" ({internal_id})")
 
-    # --- M24(2026-10-17):投递轮询水位持久化 ---
+    # --- 投递轮询水位持久化 ---
 
     def load_watermarks(self) -> dict[str, int]:
         """返回 session_key → 已扫描最大行 id。读失败返回空表(退化为旧播种语义)。"""

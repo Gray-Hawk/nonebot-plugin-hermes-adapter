@@ -72,11 +72,11 @@ async def _drain_patrol_queue(run_one) -> None:
         while _patrol_queue:
             adapter, scope_id, kwargs = _patrol_queue.popleft()
             _patrol_queued.discard((adapter, scope_id))
-            # 2026-10-13 审核修复(巡查迟到闸门,维护者定案): 入队到点火可能隔几分钟
+            # 巡查迟到闸门: 入队到点火可能隔几分钟
             # (串行队列前车未走),期间窗口转活跃/有 turn 在跑 → 本轮直接弃。
             # tick 入口的检查只是便宜前置过滤,这道才是执行时的真实闸门。
             recheck_ms = int(time.time() * 1000)
-            if _mcp.active_sessions is not None and _mcp.active_sessions.is_active(adapter, scope_id, recheck_ms):
+            if _mcp.active_sessions is not None and _mcp.active_sessions.is_alive_for_trigger(adapter, scope_id, recheck_ms):
                 logger.info(f"[HERMES proactive] 点火前复查: 窗口已活跃,本轮弃 {adapter}/{scope_id}")
                 continue
             if _mcp.inflight is not None and _mcp.inflight.is_inflight(make_inflight_key(adapter, False, "", scope_id)):
@@ -106,7 +106,7 @@ def register_proactive_activation() -> None:
         ):
             return
         # 延迟导入:handlers 依赖 mcp 运行时单例,模块级互import 会成环
-        from ..handlers.message import _handle_reactive_path
+        from ..handlers.message_relay import _handle_reactive_path
 
         now = time.time()
         now_ms = int(now * 1000)
@@ -126,7 +126,7 @@ def register_proactive_activation() -> None:
             _next_check_at[gkey] = now + interval + jitter
 
             # 触发条件三查:无活跃窗口、无 in-flight turn、窗口内有新消息
-            if _mcp.active_sessions.is_active(adapter, scope_id, now_ms):
+            if _mcp.active_sessions.is_alive_for_trigger(adapter, scope_id, now_ms):
                 continue
             if _mcp.inflight.is_inflight(make_inflight_key(adapter, False, "", scope_id)):
                 continue
