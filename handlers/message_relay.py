@@ -49,12 +49,12 @@ _chain_counts: dict[tuple[tuple[str, str], str], int] = {}
 # 值保持 int 不变,既有回归按整数断言)
 _chain_touched: dict[tuple[tuple[str, str], str], float] = {}
 
-# 私聊排队汇总成批:
+# 私聊排队汇总成批(规划书章二,topic: 项目文档库 §4):
 # turn 收尾→接力的边界才是链式连发的真凶——slot 一释放,尾随消息就各自 try_enter
 # 成功、各自开一轮;而每个接力 turn 本身又是一整轮 LLM,期间新消息继续补货。
 # 修法:收尾发现 pending 非空时不立即 pop+refire,而是**先不释放 slot**、等一个聚合窗,
 # 窗内新到消息经 try_enter 自然入队并同委托人合并(现成机制),窗后一次性 pop 开轮。
-# 维护者 2026-10-16 拍板 Q5:**全量启用**(不限长 turn);窗长按候选区间 3-5s 定稿 4s
+# **全量启用**(不限长 turn);窗长按候选区间 3-5s 定稿 4s
 # (对齐应答防抖量级:防抖 2.5s 只覆盖同 turn 内的碎片,治不了跨 turn 边界)。
 _QUEUE_AGGREGATE_WINDOW_SEC = 4.0
 
@@ -86,7 +86,7 @@ def _fire_followup_turn(
 ) -> None:
     """追加一发合成后续轮(create_task 排队,经 inflight 接力在本 turn 后跑,不并发)。
 
-    全族唯一出口(2026-10-16 Q1 合族):离场确认轮 / 类①继续执行轮 / 类②重交轮都走这里,
+    全族唯一出口(Q1 合族):离场确认轮 / 类①继续执行轮 / 类②重交轮都走这里,
     只换 tag 与 prompt。合成身份沿用现有约定:群聊 "system-check"(命中 _SYNTHETIC_USER_IDS
     豁免),私聊真实 user_id + 昵称「系统核对」(不在豁免内,靠硬计数断链)。
     """
@@ -105,7 +105,7 @@ def _fire_followup_turn(
             _handle_reactive_path(
                 bot=bot, target=target, adapter_name=adapter_name,
                 user_id="system-check", nickname=_SYNTHETIC_NICKNAME, group_id=group_id,
-                text=prompt, image_urls=[], is_explicit_trigger=False,
+                text=prompt, image_urls=[], is_direct=False,
                 addressed_to_bot=False, now_ms=_now_ms(), ephemeral=True,
             )
         )
@@ -115,7 +115,7 @@ async def _pop_pending_after_aggregate_window(
 ) -> PendingEntry | None:
     """turn 收尾取下一发:私聊被动路径先等一个聚合窗,把尾随消息并进同一条目。
 
-    私聊排队汇总成批的实现点。设计要点:
+    实现点(规划书 §4.2)。设计要点:
       - 还有 pending 时**不释放 slot**,先 await 聚合窗——窗内新到消息经 try_enter
         自然落队、并入同委托人条目(_merge_pending_message);窗满再一次性 pop 开轮。
         slot 一旦释放,尾随消息就会各自 try_enter 成功、各自开一轮,这正是要治的
@@ -136,7 +136,7 @@ async def _pop_pending_after_aggregate_window(
     return _mcp.inflight.pop_next_pending(key, after_ts=after_ts)
 
 def _release_slot_and_retry(key, adapter_name: str, is_private: bool, user_id: str, group_id) -> None:
-    """slot 释放 + 同 scope 保留行送达重试(run-resume A 方案,2026-10-16 维护者拍板)。
+    """slot 释放 + 同 scope 保留行送达重试。
 
     旧路:送达窗口超时的保留行只等下次 nb 启动,一等几小时(当日实证 2h 古董消息)。
     新径:任何 turn 收尾(slot 释放)即触发本 scope 的重试;fire-and-forget 不阻塞
@@ -189,7 +189,7 @@ async def _handle_passive_path(
         _mcp.inflight.try_enter(
             key,
             current_buffered,
-            is_explicit_trigger=True,  # passive 路径只在 (private OR active_session=off) 触发, 二者都需要 user 显式说话
+            is_direct=True,  # passive 路径只在 (private OR active_session=off) 触发, 二者都需要 user 显式说话
             original_msg_id=event_msg_id,
             now_ms=now_ms,
             commission=True,  # passive/私聊直说都按委托排队,不做闲聊 followup 合并
@@ -225,7 +225,7 @@ async def _handle_passive_path(
             # 私聊被动路径的收尾边界先过聚合窗——窗内尾随消息
             # 并入同一条目后一次性开轮;窗内 slot 不释放(见 helper docstring)。
             pending_entry = await _pop_pending_after_aggregate_window(
-                # 2026-10-16 维护者拍板:私聊聚合窗回退止血——当日三连 bug(m:id 错标/
+                # 私聊聚合窗回退止血——当日三连 bug(m:id 错标/
                 # 剥皮丢图/延迟送达)均与「合并批无单一 m:id」相关,深层拆批渲染单独立项
                 # (见 planned-mods 私聊 m:id 专项);立项落地前私聊不等聚合窗,批规模压低。
                 key, after_ts=current_buffered.ts, aggregate=False
@@ -237,7 +237,7 @@ async def _handle_passive_path(
                     _refire(
                         key=key,
                         trigger_msg=pending_entry.msg,
-                        is_explicit_trigger=pending_entry.is_explicit_trigger,
+                        is_direct=pending_entry.is_direct,
                         addressed_to_bot=pending_entry.addressed_to_bot,
                         original_msg_id=pending_entry.original_msg_id,
                         depth=1,
@@ -259,7 +259,7 @@ def _in_post_reply_cooldown(adapter_name: str, group_id: str, now_ms: int) -> bo
     两条路径都把后续非显式触发的旁观消息压在窗内,避免「同主题二次答复」。
 
     冷却仅对**非显式触发**生效——显式 @bot 必须立刻进 chat;调用方自行判断
-    `is_explicit_trigger` 后再询问本 helper。
+    `is_direct` 后再询问本 helper。
 
     冷却窗禁用 (`hermes_reactive_post_reply_cooldown_sec == 0`) 或 session 不存在
     /已过期、未记录过 last_bot_reply_at → 返回 False。
@@ -278,7 +278,7 @@ def _in_post_reply_cooldown(adapter_name: str, group_id: str, now_ms: int) -> bo
 def _steer_eligible_ids(
     adapter_name: str, is_private: bool, user_id: str, group_id: str | None, now_ms: int
 ) -> set[str]:
-    """steer 资格集合(任务锚+steer 规划书§3.1,2026-10-14 维护者定案):
+    """steer 资格集合(任务锚+steer 规划书§3.1):
     在跑 turn 触发者 ∪ 在钉锚全体参与者。私聊锚不存在,集合={live 触发者}。"""
     ids: set[str] = set()
     tracker = _mcp.run_tracker
@@ -325,7 +325,7 @@ async def _maybe_steer_direct(
     nickname: str | None,
     group_id: str | None,
     msg_text: str,
-    is_explicit_trigger: bool,
+    is_direct: bool,
     now_ms: int,
 ) -> bool:
     """资格内纯文本 steer 直注(规划书§3.2/3.3)。True=已注入,调用方不再 dispatch。
@@ -337,7 +337,7 @@ async def _maybe_steer_direct(
     if not msg_text.strip():
         return False
     if not target.private:
-        if not is_explicit_trigger:
+        if not is_direct:
             return False
         if user_id not in _steer_eligible_ids(adapter_name, False, user_id, group_id, now_ms):
             return False
@@ -353,9 +353,9 @@ async def _try_steer_followup(
     """阶段2b:把 followup 槽里的跟帖 steer 注入在跑的 run,成功=True(不再排队)。
 
     只接纯文本跟帖:带图的走不了 steer(文本通道),留在槽里走 pending。
-    表情包自 2026-10-14 起入队即剥(队列不承载),下方 sticker_urls 检查是
+    表情包自 入队即剥(队列不承载),下方 sticker_urls 检查是
     防御性保留,正常路径不会再命中。注入文本前还会再剥一次 [表情包] 占位——
-    占位对在跑 turn 是纯干扰(维护者定案),剥完无有效文本的条目不注入,
+    占位对在跑 turn 是纯干扰,剥完无有效文本的条目不注入,
     留槽走接力。
     run 已收尾(409)/无 live run/网络异常 → 留在槽里走 pending,语义与旧路完全一致。
 
@@ -393,7 +393,7 @@ async def _try_steer_followup(
         )
         return False
     content_snapshot = entry.msg.content
-    # 注入前剥掉 [表情包] 占位(2026-10-14 维护者定案):占位对在跑 turn 是纯干扰,
+    # 注入前剥掉 [表情包] 占位:占位对在跑 turn 是纯干扰,
     # 轮内不需要知道「有人发了表情包」。剥完只剩空壳(纯表情包条目,或跨人并入
     # 留下的「昵称: 」空行)→ 不注入,条目留槽走 pending 接力,语义不变。
     steer_lines = []
@@ -438,7 +438,7 @@ async def _handle_reactive_path(
     text: str,
     image_urls: list[str],
     sticker_urls: list[str] | None = None,
-    is_explicit_trigger: bool,
+    is_direct: bool,
     addressed_to_bot: bool = False,
     now_ms: int,
     nickname: str | None = None,
@@ -452,7 +452,7 @@ async def _handle_reactive_path(
     """Reactive 外壳:inflight 占位 → 调 _run_reactive_turn → finally 合并重燃。
 
     coalesce 语义:in-flight 期间到来的新触发不并发跑;委托 @ 进按委托人分键的
-    FIFO 队列(总 2/每人 1,2026-10-13 由 3 调 2),旁观闲聊只留一个最新 followup。本发完成后
+    FIFO 队列(总 2/每人 1 由 3 调 2),旁观闲聊只留一个最新 followup。本发完成后
     pop_next_pending 取下一发,用 create_task 起 _refire 接力,本 task 立即 return,
     不阻塞 NoneBot 事件循环。
 
@@ -462,25 +462,66 @@ async def _handle_reactive_path(
     """
     assert _mcp.inflight is not None and _mcp.active_sessions is not None
 
-    # 图片门控:active window + 非显式触发 + 纯图/纯表情包无文本 → 跳过 chat()
-    # 理由:LLM 自己的 should_reply 决策对图片要先看完才能定,而看图本身慢。
-    # 这种「旁观纯图」最大概率是 should_reply=false,跳过它就是省一次多模态调用。
-    # 消息已被 priority=1 perception 写入 MessageBuffer,等下次文本触发能看到。
-    # 2026-10-14 补漏(维护者定案):sticker_urls 纳入门控——此前只查 image_urls,
-    # 纯表情包旁观消息穿门控入队,把 followup 槽毒化成「带媒体」连坐 steer。
+    # inflight key、current_buffered、db id 领号三件上移到门控之前：窄化门控要在此处
+    # 探测 is_inflight 并可能直接 try_enter 合并，主流程下方复用同一份（领 id 是缓存
+    # 一次性 pop，重复领会领空，故原调用点已删）。
+    key = make_inflight_key(adapter_name, False, user_id, group_id)
+    current_buffered = BufferedMessage(
+        ts=now_ms,
+        adapter=adapter_name,
+        group_id=group_id,
+        user_id=user_id,
+        nickname=nickname or user_id,
+        content=text,
+        image_urls=list(image_urls),
+        sticker_urls=list(sticker_urls or []),
+        reply_to_ts=None,
+        is_bot=False,
+    )
+    # B 方案：凭本事件 message_id 领 perception 挂号的 db 真 id；合成消息领不到=None
+    current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id)
+
+    is_commission = addressed_to_bot and user_id not in set(plugin_config.hermes_known_bots)
+
+    # 图片门控(窄化)：active window + 非直说 + 纯图/纯表情包无文本。
+    # 有在跑 turn → 照常 try_enter 入队合并 followup，消息到场但不点火；无在跑 turn
+    # → 躺 buffer 等下个文本触发，语义同窄化前。直说（is_direct，如纯图+@）不受门控，
+    # 照常走主流程点火（纯图+@ 照常点火的既有形态不退化）。
+    # 合并分支绕开下方 post-reply cooldown 检查是刻意设计：合并进在跑 turn 不是新点火，
+    # cooldown 闸只管新点火，越权代拦会把 turn 进行中的合法跟帖一并吞掉。
+    # 附带留痕:纯图合并进槽时条目带 image_urls，会触发 steer 探针
+    # 带媒体早退（_try_steer_followup），此为已知毒化面，待后续专项处置；表情包入队
+    # 时会被入队剥占位实现 _strip_stickers_for_queue 剥成“[表情包]”占位，不毒化。
     in_active = _mcp.active_sessions.is_alive_for_trigger(adapter_name, group_id, now_ms)
-    if in_active and not is_explicit_trigger and (image_urls or sticker_urls) and not text.strip():
+    if in_active and not is_direct and (image_urls or sticker_urls) and not text.strip():
+        if _mcp.inflight.is_inflight(key):
+            # slot 已被占，try_enter 只排队不点火，天然满足“不点火但到场”。
+            inflight_result = _mcp.inflight.try_enter(
+                key,
+                current_buffered,
+                is_direct=is_direct,
+                original_msg_id=event_msg_id,
+                now_ms=now_ms,
+                addressed_to_bot=addressed_to_bot,
+                ephemeral=ephemeral,
+                commission=is_commission,
+            )
+            logger.debug(
+                f"[HERMES reactive] merged media-only into running turn "
+                f"(group={group_id} user={user_id} result={inflight_result})"
+            )
+            return
         logger.debug(
-            f"[HERMES reactive] skip media-only passive in-window msg "
-            f"(group={group_id} user={user_id}); buffered for next text trigger"
+            f"[HERMES reactive] media-only passive in-window msg stays buffered "
+            f"(group={group_id} user={user_id}); awaiting next text trigger"
         )
         return
 
     # B: post-reply cooldown — bot 刚在本群发出 reactive 回复 N 秒内,非显式触发的
     # 新消息直接静默。压「我刚说完别人接话→我又凑一句」模式 2。
-    # 显式 @bot 触发不受影响(is_explicit_trigger=True 直接旁路)。
+    # 显式 @bot 触发不受影响(is_direct=True 直接旁路)。
     # 写在 inflight try_enter 之前,避免占用 slot 又立刻退出造成 pending 抖动。
-    if in_active and not is_explicit_trigger:
+    if in_active and not is_direct:
         # debug 日志保留入口处,便于运维排查;helper 自己不打日志(refire 路径也会用)
         sess = _mcp.active_sessions.get_if_trigger_alive(adapter_name, group_id, now_ms)
         cooldown_sec = plugin_config.hermes_reactive_post_reply_cooldown_sec
@@ -498,24 +539,7 @@ async def _handle_reactive_path(
             )
             return
 
-    key = make_inflight_key(adapter_name, False, user_id, group_id)
-    current_buffered = BufferedMessage(
-        ts=now_ms,
-        adapter=adapter_name,
-        group_id=group_id,
-        user_id=user_id,
-        nickname=nickname or user_id,
-        content=text,
-        image_urls=list(image_urls),
-        sticker_urls=list(sticker_urls or []),
-        reply_to_ts=None,
-        is_bot=False,
-    )
-    # B 方案:凭本事件 message_id 领 perception 挂号的 db 真 id;合成消息领不到=None
-    current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id)
-
-    is_commission = addressed_to_bot and user_id not in set(plugin_config.hermes_known_bots)
-    # 巡查迟到闸门: droppable=True 的合成轮(巡查)
+    # droppable=True 的合成轮(巡查)
     # 撞在跑 turn 直接丢弃——「巡查天生可弃」,不占 followup 槽不接力,否则活跃期
     # 巡查会在用户 turn 结束后不请自来。投递轮询等不可弃合成轮不传此标记。
     if droppable and _mcp.inflight.is_inflight(key):
@@ -524,11 +548,11 @@ async def _handle_reactive_path(
     inflight_result = _mcp.inflight.try_enter(
         key,
         current_buffered,
-        is_explicit_trigger=is_explicit_trigger,
+        is_direct=is_direct,
         original_msg_id=event_msg_id,
         now_ms=now_ms,
         addressed_to_bot=addressed_to_bot,
-        # 疑似 A 修复(2026-10-16 审计修复批):条目自带 ephemeral——接力时按
+        # 条目自带 ephemeral——接力时按
         # 「这条排队消息自己的无窗判定」跑,不再被发包 turn 的值污染。
         ephemeral=ephemeral,
         commission=is_commission,  # 群聊只有平台确认冲 bot 的人类 @ 才进委托队列
@@ -553,7 +577,7 @@ async def _handle_reactive_path(
         # 补 steer 门各条件取值,定位「queued 后未走 steer」时卡在哪一项。
         logger.info(
             f"[HERMES steer探针] queued behind in-flight turn "
-            f"(group={group_id} user={user_id} explicit={is_explicit_trigger} "
+            f"(group={group_id} user={user_id} direct={is_direct} "
             f"commission={is_commission} ephemeral={ephemeral} "
             f"runs_channel={plugin_config.hermes_runs_channel_enabled} result={inflight_result})"
         )
@@ -578,7 +602,7 @@ async def _handle_reactive_path(
             text=text,
             image_urls=image_urls,
             sticker_urls=sticker_urls,
-            is_explicit_trigger=is_explicit_trigger,
+            is_direct=is_direct,
             addressed_to_bot=addressed_to_bot,
             now_ms=now_ms,
             trigger_msg_id=event_msg_id,
@@ -611,7 +635,7 @@ async def _handle_reactive_path(
                     _refire(
                         key=key,
                         trigger_msg=pending_entry.msg,
-                        is_explicit_trigger=pending_entry.is_explicit_trigger,
+                        is_direct=pending_entry.is_direct,
                         original_msg_id=pending_entry.original_msg_id,
                         # 补上接力透传——此前这条 finally 链路
                         # 丢 addressed_to_bot,排队委托 refire 起跑后 addressed 门控全失效
@@ -619,11 +643,11 @@ async def _handle_reactive_path(
                         addressed_to_bot=pending_entry.addressed_to_bot,
                         depth=1,
                         mode="reactive",
-                        # 疑似 A 修复(2026-10-16 审计修复批):读条目自己的 ephemeral——
+                        # 读条目自己的 ephemeral——
                         # 此前透传发包 turn 的值,冷窗关键词 turn 里排队的 addressed
                         # 委托会被以 ephemeral=True 跑掉(不读钉锚 + 二次 trigger 窗口)。
                         ephemeral=pending_entry.ephemeral,
-                        # 2026-10-17 alive/56:迟到 steer 回收标记透传(cooldown 豁免)。
+                        # 迟到 steer 回收标记透传(cooldown 豁免)。
                         steer_recovered=pending_entry.steer_recovered,
                         bot=bot,
                         target=target,
@@ -636,7 +660,7 @@ async def _refire(
     *,
     key,
     trigger_msg: BufferedMessage,
-    is_explicit_trigger: bool,
+    is_direct: bool,
     original_msg_id: str | int | None,
     depth: int,
     mode: str,
@@ -658,7 +682,7 @@ async def _refire(
 
     assert _mcp.inflight is not None
 
-    # 表情包无需在此降级(2026-10-14 维护者定案):队列不承载表情包——入队时点
+    # 表情包无需在此降级:队列不承载表情包——入队时点
     # 已在 inflight 层剥离成 [表情包] 文本占位(见 core/inflight.py
     # _strip_stickers_for_queue),接力出来的条目 sticker_urls 恒为空。
     # 字节在到达时已入库,召回路径不受影响。
@@ -677,7 +701,7 @@ async def _refire(
 
     # B: refire 路径同款 post-reply cooldown 闸门。
     # 仅对非显式触发生效——explicit pending(如 @bot)须穿透 cooldown 直达 chat()。
-    # 2026-10-17 alive/56 续:判定时刻从「接力起跑」改为「跟帖到达」——旧口径下
+    # 判定时刻从「接力起跑」改为「跟帖到达」——旧口径下
     # 本 turn 一发回复 last_bot_reply_at 即刷新,refire 必撞 8s 窗,等于把全部
     # 「turn 在跑期间到达的合法跟帖」接力一律静默吞掉(当日受控群两轮实测实锤;
     # 跟帖到达时已过入口闸,是合法排队,该不该再答应交接力轮的 submit_decision
@@ -686,7 +710,7 @@ async def _refire(
     if (
         mode == "reactive"
         and group_id is not None
-        and not is_explicit_trigger
+        and not is_direct
         and not steer_recovered
         and _in_post_reply_cooldown(adapter_name, str(group_id), trigger_msg.ts)
     ):
@@ -712,7 +736,7 @@ async def _refire(
                 text=trigger_msg.content,
                 image_urls=list(trigger_msg.image_urls),
                 sticker_urls=list(trigger_msg.sticker_urls),
-                is_explicit_trigger=is_explicit_trigger,
+                is_direct=is_direct,
                 addressed_to_bot=addressed_to_bot,
                 now_ms=refire_now_ms,
                 trigger_msg_id=original_msg_id,
@@ -734,12 +758,12 @@ async def _refire(
                 current_buffered=trigger_msg,
             )
         should_refire = not (result is not None and result.is_transport_error)
-        if result is None and is_explicit_trigger:
-            # 排队的显式触发一路走到这里却没跑成 turn = 用户的 @ 被吞了。
+        if result is None and is_direct:
+            # 兜底挂点(保留留痕,后续可能移除):排过队的直说触发被吞必须留痕。
             # 具体原因由 _run_*_turn 内部那条 drop 日志给出,这条负责点出「被吞的是
-            # 一个排过队的 explicit @」,两条合起来才够定位。
+            # 一个排过队的 direct @」,两条合起来才够定位。
             logger.warning(
-                f"[HERMES] queued explicit trigger produced no turn (key={key} depth={depth} msg_id={original_msg_id})"
+                f"[HERMES] queued direct trigger produced no turn (key={key} depth={depth} msg_id={original_msg_id})"
             )
     except Exception:
         logger.exception(f"[HERMES] refire raised at depth {depth}; dropping pending for {key}")
@@ -757,7 +781,7 @@ async def _refire(
             after_ts=trigger_msg.ts,
             # 接力轮的收尾边界是链式连发的另一半——私聊被动接力同样过聚合窗
             # (mode="passive" 且 group_id is None = 私聊);群聊接力/群聊被动保持不变。
-            # 2026-10-16 维护者拍板:私聊聚合窗回退止血(同 _handle_passive_path 处注释),
+            # 私聊聚合窗回退止血(同 _handle_passive_path 处注释),
             # 深层拆批渲染立项落地前统一不等窗。
             aggregate=False,
         )
@@ -766,15 +790,15 @@ async def _refire(
                 _refire(
                     key=key,
                     trigger_msg=pending_entry.msg,
-                    is_explicit_trigger=pending_entry.is_explicit_trigger,
+                    is_direct=pending_entry.is_direct,
                     addressed_to_bot=pending_entry.addressed_to_bot,
                     original_msg_id=pending_entry.original_msg_id,
                     depth=depth + 1,
                     mode=mode,
-                    # 疑似 A 修复(2026-10-16 审计修复批):链上每一跳都按「当前条目
+                    # 链上每一跳都按「当前条目
                     # 自己的 ephemeral」接力,不再把链首外层值一路透传下去。
                     ephemeral=pending_entry.ephemeral,
-                    # 2026-10-17 alive/56:迟到 steer 回收标记沿链透传。
+                    # 迟到 steer 回收标记沿链透传。
                     steer_recovered=pending_entry.steer_recovered,
                     bot=bot,
                     target=target,
@@ -803,7 +827,7 @@ async def route_synthesized_input(
     派发规则:
       - private (target.private=True) → 仅 allow_passive=True 才走 passive,否则跳过
       - group + active_session 开 → 触发 active session 并走 reactive
-        (synth 始终算 is_explicit_trigger=True)
+        (synth 始终算 is_direct=True)
 
     `addressed_to_bot` 由合成方按事件语义给:平台确认事件指向 bot 本体(如戳 bot)
     才是 True;群级事件(如入群)虽然 explicit 触发,但不是「冲 bot 说的」,
@@ -863,7 +887,7 @@ async def route_synthesized_input(
         group_id=group_id,
         text=text,
         image_urls=[],
-        is_explicit_trigger=True,
+        is_direct=True,
         addressed_to_bot=addressed_to_bot,
         now_ms=now_ms,
     )

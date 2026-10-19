@@ -31,7 +31,7 @@ def check_isolation(event: Event, target: alconna.Target) -> bool:
     allow_groups 裸 id 匹配与 admin 系前缀匹配并存,属于两个时代的配置风格,
     fork 统一为前缀制。
     """
-    # H9 收紧(2026-10-17):取不到 user_id 用 ""——白名单键永不匹配空 id,
+    # 取不到 user_id 用 ""——白名单键永不匹配空 id,
     # 匿名/异形事件直接被隔离检查拒绝(不再折叠进 "user" 公共桶)。
     user_id = event.get_user_id() or ""
     adapter_name = get_adapter_name(target)

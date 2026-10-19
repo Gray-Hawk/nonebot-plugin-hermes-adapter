@@ -179,7 +179,7 @@ async def start_storage() -> None:
 
 
 async def stop_storage() -> None:
-    """关闭 image_fetcher 与各 SQLite 连接(低危⑫:run_tracker/window_store 也要关)。"""
+    """关闭 image_fetcher 与各 SQLite 连接(run_tracker/window_store 也要关)。"""
     if image_fetcher is not None:
         await image_fetcher.stop()
     if message_store is not None:

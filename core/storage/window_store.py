@@ -44,7 +44,7 @@ class WindowStore:
         # 语义保持不变。
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
-        # 低危⑫(2026-10-14):WAL 标配 synchronous=NORMAL(同 run_tracker,镜像库
+        # WAL 标配 synchronous=NORMAL(同 run_tracker,镜像库
         # 不需要每提交 fsync)。
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute(_SCHEMA)
@@ -115,7 +115,7 @@ def session_to_payload(s) -> dict[str, Any]:
 def session_from_payload(adapter: str, group_id: str, payload: dict[str, Any]):
     """JSON payload → ActiveSession。字段缺失按默认值容忍(老版本行也能装)。
 
-    锚的双形态装载(任务化重构 2026-10-14):新形态 participants 列表直接用;
+    锚的双形态装载(任务化重构 ):新形态 participants 列表直接用;
     旧形态 {commissioner_id, commissioner_nickname} 迁移为单参与者。
     """
     from ..active_session import ActiveSession, AnchorRecord, Participant

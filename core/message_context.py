@@ -1,4 +1,4 @@
-"""Message Context 头的单一拼装处(2026-10-16 同源化收口批,审计确认7)。
+"""Message Context 头的单一拼装处。
 
 同一段 `Platform / Chat Type / User ID / Group ID` 此前在 hermes_client.chat()
 的默认分支与 prompt_builder.build_passive_system_prompt 各拼一份,靠测试互锁;

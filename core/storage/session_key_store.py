@@ -17,7 +17,7 @@ from pathlib import Path
 
 from nonebot import logger
 
-# updated_at 列:只写不读(保留至 M2);不改 DB 结构,存量库保持原样。
+# updated_at 列:只写不读;不改 DB 结构,存量库保持原样。
 _SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS session_keys (
@@ -28,7 +28,7 @@ _SCHEMA_STATEMENTS = [
     )
     """,
     # 投递轮询水位持久化。原内存态重启即清+首轮播种跳过
-    # 存量——nb 重启期间完成的子代理投递行被盖在水位下永不播报(维护者实测「重启后
+    # 存量——nb 重启期间完成的子代理投递行被盖在水位下永不播报(实测「重启后
     # 投递轮不到」)。落本库:水位本就按 session_key 记,与映射表同生命周期。
     """
     CREATE TABLE IF NOT EXISTS delivery_watermarks (
@@ -37,7 +37,7 @@ _SCHEMA_STATEMENTS = [
         updated_at   REAL    NOT NULL
     )
     """,
-    # 2026-10-17:/delay 暂停状态持久化(维护者确认要修)——原内存态重启即失效,
+    # /delay 暂停状态持久化——原内存态重启即失效,
     # 被暂停会话重启后悄悄恢复 T1 计时。
     """
     CREATE TABLE IF NOT EXISTS idle_paused (
@@ -102,7 +102,7 @@ class SessionKeyStore:
 
     def put(self, internal_id: str, session_key: str, generation: int, *, now: float) -> None:
         try:
-            # updated_at 只写不读(保留至 M2):随写入落库即可,无读点。
+            # updated_at 只写不读:随写入落库即可,无读点。
             self._conn.execute(
                 "INSERT INTO session_keys (internal_id, session_key, generation, updated_at) "
                 "VALUES (?, ?, ?, ?) "
@@ -150,7 +150,7 @@ class SessionKeyStore:
         except Exception as exc:
             logger.warning(f"[SESSION] 清理投递水位失败: {exc}")
 
-    # --- 2026-10-17:/delay 暂停状态持久化 ---
+    # --- /delay 暂停状态持久化 ---
 
     def load_idle_paused(self) -> set[str]:
         """返回被 /delay 暂停 T1 的 internal_id 集合。读失败返回空集。"""

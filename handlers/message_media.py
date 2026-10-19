@@ -92,8 +92,8 @@ async def _extract_sticker_urls(uni_msg: alconna.UniMessage, bot: Bot, adapter_n
     return urls
 
 
-# 本部署补丁(图片投送管线三模式): 取代早期
-# addressed 单点门控。
+# 本部署补丁(图片投送管线三模式): 取代旧版 addressed 单点门控。
+# 设计与参数定案见 项目文档库。
 def _collect_inline_image_urls(
     media_cfg: MediaConfig,
     *,
@@ -112,7 +112,7 @@ def _collect_inline_image_urls(
       里 `@<self_id>` 字面——self_id 运行时传入,不锚定任何平台账号格式)
       才内联窗口内图 + 当前消息图。
 
-    例外名单(审计修复批 2026-10-16 实装,维护者补充拍板:只实装两档):
+    例外名单(审计修复批 实装,只实装两档):
     - 条目 off:该用户图永不内联(仍可被 get_message_images 拉图);
     - 条目 semi:该用户图按半内联规则收窄——总 full 下不再恒收,只在 semi 窗口
       命中时收,且范围限 2N+1 半窗;总 semi 下与默认一致;
@@ -309,7 +309,7 @@ def _node_image_urls(node: dict) -> list[str | None]:
     return urls
 
 
-# 折叠转发 get_forward_msg 的短 TTL 结果缓存(2026-10-16 同源化收口批,审计确认4):
+# 折叠转发 get_forward_msg 的短 TTL 结果缓存:
 # 同一条消息的同一 ref 会被 perception(priority=1)与主 handler(priority=98)各调
 # 一次 _extract_forward_full;被引消息本身是折叠转发时那段还要再各调一次——同一
 # 事件最多 4 发 get_forward_msg,而两层拿到的是同一次 API 响应应有的同一结果。
@@ -343,7 +343,7 @@ async def _extract_forward_full(
     `[转发图#x]`(x = number_base + 本条消息转发图的连续编号),并把注册到的转发图
     URL 按节点顺序返回,供入库 kind='forward_image'(规划书 §8)。同一次 get_forward_msg
     响应内提取,不二次调用 API;跨 matcher 的双调用由 _forward_full_cache 短 TTL
-    缓存兜住(2026-10-16 同源化收口批,审计确认4),不重复打 API。为 None 时不发号、不注册,节点图保持 `[图片]`
+    缓存兜住,不重复打 API。为 None 时不发号、不注册,节点图保持 `[图片]`
     (用于被引消息里的折叠转发:那些图不属本条消息,不占本条消息的 idx)。
     cap: 本消息转发图注册上限;None 时现读 media_config.forward_image_cap。
     超出上限按内容(URL)去重截断 + WARN。
@@ -566,7 +566,7 @@ async def _extract_replied_media(event: Event, bot: Bot, *, adapter_name: str) -
 def _compose_quote_prefix(replied: _RepliedMedia, quote_base: int) -> str:
     """(引用 …) 前缀的唯一拼装处:字面@改写 → 转发摘要 → 引用图标记 → 归属包装。
 
-    审计修复批(2026-10-16,疑似 B 维护者拍板=修):主 handler(当轮 current_message)
+    主 handler(当轮 current_message)
     与 perception(入库 content)同源调用,保证「出入站同文本」——历史行里的引用
     前缀与当轮呈递形态一致,换窗口/压缩后「谁引用了谁、引文是什么」不再丢失。
     quote_base = 本条消息 own+sticker 图数;引用图号 (引用图#k) 接排其后
@@ -579,9 +579,9 @@ def _compose_quote_prefix(replied: _RepliedMedia, quote_base: int) -> str:
     replied_text = replied.text
     if replied_text:
         # 本部署补丁: 前缀带发送者归属,空标签回退旧格式;
-        # 引用文本先过一道字面手打 @ 的改写(中危⑥,见 _rewrite_quoted_literal_ats)
+        # 引用文本先过一道字面手打 @ 的改写(见 _rewrite_quoted_literal_ats)
         replied_text = _rewrite_quoted_literal_ats(replied_text)
-    # 引用折叠消息(维护者 2026-10-15 按审计建议 a 拍板):引用块里补单行摘要让内容可见,
+    # 引用折叠消息:引用块里补单行摘要让内容可见,
     # 不做全量内联(省 token)。fetch_failed 自闭合变体同样拼——「有个取不到的折叠」比空白强。
     if replied.forward_full is not None:
         fwd_note = replied.forward_full

@@ -93,13 +93,13 @@ def validate_push_context(
 ) -> None:
     """守卫 push_message MCP 工具调用的前置上下文。
 
-    M1 规则:必须存在 (adapter, group_id) 的活跃 reactive session,
+    必须存在 (adapter, group_id) 的活跃 reactive session,
     且 BotRegistry 有对应路由(target+bot_self_id)才允许 push。
     检查顺序:范围 → session → target。session 缺失比 target 缺失更常见(TTL 过期),
     优先报那条更直观;但**范围必须排在两者之前**,否则越权调用方能通过报错差异
     探知别的群有没有活跃会话。
 
-    M2 将增加 bg_task 路径(执行中的任务允许 push 即使无 reactive session)。
+    bg_task 路径(执行中的任务允许 push 即使无 reactive session)。
 
     Raises:
         PushContextError: 任一前置不满足;调用方映射 HTTP 422。

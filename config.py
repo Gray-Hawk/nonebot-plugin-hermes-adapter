@@ -88,16 +88,19 @@ class Config(BaseModel):
     """
 
     # --- 触发模式 ---
-    hermes_group_trigger: str = "keyword-soft"
-    """群聊触发方式(本部署补丁):
-    at / all / keyword 三模式已作废,收敛为 keyword-soft 单路径——
-    真 @bot / 引用 bot = 寻址事实(addressed_to_bot,开窗 + 进决策,不再强制回复);
-    关键词全文命中 = 隐式激活(不点名、不开窗只续期,窗口外跑临时 turn),推最近
-    hermes_keyword_soft_context(N1) 条消息给 LLM 自判是否发言。
-    配置其它值时按 keyword-soft 处理并 WARN 一次。字段保留仅为 .env 兼容。"""
+    hermes_group_trigger: str = "keyword"
+    """群聊触发方式(批 C 拍板 6:收敛 at / keyword 两档):
+    - keyword(默认):真 @bot / 引用 bot = 寻址事实(addressed_to_bot,开窗 + 进决策,
+      不再强制回复);关键词全文命中 = 隐式激活(不点名、不开窗只续期,窗口外跑
+      临时 turn),推最近 hermes_keyword_soft_context(N1) 条消息给 LLM 自判是否
+      发言。@/引用 与关键词双通道并存。
+    - at:仅 @/引用 寻址激活,关键词通道关闭(关键词命中不再点火)。
+    兼容与废弃:keyword-soft 不做兼容保留(2026-10-19 维护者定),与 all 及其它
+    非法值一样废弃,按 keyword 处理并 WARN 一次。"""
 
     hermes_keywords: set[str] = {"/ai"}
-    """keyword-soft 隐式激活的关键词集合(命中即隐式激活推 N1 条上下文)。
+    """keyword 档隐式激活的关键词集合(命中即隐式激活推 N1 条上下文),
+    仅在 hermes_group_trigger = keyword 档生效(at 档关键词通道关闭)。
     匹配范围(2026-10-14 起):只匹配用户消息本体;引用块/转发展开/占位符不参与点火。"""
 
     hermes_private_trigger: str = "all"
@@ -196,14 +199,14 @@ class Config(BaseModel):
     本配置仅控制 [图片] 占位是否出现在历史里;inline_labeled 模式已不再实装。
     """
 
-    # --- M1: 内存缓冲 ---
+    # --- 内存缓冲 ---
     hermes_buffer_per_group_cap: int = 200
     """每群在 MessageBuffer 中保留多少条最近消息(LRU 之外的硬上限)"""
 
     hermes_buffer_total_groups_cap: int = 50
     """MessageBuffer 跨群总容量,超出按 LRU 驱逐"""
 
-    # --- M1: 活跃态 ---
+    # --- 活跃态 ---
     hermes_active_session_enabled: bool = False
     """是否开启 @ 触发的群活跃态(False 退化为 v0.1.6 等价行为)"""
 
@@ -223,44 +226,13 @@ class Config(BaseModel):
     让 Hermes 自决是否欢迎(decision_protocol 的 noop 是合法选择)。
     active_session 关时不触发——passive 是 1:1 Q&A 语义,不适用欢迎场景。"""
 
-    # --- Phase B-0: ack 反馈 + 非文本段感知 ---
-    hermes_ack_feedback_enabled: bool = False
-    """显式触发 (用户主动 @ bot 或私聊) 时给一个'已收到'视觉回执。
-    B-0 实装: OneBot v11 **群聊** (NapCat/LLOneBot/LuckyLilliaBot) 贴 emoji,
-    chat 完成后撤销。其他适配器或场景 silently no-op。
-
-    开关名通用,B-0.5 规划里要扩 Telegram/Discord 私聊 typing 状态,避免改名 breaking。
-
-    **已知限制**:
-      - 私聊不贴 emoji: QQ NT 协议下 set_msg_emoji_like 仅支持群聊
-        (LuckyLilliaBot/NapCat 在私聊调用都会 raise '只支持群聊消息')
-      - emoji 撤销依赖 OneBot 实现端较新版本:
-          NapCat: 全版本支持 (用 set=False)
-          LuckyLilliaBot / 较新 LLOneBot: 支持 (unset_msg_emoji_like 或 set=False)
-          老 LLOneBot: 两条路径都不支持, emoji 永久留在消息上 (启动后 WARN-once 告知)
-    若 emoji 不撤销但你不想 disable, 接受'永久已读痕迹'即可——不影响主流程。"""
-
-    hermes_ack_emoji_id: int = 341
-    """B-0 OneBot v11 路径下贴的 QQ 表情 id。默认 341 (/打招呼) ——
-    动画"hi 打招呼",bot 收到 @ 的最自然反馈。
-    其他推荐:
-      - 373 (/忙):一只小动物在打字,typing-indicator 风格
-      - 129 (/挥手):经典小表情版的挥手,跨版本更稳但视觉平淡
-    注意:341/373 是 QQ NT 超表情 (EMCode 10000+),NapCat 内部有个
-    `length > 3 ? type=2 : type=1` 启发式,3 位 id 会被当经典型——
-    实测多数 NapCat 版本仍能正常 render,但跨版本不保证。
-    若实测视觉异常,可换经典型小表情 (EMCode < 300,如 129)。
-    NapCat schema 接受 Number | String,走 int 是为了 .env 直接写数字
-    (HERMES_ACK_EMOJI_ID=237 不用引号),pydantic-settings 不会撞类型错。
-    完整列表见 NapCat face_config.json。仅 OneBot 路径用到。"""
-
     hermes_reactive_post_reply_cooldown_sec: int = 8
     """reactive 模式下,bot 刚回复完群里 N 秒内,非显式 @ 触发的新消息直接静默。
     用来阻断「我刚说完别人接话→我又凑一句」类型的过触发。
     0 = 关闭(回退到旧行为)。显式 @bot 不受影响,任何时候都会立刻进入决策。"""
 
     hermes_prompt_timezone: str = ""
-    """喂给模型的时间戳时区覆盖,IANA 名(如 Asia/Shanghai)。
+    """M21(2026-10-17 维护者定案):喂给模型的时间戳时区覆盖,IANA 名(如 Asia/Shanghai)。
     缺省空串=部署机本地时区(现状);部署机时区错误/跨区部署时在此覆盖,不动系统。"""
 
     # --- 应答防抖(本部署补丁) ---
@@ -270,7 +242,7 @@ class Config(BaseModel):
     QQ 用户「[图片]→3→哦那不怪你」式一秒一条的连发,原来每条各烧一轮 turn,
     防抖后合并成一轮,且 LLM 能看到完整想法再开口。期内新消息以最新触发为准
     并顺延截止时间(受 max_wait 硬上限约束)。0 = 关闭(回退旧行为:立即起跑)。
-    防抖期间不占 inflight slot;ack emoji 仍在首条消息到达时秒贴。"""
+    防抖期间不占 inflight slot。"""
 
     hermes_reply_debounce_private_sec: float = 2.5
     """应答防抖(私聊,秒),语义同 hermes_reply_debounce_group_sec。私聊碎片连发同样
@@ -280,7 +252,7 @@ class Config(BaseModel):
     """防抖顺延硬上限(秒):自首条消息起算最多等待这么久,防止活跃群里截止时间
     被新消息永远顺延、bot 永远不开口。0 = 无上限(不推荐)。"""
 
-    # --- /help 菜单头尾自定义(2026-10-13 维护者拍板:只做头尾,独立文件) ---
+    # --- /help 菜单头尾自定义(只做头尾,独立文件) ---
 
     hermes_help_menu_file: str = ""
     """/help 菜单头尾自定义文件路径(本部署新增)。空 = 使用内置动态菜单。
@@ -290,7 +262,7 @@ class Config(BaseModel):
     没有 --- 时整个文件只当菜单头。菜单头不要自带「命令：」行,插件会统一补。
     文件不存在/读取失败/内容为空 → 回退内置菜单并 WARN,命令不挂。"""
 
-    # --- 定制定居目录(2026-10-13 维护者拍板:单目录 N 文件,防 .env 键膨胀) ---
+    # --- 定制定居目录(单目录 N 文件,防 .env 键膨胀) ---
 
     hermes_custom_dir: str = ""
     """定制定居目录。空 = 默认用 localstore 插件数据目录（2026-10-14 维护者定稿：
@@ -335,7 +307,7 @@ class Config(BaseModel):
     # --- 激活体系改造:隐性激活 + T1/T5 + T2 定时激活(本部署新增) ---
 
     hermes_keyword_soft_context: int = 10
-    """N1: keyword-soft 触发模式下,关键词命中(全文匹配)时推送给 LLM 的最近消息
+    """N1: keyword 触发模式下,关键词命中(全文匹配)时推送给 LLM 的最近消息
     条数。关键词命中是隐式激活:不升级 addressed_to_bot,窗口外跑临时 turn 不开窗,
     窗口内只滑动续期。"""
 
@@ -394,7 +366,7 @@ class Config(BaseModel):
     非显式触发本来就静默,不受影响。"""
 
 
-    # --- M1: 反向 MCP 通道 ---
+    # --- 反向 MCP 通道 ---
     hermes_mcp_enabled: bool = False
     """是否启动内嵌 FastMCP server(False 时 Hermes 反向调用全失败,出向不影响)"""
 
@@ -411,7 +383,7 @@ class Config(BaseModel):
     """get_recent_messages 工具单次返回上限。最小 1——0/负值会让工具静默返空,
     Pydantic 在启动期校验防 misconfig。"""
 
-    # --- M1: 持久化存储 ---
+    # --- 持久化存储 ---
     hermes_storage_db_path: str = ""
     """SQLite 消息日志路径。空串走默认 ~/.local/share/nonebot-plugin-hermes/messages.db"""
 
@@ -487,7 +459,7 @@ class Config(BaseModel):
     """本部署补丁(阶段2d, 维护者定案「丢了就贴」): 429 满额
     丢单(自动重试一次仍 429)时贴在触发消息上的 emoji id——「忙,稍等」的轻量
     信号,不发文本报错。仅群聊(QQ NT 协议私聊不支持 emoji 回执,私聊走文本兜底)。
-    默认 96(冷汗),刻意与 ack(341)和已移除的旧 busy(97/擦汗)都不同 id,
+    默认 96(冷汗),刻意与已移除的旧 busy(97/擦汗)等不同 id,
     语义不混淆。"""
 
     hermes_approval_expiry_sec: int = 300
@@ -514,7 +486,7 @@ def _resolve_warn_once(kind: str, text: str) -> None:
 
 
 def resolve_custom_dir() -> "Path | None":
-    """定制定居目录解析（2026-10-14 维护者定稿）。
+    """定制定居目录解析。
 
     显式配置 hermes_custom_dir → 指定路径；未配置（空串）→ localstore
     插件数据目录（与 messages.db 同目录）。群档案的开关独立控制

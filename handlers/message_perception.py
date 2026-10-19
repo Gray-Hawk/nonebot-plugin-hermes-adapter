@@ -33,7 +33,7 @@ from .message_media import (
 perception_message = on_message(priority=1, block=False)
 
 
-# perception → 主 handler 的 db id 传递桥(2026-10-16 定案,B 方案)。
+# perception → 主 handler 的 db id 传递桥(定案,B 方案)。
 # 两 matcher(priority=1 perception / priority=98 主 handler)state 隔离,
 # perception 入库拿到的 lastrowid 经此短 TTL 缓存按 (adapter, event.message_id)
 # 挂号;主 handler 构造触发条目时凭自己 event 领号,条目自此自带真实 db id,
@@ -138,7 +138,7 @@ async def handle_perception(bot: Bot, event: Event):
     if not msg_text and not image_urls and not quote_image_urls and not forward_image_urls:
         return
 
-    # 引用前缀(审计修复批,2026-10-16,疑似 B 维护者拍板=修):与主 handler 同源调
+    # 引用前缀与主 handler 同源调
     # _compose_quote_prefix——历史行/换窗口后「谁引用了谁、引文是什么」不再只活在当轮。
     # 拼在文本截断与空内容闸门之后:前缀绝不被 hermes_perception_text_length 截掉,
     # 也不改变「本条有无自身内容」的入库判定(纯引用空体消息维持不落库)。
@@ -169,7 +169,7 @@ async def handle_perception(bot: Bot, event: Event):
         # B 方案:入库即挂号,主 handler 凭同一 event 的 message_id 领真实 db id
         _register_event_db_id(adapter_name, getattr(event, "message_id", None), buffered.id)
 
-    # 2026-10-15 补丁：发言者已有画像但不在群友行时，自动补进群友行
+    # 本部署补丁:发言者已有画像但不在群友行时，自动补进群友行
     if group_id:
         sync_buddy_to_group(adapter_name, group_id, user_id)
 
@@ -193,11 +193,11 @@ async def handle_perception(bot: Bot, event: Event):
 
 
 def _merge_fragment_payload(old: dict, new: dict) -> None:
-    """同一个人的防抖碎片并入在窗载荷(2026-10-12 维护者拍板:替换改拼接——
-    「如果是替换还要防抖干嘛」)。文本换行拼接;图片/表情包 URL 追加去重;
+    """同一个人的防抖碎片并入在窗载荷(替换改拼接——「如果是替换还要防抖干嘛」)。
+    文本换行拼接;图片/表情包 URL 追加去重;
     explicit/addressed 取并集(任一碎片被点名,合并触发即被点名);
     ephemeral 两者皆真才真;now_ms 取最新(触发时序以最后一条为准);
-    event 保留首条——ack 已用它贴过 emoji,dispatch 不再用。"""
+    event 保留首条——dispatch 不再用。"""
 
     new_text = (new.get("msg_text") or "").strip()
     if new_text:
@@ -209,7 +209,7 @@ def _merge_fragment_payload(old: dict, new: dict) -> None:
             merged = list(old.get(field) or [])
             merged.extend(u for u in incoming if u not in merged)
             old[field] = merged
-    old["is_explicit_trigger"] = old["is_explicit_trigger"] or new["is_explicit_trigger"]
+    old["is_direct"] = old["is_direct"] or new["is_direct"]
     old["addressed_to_bot"] = old["addressed_to_bot"] or new["addressed_to_bot"]
     old["ephemeral"] = old["ephemeral"] and new["ephemeral"]
     if new.get("context_limit") is not None:

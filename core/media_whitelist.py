@@ -9,7 +9,7 @@
 演进, 复刻必漂移), 插件侧是**白名单**——只有落在白名单根内的已存在普通文件才放行。
 宁严勿宽: 判不了就退回 [生成了文件] 占位符, 永远不可能把不该发的文件发出去。
 默认白名单 = ~/.hermes/cache/scratch + hermes 内建媒体缓存目录; 工作目录刻意不进
-默认(2026-10-08 维护者拍板), 由 hermes_media_allow_dirs 配置项追加。
+默认, 由 hermes_media_allow_dirs 配置项追加。
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ _IMAGE_MIME = {
     ".bmp": "image/bmp",
 }
 
-# 出站媒体引用形态正则已收口至 core/media_patterns.py 单点定义(2026-10-16 同源化
+# 出站媒体引用形态正则已收口至 core/media_patterns.py 单点定义(同源化
 # 收口批,审计确认8):hermes_client 的提取与本模块的内联共用同一组,原先两文件各
 # 一份「为回避循环 import 独立一份」的形态消除。import 见文件头。
 

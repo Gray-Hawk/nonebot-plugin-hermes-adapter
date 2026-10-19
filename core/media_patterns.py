@@ -1,4 +1,4 @@
-"""出站媒体引用形态正则(单一来源,2026-10-16 同源化收口批,审计确认8)。
+"""出站媒体引用形态正则(单一来源 同源化收口批,审计确认8)。
 
 上游内联收口 media_whitelist.inline_local_media_images 与下游提取
 hermes_client.extract_response_media 必须对同一组形态匹配;任何一侧放宽/收紧

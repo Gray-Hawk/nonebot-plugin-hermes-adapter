@@ -48,7 +48,7 @@ def _has_at_bot_in_original(event: Event, bot_self_id: str) -> bool:
     UniMessage 时已看不到那个 @bot,导致:
       - `_is_bot_at(uni_msg, ...)` 返回 False
       - 「@bot @other 怎么看」被当成只 @ 他人,is_mentioned 错误地为 False
-      - emoji ack / chat 都不触发
+      - chat 不触发
 
     event.original_message 是 v11 在 _check_at_me 跑之前深拷贝的,@bot 还在那里。
     本函数兜底翻原始消息,告诉上游「用户确实 @ 了我」。
@@ -102,10 +102,10 @@ def _is_blacklisted(group_id: str | None, user_id: str) -> bool:
 _MAX_NICKNAME_LEN = 24
 
 # 伪造身份字段形态(等号全角化归一后的唯一形态):id＝xxx。
-# 正常人不会起这种名片,见即没收(H4 修复,2026-10-16 维护者拍板)。
+# 正常人不会起这种名片,见即没收。
 _FORGED_ID_RE = re.compile(r"[iI]\s*[dD]\s*＝\s*\S+")
 
-# H7(2026-10-17):单例未装配 WARN 的节流状态(模块级,60s 一次)。
+# 单例未装配 WARN 的节流状态(模块级,60s 一次)。
 _unassembled_warned_at = 0.0
 
 
@@ -136,7 +136,7 @@ def _sanitize_nickname(value) -> str | None:
     s = str(value)
     s = "".join(ch for ch in s if ch.isprintable())  # Cc/Cf/Cs 全过滤,ASCII space 保留
     s = s.replace("]", "］")  # 全角 `]`,与半角 `]` 视觉相近不破坏外观,但不闭合 [id=…] 标签
-    # H4(2026-10-16 受控群实测实锤):先归一化再校验——等号全角化后,
+    # 先归一化再校验——等号全角化后,
     # 伪造身份字段收敛为唯一形态,没收并留 WARN 作案证据。
     s = s.replace("=", "＝")
     forged = _FORGED_ID_RE.findall(s)
@@ -197,13 +197,13 @@ def _extract_sender_nickname(event: Event, adapter_name: str) -> str | None:
 
 
 def _label_safe(value: str) -> str:
-    """低危⑬(2026-10-14):引用归属标签的定界符加固。
+    """引用归属标签的定界符加固。
 
     `(引用 昵称(id): …)` 形态里半角 ( ) : 是结构字符——群名片或异平台 id 里
     混入这些字符能伪造归属边界、往引用块注入假内容。全角化后语义不变、结构不破。
     只用于归属标签拼装;昵称的通用清洗仍是 _sanitize_nickname。
     注意:映射表必须用 \\u 转义写,直接写全角字面量会被上游管道规范化回半角
-    (2026-10-14 踩过:replace("(", "(") 两侧同字节,等于没替换)。
+    (踩过:replace("(", "(") 两侧同字节,等于没替换)。
     """
     _FW = {"(": "\uff08", ")": "\uff09", ":": "\uff1a", "[": "\uff3b", "]": "\uff3d"}
     return "".join(_FW.get(ch, ch) for ch in value)
@@ -214,8 +214,8 @@ def _extract_replied_sender_label(event: Event) -> str:
 
     本部署补丁:信封的 `(引用: ...)` 原本不带被引消息归属,
     LLM 分不清引用的是 bot 自己的话、当前发言者的话还是第三方的话——「引用 A 的
-    旧消息对 B 说『说的就是你』」会因归属缺失被误判成冲 bot 说(2026-10-13 群
-    200000003 实测误接话)。OneBot v11 的 Reply 对象自带 sender(user_id/card/
+    旧消息对 B 说『说的就是你』」会因归属缺失被误判成冲 bot 说。OneBot v11 的
+    Reply 对象自带 sender(user_id/card/
     nickname),无需额外 API;昵称沿用 _extract_sender_nickname 的群名片优先约定
     并过 _sanitize_nickname 防 [user=…] 标签伪装。非 OneBot adapter 或无 sender
     字段时经 getattr 链安全落 '',下游回退旧的无归属格式,行为不退化。
@@ -224,7 +224,7 @@ def _extract_replied_sender_label(event: Event) -> str:
         reply = getattr(event, "reply", None)
         sender = getattr(reply, "sender", None)
         if sender is None:
-            # 低危⑬(2026-10-14):v12 等 adapter 的 reply 不带 sender——记一笔
+            # v12 等 adapter 的 reply 不带 sender——记一笔
             # 可观测,不再静默吞;下游照旧回退无归属格式,行为不退化。
             logger.info("[HERMES] 引用消息无 sender 字段(adapter 缺归属信息),回退无归属格式")
             return ""
@@ -253,9 +253,9 @@ def _format_quote_prefix(replied_text: str, sender_label: str) -> str:
 def _rewrite_quoted_ats(placeholders: list[str]) -> str:
     """引用内历史@改写:['@全体', '@<id>'] → '提及全体 提及<id>',空列表返 ''。
 
-    本部署补丁(雷②, 维护者定案用「提及」):半角「@<bot_id>」
+    本部署补丁(用「提及」):半角「@<bot_id>」
     随引用文本进 current_message 会字面命中 decision 协议「`@<你的 id>` 就是在 @ 你」
-    的规则(2026-10-13 群 200000003 误接话事故:引用含 @bot 的旧消息 + 当前在对
+    的规则(群 200000003 误接话事故:引用含 @bot 的旧消息 + 当前在对
     别人说话,被判成冲 bot 说)。改写后 id 信息保留、字面 token 断开,「提及」与@
     语义等价。只作用于引用块内——当前消息自身的 @ 占位(at_placeholders)维持
     「@<id>」原格式,协议块靠「块外才是当前@」区分两者。

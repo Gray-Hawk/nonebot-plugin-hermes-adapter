@@ -10,13 +10,13 @@
 极简送达与正常 turn 的差异(刻意收窄,防半个状态机):
 - reactive/结构化: output 按 submit_decision JSON 解析,失败即静默;at_user_id
   用 message_buffer 当前 recent 窗口校验(重启后 recent 按新 buffer 算);
-- pin/release anchor、should_exit_active、ack emoji、防抖合并这些 turn 生命周期
+- pin/release anchor、should_exit_active、防抖合并这些 turn 生命周期
   特性在续跑轮一律跳过(记 INFO);mark_bot_replied 照打(窗口若还活着);
 - 续跑期间到达的旁白帧按 interim_echo 同款转发(受 hermes_interim_echo_enabled 控制)。
 
 送达窗口:BotRegistry 重启即清、scope 内可能已有新 turn 在跑——等 entry 出现且
 scope 空闲才送,15s 一拍共 40 拍(10 分钟);超时保留行。保留行两条出路
-(2026-10-16 维护者拍板 A+B,替代旧「只等下次启动」):A=同 scope 任意 turn 收尾即
+:A=同 scope 任意 turn 收尾即
 触发 retry_scope_deliveries 重试;B=已终态回复逾 15 分钟未送达直接丢弃
 (_DELIVERY_CAP_SEC,在 _resume_row_impl 查得 status 后生效;未终态长任务不受
 cap 影响)。reattach 过程自身的网络失败同样保留行(runs 在 gateway 侧还活着)。
@@ -46,16 +46,16 @@ from ..core.run_tracker import TrackedRun
 _RESUME_RETRY_SEC = 15
 _RESUME_RETRY_MAX = 40  # 40 拍 × 15s = 10 分钟送达窗口
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
-# 送达时效 cap(2026-10-16 维护者拍板 B):已终态(completed)的回复若 15 分钟仍未送达,
-# 直接丢弃不再保留——维护者原话「15 分钟内没送到,送到概率基本就是 0」,且时过境迁的
+# 送达时效 cap:已终态(completed)的回复若 15 分钟仍未送达,
+# 直接丢弃不再保留——「15 分钟内没送到,送到概率基本就是 0」,且时过境迁的
 # 旧回复裸发出来比丢失更糟(当日实证:13:59 的部署汇报在 scope 抢不到空闲窗被保留,
-# 2 小时后第二次部署重启时被补送,维护者当成凭空冒出的古董消息)。
+# 2 小时后第二次部署重启时被补送,被当成凭空冒出的古董消息)。
 # 只作用于已终态行:仍在跑的 run(未终态)不受 cap 影响,长任务不会被误丢。
 _DELIVERY_CAP_SEC = 15 * 60
 # per-run 恢复去重:启动恢复(resume_active_runs)与 turn 收尾重试
 # (retry_scope_deliveries)可能重叠触发同一行,集合挡一次。
 _resume_inflight: set[str] = set()
-# 僵尸行 TTL(低危⑫):送达失败/网络失败保留的行若永远送不出去(群组沉寂、bot 离线、
+# 僵尸行 TTL:送达失败/网络失败保留的行若永远送不出去(群组沉寂、bot 离线、
 # 网关已遗忘该 run),启动时按龄期清扫。单 turn 迭代数有硬顶,真在跑的 run 到不了
 # 24h 龄期,误伤不到;网关终态状态只留 1h,更老的行本来也送不出去。
 _ZOMBIE_TTL_SEC = 24 * 3600
@@ -92,7 +92,7 @@ async def resume_active_runs() -> None:
     tracker = _mcp.run_tracker
     if tracker is None:
         return
-    # 低危⑫:先扫僵尸行(龄期超 TTL 的行——网关早已遗忘那些 run,送不出去了)
+    # 先扫僵尸行(龄期超 TTL 的行——网关早已遗忘那些 run,送不出去了)
     pruned = tracker.prune_zombies(_ZOMBIE_TTL_SEC)
     if pruned:
         logger.warning(f"[HERMES run-resume] 清扫僵尸行 {len(pruned)} 条: {pruned}")
@@ -118,7 +118,7 @@ async def _resume_row(row: TrackedRun) -> None:
 async def _drop_if_stale_completed(row: TrackedRun, tracker) -> bool:
     """已终态(completed)且逾 _DELIVERY_CAP_SEC 的行直接丢弃删行(B 时效闸)。
 
-    2026-10-17 维护者拍板:B 闸原本只排在送达窗口之后(_resume_row_impl 主路径),
+    B 闸原本只排在送达窗口之后(_resume_row_impl 主路径),
     scope 长忙(窗口超时)或 bot 离线时永远轮不到执行,已终态超龄行会躺到 24h
     僵尸清扫才走。抽成 helper 后在各保留分支前统一补闸。查询失败/未终态/
     未超龄一律 False,调用方维持原保留语义不变。
@@ -164,9 +164,9 @@ async def _resume_row_impl(row: TrackedRun) -> None:
             entry = None
         await asyncio.sleep(_RESUME_RETRY_SEC)
     if entry is None:
-        # 低危⑫(2026-10-14):送达窗口超时不再弃行——删行=completed 回复永久丢。
+        # 送达窗口超时不再弃行——删行=completed 回复永久丢。
         # 保留行等下次启动再送;永远送不出去的真僵尸由启动 TTL 清扫兜底。
-        # 2026-10-17:保留前先过 B 时效闸(原只排在窗口之后,scope 长忙时轮不到)。
+        # 保留前先过 B 时效闸(原只排在窗口之后,scope 长忙时轮不到)。
         if await _drop_if_stale_completed(row, tracker):
             return
         logger.warning(
@@ -176,7 +176,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
     try:
         bot = get_bot(entry.bot_self_id)
     except (KeyError, ValueError) as exc:
-        # 2026-10-17:bot 离线保留前同样先过 B 时效闸。
+        # bot 离线保留前同样先过 B 时效闸。
         if await _drop_if_stale_completed(row, tracker):
             return
         logger.warning(f"[HERMES run-resume] bot 离线,保留行待下次启动 run_id={row.run_id}: {exc}")
@@ -194,7 +194,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
                 raise RuntimeError(f"status HTTP {resp.status_code}")
             status_body = resp.json()
             status = str(status_body.get("status") or "")
-            # B 时效闸(2026-10-16 维护者拍板):已终态回复逾 _DELIVERY_CAP_SEC 未送达 →
+            # B 时效闸:已终态回复逾 _DELIVERY_CAP_SEC 未送达 →
             # 直接丢弃删行,不再保留等下次启动。未终态(仍在跑)的行不查 cap。
             if status == "completed" and (_now_ms() / 1000 - row.started_at) > _DELIVERY_CAP_SEC:
                 logger.warning(
@@ -291,7 +291,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
     logger.info(
         f"[HERMES run-resume] 续跑送达完成 run_id={row.run_id} scope={row.scope_key} "
         f"sent={sent} text_len={len(cleaned)} media={len(media_urls)} files={len(file_paths)}"
-        "(turn 生命周期特性:pin/exit/ack/防抖 跳过)"
+        "(turn 生命周期特性:pin/exit/防抖 跳过)"
     )
     tracker.finish(row.run_id)
 
@@ -303,7 +303,7 @@ def _now_ms() -> int:
 
 
 async def retry_scope_deliveries(adapter_name: str, is_private: bool, user_id: str, group_id) -> None:
-    """同 scope turn 收尾触发的送达重试(2026-10-16 维护者拍板 A)。
+    """同 scope turn 收尾触发的送达重试。
 
     旧路:送达窗口超时后保留行只等下次 nb 启动,一等就是几小时(当日实证 2h)。
     新径:同 scope 任意 turn 收尾(slot 释放)即对本 scope 的待送达行逐行起恢复,

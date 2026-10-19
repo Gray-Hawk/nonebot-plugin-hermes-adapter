@@ -45,7 +45,7 @@ _driver = get_driver()
 
 @_driver.on_startup
 async def _hermes_m1_startup():
-    """M1-mem 启动序列:装配运行时单例 + 起 MCP server + 注册 cron。
+    """启动序列:装配运行时单例 + 起 MCP server + 注册 cron。
 
     注意:不能在 on_startup 钩子里再追加 on_startup 钩子(已经在 startup phase 里),
     所以直接 await start_mcp_server() 而非走 register_lifecycle 的间接路径。
@@ -128,7 +128,7 @@ async def _hermes_m1_startup():
             f"{plugin_config.hermes_help_menu_file};/help 将回退内置菜单"
         )
 
-    # 定制定居目录(2026-10-13):配了但目录不存在时启动期提醒;各功能各自回退内置
+    # 定制定居目录:配了但目录不存在时启动期提醒;各功能各自回退内置
     if plugin_config.hermes_custom_dir and not os.path.isdir(
         os.path.expanduser(plugin_config.hermes_custom_dir)
     ):

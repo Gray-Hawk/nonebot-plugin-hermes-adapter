@@ -1,7 +1,7 @@
-"""用户身份表（跨群用户画像系统残项，2026-10-15 维护者拍板重启）。
+"""用户身份表（跨群用户画像系统残项重启）。
 
 存储：<hermes_custom_dir>/memory/<适配器>/identities.csv——人手可改
-（CSV，维护者 2026-10-15 定：表格类数据用 CSV，方便手动编辑/表格软件打开；
+（CSV，表格类数据用 CSV，方便手动编辑/表格软件打开；
 存储量无上限，纯文本随便长），助手软触发维护也用 write_file/patch 直改。
 插件侧只读 + mtime 缓存（文件出现/消失/改动自然失效重建，与 group_profile
 同套缓存语义）。
@@ -32,7 +32,7 @@ from nonebot import logger
 
 # path → (签名, {user_id: entry})；签名失效重建，负缓存（文件不存在）也缓存
 # 签名 = (mtime_ns, size)：本机文件系统 mtime 粒度很粗（同毫秒连写不变，
-# 2026-10-15 冒烟实证），单看 mtime 会漏掉快速连改；同长度同瞬间改写仍有
+# 冒烟实证），单看 mtime 会漏掉快速连改；同长度同瞬间改写仍有
 # 残余风险，生产场景人工编辑间隔远大于此，可接受。
 _cache: dict[str, tuple[tuple[int | None, int], dict[str, dict]]] = {}
 

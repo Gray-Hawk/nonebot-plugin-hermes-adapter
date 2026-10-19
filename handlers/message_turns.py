@@ -84,18 +84,18 @@ async def _dispatch_chat(
     msg_text: str,
     image_urls: list[str],
     sticker_urls: list[str],
-    is_explicit_trigger: bool,
+    is_direct: bool,
     addressed_to_bot: bool,
     now_ms: int,
     ephemeral: bool = False,
     context_limit: int | None = None,
     replied_msg_id=None,
 ):
-    """ack scope + passive/reactive 分叉(原 handle_message 末段,防抖批抽出以便
+    """passive/reactive 分叉(原 handle_message 末段,防抖批抽出以便
     防抖到期后与防抖关闭路径共用同一 dispatch)。"""
-    # 任务锚+steer(规划书§3,2026-10-14):资格内纯文本直注在跑 turn——私聊恒资格,
+    # 任务锚+steer(规划书§3):资格内纯文本直注在跑 turn——私聊恒资格,
     # 群聊仅委托且发送者在资格集合(在跑 turn 触发者 ∪ 在钉锚全体参与者)。
-    # 直注成功即 return,不贴 ack(维护者定案);注不进去落回正常 dispatch,零丢失。
+    # 直注成功即 return;注不进去落回正常 dispatch,零丢失。
     if (
         plugin_config.hermes_runs_channel_enabled
         and not ephemeral
@@ -103,38 +103,14 @@ async def _dispatch_chat(
         and not sticker_urls
         and await _maybe_steer_direct(
             target=target, adapter_name=adapter_name, user_id=user_id, nickname=nickname,
-            group_id=group_id, msg_text=msg_text, is_explicit_trigger=is_explicit_trigger,
+            group_id=group_id, msg_text=msg_text, is_direct=is_direct,
             now_ms=now_ms,
         )
     ):
         return
-    async with _ack_scope(
-        bot,
-        event,
-        adapter_name=adapter_name,
-        is_explicit_trigger=is_explicit_trigger,
-        is_private=target.private,
-    ):
-        if target.private or not plugin_config.hermes_active_session_enabled:
-            # 原 v0.1.6 等价路径:passive 模式,raw_text 直接当回复
-            await _handle_passive_path(
-                bot=bot,
-                target=target,
-                adapter_name=adapter_name,
-                user_id=user_id,
-                nickname=nickname,
-                group_id=group_id,
-                text=msg_text,
-                image_urls=image_urls,
-                sticker_urls=sticker_urls,
-                is_private=target.private,
-                now_ms=now_ms,
-                event_msg_id=getattr(event, "message_id", None),
-            )
-            return
-
-        # 群聊 + 活跃态启用 → reactive 决策
-        await _handle_reactive_path(
+    if target.private or not plugin_config.hermes_active_session_enabled:
+        # 原 v0.1.6 等价路径:passive 模式,raw_text 直接当回复
+        await _handle_passive_path(
             bot=bot,
             target=target,
             adapter_name=adapter_name,
@@ -144,16 +120,33 @@ async def _dispatch_chat(
             text=msg_text,
             image_urls=image_urls,
             sticker_urls=sticker_urls,
-            is_explicit_trigger=is_explicit_trigger,
-            addressed_to_bot=addressed_to_bot,
+            is_private=target.private,
             now_ms=now_ms,
             event_msg_id=getattr(event, "message_id", None),
-            # keyword-soft 窗口外命中:跑无窗口临时 turn(不开窗);窗口内则正常跑,
-            # 两种都推 N1 条上下文(不用续发轮裁剪)。
-            ephemeral=ephemeral,
-            context_limit=context_limit,
-            replied_msg_id=replied_msg_id,
         )
+        return
+
+    # 群聊 + 活跃态启用 → reactive 决策
+    await _handle_reactive_path(
+        bot=bot,
+        target=target,
+        adapter_name=adapter_name,
+        user_id=user_id,
+        nickname=nickname,
+        group_id=group_id,
+        text=msg_text,
+        image_urls=image_urls,
+        sticker_urls=sticker_urls,
+        is_direct=is_direct,
+        addressed_to_bot=addressed_to_bot,
+        now_ms=now_ms,
+        event_msg_id=getattr(event, "message_id", None),
+        # keyword-soft 窗口外命中:跑无窗口临时 turn(不开窗);窗口内则正常跑,
+        # 两种都推 N1 条上下文(不用续发轮裁剪)。
+        ephemeral=ephemeral,
+        context_limit=context_limit,
+        replied_msg_id=replied_msg_id,
+    )
 
 # 上游 locked 类持久化失败 = 别的 Hermes 进程正在写 state.db,上游要求「过一会再发一次」。
 # 等一拍再重试,让持有写锁的一方先落库;不做指数退避,单次补偿够覆盖锁窗口,
@@ -358,10 +351,10 @@ async def _run_passive_turn(
     # (全隐式化:私聊不再「硬必回」,模型按私聊版协议自决,无实质内容可静默)。
     # 群聊 passive(active_session=off 的旧部署形态)维持 raw_text 直发不动。
     use_private_decision = is_private
-    # 2026-10-15 补丁:计算记忆根路径,用于路由提示动态跟随配置
+    # 本部署补丁:计算记忆根路径,用于路由提示动态跟随配置
     _custom_dir = resolve_custom_dir()
     _memory_root = str(_custom_dir / "memory" / adapter_name) if _custom_dir else None
-    # 身份表（2026-10-15）：发言者标签正主名注释，custom_dir 不可用/查不到都静默 None
+    # 身份表：发言者标签正主名注释，custom_dir 不可用/查不到都静默 None
     _name_resolver = (
         (lambda uid, _cd=_custom_dir, _ad=adapter_name: identity.resolve_display_name(_cd, _ad, uid))
         if _custom_dir else None
@@ -374,13 +367,13 @@ async def _run_passive_turn(
         private_decision=use_private_decision,
         # 群记忆外挂:群档案注入块(私聊 group_id=None 内部静默跳过)
         profile_block=build_group_profile_block(adapter_name, group_id),
-        # 2026-10-15 补丁:传入功能开关,私聊时启用则注入简化版路由提示
+        # 本部署补丁:传入功能开关,私聊时启用则注入简化版路由提示
         group_profile_enabled=plugin_config.hermes_group_profile_enabled,
         memory_root=_memory_root,
     )
     # 图片内联成 data: URL 再出站:上游对 http(s) URL 是纯透传,交出去就把可达性
     # 赌在 provider 出网与 URL 时效上,且部分 provider 形态会静默丢图。
-    # 2026-10-15 三模式改造:私聊维持无条件内联;群聊 passive 与 reactive 同走
+    # 三模式改造:私聊维持无条件内联;群聊 passive 与 reactive 同走
     # media_config 三模式(窗口=recent;passive 无 addressed 概念,按 True 传——
     # 群聊 passive 只在显式触发时被调用,等价于已被 @)。
     media_cfg = load_media_config()
@@ -405,7 +398,7 @@ async def _run_passive_turn(
             self_id=str(bot.self_id),
         )
     inlined = await inline_image_frames(inline_urls, cfg=media_cfg) if inline_urls else []
-    # 2026-10-13 动图抽帧:表情走专用通道,返回 (url, 帧组)(动图多帧/静态单帧),
+    # 动图抽帧:表情走专用通道,返回 (url, 帧组)(动图多帧/静态单帧),
     # 帧组结构自配对防张冠李戴(见 image_inline.inline_gif_frames docstring)。
     sticker_inlined = (
         await inline_gif_frames(sticker_urls or [], cfg=media_cfg)
@@ -426,11 +419,11 @@ async def _run_passive_turn(
         current_text=passive_text,
         current_image_urls=_label_groups(label_index, inlined),
         current_sticker_urls=_label_groups(label_index, sticker_inlined),
-        # 审计修复批 2026-10-16(疑似 C 拍板=修):当前消息行补 [m:ID] 前缀 + 媒体清单,
+        # 当前消息行补 [m:ID] 前缀 + 媒体清单,
         # 与 reactive 的 current_message 同形同源;B 方案(同日晚):行来自触发条目
         # (构造时已凭 event 领得 db 真 id),不再偷看 buffer 尾部。
         current_message=current_row,
-        # 2026-10-13 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
+        # 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
         plugin_note="\n".join(
             task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, is_private, user_id, group_id))
         ) or None,
@@ -442,7 +435,7 @@ async def _run_passive_turn(
     # 独立发话通道);不 @ 人(进度广播不针对特定个体)。extract_response_media 剥掉
     # MEDIA:/md 图片标签——旁白里的本地路径原样发出会泄主机路径;媒体最终回复还会带。
     async def _interim_echo(segment: str) -> None:
-        # 2026-10-13 分级反馈:旁白段过 where=interim/all 的 note 规则(确认轮不跟旁白)
+        # 分级反馈:旁白段过 where=interim/all 的 note 规则(确认轮不跟旁白)
         _check_interim_feedback(
             _feedback_scope_key(adapter_name, is_private, user_id, group_id), segment
         )
@@ -498,7 +491,7 @@ async def _run_passive_turn(
                 content=result.pending_steer, image_urls=[], sticker_urls=[],
                 reply_to_ts=None, is_bot=False,
             ),
-            is_explicit_trigger=True,
+            is_direct=True,
             original_msg_id=None,
             now_ms=_now_ms(),
             commission=True,
@@ -511,7 +504,7 @@ async def _run_passive_turn(
     # 本部署补丁: 403 鉴权类错误硬静默——不发 fallback、
     # 不发 raw_text,不依赖 fallback 配置。403 是运维事件(key/额度),群里通知无意义,
     # 上游持续故障时每条触发一条通知就是刷屏。记 error 级日志让运维能看见。
-    # 2026-10-11 扩展: provider 暂不可用/重试耗尽引导文案同口径静默。
+    # 扩展: provider 暂不可用/重试耗尽引导文案同口径静默。
     if result.is_forbidden_error or result.is_outage_error:
         _silence_kind = (
             "403 鉴权类错误" if result.is_forbidden_error
@@ -553,7 +546,7 @@ async def _run_passive_turn(
     # 本部署补丁: 私聊决策信封解析成功时按信封走——
     # should_reply=false 即静默(私聊不再硬必回)。解析失败回 raw_text:私聊是显式
     # 对话,静默更像故障;并保留既有防御性抠取(模型可能吐了破信封)。
-    # 2026-10-13 分级反馈:background_task 便签登记(静默轮也登记)。
+    # 分级反馈:background_task 便签登记(静默轮也登记)。
     _fb_key = _feedback_scope_key(adapter_name, is_private, user_id, group_id)
     if use_private_decision and result.structured is not None and not result.parse_failed:
         _record_background_note(_fb_key, result.structured, log_tag="passive")
@@ -564,7 +557,7 @@ async def _run_passive_turn(
     else:
         # 防御:同一 Hermes session 之前跑过 reactive 时学到 submit_decision 契约,
         # 切回 passive 后仍可能吐 JSON。检测并抠 reply_text;不命中则用原 raw_text。
-        # 2026-10-17 闭环提醒(维护者定案):决策轮信封缺失(模型写了散文忘包 JSON,
+        # 闭环提醒:决策轮信封缺失(模型写了散文忘包 JSON,
         # 区别于 transport 错误)→ 留便签下轮提醒,不靠人介入纠偏。
         if use_private_decision and result.parse_failed and not result.is_transport_error:
             task_notes.push_plugin_note(
@@ -594,7 +587,7 @@ async def _run_passive_turn(
 
     cleaned_text, extracted_media_urls, extracted_files = extract_response_media(reply_text)
     media_urls = list(result.media_urls) + [u for u in extracted_media_urls if u not in result.media_urls]
-    # 本部署补丁(2026-10-08): 本地文件上传。client 层(普通文本路径)已收过一轮
+    # 本部署补丁:本地文件上传。client 层(普通文本路径)已收过一轮
     # file_paths; handler 层对 reply_text 的二次 extract 覆盖 JSON 残留场景。
     file_paths = list(result.file_paths) + [p for p in extracted_files if p not in result.file_paths]
 
@@ -608,7 +601,7 @@ async def _run_passive_turn(
         at_user_id=None if is_private else user_id,
         adapter_name=adapter_name,
     )
-    # 2026-10-13 分级反馈:发送成功后的文书暗示/离场确认检查(合成轮豁免)
+    # 分级反馈:发送成功后的文书暗示/离场确认检查(合成轮豁免)
     await _post_send_feedback(
         key=_fb_key, reply_text=cleaned_text, bot=bot, target=target,
         adapter_name=adapter_name, user_id=user_id, group_id=group_id,
@@ -629,7 +622,7 @@ async def _run_reactive_turn(
     text: str,
     image_urls: list[str],
     sticker_urls: list[str] | None = None,
-    is_explicit_trigger: bool,
+    is_direct: bool,
     addressed_to_bot: bool = False,
     now_ms: int,
     nickname: str | None = None,
@@ -664,7 +657,7 @@ async def _run_reactive_turn(
             # 两种都意味着有人的触发被吞了 —— 必须留痕,不能静默 return。
             logger.warning(
                 f"[HERMES reactive] drop: no active window at turn start "
-                f"(group={group_id} user={user_id} explicit={is_explicit_trigger} now_ms={now_ms})"
+                f"(group={group_id} user={user_id} direct={is_direct} now_ms={now_ms})"
             )
             return None
         # 隐式激活临时 turn:造一个不注册进管理器的 session 实例。下游读操作
@@ -699,11 +692,11 @@ async def _run_reactive_turn(
             group_id=group_id,
             limit=context_limit or plugin_config.hermes_perception_buffer,
         )
-    # 本部署补丁(增量推送,维护者立项): 只推「没推过」的新消息,
+    # 本部署补丁(增量推送): 只推「没推过」的新消息,
     # 旧历史由 Hermes 服务端转录承担——此前每轮全量重推历史块,块随 user 消息落进
     # 转录、后续每轮重发,复利占输入账单 ~10%(生产实证)。拉取上限即推送上限:
     # 水位过老导致新消息超上限时,更老的永久跳过(与旧窗口外不可见语义一致)。
-    # 旧续发轮 OR 双闸/select_followup_window 随之废弃(维护者 2026-10-12 定:配置削减)。
+    # 旧续发轮 OR 双闸/select_followup_window 随之废弃(定:配置削减)。
     watermark = session_manager.get_push_watermark(adapter_name, user_id, group_id)
     recent, new_watermark = split_unpushed_messages(recent_full, watermark)
 
@@ -711,10 +704,10 @@ async def _run_reactive_turn(
     # 裸 `@<id>` 和 [bot] 历史行绑回自己。取值走进程内缓存,首轮一次 RPC。
     self_nickname = await get_bot_nickname(bot)
 
-    # 2026-10-15 补丁:计算记忆根路径,用于路由提示动态跟随配置
+    # 本部署补丁:计算记忆根路径,用于路由提示动态跟随配置
     _custom_dir = resolve_custom_dir()
     _memory_root = str(_custom_dir / "memory" / adapter_name) if _custom_dir else None
-    # 身份表（2026-10-15）：发言者标签正主名注释，custom_dir 不可用/查不到都静默 None
+    # 身份表：发言者标签正主名注释，custom_dir 不可用/查不到都静默 None
     _name_resolver = (
         (lambda uid, _cd=_custom_dir, _ad=adapter_name: identity.resolve_display_name(_cd, _ad, uid))
         if _custom_dir else None
@@ -722,10 +715,10 @@ async def _run_reactive_turn(
     system_prompt = build_reactive_system_prompt(
         # 群记忆外挂:群档案注入块(私聊/无档案返回 None,函数内静默跳过)
         profile_block=build_group_profile_block(adapter_name, group_id),
-        # 2026-10-15 补丁:传入功能开关,私聊时启用则注入简化版路由提示
+        # 本部署补丁:传入功能开关,私聊时启用则注入简化版路由提示
         group_profile_enabled=plugin_config.hermes_group_profile_enabled,
         memory_root=_memory_root,
-        # 2026-10-15 补丁:会话上下文挪入系统提示,吃缓存
+        # 本部署补丁:会话上下文挪入系统提示,吃缓存
         adapter=adapter_name,
         group_id=group_id,
         self_id=str(bot.self_id),
@@ -736,7 +729,7 @@ async def _run_reactive_turn(
     # 接力链不用为此加字段。
     sender_blacklisted = _is_blacklisted(group_id, user_id)
     # 本部署补丁: 取在钉委托锚(懒式超龄剔除)。
-    # 2026-10-13 改手动单轨后,入口不再自动钉锚;这里只会读到「之前判断轮已确认
+    # 改手动单轨后,入口不再自动钉锚;这里只会读到「之前判断轮已确认
     # 并 pin 成功」的锚。ephemeral 临时 session 不注册进管理器,天然无锚。
     pinned_anchors: list[AnchorRecord] = []
     if not ephemeral:
@@ -809,7 +802,7 @@ async def _run_reactive_turn(
         current_message=current_row,
         sender_blacklisted=sender_blacklisted,
         pinned_anchors=pinned_anchors,
-        # 2026-10-13 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
+        # 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
         plugin_note="\n".join(
             task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, False, user_id, group_id))
         ) or None,
@@ -825,7 +818,7 @@ async def _run_reactive_turn(
     oversized = [(m.id, len(m.content)) for m in recent_full if len(m.content) > 2000]
     logger.debug(
         f"[HERMES reactive] prompt built group={group_id} user_content_chars={prompt_chars} "
-        f"window={len(recent)}/{len(recent_full)} explicit={is_explicit_trigger} "
+        f"window={len(recent)}/{len(recent_full)} direct={is_direct} "
         f"mode={media_cfg.mode} imgs={len(inlined_frames)}/{len(image_urls)}"
     )
     if oversized:
@@ -852,7 +845,7 @@ async def _run_reactive_turn(
     # /[] 让契约清晰,避免被读者误以为 image_urls 也参与了构造。
     # 本部署补丁: 旁白实时转发,同 passive 路径注释。
     async def _interim_echo(segment: str) -> None:
-        # 2026-10-13 分级反馈:旁白段过 where=interim/all 的 note 规则(确认轮不跟旁白)
+        # 分级反馈:旁白段过 where=interim/all 的 note 规则(确认轮不跟旁白)
         _check_interim_feedback(
             _feedback_scope_key(adapter_name, False, user_id, group_id), segment
         )
@@ -905,12 +898,12 @@ async def _run_reactive_turn(
                     content=result.pending_steer, image_urls=[], sticker_urls=[],
                     reply_to_ts=None, is_bot=False,
                 ),
-                is_explicit_trigger=False,
-                # 迟到 steer 的出生轮语义:随条目走(2026-10-16 审计修复批:接力改读
+                is_direct=False,
+                # 迟到 steer 的出生轮语义:随条目走(接力改读
                 # 条目自己的值后,这里同步盖出生轮的 ephemeral——冷窗关键词轮里上浮的
                 # steer 仍按无窗跑,不因接力方有窗而切换跑法,避免交接到无窗轮被吞)。
                 ephemeral=ephemeral,
-                # 2026-10-17 alive/56:打回收标记,refire 的 post-reply cooldown 闸门
+                # 打回收标记,refire 的 post-reply cooldown 闸门
                 # 放行——此文本已被 steer_run 收过一次,不是「刚说完接话」类过触发。
                 steer_recovered=True,
             ),
@@ -935,7 +928,7 @@ async def _run_reactive_turn(
 
     if result.parse_failed or result.structured is None:
         # 本部署补丁: 403 鉴权类错误硬静默(同 passive 路径注释)。
-        # 2026-10-11 扩展: provider 暂不可用/重试耗尽引导文案同口径静默。
+        # 扩展: provider 暂不可用/重试耗尽引导文案同口径静默。
         if result.is_forbidden_error or result.is_outage_error:
             _silence_kind = (
                 "403 鉴权类错误" if result.is_forbidden_error
@@ -951,7 +944,7 @@ async def _run_reactive_turn(
         if result.is_interrupted:
             logger.info(f"[HERMES reactive] turn 被终止,硬静默 (group={group_id})")
             return result
-        # 2026-10-17 闭环提醒(维护者定案):决策轮信封缺失(模型写散文忘包 JSON;
+        # 闭环提醒:决策轮信封缺失(模型写散文忘包 JSON;
         # 403/outage/interrupted/transport 均已提前分流,到这里是模型自己的形状问题)
         # → 留便签下轮提醒,不靠人介入纠偏。
         if result.parse_failed and not result.is_transport_error:
@@ -967,8 +960,10 @@ async def _run_reactive_turn(
         # 既泄密又难看。换成 config 里的友好兜底文本;空串则静默。
         # parse_failed 但非 transport(LLM 真的回了点啥但结构错):原样转发 raw_text,
         # 仍可能是用户想要的回答。
-        if result.is_transport_error and is_explicit_trigger:
-            # 阶段2d(维护者定案「丢了就贴」):429 满额丢单(自动重试一次仍 429)不发
+        # 兜底挂点(保留留痕,后续可能移除):transport 错误兜底——
+        # 仅直说触发发 fallback 文本 / 贴 429 emoji,隐式静默防刷屏。
+        if result.is_transport_error and is_direct:
+            # 阶段2d(「丢了就贴」):429 满额丢单(自动重试一次仍 429)不发
             # 文本,在触发消息上贴 emoji 表「忙,稍等」;无 msg id 时退回文本兜底。
             if result.is_rate_limited and trigger_msg_id is not None:
                 logger.info(
@@ -988,7 +983,7 @@ async def _run_reactive_turn(
                     target=target,
                     text=fallback_text,
                     media_urls=[],
-                    # 问题5(2026-10-12): transport 错误连模型输出都没有,不 @。
+                    # 问题5: transport 错误连模型输出都没有,不 @。
                     at_user_id=None,
                     adapter_name=adapter_name,
                 )
@@ -1003,17 +998,20 @@ async def _run_reactive_turn(
         # should_reply=false 决定,而那信号只以 JSON 形式存在,拿一段可能不该说的话去撞群
         # 比丢一条更糟,所以那种破法非显式 turn 仍静默。transport / persistence 错误的 raw
         # 是服务端报文,绝不当散文转发,故排除。
-        # M9 修复(2026-10-17):信封在场的嗅探从「含 "should_reply" 字面值」收紧为
+        # 信封在场的嗅探从「含 "should_reply" 字面值」收紧为
         # 「以 { 开头或存在 "should_reply": 键值形态」——旧口径下模型正文讨论协议
         # (提及字段名)会被误判破信封,非显式 turn 静默吞话。
         _looks_envelope = raw.strip().startswith("{") or bool(re.search(r'"should_reply"\s*:', raw))
         is_pure_prose = bool(raw) and not result.is_transport_error and not _looks_envelope
-        forward_raw = bool(raw) and (is_explicit_trigger or is_pure_prose)
+        # 兜底挂点(保留留痕,后续可能移除):破信封必达兜底——
+        # 直说触发必发 raw_text;隐式仅在纯散文时发,其余静默(信封破可能带
+        # should_reply=false,不敢代发)。
+        forward_raw = bool(raw) and (is_direct or is_pure_prose)
         raw_preview = preview_raw(raw)
         logger.warning(
             f"[HERMES reactive] structured parse failed (group={group_id}, "
             f"transport_error={result.is_transport_error}); fallback="
-            f"{('raw_text' if is_explicit_trigger else 'prose') if forward_raw else 'silent'}; "
+            f"{('raw_text' if is_direct else 'prose') if forward_raw else 'silent'}; "
             f"raw_len={len(raw)} raw_preview={raw_preview!r}"
         )
         # 显式触发降级发 raw_text;非显式触发仅在纯散文时发,其余静默
@@ -1034,7 +1032,7 @@ async def _run_reactive_turn(
                 at_user_id=None,
                 adapter_name=adapter_name,
             )
-            # 本部署补丁(2026-10-08): 散文兜底同样可能带本地文件引用。
+            # 本部署补丁:散文兜底同样可能带本地文件引用。
             await send_local_files(
                 bot=bot, target=target,
                 file_paths=list(result.file_paths) + [p for p in extracted_files if p not in result.file_paths],
@@ -1044,7 +1042,7 @@ async def _run_reactive_turn(
 
     logger.info(
         f"[HERMES reactive] decision adapter={adapter_name} group={group_id} user={user_id} "
-        f"explicit={is_explicit_trigger} should_reply={result.structured.get('should_reply')} "
+        f"direct={is_direct} should_reply={result.structured.get('should_reply')} "
         f"should_exit_active={result.structured.get('should_exit_active')} "
         f"reply_text_len={len(str(result.structured.get('reply_text') or ''))} "
         f"topic_hint={result.structured.get('topic_hint')!r} "
@@ -1057,7 +1055,7 @@ async def _run_reactive_turn(
     logger.debug(f"[HERMES reactive] decision raw (len={len(result.raw_text or '')}): {raw_preview!r}")
 
     decision = result.structured
-    # 2026-10-13 分级反馈:离场任务便签登记(静默轮也登记)
+    # 分级反馈:离场任务便签登记(静默轮也登记)
     _fb_key = _feedback_scope_key(adapter_name, False, user_id, group_id)
     _record_background_note(_fb_key, decision, log_tag="reactive")
     if decision.get("topic_hint"):
@@ -1087,14 +1085,13 @@ async def _run_reactive_turn(
 
     if not decision.get("should_reply"):
         # 显式触发 + LLM 选择沉默是「看起来该回但没回」最常见的来源,
-        # 提到 info 让群主能扫日志直接看见「不是插件 bug,是 LLM 自己判定的」。
-        # 被点名(addressed_to_you: true 已进 prompt)却静默要更响一档:那是模型否掉了
-        # 插件给的既定事实,属于要排查的形状。例外是本 turn 已经由 MCP push 答过 ——
-        # 那种静默正是防重复该有的样子。
-        emit = logger.warning if addressed_to_bot and not mid_turn_push else logger.info
+        # 静默是设计功能不是异常:被点名(addressed_to_you: true
+        # 已进 prompt)却静默只是模型否掉了插件给的既定事实,不构成需要排查的形状,
+        # 与「本 turn 已由 MCP push 答过的防重复静默」同级,统一 INFO 留痕即可。
+        emit = logger.info
         emit(
             f"[HERMES reactive] silent: LLM decided should_reply=false "
-            f"(group={group_id} user={user_id} explicit={is_explicit_trigger} "
+            f"(group={group_id} user={user_id} direct={is_direct} "
             f"addressed={addressed_to_bot} answered_mid_turn={mid_turn_push} "
             f"topic_hint={result.structured.get('topic_hint')!r})"
         )
@@ -1144,17 +1141,17 @@ async def _run_reactive_turn(
             return result
         logger.info(
             f"[HERMES reactive] suppress submit_decision reply: it restates the mid-turn push "
-            f"(group={group_id} user={user_id} explicit={is_explicit_trigger} "
+            f"(group={group_id} user={user_id} direct={is_direct} "
             f"reply_text_len={len(reply_text)} mid_turn_media={session.last_bot_reply_media})"
         )
         return result
 
-    # 本部署补丁(问题5,维护者拍板): 彻底废弃插件层 @ 兜底,
+    # 本部署补丁(问题5): 彻底废弃插件层 @ 兜底,
     # @ 完全由 LLM 决策——只认信封里的 at_user_id,且值必须落在本 turn recent
     # 窗口发言者集合内(防模型 @ 不在场的人);没给/非法就不 @。
-    # 理由(维护者原话):@ 兜底本质是废弃机制,LLM 决策完全足够,兜底反而可能答错;
+    # 理由:@ 兜底本质是废弃机制,LLM 决策完全足够,兜底反而可能答错;
     # @ 是强提醒,漏 @ 无害、错 @ 才烦人。at_user 布尔字段随之废弃(协议契约已同步删除)。
-    # M8 修复(2026-10-17):校验集合从 recent(增量水位后新消息)改为 recent_full
+    # 校验集合从 recent(增量水位后新消息)改为 recent_full
     # (缓冲窗全量)——模型上下文按全量渲染,旧口径下「上一轮刚发言、本轮没说话」
     # 的在场者会被当不在场,@ 被静默丢弃(「在场」定义与模型视野错位)。
     _decision_at_id = decision.get("at_user_id")
@@ -1180,13 +1177,13 @@ async def _run_reactive_turn(
         at_user_id=at_user,
         adapter_name=adapter_name,
     )
-    # 本部署补丁(2026-10-08): 本地文件跟在文本消息之后上传。
+    # 本部署补丁:本地文件跟在文本消息之后上传。
     await send_local_files(bot=bot, target=target, file_paths=file_paths, adapter_name=adapter_name)
     logger.debug(
         f"[HERMES reactive] sent adapter={adapter_name} group={group_id} "
         f"ok={sent} text_len={len(cleaned_reply_text)} media={len(media_urls)} at_user={at_user}"
     )
-    # 2026-10-13 分级反馈:发送成功后的文书暗示/离场确认检查(合成轮豁免)
+    # 分级反馈:发送成功后的文书暗示/离场确认检查(合成轮豁免)
     if sent:
         await _post_send_feedback(
             key=_fb_key, reply_text=cleaned_reply_text, bot=bot, target=target,
@@ -1250,14 +1247,14 @@ async def _run_reactive_turn(
                 f"[HERMES reactive] mark_bot_replied landed nowhere: active window gone "
                 f"(group={group_id}); post-reply cooldown will not engage for follow-ups"
             )
-        # 2026-10-13 队列化定案:委托锚改手动单轨——入口不再自动钉,只有本轮
+        # 队列化定案:委托锚改手动单轨——入口不再自动钉,只有本轮
         # submit_decision 显式 pin_anchor=true 且回复真发出去了才钉。放在 mark_bot_replied
         # 之后,避免新锚立刻被自己的发言标成 answered;should_exit_active 不钉。
         # 去掉 ephemeral 排除——ephemeral 在 handler 入口
         # 按「开窗前」的 in_active_window 算,冷窗下「@bot+关键词」的委托轮恒 ephemeral=True,
         # 但入口 trigger() 已开真窗口,旧门把这支永远挡在钉锚外且无日志。真正的闸门是
         # 下面的 get_if_trigger_alive:没窗(ephemeral 沉默/窗已死)自然钉不上,有窗就该能钉。
-        # 任务锚重构(2026-10-14,规划书§2.2):merge 双通道优先于新钉——
+        # 任务锚重构(规划书§2.2):merge 双通道优先于新钉——
         # ①信封 anchor_merge=发起者 id(模型判同任务;校验在钉发起者集合,非法走
         #   便签反馈通道,下轮贴回模型自修正);
         # ②quote 自动归并:pin_anchor=true 且当前消息引用的正是某锚的首条委托消息。
@@ -1316,7 +1313,7 @@ async def _run_reactive_turn(
                     ),
                     # master_ids 必须拆前缀——
                     # hermes_admin_users 是「adapter:id」复合键,
-                    # 而 commissioner_id 是裸 user_id,直接比恒不命中,维护者槽形同虚设。
+                    # 而 commissioner_id 是裸 user_id,直接比恒不命中,该槽形同虚设。
                     # 复用 approvals 同款拆法:只取当前适配器名下的裸 id,跨平台不串。
                     master_ids=set(admin_user_ids(set(plugin_config.hermes_admin_users), adapter_name)),
                     max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
@@ -1327,10 +1324,10 @@ async def _run_reactive_turn(
                     f"(group={group_id} user={user_id} msg_id={trigger_msg_id})"
                 )
 
-        # 低危⑬-① 方案D(2026-10-14 维护者定案+修正): answered 改模型自答自标——
+        # answered 改模型自答自标——
         # 信封 answer_anchor=委托人 id|"all",回复真发出才标记(与 pin 同门槛,
         # 收窗轮不标记)。错填不静默丢:值校验在钉锚委托人集合,非法值走插件
-        # 便签反馈通道,下一轮贴回模型自修正(维护者:「解挂不差一轮聊天」)。
+        # 便签反馈通道,下一轮贴回模型自修正(解挂不差一轮聊天)。
         answer_anchor = decision.get("answer_anchor")
         if answer_anchor and not decision.get("should_exit_active"):
             who = "all" if answer_anchor is True else str(answer_anchor)
@@ -1361,7 +1358,6 @@ async def _run_reactive_turn(
 # feedback→relay→turns 加载环;统一置底,由入口层 message.py 首载本域、
 # 全部 def 就位后再解析。
 from .message_feedback import (
-    _ack_scope,
     _check_interim_feedback,
     _emoji_like_quiet,
     _feedback_scope_key,

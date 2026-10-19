@@ -13,7 +13,7 @@ LLM turn 让 agent 自己汇报(群=reactive 临时 turn,私聊=passive turn)。
 地址、凭据取用方式、部署路径等内部细节),原样进群等于泄密;走 turn 让 agent 按人设
 口径和保密判断自己组织语言。成本是每次完成一发额外 turn,完成属低频事件,可接受。
 
-2026-10-14 窗口冲掉修复(维护者报障「总是我先发消息,子代理才到」):旧实现每拍只拉
+窗口冲掉修复(「总是我先发消息,子代理才到」):旧实现每拍只拉
 最新 15 行找投递记录,而转录行的大头是 assistant/tool 行——活跃会话一轮工具链就
 几十行,完成行写入后 30 秒内就被顶出窗口,轮询永远看不到,只能靠下一条真实消息
 把 agent 唤起后顺上下文汇报。修复:水位改为「已扫描的最大行 id」(不再只盯投递行),
@@ -213,7 +213,7 @@ async def _poll_session(
     _watermark[session_key] = tip
     _persist_watermark(session_key, tip)
     now_ms = int(time.time() * 1000)
-    # 2026-10-13 分级反馈:模型离场时登记的任务便签随汇报轮回投(防压缩后忘记任务)。
+    # 分级反馈:模型离场时登记的任务便签随汇报轮回投(防压缩后忘记任务)。
     # 便签点火即消费——汇报失败也不还,下轮完成行(若有)用通用引导语兜底。
     note_key = make_inflight_key(adapter, is_private, user_id, group_id)
     task_note = task_notes.pop_task_note(note_key)
@@ -252,7 +252,7 @@ async def _poll_session(
                 group_id=scope_id,
                 text=note_suffix + _PROMPT_GROUP,
                 image_urls=[],
-                is_explicit_trigger=False,
+                is_direct=False,
                 addressed_to_bot=False,
                 now_ms=now_ms,
                 ephemeral=True,

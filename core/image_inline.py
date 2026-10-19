@@ -9,7 +9,7 @@ provider 拉不到会把整轮打成 400;Anthropic 形态转成 `{"type":"url"}`
 内联不会增加上游持久化体积:Hermes 落库前把 image part 投影成文本占位,
 图片字节不进它的会话库。代价只在单次请求体上。
 
-压缩参数全部来自 media_config.yaml(2026-10-15 维护者定稿,见
+压缩参数全部来自 media_config.yaml(见
 项目文档库):
 - 梯度 (max_edge, quality) 逐级从**原图**重压(不叠压),压不进 cap 明确缺席
   (回退占位符,少一张图仍能答话,压糊的图不是「这张图」)
@@ -29,7 +29,7 @@ from nonebot import logger
 
 from .media_config import MediaConfig, load_media_config
 
-# --- 抽帧采样(通用动图通道,原表情专用,2026-10-15 通用化) ---
+# --- 抽帧采样(通用动图通道,原表情专用 通用化) ---
 # 背景:GIF 直输会被静态化且失真(帧叠化/取尾帧),动图感知只有抽帧喂多张
 # 静态图一条路;多帧理解已实测通过(按序描述+动作弧正确)。
 
@@ -93,7 +93,7 @@ def _encode_image_ladder(
     """已归一化的 RGB 图像 → 按梯度逐级(从原图)下采样+JPEG 重编码。全级超限返回 None。
 
     梯度每级 (max_edge, quality):小图不放大;每级都从 base_im 重压而非在上一级
-    产物上叠压(维护者 2026-10-15 大小门设计:二次降档基于原图)。
+    产物上叠压(大小门设计:二次降档基于原图)。
     optimize=True 生成最优霍夫曼编码表;不写 exif 参数即剔除全部地理位置等隐私元数据。
     """
     from PIL import Image
@@ -285,7 +285,7 @@ async def inline_image_frames(
 
     - 压缩参数:cfg.inline_ladder / inline_max_bytes / inline_gif_max_frames
     - 抓取失败/解码失败/梯度全级超限的图整组缺席(调用方据缺席数补占位符)
-    - 无总量预算(维护者 2026-10-15 定:只有单图上限)
+    - 无总量预算(定:只有单图上限)
     - 返回携带源 url:调用方按 url 反查寻址标签(m:id#idx),URL 级去重丢的是重复
       url,号随 url 走,天然不会错位(见规划书 §8)。url 去重在函数内部做。
     """
@@ -322,7 +322,7 @@ async def inline_image_frames(
 async def inline_gif_frames(
     urls: Sequence[str], *, cfg: MediaConfig | None = None, max_frames: int | None = None
 ) -> list[tuple[str, list[str]]]:
-    """通用抽帧内联通道(原表情专用 inline_sticker_frames,2026-10-15 通用化改名)。
+    """通用抽帧内联通道(原表情专用 inline_sticker_frames 通用化改名)。
 
     每张图 → (源 url, 帧组)(动图采样帧,静态单帧)。帧数上限:max_frames 入参优先,
     否则 cfg.inline_gif_max_frames(内联档缺省 5;拉图档 10 由调用方传入)。

@@ -78,7 +78,7 @@ class MessageStore:
     def _migrate(self) -> None:
         """老库就地升级。新增列一律带默认值,存量行自动落到正确语义。
 
-        - message_images.kind:2026-10-09 前只有普通图片,存量行补 'image' 即正确。
+        - message_images.kind:前只有普通图片,存量行补 'image' 即正确。
         """
         img_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(message_images)")}
         if "kind" not in img_cols:

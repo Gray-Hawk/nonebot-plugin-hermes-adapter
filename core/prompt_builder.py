@@ -67,7 +67,7 @@ def _current_time_str() -> str:
 def _sanitize_tag_text(text: str) -> str:
     """标签内嵌文本的定界符加固：半角 ()[]=: 全角化（同引用归属标签的 _label_safe
     思路）——身份表正主名是人手维护的 CSV 字段，混入结构字符会伪造标签边界；
-    `=` 是标签字段分隔符，必须一并拆掉（H4, 2026-10-16）。"""
+    `=` 是标签字段分隔符，必须一并拆掉。"""
     for half, full in (("(", "\uff08"), (")", "\uff09"), ("[", "\uff3b"),
                        ("]", "\uff3d"), (":", "\uff1a"), ("=", "\uff1d")):
         text = text.replace(half, full)
@@ -86,7 +86,7 @@ def _format_speaker_tag(nickname: str | None, user_id: str,
       去匹配 SOUL.md / 系统设定里的稳定身份信息(主人、管理员、白名单等)。
     - 昵称缺失或退回成 user_id → `[id=ID]`,避免 `[id=12345 user=12345]`
       这种字段重复噪音。
-    - canonical(身份表正主名,2026-10-15) 与当前昵称不同 →
+    - canonical(身份表正主名) 与当前昵称不同 →
       `[id=ID user=Nick(正主名)]`,换昵称/跨群/小号都认得出是同一人。
     """
     nick = (nickname or "").strip()
@@ -101,7 +101,7 @@ def _format_speaker_tag(nickname: str | None, user_id: str,
 
 # 字段名与 hermes_client._DECISION_HINT 和 ActiveSessionManager.update_topic 对齐,
 # 模型一次响应里只看到一个字段名 `topic_hint`,避免歧义。
-# `submit_decision` 是契约标识符:M1 路径 B 不真发 tools(P0-spike Hermes 不透传),
+# `submit_decision` 是契约标识符:不真发 tools(Hermes 不透传),
 # 但保留这个名字让模型识别"决策上下文",并与 Task 8B 的 structured_tool_name 入参对齐。
 #
 # 模块级常量:byte-stable,直接吃 LLM 前缀缓存,跨 turn 不变。
@@ -245,12 +245,14 @@ _DECISION_PROTOCOL_BLOCK = (
 )
 
 # 本部署补丁: 私聊版决策协议。私聊没有活跃窗/
-# 退场/@归属那套群聊概念,协议刻意从简:私聊是显式对话,默认该回,只为
-# 无实质内容的消息留沉默口。解析失败时插件侧回 raw_text(私聊静默更像故障)。
+# 退场/@归属那套群聊概念,协议刻意从简:私聊全量自决,不写默认该回
+# ——有实质内容正常回应,无实质内容
+# 或判断无需回应可沉默。解析失败时插件侧回 raw_text(私聊静默更像故障)。
 _PRIVATE_DECISION_PROTOCOL_BLOCK = (
     "<decision_protocol>\n"
-    "你处于私聊对话。对方在等你回应,默认 should_reply=true。\n"
-    "仅在消息完全没有可回应内容时(纯表情轰炸、无意义刷屏)才 false。\n"
+    "你处于私聊对话。是否回复由你自决:\n"
+    "有实质内容的消息正常回应;纯表情轰炸、无意义刷屏、或你判断\n"
+    "无需回应的场合,可以 should_reply=false 沉默。\n"
     "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
     + render_cn_field_lines(("should_reply", "reply_text", "not_final"), short=True)
     + "最终输出必须是该 JSON 对象,不要在 JSON 外面再包文字;\n"
@@ -324,12 +326,12 @@ def build_reactive_system_prompt(
     顶端(见 build_reactive_user_content),system 在 turn 间字节稳定,有利于 LLM
     前缀缓存延伸到后续的会话历史段。
 
-    profile_block(群记忆外挂,2026-10-14 定稿):群档案注入块,拼在协议块末尾。
+    profile_block(群记忆外挂 定稿):群档案注入块,拼在协议块末尾。
     块内容按群字节稳定(静态文件,仅编辑时变化);挂上后 reactive system 按群分叉,
     前缀缓存随之按群分裂(预期行为,定稿三.10)。
-    2026-10-15 补丁:群档案功能启用时注入记忆写入路由提示。群聊用完整版(三层),
+    本部署补丁:群档案功能启用时注入记忆写入路由提示。群聊用完整版(三层),
     私聊用简化版(两层,无群层面);功能关闭时不注入。路径根动态跟随 hermes_custom_dir。
-    2026-10-15 补丁:会话上下文(adapter/group_id/self)挪入系统提示,吃缓存。
+    本部署补丁:会话上下文(adapter/group_id/self)挪入系统提示,吃缓存。
     """
     parts = [_DECISION_PROTOCOL_BLOCK]
 
@@ -531,7 +533,7 @@ def build_passive_system_prompt(
     """passive 路径的 system prompt:仅 Message Context 头。
 
     头段与 hermes_client.chat 的默认分支同源(同为 core/message_context.py 的
-    render_message_context_head 输出,2026-10-16 同源化收口批:互锁从测试升级为
+    render_message_context_head 输出 同源化收口批:互锁从测试升级为
     代码同源);用本函数统一构造能配合 build_passive_user_content 一起把会话历史
     挪到 user content。
 
@@ -546,8 +548,8 @@ def build_passive_system_prompt(
     )
     if private_decision:
         head += "\n\n" + _PRIVATE_DECISION_PROTOCOL_BLOCK
-    # 群记忆外挂(2026-10-14 定稿):群档案块拼在最末,字节稳定 per 群。
-    # 2026-10-15 补丁:群档案功能启用时注入记忆写入路由提示。群聊用完整版(三层),
+    # 群记忆外挂(定稿):群档案块拼在最末,字节稳定 per 群。
+    # 本部署补丁:群档案功能启用时注入记忆写入路由提示。群聊用完整版(三层),
     # 私聊用简化版(两层,无群层面);功能关闭时不注入。路径根动态跟随 hermes_custom_dir。
     if profile_block and memory_root:
         # 路由提示放群档案前面:路由内容固定吃缓存,群档案按群变放最后
@@ -658,7 +660,7 @@ def build_reactive_user_content(
         + render_field_name_list()
         + "),不要直接说话或扮演动作。"
     )
-    # 2026-10-13 分级反馈:插件提示便签贴 reminder 尾(近因位置,下轮即见即焚)
+    # 分级反馈:插件提示便签贴 reminder 尾(近因位置,下轮即见即焚)
     if plugin_note:
         reminder += f"\n(插件小提示:{plugin_note})"
 
@@ -707,7 +709,7 @@ def build_passive_user_content(
         text_block = cur_line
     if current_sticker_urls:
         text_block += _STICKER_MOOD_NOTE
-    # 2026-10-13 分级反馈:插件提示便签贴文本尾
+    # 分级反馈:插件提示便签贴文本尾
     if plugin_note:
         text_block += f"\n(插件小提示:{plugin_note})"
     text_block = f"(当前时间: {_current_time_str()})\n\n" + text_block
@@ -759,7 +761,7 @@ def _assemble_media_parts(
 ) -> list[dict[str, Any]]:
     """文本块 + 普通图帧组 + 表情帧组 → 多模态 parts。
 
-    2026-10-15 帧组化(图片投送管线三模式);同批媒体统一寻址:每组帧前插一行
+    帧组化(图片投送管线三模式);同批媒体统一寻址:每组帧前插一行
     寻址标签(带全 m:id#idx,parts 与文本行分离必须带号)。帧组结构自配对防张冠李戴:
     一张图的所有帧装同一组,标签按组内位置生成,跨图不可能错位。
     每组项可为 (寻址三元组, 帧列表) 或裸帧列表(无号,退回基线标签)。

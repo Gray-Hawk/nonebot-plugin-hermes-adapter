@@ -132,7 +132,7 @@ def _persist() -> None:
     except Exception as exc:
         logger.warning(f"[HERMES approval] 挂起审批写盘失败(内存态仍可用,重启即丢): {exc}")
 
-# 低危⑬(2026-10-14):/approve 应答互斥锁。peek 与 acknowledge 之间夹着 ack RPC
+# /approve 应答互斥锁。peek 与 acknowledge 之间夹着 ack RPC
 # 的 await,两把并发 /approve 会 peek 到同一条目→重复应答、第二条目被跳过。
 # 锁把「看→答→删」串成原子段;回执发送在锁外,不占串行段。
 answer_lock = asyncio.Lock()
