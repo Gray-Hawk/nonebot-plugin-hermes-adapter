@@ -636,6 +636,32 @@ _INTERIM_MIN_CHARS = 2
 _STEER_REPLY_MARK = "⟦s⟧"
 
 
+def strip_steer_reply_segments(text: str, pushed: list[str] | None = None) -> str:
+    """剥除正文里的 steer 回应协议段(⟦s⟧ 标记段,本部署补丁)。
+
+    标记段是模型与插件之间的投递协议,不应出现在用户可见的正式回复里:
+    已实时推送过的段整段删除(中途已投递,不重复); 未推过的段剥标记保留文本
+    (检出失败/推送未注册场景不丢内容)。无标记时原样返回(completions 通道与
+    无 steer 场景幂等)。段判定按空行切分,标记须在段首;段中混入的标记字样
+    不处理(非约定形态,罕见)。pushed 为读取循环 drain 过的回应段集合。
+    """
+    if _STEER_REPLY_MARK not in text:
+        return text
+    pushed_set = {s.strip() for s in (pushed or []) if s and s.strip()}
+    out: list[str] = []
+    for part in text.split("\n\n"):
+        stripped = part.strip()
+        if not stripped.startswith(_STEER_REPLY_MARK):
+            out.append(part)
+            continue
+        body = stripped[len(_STEER_REPLY_MARK):].strip()
+        if body and body in pushed_set:
+            continue  # 已实时推送,整段删除
+        if body:
+            out.append(body)  # 未推送:剥标记保留文本
+    return "\n\n".join(out).strip("\n")
+
+
 class InterimSegmenter:
     """SSE 行流 → 旁白段切分 + 最终回复累积。纯逻辑无网络依赖,可单测。
 
@@ -1614,6 +1640,8 @@ class HermesClient:
         parser = RunsEventParser()
         run_id = ""
         tracker = None
+        # drain 过的 steer 回应段集合(本部署补丁): 收尾清洗正文协议段用。
+        pushed_steer_replies: list[str] = []
         try:
             client = _get_http_client()
             resp = await self._submit_run_with_replay(client, tgt, body, submit_headers, timeout)
@@ -1668,8 +1696,11 @@ class HermesClient:
                             logger.warning("[HERMES] 审批通知回调失败(不影响主 turn)", exc_info=True)
                     # 本部署补丁: steer 回应标记段即时上交(回调失败不拖垮主 turn)。
                     # run.completed 帧同帧闭合的段也在此被取走,之后才 break。
+                    # drain 过的段记入 pushed_steer_replies,收尾清洗正文时按「已投递」
+                    # 整段剥除;回调未注册时队列不 drain,清洗按「未投递」剥标记留文。
                     if parser.steer_replies and steer_reply_callback is not None:
                         replies, parser.steer_replies = parser.steer_replies, []
+                        pushed_steer_replies.extend(replies)
                         for reply in replies:
                             try:
                                 await steer_reply_callback(reply)
@@ -1721,9 +1752,13 @@ class HermesClient:
                 parse_failed=True,
                 is_transport_error=True,
             ), ""
-        # completed:与流式分支同形补内联,rotated=None(轮换上游服务端处理)
+        # completed:与流式分支同形补内联,rotated=None(轮换上游服务端处理)。
+        # 本部署补丁: 先剥除 steer 回应协议段(已推送的整段删除/未推送的剥标记),
+        # ⟦s⟧ 标记是模型与插件间的投递协议,不进用户可见正文。
         _finish()
-        return inline_local_media_images(parser.output or ""), None, None, parser.pending_steer
+        return inline_local_media_images(
+            strip_steer_reply_segments(parser.output or "", pushed_steer_replies)
+        ), None, None, parser.pending_steer
 
     async def fetch_capabilities(self) -> dict[str, Any]:
         """取 /v1/capabilities;任何失败都返回空 dict —— 探测不能阻塞启动。"""

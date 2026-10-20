@@ -452,14 +452,14 @@ async def _run_passive_turn(
 
     # 本部署补丁: steer 注入后模型回应(⟦s⟧ 标记段)实时推送,发送通道与旁白同款。
     # 生效判定走 steer_reply_push_active()(联动让位: 旁白开时本回调不注册,
-    # 回应由旁白机制自然透出); 推送文本带「↩ 」前缀标注中途回应。
+    # 回应由旁白机制自然透出); 推送当正常回复发,不做来源标注。
     async def _steer_reply_push(segment: str) -> None:
         cleaned, _, _ = extract_response_media(segment)
         if cleaned:
             await send_text_with_media(
                 bot=bot,
                 target=target,
-                text=f"↩ {cleaned}",
+                text=cleaned,
                 media_urls=[],
                 at_user_id=None,
                 adapter_name=adapter_name,
@@ -883,7 +883,7 @@ async def _run_reactive_turn(
             await send_text_with_media(
                 bot=bot,
                 target=target,
-                text=f"↩ {cleaned}",
+                text=cleaned,
                 media_urls=[],
                 at_user_id=None,
                 adapter_name=adapter_name,
