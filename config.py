@@ -65,9 +65,11 @@ class Config(BaseModel):
     仅 runs 通道形态生效(steer 注入是 runs 家族能力; completions 路无 steer,
     本键无作用)。归因方式: steer 注入文本尾部挂一次性约定行(见
     handlers/message_relay.py), 模型把回应放在以约定标记开头的独立段落,
-    插件在 runs 事件流的 message.delta 里拼流检出标记段后实时推送(带
-    「↩ 」前缀标注)。模型不遵守约定时退化为现状(回应只进最终 output),
-    不会更差。零常态开销: 只有 steer 发生时才注入约定行。"""
+    插件在 runs 事件流的 message.delta 里拼流检出标记段后实时推送(当正常
+    回复发,不做来源标注); 正式回复收尾会剥除协议段(已推送的整段删除、
+    未推送的剥标记留文), 标记不进用户可见正文。模型不遵守约定时退化为现状
+    (回应只进最终 output), 不会更差。零常态开销: 只有 steer 发生时才注入
+    约定行。"""
 
     # 本部署补丁: 本地文件/图片投递的白名单与尺寸上限。
     hermes_media_allow_dirs: str = ""
