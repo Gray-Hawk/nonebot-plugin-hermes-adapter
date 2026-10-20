@@ -282,6 +282,8 @@ def _make_approval_notify(
             choices=[str(c) for c in (approval.get("choices") or [])],
             is_private=is_private,
             group_id=group_id,
+            # v0.22 authority 应答三键之一;通知帧自带,老形态没有则为空串
+            request_id=str(approval.get("request_id") or ""),
         )
         sent = await approvals_notify_admins(
             bot=bot, adapter_name=adapter_name, entry=entry,

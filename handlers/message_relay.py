@@ -12,7 +12,7 @@ from nonebot import logger
 from nonebot.adapters import Bot
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
-from ..config import plugin_config
+from ..config import plugin_config, steer_reply_push_active
 from ..core.hermes_client import (
     hermes_client,
 )
@@ -57,6 +57,24 @@ _chain_touched: dict[tuple[tuple[str, str], str], float] = {}
 # **全量启用**(不限长 turn);窗长按候选区间 3-5s 定稿 4s
 # (对齐应答防抖量级:防抖 2.5s 只覆盖同 turn 内的碎片,治不了跨 turn 边界)。
 _QUEUE_AGGREGATE_WINDOW_SEC = 4.0
+
+# 本部署补丁: steer 回应实时推送的模型侧协议——steer 注入文本尾部挂的一次性
+# 约定行(运行时文本): 模型若回应注入消息,须把回应单独放在以 ⟦s⟧ 开头的段落,
+# 插件在 runs 事件流 delta 里拼流检出后实时推送(带「↩ 」前缀)。
+# 挂接条件 = steer_reply_push_active()(推送开关开且旁白关,注入时现读):
+# 旁白开启时约定行不挂(回应由旁白机制自然透出,不留协议噪音)。
+# 全角字符按转义写法,防写入管道把全角字面量规范化回半角。
+_STEER_REPLY_CONVENTION_LINE = (
+    "\uff08系统提示\uff1a本条为对话中途插入的消息\u3002若你之后回应它\uff0c"
+    "请把回应单独放在以 \u27e6s\u27e7 开头的段落\uff0c其余内容照常\u3002)"
+)
+
+
+def _with_steer_reply_convention(text: str) -> str:
+    """按生效判定给 steer 注入文本挂回应约定行(不生效原样返回)。"""
+    if not steer_reply_push_active():
+        return text
+    return f"{text}\n{_STEER_REPLY_CONVENTION_LINE}"
 
 def _chain_allow(key: tuple[str, str], kind: str, limit: int) -> bool:
     """同 scope 连续计数未达上限 → 允许点火。"""
@@ -341,7 +359,9 @@ async def _maybe_steer_direct(
             return False
         if user_id not in _steer_eligible_ids(adapter_name, False, user_id, group_id, now_ms):
             return False
-    text = f"{_format_speaker_tag(nickname, user_id)}: {msg_text.strip()}"
+    text = _with_steer_reply_convention(
+        f"{_format_speaker_tag(nickname, user_id)}: {msg_text.strip()}"
+    )
     return await _steer_text_into_live_run(adapter_name, target.private, user_id, group_id, text)
 
 async def _try_steer_followup(
@@ -408,7 +428,9 @@ async def _try_steer_followup(
             f"(group={group_id})"
         )
         return False
-    text = f"{_format_speaker_tag(entry.msg.nickname, entry.msg.user_id)}: {steer_text}"
+    text = _with_steer_reply_convention(
+        f"{_format_speaker_tag(entry.msg.nickname, entry.msg.user_id)}: {steer_text}"
+    )
     ok = await hermes_client.steer_run(
         tgt=resolve_target(adapter_name, False, group_id), run_id=live.run_id, text=text
     )

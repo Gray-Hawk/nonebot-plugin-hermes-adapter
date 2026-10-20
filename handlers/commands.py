@@ -569,6 +569,7 @@ async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna
                 tgt=resolve_target(entry.adapter, entry.is_private, entry.group_id),
                 run_id=entry.run_id,
                 choice=choice,
+                request_id=entry.request_id,
             )
             if ok:
                 # 先应答后删单——失败留单,管理员可重试

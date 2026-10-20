@@ -630,6 +630,11 @@ def rotated_session_key(header_value: str | None, sent_key: str) -> str | None:
 # 旁白段最小长度:低于这个长度不值得发一条群消息(空白/单标点段)。
 _INTERIM_MIN_CHARS = 2
 
+# steer 回应段标记: steer 注入文本尾部挂一次性约定行(见 handlers/message_relay.py),
+# 模型把对注入消息的回应放在以本标记开头的独立段落; 插件在 delta 流拼流检出。
+# 标记选形要求: 正文几乎不会自然撞车的独特字符对。
+_STEER_REPLY_MARK = "⟦s⟧"
+
 
 class InterimSegmenter:
     """SSE 行流 → 旁白段切分 + 最终回复累积。纯逻辑无网络依赖,可单测。
@@ -749,12 +754,20 @@ class RunsEventParser:
 
     本部署补丁(runs 迁移阶段1)。消费规则按阶段0实测定案:
     - message.interim = 上游切好的旁白段 → 逐段交给调用方(达最小长度,strip);
+      旧形态/上游恢复供给时与下方工具间隙切分并存, interim 帧到达即清间隙
+      缓冲,同一文本不双推;
     - message.delta  = 混有旁白的预览流 → 只计数,**绝不拼正文**(output 才是正文);
+      本部署补丁: 同时喂两个判定缓冲——⟦s⟧ 标记归因(steer 回应)与
+      工具间隙切分(旁白修复),均只做实时推送归因,不改变正文只取 output 的定案;
+    - run.steered → 开 steer 回应收集窗(标记段检出从此生效);
+    - tool.started/tool.completed → 工具间隙段的定性边界: started 把间隙缓冲
+      定成旁白段(经 feed 返回), completed 重新开攒; run.* 帧把间隙缓冲丢弃
+      (段尾=最终正文,不推); 这两个事件帧同时闭合未收的 ⟦s⟧ 标记段;
     - run.completed → 正文取 output;run.failed → 取 error(已脱敏);
       run.cancelled → interrupted 标记;
-    - 其余帧(tool.*/reasoning.*/approval.*/run.steered)与注释帧(: keepalive 等)
-      一律不消费。runs 帧是 data-only(事件名在 payload["event"]),event: 行形态
-      作兜底兼容。
+    - 其余帧(reasoning.*/approval.* 等)与注释帧(: keepalive 等)
+      一律不消费(approval.request 整帧暂存除外)。runs 帧是 data-only
+      (事件名在 payload["event"]),event: 行形态作兜底兼容。
     """
 
     def __init__(self) -> None:
@@ -768,10 +781,80 @@ class RunsEventParser:
         self.last_seq = -1
         self.pending_steer = ""
         self.approval: dict | None = None
+        # 本部署补丁: steer 回应收集。run.steered 置 True(开收集窗);
+        # 标记段切出后进 steer_replies 队列,由消费循环取走清空(仿 approval 暂存)。
+        self.steer_collecting = False
+        self.steer_replies: list[str] = []
+        self._delta_buf = ""
+        self._steer_seg: str | None = None
+        # 本部署补丁: 工具间隙旁白缓冲。turn 开始即开攒(首个 tool.started 前
+        # 的 commentary 也是间隙段); started 定性 started 前文本, completed 重新开攒,
+        # run.* 丢弃(最终正文)。
+        self._gap_open = True
+        self._gap_buf = ""
         self._event = ""
 
+    def _close_steer_segment(self) -> None:
+        """闭合进行中的 ⟦s⟧ 标记段(帧界触发): 剥标记 strip 入队,缓冲清空。
+
+        标记段内容里不再找嵌套标记——约定语义是一段一标记,段内出现标记
+        字样按正文处理。
+        """
+        if self._steer_seg is None:
+            self._delta_buf = ""
+            return
+        seg = (self._steer_seg + self._delta_buf).strip()
+        self._steer_seg = None
+        self._delta_buf = ""
+        if seg:
+            self.steer_replies.append(seg)
+
+    def _process_delta_buf(self) -> None:
+        """在拼流缓冲里扫 ⟦s⟧ 标记段: 标记会被切碎分帧,必须拼流后检测。
+
+        检出标记 → 后续文收段 → 遇 \\n\\n 闭合(剥标记 strip 入队), 闭合后
+        remainder 继续循环扫描(一次 steer 可有多段); 未闭合则挂起等下一帧。
+        无标记时只留缓冲尾部(标记长-1,防跨帧切碎漏检),其余丢弃控内存。
+        """
+        while True:
+            if self._steer_seg is None:
+                if not self.steer_collecting:
+                    self._delta_buf = ""
+                    return
+                idx = self._delta_buf.find(_STEER_REPLY_MARK)
+                if idx < 0:
+                    keep = len(_STEER_REPLY_MARK) - 1
+                    self._delta_buf = self._delta_buf[-keep:] if keep else ""
+                    return
+                self._steer_seg = ""
+                self._delta_buf = self._delta_buf[idx + len(_STEER_REPLY_MARK):]
+                continue
+            end = self._delta_buf.find("\n\n")
+            if end < 0:
+                self._steer_seg += self._delta_buf
+                self._delta_buf = ""
+                return
+            self._steer_seg += self._delta_buf[:end]
+            seg = self._steer_seg.strip()
+            self._steer_seg = None
+            self._delta_buf = self._delta_buf[end + 2:]
+            if seg:
+                self.steer_replies.append(seg)
+            continue
+
+    def _pop_gap_segment(self) -> str | None:
+        """工具间隙段定性: strip + 达最小长度才成段(与 interim 帧同门槛)。"""
+        text = self._gap_buf.strip()
+        self._gap_buf = ""
+        return text if len(text) >= _INTERIM_MIN_CHARS else None
+
     def feed(self, line: str) -> str | None:
-        """喂一行 SSE 原始行。切出旁白段则返回(strip 后,达最小长度),否则 None。"""
+        """喂一行 SSE 原始行。切出旁白段则返回(strip 后,达最小长度),否则 None。
+
+        旁白段两个来源: message.interim 帧(上游切好)与工具间隙段(本类自切,
+        tool.started 帧到达时定性返回)。steer 回应段不走返回值,走 steer_replies
+        属性队列。
+        """
         if not line:
             return None
         if line.startswith(":"):
@@ -801,11 +884,47 @@ class RunsEventParser:
             self.last_seq = seq
         if not event:
             event = str(payload.get("event") or "")
+        # run.* 帧(run.steered 除外)是标记段与工具间隙的丢弃边界:
+        # 段尾即最终正文/终态,旁白与 steer 回应收集都到此为止。
+        if event.startswith("run.") and event != "run.steered":
+            self._close_steer_segment()
+            self._gap_open = False
+            self._gap_buf = ""
         if event == "message.interim":
+            # 上游已切好的段:清工具间隙缓冲——旧形态/上游恢复 interim 供给时,
+            # 间隙缓冲里的 delta 文本与 interim 段同源,不双推。
+            self._gap_buf = ""
             text = str(payload.get("text") or "").strip()
             return text if len(text) >= _INTERIM_MIN_CHARS else None
         if event == "message.delta":
             self.delta_count += 1
+            piece = str(payload.get("delta") or "")
+            if piece:
+                # 本部署补丁: delta 同时喂两个判定缓冲(均不改「正文只取 output」定案):
+                # steer 回应收集窗开着才拼流扫 ⟦s⟧ 标记; 工具间隙开着才攒旁白候选。
+                if self.steer_collecting:
+                    self._delta_buf += piece
+                    self._process_delta_buf()
+                if self._gap_open:
+                    self._gap_buf += piece
+            return None
+        if event == "run.steered":
+            # 本部署补丁: steer 被接受(run.steered 帧存在即 accepted)——开回应
+            # 收集窗,后续 delta 流里的 ⟦s⟧ 标记段即模型对注入消息的回应。
+            self._close_steer_segment()
+            self.steer_collecting = True
+            return None
+        if event == "tool.started":
+            # 工具间隙段定性: started 之前的间隙文本=中间轮旁白,经 feed 返回;
+            # 同时闭合未收的标记段(steer 回应可一直写到工具边界)。
+            self._close_steer_segment()
+            seg = self._pop_gap_segment()
+            self._gap_open = False
+            return seg
+        if event == "tool.completed":
+            # 工具跑完,重新开攒间隙段。
+            self._close_steer_segment()
+            self._gap_open = True
             return None
         if event == "approval.request":
             # 阶段3c:整帧原文暂存(command 上游已脱敏),由消费循环交 approval_callback
@@ -1024,6 +1143,7 @@ class HermesClient:
         interim_callback: InterimCallback | None = None,
         bot_self_id: str | None = None,
         approval_callback: "ApprovalCallback | None" = None,
+        steer_reply_callback: InterimCallback | None = None,
     ) -> ChatResult:
         """调用 Hermes,返回 ChatResult。
 
@@ -1045,6 +1165,9 @@ class HermesClient:
         - interim_callback(本部署补丁): 非 None 时改走 SSE 流式,
           agent 每轮工具调用前的旁白段实时回调给它(发送失败仅记日志,不影响主 turn);
           raw_text 只含最终回复段。None = 旧行为(一次性非流式)。
+        - steer_reply_callback(本部署补丁): runs 通道下, steer 注入后模型回应
+          (⟦s⟧ 标记段,见 RunsEventParser.steer_replies)逐段实时回调给它;
+          发送失败仅记日志,不影响主 turn。仅 runs 分支消费,completions 路忽略。
         """
         tgt = target or default_target()
         url = f"{tgt.base_url}/v1/chat/completions"
@@ -1119,6 +1242,7 @@ class HermesClient:
                     system_prompt=system_prompt, session_key=session_key,
                     timeout=tgt.timeout, interim_callback=interim_callback,
                     approval_callback=approval_callback,
+                    steer_reply_callback=steer_reply_callback,
                     idempotency_key=turn_idem_key,
                     scope=dict(
                         adapter=adapter_name, is_private=is_private, user_id=user_id,
@@ -1320,17 +1444,39 @@ class HermesClient:
         # 本地图片在这里按插件白名单补内联, 让 raw_text 形态与非流式一致(补丁)。
         return inline_local_media_images(seg.final_text()), rotated
 
-    async def respond_approval(self, *, tgt: HermesTarget, run_id: str, choice: str) -> tuple[bool, str]:
+    async def respond_approval(self, *, tgt: HermesTarget, run_id: str, choice: str,
+                               request_id: str = "") -> tuple[bool, str]:
         """POST /v1/runs/{id}/approval 应答挂起审批(阶段3c)。返回 (成功, 说明)。
 
         choice 合法集(API key 路径):once / session / always / deny;
         approve/approved/allow 上游别名映射到 once。409 = 无挂中审批(已答/已超时)。
+
+        v0.22 authority 形态适配(2026-10-20,alive/70 问题B):该形态的应答端点
+        要求 body 严格三键 {request_id, execution_generation, choice},多一少一
+        都 400 invalid_params;老形态只认 choice(多带字段无害)。判定法:
+        GET run 状态,返回带 execution_generation 即 authority 形态。
+        request_id 优先用登记时存的通知帧值,缺了从 pending_controls 兜底。
         """
         try:
             client = _get_http_client()
+            payload: dict = {"choice": choice}
+            status = await self.get_run_status(tgt=tgt, run_id=run_id)
+            if status and isinstance(status.get("execution_generation"), int):
+                rid = request_id
+                if not rid:
+                    for p in status.get("pending_controls") or []:
+                        if isinstance(p, dict) and p.get("kind") == "approval" and p.get("prompt_id"):
+                            rid = str(p["prompt_id"])
+                            break
+                if not rid:
+                    return False, "authority 形态应答缺 request_id(通知帧与 pending_controls 均未提供)"
+                # 严格三键:authority 端点对 body 键集做精确匹配
+                payload = {"request_id": rid,
+                           "execution_generation": status["execution_generation"],
+                           "choice": choice}
             resp = await client.post(
                 f"{tgt.base_url}/v1/runs/{run_id}/approval",
-                json={"choice": choice},
+                json=payload,
                 headers=self.get_headers(api_key=tgt.api_key),
                 timeout=15,
             )
@@ -1441,6 +1587,7 @@ class HermesClient:
         timeout: int,
         interim_callback: InterimCallback | None,
         approval_callback: "ApprovalCallback | None",
+        steer_reply_callback: InterimCallback | None,
         idempotency_key: str,
         scope: dict[str, Any],
     ) -> tuple[str, str | None, "ChatResult | None", str]:
@@ -1519,6 +1666,15 @@ class HermesClient:
                             await approval_callback(approval)
                         except Exception:
                             logger.warning("[HERMES] 审批通知回调失败(不影响主 turn)", exc_info=True)
+                    # 本部署补丁: steer 回应标记段即时上交(回调失败不拖垮主 turn)。
+                    # run.completed 帧同帧闭合的段也在此被取走,之后才 break。
+                    if parser.steer_replies and steer_reply_callback is not None:
+                        replies, parser.steer_replies = parser.steer_replies, []
+                        for reply in replies:
+                            try:
+                                await steer_reply_callback(reply)
+                            except Exception:
+                                logger.warning("[HERMES] steer 回应推送失败(不影响主 turn)", exc_info=True)
                     # 粗粒度写库:旁白帧与终态帧才更新 last_seq(delta 高频不写)
                     if tracker is not None and parser.last_seq >= 0 and (interim or parser.terminal):
                         tracker.update_seq(run_id, parser.last_seq)
