@@ -56,6 +56,19 @@ class Config(BaseModel):
     流式下上游不内联本地图片, 由插件侧 inline_local_media_images 按白名单
     补做(见 core/media_whitelist.py)。"""
 
+    # 本部署补丁: steer 注入后模型回应的实时推送(runs 通道)。
+    hermes_steer_reply_push_enabled: bool = True
+    """steer 注入后模型回应实时推送(本部署补丁,缺省开)。
+
+    生效条件 = 本键开 且 hermes_interim_echo_enabled 关(联动让位): 旁白(流式)
+    开启时 steer 回应已由旁白机制实时透出, 本推送自动关闭, 同一回应不双推。
+    仅 runs 通道形态生效(steer 注入是 runs 家族能力; completions 路无 steer,
+    本键无作用)。归因方式: steer 注入文本尾部挂一次性约定行(见
+    handlers/message_relay.py), 模型把回应放在以约定标记开头的独立段落,
+    插件在 runs 事件流的 message.delta 里拼流检出标记段后实时推送(带
+    「↩ 」前缀标注)。模型不遵守约定时退化为现状(回应只进最终 output),
+    不会更差。零常态开销: 只有 steer 发生时才注入约定行。"""
+
     # 本部署补丁: 本地文件/图片投递的白名单与尺寸上限。
     hermes_media_allow_dirs: str = ""
     """额外的本地文件投递白名单根目录(os.pathsep 分隔, 支持 ~)。
@@ -475,6 +488,18 @@ class Config(BaseModel):
 
 
 plugin_config = get_plugin_config(Config)
+
+
+def steer_reply_push_active() -> bool:
+    """steer 回应实时推送生效判定(单一来源): 本键开 且 旁白开关联动让位。
+
+    注入侧(挂约定行)与推送侧(handler 回调注册)必须用同一判定,
+    保证「挂了约定行 ⇒ 必有推送通道接收」; 两处各自现读配置。
+    """
+    return (
+        plugin_config.hermes_steer_reply_push_enabled
+        and not plugin_config.hermes_interim_echo_enabled
+    )
 
 # resolve_custom_dir 的兜底 WARN 按形态每进程去重(本部署补丁):该函数被各功能
 # 「现读现用」高频调用,不节流会刷屏;但完全静默时配置拼错只在启动期 WARN 一闪而过,

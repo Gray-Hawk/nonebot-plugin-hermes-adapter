@@ -46,6 +46,9 @@ class PendingApproval:
     choices: list[str]
     is_private: bool = False
     group_id: str | None = None  # 应答路由(resolve_target 用)
+    # v0.22 authority 形态应答三键之一,来自审批通知帧(request_id);老形态用不到,
+    # 老存档/老 gateway 无此值时为空串,应答时从 run 状态 pending_controls 兜底。
+    request_id: str = ""
     ts: float = field(default_factory=time.time)
 
     @property
@@ -91,6 +94,7 @@ def bind_storage(path: Path) -> int:
                 choices=[str(c) for c in row["choices"]],
                 is_private=bool(row.get("is_private", False)),
                 group_id=(str(row["group_id"]) if row.get("group_id") is not None else None),
+                request_id=str(row.get("request_id") or ""),
                 ts=float(row["ts"]),
             )
         except Exception:
@@ -122,6 +126,7 @@ def _persist() -> None:
                 "choices": e.choices,
                 "is_private": e.is_private,
                 "group_id": e.group_id,
+                "request_id": e.request_id,
                 "ts": e.ts,
             }
             for e in _pending.values()
@@ -140,13 +145,13 @@ answer_lock = asyncio.Lock()
 
 def add_pending(
     *, run_id: str, adapter: str, scope_desc: str, command: str, choices: list[str],
-    is_private: bool = False, group_id: str | None = None,
+    is_private: bool = False, group_id: str | None = None, request_id: str = "",
 ) -> PendingApproval:
     """登记一条挂起审批,返回条目(通知文本引用其序号)。"""
     entry = PendingApproval(
         approval_id=next(_seq), run_id=run_id, adapter=adapter,
         scope_desc=scope_desc, command=command, choices=choices,
-        is_private=is_private, group_id=group_id,
+        is_private=is_private, group_id=group_id, request_id=request_id,
     )
     _pending[entry.approval_id] = entry
     _persist()
