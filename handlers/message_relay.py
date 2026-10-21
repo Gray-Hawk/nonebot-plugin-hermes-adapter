@@ -8,11 +8,14 @@ from __future__ import annotations
 import asyncio
 import time
 
-from nonebot import logger
+import nonebot_plugin_alconna as alconna
+from nonebot import get_bot, get_bots, logger
 from nonebot.adapters import Bot
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
+from ..adapter_norm import normalize_adapter_name
 from ..config import plugin_config, steer_reply_push_active
+from ..core import rate_bucket, user_lists
 from ..core.hermes_client import (
     hermes_client,
 )
@@ -58,16 +61,16 @@ _chain_touched: dict[tuple[tuple[str, str], str], float] = {}
 # (对齐应答防抖量级:防抖 2.5s 只覆盖同 turn 内的碎片,治不了跨 turn 边界)。
 _QUEUE_AGGREGATE_WINDOW_SEC = 4.0
 
-# 本部署补丁: steer 回应实时推送的模型侧协议——steer 注入文本尾部挂的一次性
-# 约定行(运行时文本): 模型若回应注入消息,须把回应单独放在以 ⟦s⟧ 开头的段落,
-# 插件在 runs 事件流 delta 里拼流检出后实时推送(当正常回复发,不做来源标注);
-# 正式回复收尾剥除协议段,标记不进用户可见正文。
+# 本部署补丁: steer 注入文本尾部挂的一次性约定行(运行时文本)——模型侧协议:
+# 本条为对话中途插入的消息; 若模型之后想回应它, 约定调用 push_message 工具
+# 发送回应(推送通道已泛化私聊), 其余内容照常。回应不占用正文、不挂任何标记段。
 # 挂接条件 = steer_reply_push_active()(推送开关开且旁白关,注入时现读):
-# 旁白开启时约定行不挂(回应由旁白机制自然透出,不留协议噪音)。
+# 旁白开启时约定行不挂(流式全推送生效,模型写在旁白位的回应自然透出,
+# 不留协议噪音)。
 # 全角字符按转义写法,防写入管道把全角字面量规范化回半角。
 _STEER_REPLY_CONVENTION_LINE = (
     "\uff08系统提示\uff1a本条为对话中途插入的消息\u3002若你之后回应它\uff0c"
-    "请把回应单独放在以 \u27e6s\u27e7 开头的段落\uff0c其余内容照常\u3002)"
+    "请调用 push_message 工具发送回应\uff0c其余内容照常\u3002\uff09"
 )
 
 
@@ -504,7 +507,7 @@ async def _handle_reactive_path(
     # B 方案：凭本事件 message_id 领 perception 挂号的 db 真 id；合成消息领不到=None
     current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id)
 
-    is_commission = addressed_to_bot and user_id not in set(plugin_config.hermes_known_bots)
+    is_commission = addressed_to_bot and not user_lists.is_known_bot(user_id)
 
     # 图片门控(窄化)：active window + 非直说 + 纯图/纯表情包无文本。
     # 有在跑 turn → 照常 try_enter 入队合并 followup，消息到场但不点火；无在跑 turn
@@ -914,3 +917,131 @@ async def route_synthesized_input(
         addressed_to_bot=addressed_to_bot,
         now_ms=now_ms,
     )
+
+
+# --- 主动唤起(本部署补丁) ---
+#
+# 唤起 = 合成输入注入的泛化:任意内容唤起一轮 LLM turn,复用 _handle_passive_path /
+# _handle_reactive_path(ephemeral) 全套管线(信封/反馈/限流/留痕),发言天然进
+# 会话上下文。三道闸(按序):白名单硬闸(私侧) → per-target 令牌桶(独立 YAML
+# 现读现用) → 路由解析(registry 优先、无 entry 合成兜底)。
+# 防重入:唤起轮里模型再调 wake 工具时由令牌桶挡下。
+# 内部 API 保持干净函数签名,供 MCP 工具与插件侧 apscheduler 定时任务共用
+# (定时提醒类点火的落点;为未来提示系统演进预留的调用面)。
+
+_DEFAULT_WAKE_SOURCE = "定时提醒"
+
+
+def _resolve_wake_route(adapter_name: str, scope: str, scope_id: str):
+    """解析 (bot, target):BotRegistry 优先,无 entry 时合成兜底。
+
+    兜底先例:适配器过滤选 bot(同 core/approvals.py 的 get_bots 过滤) +
+    alconna Target 合成构造(同 handlers/notices.py 的 _build_target)。
+    返回 (bot, target);失败返回给调用方看的错误串(str)。
+    """
+    if _mcp.bot_registry is not None:
+        entry = _mcp.bot_registry.get(adapter_name, scope, scope_id)  # type: ignore[arg-type]
+        if entry is not None:
+            try:
+                return get_bot(entry.bot_self_id), entry.target
+            except (KeyError, ValueError) as exc:
+                return f"bot 离线(self_id={entry.bot_self_id}): {exc}"
+    matched = sorted(
+        (
+            b
+            for b in get_bots().values()
+            if normalize_adapter_name(getattr(b.adapter, "get_name", lambda: "")()) == adapter_name
+        ),
+        key=lambda b: str(getattr(b, "self_id", "")),
+    )
+    if not matched:
+        return (
+            f"registry 无 entry 且无 {adapter_name} 适配器 bot 在线——"
+            "目标重启后需先发言重建路由,或等 bot 上线后再试"
+        )
+    return (
+        matched[0],
+        alconna.Target(id=scope_id, private=(scope == "private"), adapter=adapter_name),
+    )
+
+
+def _wake_rate_limited(adapter_name: str, scope: str, scope_id: str) -> str | None:
+    """令牌桶闸:取格成功 → None;超限 → 给调用方看的报错文案。"""
+    limits = rate_bucket.load_wake_limits()
+    bucket_key = f"{adapter_name}:{scope}:{scope_id}"
+    if rate_bucket.try_acquire(bucket_key, capacity=limits.capacity, refill_seconds=limits.refill_seconds):
+        return None
+    wait = rate_bucket.seconds_until_next(bucket_key, refill_seconds=limits.refill_seconds)
+    return (
+        f"唤起频率超限(每 target 容量 {limits.capacity} 格、每 {limits.refill_seconds}s 回 1 格),"
+        f"约 {wait}s 后再试;不排队、不延后,请勿重试撞桶"
+    )
+
+
+async def wake_private_turn(
+    *, adapter_name: str, user_id: str, text: str, source: str = _DEFAULT_WAKE_SOURCE
+) -> str | None:
+    """唤起一条私聊 turn。返回 None = 已点火;返回 str = 拒绝原因(原样回给调用方)。
+
+    闸序:私聊主动下行白名单硬闸(user_lists.yaml,未配置回落管理员集合) → 令牌桶 →
+    路由解析(registry 优先/合成兜底)→ _handle_passive_path。
+    """
+    if not user_lists.private_allowed(adapter_name, user_id):
+        return f"目标不在私聊主动下行白名单(user_lists.yaml 的 private_allow 或管理员集合): {user_id}"
+    denied = _wake_rate_limited(adapter_name, "private", user_id)
+    if denied is not None:
+        return denied
+    route = _resolve_wake_route(adapter_name, "private", user_id)
+    if isinstance(route, str):
+        return route
+    bot, target = route
+    spawn_bg_task(
+        _handle_passive_path(
+            bot=bot,
+            target=target,
+            adapter_name=adapter_name,
+            user_id=user_id,
+            nickname=source,
+            group_id=None,
+            text=text,
+            image_urls=[],
+            is_private=True,
+            now_ms=_now_ms(),
+        )
+    )
+    logger.info(f"[HERMES wake] 私聊唤起已点火: {adapter_name}/{user_id} source={source}")
+    return None
+
+
+async def wake_group_turn(
+    *, adapter_name: str, group_id: str, text: str, source: str = _DEFAULT_WAKE_SOURCE
+) -> str | None:
+    """唤起一条群聊 ephemeral turn(无窗口依赖)。返回 None = 已点火;str = 拒绝原因。
+
+    闸序:令牌桶 → 路由解析(registry 优先/合成兜底)→ _handle_reactive_path。
+    """
+    denied = _wake_rate_limited(adapter_name, "group", group_id)
+    if denied is not None:
+        return denied
+    route = _resolve_wake_route(adapter_name, "group", group_id)
+    if isinstance(route, str):
+        return route
+    bot, target = route
+    spawn_bg_task(
+        _handle_reactive_path(
+            bot=bot,
+            target=target,
+            adapter_name=adapter_name,
+            user_id="wake",
+            nickname=source,
+            group_id=group_id,
+            text=text,
+            image_urls=[],
+            is_direct=False,
+            addressed_to_bot=False,
+            now_ms=_now_ms(),
+            ephemeral=True,
+        )
+    )
+    logger.info(f"[HERMES wake] 群聊唤起已点火: {adapter_name}/{group_id} source={source}")
+    return None

@@ -304,12 +304,13 @@ class Config(BaseModel):
     # --- 黑名单(本部署补丁) ---
 
     hermes_blacklist: dict[str, list[str]] = {}
-    """黑名单:{群号: [账号QQ, ...]}。名单账号的消息不置 explicit/addressed——
+    """【已废弃,不再被读取】黑名单已迁入 `<hermes_custom_dir>/user_lists.yaml`
+    (core/user_lists.py,现读现用);字段定义保留仅为防旧配置启动报错,
+    迁移完成后删除。原语义留档:名单账号的消息不置 explicit/addressed——
     它们的 @ 降级为普通隐式信号,从入口消解 AI 互聊循环的燃料;消息照常入
     buffer、窗口内跟帖照常可见(人类委托「去跟 X 说」的会话能继续)。
     「软」语义在协议层:模型按锚/任务上下文自决是否与名单账号对话(默认不),
-    代码不硬断。仅群聊生效;私聊不受名单影响。.env 写 JSON,如
-    HERMES_BLACKLIST={"2000000001": ["1000000002"]}"""
+    代码不硬断。仅群聊生效;私聊不受名单影响。"""
 
     # --- 委托锚(本部署补丁) ---
 
@@ -319,11 +320,12 @@ class Config(BaseModel):
     短于 hermes_active_session_ttl_sec。"""
 
     hermes_known_bots: list[str] = []
-    """已知 bot 账号表(本部署补丁:锚优化短期项A,维护者拍板)。
-    名单账号的消息不钉委托锚——bot 的 quote 接话不是委托,钉上只会挤占锚位、
-    刷新锚龄。语义与 hermes_blacklist 不同:黑名单=不响应;known_bots 仍可
-    被正常响应(人类委托「去跟 X 说」),只是其发言永远不成锚。全局生效
-    (不分群),.env 写 JSON 数组,如 HERMES_KNOWN_BOTS=["1000000003"]"""
+    """【已废弃,不再被读取】已知 bot 账号表已迁入 `<hermes_custom_dir>/user_lists.yaml`
+    (core/user_lists.py,现读现用);字段定义保留仅为防旧配置启动报错,
+    迁移完成后删除。原语义留档:名单账号的消息不钉委托锚——bot 的 quote 接话
+    不是委托,钉上只会挤占锚位、刷新锚龄。语义与黑名单不同:黑名单=不响应;
+    known_bots 仍可被正常响应(人类委托「去跟 X 说」),只是其发言永远不成锚。
+    全局生效(不分群)。"""
 
     # --- 激活体系改造:隐性激活 + T1/T5 + T2 定时激活(本部署新增) ---
 
