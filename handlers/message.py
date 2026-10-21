@@ -264,8 +264,8 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # (模式解析见下方群聊分支)。
     # is_direct = 直说标记:私聊消息恒 True,群聊 = addressed_to_bot,合成事件
     # 按各注入点给值;它不再是“显式激活触发事件”,只是“这条消息指名/直说”的
-    # 事实标签(下游开窗 / 解析兜底转发 / 图片门控旁路 / cooldown 旁路 / 裁剪豁免
-    # 全部挂在这个事实上)。addressed_to_bot 是寻址事实,与 is_direct 并存但在
+    # 事实标签(下游开窗 / 解析兜底转发 / 图片门控旁路 / 裁剪豁免
+    # 全部挂在这个事实上;cooldown 与防抖的直说旁路已砍除,修改 56)。addressed_to_bot 是寻址事实,与 is_direct 并存但在
     # 私聊脱钩:私聊 addressed_to_bot 恒 False、is_direct 恒 True。
     is_direct = False
     addressed_to_bot = False
@@ -371,7 +371,9 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # 顺延硬上限同步抬到不低于窗长,否则长窗会被默认 max_wait 钳回去。
     if plugin_config.hermes_reply_delay_sec > 0 and _is_reply_delayed(adapter_name, user_id):
         debounce_sec = max(debounce_sec, plugin_config.hermes_reply_delay_sec)
-        max_wait_sec = max(max_wait_sec, plugin_config.hermes_reply_delay_sec)
+        # max_wait 的 0=不限语义优先:仅原本有上限时才抬升,0 严格保持不限
+        if max_wait_sec > 0:
+            max_wait_sec = max(max_wait_sec, plugin_config.hermes_reply_delay_sec)
     if debounce_sec > 0:
         debounce_key = make_inflight_key(adapter_name, target.private, user_id, group_id)
         payload = dict(
