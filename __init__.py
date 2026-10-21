@@ -98,6 +98,12 @@ async def _hermes_m1_startup():
     register_session_idle_reset()
     register_proactive_activation()
     register_delivery_poll()
+    # 本部署补丁: 指令寻址前缀启用时启动期明示(前缀在 handlers/commands.py 注册期定型)
+    if plugin_config.hermes_bot_name.strip():
+        logger.info(
+            f"[HERMES] 指令寻址已启用: 本实例指令形如 "
+            f"/{plugin_config.hermes_bot_name.strip().split()[0]} <命令>, 裸指令静默不执行"
+        )
     # 阶段2a:nb 重启后续跑在跑 runs turn。仅在 runs 通道开启时有意义
     # (completions 路不写 tracker,resume 自然空转返回)。
     if plugin_config.hermes_runs_channel_enabled:
