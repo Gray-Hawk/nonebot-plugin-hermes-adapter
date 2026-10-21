@@ -18,6 +18,7 @@ from nonebot.rule import Rule
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
 from ..core import user_lists
+from ..core.approvals import admin_user_ids
 from ..core.inflight import make_inflight_key
 from ..utils import check_isolation, get_adapter_name
 
@@ -85,6 +86,17 @@ def _keyword_soft_hit(keywords, text: str) -> bool:
     LLM 看,但不参与点火(旧文本/转发日志里的关键词不再误触发)。
     """
     return any(kw and kw in text for kw in keywords)
+
+
+def _is_reply_delayed(adapter_name: str, user_id: str) -> bool:
+    """强制回复延迟名单判定(本部署补丁):known_bots 缺省涵盖,.env 名单额外追加。
+
+    .env 键是 {adapter}:{user_id} 复合键,拆前缀取本台裸 id 再比(复用
+    admin_user_ids 同款拆法,跨平台不串);known_bots 走 user_lists.yaml 现读现用。
+    """
+    if user_lists.is_known_bot(user_id):
+        return True
+    return user_id in admin_user_ids(set(plugin_config.hermes_reply_delay_users), adapter_name)
 
 
 def _debounce_arrive(
@@ -345,20 +357,22 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # 首条触发:登记状态 → 睡满防抖窗 → 拿合并后载荷 dispatch。
     # 期内碎片:同人拼接/跨人替换 + 顺延截止(受 max_wait 硬上限)后立即返回,不另起 turn。
     # 防抖期间不占 inflight slot;T2 定时/投递轮询不经过本 handler,天然不防抖。
-    # 显式/隐式闲聊一视同仁;但群里 addressed_to_bot 的委托 @ 不走群防抖——
-    # 多人同时 @ 时,群级防抖的跨人替换会把先到的委托触发载荷顶掉。
-    # 委托直连 _dispatch_chat,排队交给 inflight 的委托队列。
-    skip_debounce_for_commission = (
-        (not target.private)
-        and addressed_to_bot
-        and not user_lists.is_known_bot(user_id)
-    )
+    # 显式/隐式一视同仁——委托 @ 的直连豁免已砍除(本部署补丁):双 bot 场景下
+    # 豁免让互 @ 零延迟直连、无限制器助燃互聊;砍后防抖窗即限速。跨人替换只换
+    # 触发归属,turn 上下文从 buffer 拉,被顶掉的碎片内容不丢。
     debounce_sec = (
         plugin_config.hermes_reply_debounce_private_sec
         if target.private
         else plugin_config.hermes_reply_debounce_group_sec
     )
-    if debounce_sec > 0 and not skip_debounce_for_commission:
+    max_wait_sec = plugin_config.hermes_reply_debounce_max_wait_sec
+    # 本部署补丁: 强制延迟名单(known_bots 缺省涵盖 + .env 追加)——名单内用户的
+    # 触发防抖窗提升到 hermes_reply_delay_sec(防抖关闭也强制开窗,bot 交互限速器),
+    # 顺延硬上限同步抬到不低于窗长,否则长窗会被默认 max_wait 钳回去。
+    if plugin_config.hermes_reply_delay_sec > 0 and _is_reply_delayed(adapter_name, user_id):
+        debounce_sec = max(debounce_sec, plugin_config.hermes_reply_delay_sec)
+        max_wait_sec = max(max_wait_sec, plugin_config.hermes_reply_delay_sec)
+    if debounce_sec > 0:
         debounce_key = make_inflight_key(adapter_name, target.private, user_id, group_id)
         payload = dict(
             bot=bot,
@@ -389,7 +403,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             debounce_key,
             payload,
             debounce_sec=debounce_sec,
-            max_wait_sec=plugin_config.hermes_reply_debounce_max_wait_sec,
+            max_wait_sec=max_wait_sec,
             now_mono=loop.time(),
             replaceable=not (media_only and not is_direct),
         )
