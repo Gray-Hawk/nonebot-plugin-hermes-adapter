@@ -1,7 +1,8 @@
 """FastMCP app 工厂。
 
-把 push_message / list_active_sessions / get_recent_messages 三个工具
-装配进一个 FastMCP 实例,供 mcp/__init__.py 启动 uvicorn 时使用。
+把 mcp/tools/ 下的工具(push_message / wake_turn / list_active_sessions /
+get_recent_messages / get_message_images)装配进一个 FastMCP 实例,
+供 mcp/__init__.py 启动 uvicorn 时使用。
 """
 
 from __future__ import annotations
@@ -39,6 +40,11 @@ from .tools.push_message import (
     PushMessageInput,
     PushMessageResult,
     push_message_impl,
+)
+from .tools.wake_turn import (
+    WakeTurnInput,
+    WakeTurnResult,
+    wake_turn_impl,
 )
 
 # capability 协商里要摘掉的 JSON-RPC 入口。FastMCP 的 _setup_handlers 无条件注册
@@ -191,16 +197,27 @@ def build_mcp_app(
     @mcp.tool()
     async def push_message(
         adapter: str,
-        group_id: str,
         text: str,
+        group_id: str | None = None,
+        user_id: str | None = None,
         image_urls: list[str] | None = None,
         reply_to_msg_id: str | None = None,
         task_id: str | None = None,
     ) -> PushMessageResult:
-        """Send a message to a group via nonebot. Reactive context required."""
+        """Send a message to a group or a private user via nonebot (ready-made text, no LLM turn).
+
+        Boundaries — read before calling:
+          - group pushes: an active reactive session for (adapter, group_id) is required,
+            plus a BotRegistry route. Unchanged legacy behavior.
+          - private pushes: no session/window requirement; the target must be listed in
+            private_allow (user_lists.yaml; falls back to the admin set when absent).
+            Rate-limited per target by the same token bucket as wake_turn (shared).
+          - group_id and user_id are mutually exclusive — give exactly one.
+        """
         inp = PushMessageInput(
             adapter=adapter,
             group_id=group_id,
+            user_id=user_id,
             text=text,
             image_urls=image_urls or [],
             reply_to_msg_id=reply_to_msg_id,
@@ -215,7 +232,7 @@ def build_mcp_app(
         )
         _log_tool_call(
             "push_message",
-            f"adapter={adapter} group={group_id} text_len={len(text)} imgs={len(image_urls or [])}",
+            f"adapter={adapter} group={group_id} user={user_id} text_len={len(text)} imgs={len(image_urls or [])}",
             f"ok={result.ok}"
             + (f" error={_clip(result.error)!r}" if result.error else "")
             + (f" skipped_imgs={len(result.skipped_images)}" if result.skipped_images else ""),
@@ -291,6 +308,43 @@ def build_mcp_app(
             _summarize_image_result(blocks),
         )
         return blocks
+
+    @mcp.tool()
+    async def wake_turn(
+        adapter: str,
+        text: str,
+        user_id: str | None = None,
+        group_id: str | None = None,
+        source: str = "agent-request",
+    ) -> WakeTurnResult:
+        """Open a proactive LLM turn toward a private user or a group (wake, not direct push).
+
+        Unlike push_message (ready-made text sent as-is), each wake burns one full LLM
+        turn: the model composes the actual message in its own voice and the reply lands
+        in session context. Use for reminders/alerts that need composed language.
+
+        Boundaries — read before calling:
+          - private targets must be listed in private_allow (user_lists.yaml; falls
+            back to the admin set when the key is absent). Hard gate, no override.
+          - per-target token bucket (wake_limits.yaml, default 3 tokens / 1 token per
+            300s). Over-limit calls are REJECTED with the wait time in the error —
+            never queued, do not retry to bump the bucket.
+          - group wakes run as ephemeral turns (no active-window requirement).
+        """
+        inp = WakeTurnInput(
+            adapter=adapter,
+            user_id=user_id,
+            group_id=group_id,
+            text=text,
+            source=source,
+        )
+        result = await wake_turn_impl(inp, scope=caller_scope_from_request())
+        _log_tool_call(
+            "wake_turn",
+            f"adapter={adapter} user={user_id} group={group_id} text_len={len(text)} src={source}",
+            f"ok={result.ok}" + (f" error={_clip(result.error)!r}" if result.error else ""),
+        )
+        return result
 
     http_app = mcp.http_app()
 

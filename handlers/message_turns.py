@@ -15,7 +15,7 @@ from nonebot.adapters import (
 )
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
-from ..config import plugin_config, steer_reply_push_active
+from ..config import plugin_config
 from ..core.active_session import (
     ActiveSession,
     AnchorRecord,
@@ -70,7 +70,7 @@ from .message_ingress import (
     _now_ms,
 )
 
-_SYNTHETIC_USER_IDS = frozenset({"system-check", "timer", "delivery"})
+_SYNTHETIC_USER_IDS = frozenset({"system-check", "timer", "delivery", "wake"})
 
 async def _dispatch_chat(
     *,
@@ -450,21 +450,6 @@ async def _run_passive_turn(
                 adapter_name=adapter_name,
             )
 
-    # 本部署补丁: steer 注入后模型回应(⟦s⟧ 标记段)实时推送,发送通道与旁白同款。
-    # 生效判定走 steer_reply_push_active()(联动让位: 旁白开时本回调不注册,
-    # 回应由旁白机制自然透出); 推送当正常回复发,不做来源标注。
-    async def _steer_reply_push(segment: str) -> None:
-        cleaned, _, _ = extract_response_media(segment)
-        if cleaned:
-            await send_text_with_media(
-                bot=bot,
-                target=target,
-                text=cleaned,
-                media_urls=[],
-                at_user_id=None,
-                adapter_name=adapter_name,
-            )
-
     result = await _chat_with_overflow_recovery(
         "passive",
         reply_bot=bot,
@@ -484,7 +469,6 @@ async def _run_passive_turn(
         user_content_override=user_content,
         target=hermes_target,
         interim_callback=_interim_echo if plugin_config.hermes_interim_echo_enabled else None,
-        steer_reply_callback=_steer_reply_push if steer_reply_push_active() else None,
         approval_callback=(
             _make_approval_notify(
                 bot, adapter_name,
@@ -876,19 +860,6 @@ async def _run_reactive_turn(
                 adapter_name=adapter_name,
             )
 
-    # 本部署补丁: steer 回应实时推送,同 passive 路径注释。
-    async def _steer_reply_push(segment: str) -> None:
-        cleaned, _, _ = extract_response_media(segment)
-        if cleaned:
-            await send_text_with_media(
-                bot=bot,
-                target=target,
-                text=cleaned,
-                media_urls=[],
-                at_user_id=None,
-                adapter_name=adapter_name,
-            )
-
     result = await _chat_with_overflow_recovery(
         "reactive",
         reply_bot=bot,
@@ -908,7 +879,6 @@ async def _run_reactive_turn(
         user_content_override=user_content,
         target=hermes_target,
         interim_callback=_interim_echo if plugin_config.hermes_interim_echo_enabled else None,
-        steer_reply_callback=_steer_reply_push if steer_reply_push_active() else None,
         approval_callback=(
             _make_approval_notify(bot, adapter_name, f"群 {group_id}", is_private=False, group_id=group_id)
             if plugin_config.hermes_runs_channel_enabled else None

@@ -17,6 +17,7 @@ from nonebot.rule import Rule
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
+from ..core import user_lists
 from ..core.inflight import make_inflight_key
 from ..utils import check_isolation, get_adapter_name
 
@@ -350,7 +351,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     skip_debounce_for_commission = (
         (not target.private)
         and addressed_to_bot
-        and user_id not in set(plugin_config.hermes_known_bots)
+        and not user_lists.is_known_bot(user_id)
     )
     debounce_sec = (
         plugin_config.hermes_reply_debounce_private_sec

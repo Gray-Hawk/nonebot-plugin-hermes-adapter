@@ -1,15 +1,19 @@
-"""push_message: Hermes 反向调用,nonebot 主动发送一条消息到群。
+"""push_message: Hermes 反向调用,nonebot 主动发送一条消息到群或私聊。
 
-约束:
-  - (adapter, group_id) 必须有活跃 reactive session
-  - BotRegistry 必须有该 (adapter, group_id) 的 Target
-不满足任一条件返回 422 等价错误(由 FastMCP 序列化为 isError=true)。
+群私双路(group_id/user_id 互斥二选一):
+  - 群侧(行为不变):(adapter, group_id) 必须有活跃 reactive session
+    + BotRegistry 必须有该 (adapter, group_id) 的 Target;
+  - 私侧(无窗体系):不验窗;目标必须在私聊主动下行白名单(private_allow,
+    唤起与直发共用),路由走「registry 优先、无 entry 合成兜底」单路径
+    (与 wake_turn 唤起通道同一个解析函数),per-target 令牌桶与唤起共用同桶。
+不满足条件返回 422 等价错误(由 FastMCP 序列化为 isError=true)。
 
 成功路径的副作用, 与 reactive submit_decision 回复路径(_run_reactive_turn 末段)等价:
-  1. mark_bot_replied — 写 ActiveSession.last_bot_reply_at, 供 post-reply cooldown 闸门
+  1. mark_bot_replied(仅群侧) — 写 ActiveSession.last_bot_reply_at, 供 post-reply cooldown 闸门
      在后续 reactive turn / refire 入口判定
-  2. message_buffer.append(is_bot=True) — 让后续 _run_reactive_turn 拉到的
-     <recent_messages> 里能看见 bot 这条 push 出去的话, LLM 不会"以为自己没说"
+  2. message_buffer.append(is_bot=True) — 让后续 turn 拉到的消息历史里能看见 bot
+     这条 push 出去的话, LLM 不会"以为自己没说"
+私侧无窗体系,只回写 buffer(形态与群侧同构,group_id=None 的自已条目);
 两件都做才能避免 Hermes 用 push_message 当主回复后, 后续 refire / 同 turn submit_decision
 又答一遍同主题。
 """
@@ -20,7 +24,7 @@ import time
 from typing import TYPE_CHECKING
 
 from nonebot import get_bot, logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ...core.message_buffer import BufferedMessage
 from ...core.outbound import get_bot_nickname, send_text_with_media
@@ -34,11 +38,22 @@ if TYPE_CHECKING:
 
 class PushMessageInput(BaseModel):
     adapter: str = Field(..., description="Adapter name (lowercased), e.g. 'ob11'")
-    group_id: str = Field(..., description="Group ID")
+    group_id: str | None = Field(default=None, description="Group ID (mutually exclusive with user_id)")
+    user_id: str | None = Field(
+        default=None,
+        description="Private-chat target user id (mutually exclusive with group_id; "
+        "must be listed in private_allow / the admin set)",
+    )
     text: str = Field(..., description="Reply text. Empty allowed only if image_urls non-empty.")
     image_urls: list[str] = Field(default_factory=list, description="Image URLs")
     reply_to_msg_id: str | None = Field(default=None, description="(保留至 M2: 不使用,保留位)")
     task_id: str | None = Field(default=None, description="(M1: 不使用,M2 bg_tasks 接入)")
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> "PushMessageInput":
+        if bool(self.group_id) == bool(self.user_id):
+            raise ValueError("exactly one of group_id / user_id must be given")
+        return self
 
 
 class PushMessageResult(BaseModel):
@@ -58,10 +73,17 @@ class PushMessageResult(BaseModel):
 
 # push 成功后回给调用方的行为提示。写在返回值里而不是只写进 SKILL.md:agent 是在拿到
 # 这个结果之后才写 submit_decision 的,这里是唯一能在它决策**之前**提醒到它的地方。
+# 群侧措辞一字不动(历史行为);私聊是同语义的路数复述。
 _SPOKEN_NOTE = (
     "You have now spoken in this group for this turn. If your submit_decision also carries "
     "reply_text, it will ALSO be sent as a second message. Restating what you just pushed is "
     "dropped as a duplicate — set should_reply=false unless you have something new to add."
+)
+_PRIVATE_SPOKEN_NOTE = (
+    "You have now spoken to this user in private for this turn. If your submit_decision also "
+    "carries reply_text, it will ALSO be sent as a second private message. Restating what you "
+    "just pushed is dropped as a duplicate — set should_reply=false unless you have something "
+    "new to add."
 )
 
 # bot 侧能真正投递的 scheme。本地路径不在其中:MCP 调用方(Hermes)与 bot 可能不同机,
@@ -78,6 +100,30 @@ def _partition_image_urls(urls: list[str]) -> tuple[list[str], list[str]]:
     return ok, skipped
 
 
+def _resolve_private_push(adapter: str, user_id: str):
+    """私侧 push 的节流 + 路由:整条复用唤起通道的单一路径,不自造同款。
+
+    令牌桶与唤起共用同桶(键形 {adapter}:{scope}:{scope_id} 一致,同 target 唤起+
+    直发合计受容量约束);路由直调 message_relay._resolve_wake_route
+    (registry 优先、无 entry 合成兜底,与 wake_turn 同一个解析函数)。
+
+    返回 (bot, target, bot_self_id);失败返回给调用方看的错误串(str)。
+    """
+    # 延迟导入:handlers 依赖 mcp 运行时单例,模块级互 import 会成环(wake_turn 同款)
+    from ...handlers import message_relay as _relay
+
+    denied = _relay._wake_rate_limited(adapter, "private", user_id)
+    if denied is not None:
+        logger.warning(f"[MCP push_message] 私聊直发被限频: {adapter}/{user_id}")
+        return denied
+    route = _relay._resolve_wake_route(adapter, "private", user_id)
+    if isinstance(route, str):
+        logger.warning(f"[MCP push_message] 私聊直发路由失败: {route}")
+        return route
+    bot, target = route
+    return bot, target, str(getattr(bot, "self_id", "") or "")
+
+
 async def push_message_impl(
     inp: PushMessageInput,
     *,
@@ -91,11 +137,18 @@ async def push_message_impl(
     if not inp.text and not inp.image_urls:
         return PushMessageResult(ok=False, error="text and image_urls both empty")
 
+    is_private = inp.user_id is not None
+    # 互斥校验(schema model_validator + validate_push_context 双层保证)确保
+    # 私侧 user_id / 群侧 group_id 恰好一个非 None,这里收窄成 str。
+    target_id: str = inp.user_id or inp.group_id or ""
+    gid: str = "" if is_private else (inp.group_id or "")
+
     now_ms = int(time.time() * 1000)
     try:
         validate_push_context(
             adapter=inp.adapter,
             group_id=inp.group_id,
+            user_id=inp.user_id,
             active_sessions=active_sessions,
             bot_registry=bot_registry,
             now_ms=now_ms,
@@ -105,24 +158,32 @@ async def push_message_impl(
         logger.warning(f"[MCP push_message] context invalid: {exc}")
         return PushMessageResult(ok=False, error=str(exc))
 
-    # 防御:即使 validate 通过了,这里二次 get 之间存在理论 TOCTOU 窗口
-    # (registry 没 TTL,短期内不会自动 evict,但 python -O 下 assert 会被剥除,
-    # 走 if 而非 assert 保 push_message 整体错误面收敛在 PushMessageResult 里)
-    entry = bot_registry.get(inp.adapter, "group", inp.group_id)
-    if entry is None:
-        logger.warning(
-            f"[MCP push_message] registry entry disappeared after context check: {inp.adapter}/{inp.group_id}"
-        )
-        return PushMessageResult(
-            ok=False,
-            error=f"bot registry entry not found: ({inp.adapter}, {inp.group_id})",
-        )
+    if is_private:
+        route = _resolve_private_push(inp.adapter, target_id)
+        if isinstance(route, str):
+            return PushMessageResult(ok=False, error=route)
+        bot, target, bot_self_id = route
+    else:
+        # 防御:即使 validate 通过了,这里二次 get 之间存在理论 TOCTOU 窗口
+        # (registry 没 TTL,短期内不会自动 evict,但 python -O 下 assert 会被剥除,
+        # 走 if 而非 assert 保 push_message 整体错误面收敛在 PushMessageResult 里)
+        entry = bot_registry.get(inp.adapter, "group", gid)
+        if entry is None:
+            logger.warning(
+                f"[MCP push_message] registry entry disappeared after context check: {inp.adapter}/{gid}"
+            )
+            return PushMessageResult(
+                ok=False,
+                error=f"bot registry entry not found: ({inp.adapter}, {gid})",
+            )
 
-    try:
-        bot = get_bot(entry.bot_self_id)
-    except (KeyError, ValueError) as exc:
-        logger.warning(f"[MCP push_message] bot offline self_id={entry.bot_self_id}: {exc}")
-        return PushMessageResult(ok=False, error=f"bot offline: {entry.bot_self_id}")
+        try:
+            bot = get_bot(entry.bot_self_id)
+        except (KeyError, ValueError) as exc:
+            logger.warning(f"[MCP push_message] bot offline self_id={entry.bot_self_id}: {exc}")
+            return PushMessageResult(ok=False, error=f"bot offline: {entry.bot_self_id}")
+        target = entry.target
+        bot_self_id = entry.bot_self_id
 
     # 无法投递的引用要在这里就摘掉并如实回报:直接交给 outbound 只会被静默跳过,
     # 调用方拿到 ok=true 以为图发了,用户却什么也没看到 —— agent 通常会因此重发一遍,
@@ -149,7 +210,7 @@ async def push_message_impl(
 
     success = await send_text_with_media(
         bot=bot,
-        target=entry.target,
+        target=target,
         text=inp.text,
         media_urls=deliverable,
         at_user_id=None,  # 主动 push 不 @ 任何用户(对话不针对特定个体)
@@ -158,14 +219,36 @@ async def push_message_impl(
     if not success:
         return PushMessageResult(ok=False, error="send failed (see nonebot log)", skipped_images=skipped)
 
+    if is_private:
+        # 私侧无窗体系:无 mark_activity/touch/mark_bot_replied(都是群窗机制);
+        # 只回写 buffer,形态与群侧同构(group_id=None 的自已条目)——
+        # 防后续 turn 拉到历史时 LLM「以为自己没说」而重复作答。
+        if message_buffer is not None:
+            message_buffer.append(
+                BufferedMessage(
+                    ts=now_ms,
+                    adapter=inp.adapter,
+                    group_id=None,
+                    user_id=bot_self_id,
+                    # 与群侧回写同一约定:用平台账号名,别写字面 "Bot"。
+                    nickname=await get_bot_nickname(bot),
+                    content=inp.text,
+                    image_urls=list(deliverable),
+                    is_bot=True,
+                )
+            )
+        return PushMessageResult(
+            ok=True, warning=warning, skipped_images=skipped, note=_PRIVATE_SPOKEN_NOTE
+        )
+
     # T1 活动基准:LLM 主动发话也算活动,防止「agent 长任务期间只 push 不说话」
     # 被空闲重置误判。群级标记,share_group / per-user 两种会话形态一起覆盖。
-    session_manager.mark_activity_group(inp.adapter, inp.group_id)
+    session_manager.mark_activity_group(inp.adapter, gid)
 
     # 滑动续期。注:用 send 前的 now_ms 而非 send 后的 wall clock,
     # 慢 send(图片上传等)情况下 TTL 续期会比 wall clock 略短(<10s 量级,
     # 300s TTL 下可忽略)。如未来需要精确续期,在此重新读 time.time()。
-    active_sessions.touch(inp.adapter, inp.group_id, now_ms=now_ms)
+    active_sessions.touch(inp.adapter, gid, now_ms=now_ms)
 
     # 与 reactive 回复路径对齐 — 写 last_bot_reply_at(供 cooldown 闸门),
     # 把 push 的内容注入 buffer(供后续 turn 的 <recent_messages> 看见 bot 已答)
@@ -173,21 +256,21 @@ async def push_message_impl(
     # 「文本已答但图还没出去」,把 submit_decision 里能投的图补发出去。
     # 带上原文:同 turn 去重据此判断 submit_decision 是不是在复述这一条。
     if not active_sessions.mark_bot_replied(
-        inp.adapter, inp.group_id, now_ms=now_ms, media_count=len(deliverable), text=inp.text
+        inp.adapter, gid, now_ms=now_ms, media_count=len(deliverable), text=inp.text
     ):
         # push 已经发出去了,但窗口在这一刻没了(某一发 turn 返回了 should_exit_active)。
         # 后续 turn 的 cooldown 与同 turn 去重都看不到这一发,可能出现重复答复。
         logger.warning(
             f"[MCP push_message] mark_bot_replied landed nowhere: no active session "
-            f"for {inp.adapter}/{inp.group_id}; cooldown and same-turn dedupe lose this reply"
+            f"for {inp.adapter}/{gid}; cooldown and same-turn dedupe lose this reply"
         )
     if message_buffer is not None:
         message_buffer.append(
             BufferedMessage(
                 ts=now_ms,
                 adapter=inp.adapter,
-                group_id=inp.group_id,
-                user_id=entry.bot_self_id,
+                group_id=gid,
+                user_id=bot_self_id,
                 # 与 reactive 回写同一约定:用平台账号名,别写字面 "Bot" —— 那行会
                 # 进下一轮 <recent_messages>,角色名不叫 Bot 时读起来像另一个 bot。
                 nickname=await get_bot_nickname(bot),

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from nonebot import logger
 
+from ..core import user_lists
 from ..core.active_session import ActiveSessionManager
 from ..core.bot_registry import BotRegistry
 from ..core.routing import CallerScope, resolve_caller_scope
@@ -85,7 +86,8 @@ def assert_scope_allows(adapter: str, group_id: str, scope: CallerScope | None) 
 def validate_push_context(
     *,
     adapter: str,
-    group_id: str,
+    group_id: str | None = None,
+    user_id: str | None = None,
     active_sessions: ActiveSessionManager,
     bot_registry: BotRegistry,
     now_ms: int,
@@ -93,17 +95,35 @@ def validate_push_context(
 ) -> None:
     """守卫 push_message MCP 工具调用的前置上下文。
 
-    必须存在 (adapter, group_id) 的活跃 reactive session,
-    且 BotRegistry 有对应路由(target+bot_self_id)才允许 push。
-    检查顺序:范围 → session → target。session 缺失比 target 缺失更常见(TTL 过期),
-    优先报那条更直观;但**范围必须排在两者之前**,否则越权调用方能通过报错差异
-    探知别的群有没有活跃会话。
+    群私双路,互斥二选一(schema 的 model_validator 已挡,这里再兜一层防直调):
+      - 群侧(行为不变):必须存在 (adapter, group_id) 的活跃 reactive session,
+        且 BotRegistry 有对应路由(target+bot_self_id);范围校验照旧排在最前,
+        否则越权调用方能通过报错差异探知别的群有没有活跃会话。
+      - 私侧(无窗体系):不验窗;registry 不硬要求——无 entry 由 impl 侧走
+        「registry 优先、无 entry 合成兜底」单路径。闸只有两个:调用方身份
+        可识别(防匿名端点;群侧的范围标签模型不覆盖私聊目标,同 wake_turn 私侧)
+        + 私聊主动下行白名单(user_lists.yaml 的 private_allow,唤起与直发共用,
+        未配置回落管理员集合)。
 
     bg_task 路径(执行中的任务允许 push 即使无 reactive session)。
 
     Raises:
         PushContextError: 任一前置不满足;调用方映射 HTTP 422。
     """
+    if (group_id is None) == (user_id is None):
+        raise PushContextError("exactly one of group_id / user_id must be given")
+    if user_id is not None:
+        if scope is None:
+            raise PushContextError(
+                "unresolved caller — the bridge could not identify this endpoint"
+            )
+        if not user_lists.private_allowed(adapter, user_id):
+            raise PushContextError(
+                f"目标不在私聊主动下行白名单(user_lists.yaml 的 private_allow 或管理员集合): {user_id}"
+            )
+        return
+    if group_id is None:  # pragma: no cover - 由上方互斥校验保证,这里是类型收窄
+        raise PushContextError("exactly one of group_id / user_id must be given")
     assert_scope_allows(adapter, group_id, scope)
     if not active_sessions.is_alive_for_trigger(adapter, group_id, now_ms):
         raise PushContextError(f"no active reactive session for ({adapter}, {group_id})")

@@ -13,6 +13,7 @@ from nonebot import logger
 from nonebot.adapters import Event
 
 from ..config import plugin_config
+from ..core import user_lists
 
 
 async def _ignore_rule(event: Event) -> bool:
@@ -89,11 +90,10 @@ def _is_blacklisted(group_id: str | None, user_id: str) -> bool:
     """黑名单判定(本部署补丁)。
 
     仅群聊生效(名单按群分组);私聊不受名单影响——私聊是显式对话,
-    「不主动对话」语义不适用。
+    「不主动对话」语义不适用。名单数据源:core/user_lists.py 的
+    user_lists.yaml(现读现用);旧 .env 键 hermes_blacklist 已废弃。
     """
-    if not group_id:
-        return False
-    return user_id in plugin_config.hermes_blacklist.get(group_id, ())
+    return user_lists.is_blacklisted(group_id, user_id)
 
 
 # 单条昵称在 prompt 里的最大字符数。
