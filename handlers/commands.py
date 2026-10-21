@@ -27,8 +27,38 @@ from ..core.run_tracker import make_scope_key
 from ..core.session import session_manager
 from ..utils import check_isolation, get_adapter_name
 
+# 本部署补丁: 指令寻址前缀(多 bot 共群指令域区分)。
+# 注册期定型(下面全部 on_command 在插件加载期执行),改名需重启 nb 生效。
+_raw_bot_name = plugin_config.hermes_bot_name.strip()
+_name_parts = _raw_bot_name.split()
+CMD_PREFIX = _name_parts[0] if _name_parts else ""
+if len(_name_parts) > 1:
+    logger.warning(f"[HERMES] hermes_bot_name 含空白,只取首段 {CMD_PREFIX!r} 作指令前缀")
+
+
+def _cmd(name: str) -> str:
+    """拼带寻址前缀的命令名。空前缀 = 原名(旧行为直连)。"""
+    return f"{CMD_PREFIX} {name}" if CMD_PREFIX else name
+
+
+def _display_cmd(name: str) -> str:
+    """回执与 /help 菜单里展示的指令形态(带斜杠与寻址前缀)。"""
+    return f"/{_cmd(name)}"
+
+
+def _tail_args(raw: str) -> str:
+    """从命令消息纯文本剥余文(命令头一段 + 可能存在的寻址前缀一段)。
+
+    带前缀时 plaintext 形如 "/normi reasoning high",余文从第三段起;
+    空前缀照旧 "/reasoning high" 余文从第二段起。无多余文返回空串。
+    """
+    idx = 2 if CMD_PREFIX else 1
+    parts = raw.split(maxsplit=idx)
+    return parts[idx].strip() if len(parts) > idx else ""
+
+
 # --- /clear ---
-clear_command = on_command("clear", force_whitespace=True, priority=88, block=True)
+clear_command = on_command(_cmd("clear"), force_whitespace=True, priority=88, block=True)
 
 
 @clear_command.handle()
@@ -61,8 +91,8 @@ async def handle_clear(bot: Bot, event: Event, matcher: Matcher):
 
 
 # --- /delay、/resume(T1 空闲重置超控,本部署新增) ---
-delay_command = on_command("delay", force_whitespace=True, priority=88, block=True)
-resume_command = on_command("resume", force_whitespace=True, priority=88, block=True)
+delay_command = on_command(_cmd("delay"), force_whitespace=True, priority=88, block=True)
+resume_command = on_command(_cmd("resume"), force_whitespace=True, priority=88, block=True)
 
 
 @delay_command.handle()
@@ -85,7 +115,7 @@ async def handle_delay(bot: Bot, event: Event, matcher: Matcher):
     group_id = None if target.private else target.id
     internal_id = session_manager.set_idle_paused(adapter_name, target.private, user_id, group_id, True)
     logger.info(f"[HERMES] /delay: T1 计时已暂停 ({internal_id})")
-    await alconna.UniMessage("⏸️ 已暂停本会话的空闲自动重置,/resume 恢复。").send(target=target, bot=bot)
+    await alconna.UniMessage(f"⏸️ 已暂停本会话的空闲自动重置,{_display_cmd('resume')} 恢复。").send(target=target, bot=bot)
 
 
 @resume_command.handle()
@@ -108,7 +138,7 @@ async def handle_resume(bot: Bot, event: Event, matcher: Matcher):
 
 
 # --- /ping ---
-ping_command = on_command("ping", force_whitespace=True, priority=88, block=True)
+ping_command = on_command(_cmd("ping"), force_whitespace=True, priority=88, block=True)
 
 
 def build_ping_message(ok: bool) -> str:
@@ -150,7 +180,7 @@ async def handle_ping(bot: Bot, event: Event, matcher: Matcher):
 
 
 # --- /help ---
-help_command = on_command("help", aliases={"帮助"}, force_whitespace=True, priority=88, block=True)
+help_command = on_command(_cmd("help"), aliases={_cmd("帮助")}, force_whitespace=True, priority=88, block=True)
 
 _HELP_MENU_SEP = "---"
 
@@ -198,27 +228,33 @@ def build_help_text(
     *,
     header: str | None = None,
     footer: str | None = None,
+    cmd_prefix: str = "",
 ) -> str:
     """拼装 /help 正文。与 handler 分开以便离线冒烟。
 
     默认形态保持旧行为一字不差;自定义只换头尾,中间命令清单仍按功能开关
     动态生成(T1 才列 /delay /resume,管理员才列 /hermes-status)。
+    cmd_prefix 非空时每条命令带寻址前缀(如 /normi clear)。
     """
+
+    def _cl(cmd: str) -> str:
+        return f"/{cmd_prefix} {cmd}" if cmd_prefix else f"/{cmd}"
+
     lines = [
-        "/clear - 重置对话",
-        "/ping - 检查连接状态",
-        "/help - 显示本帮助",
+        f"{_cl('clear')} - 重置对话",
+        f"{_cl('ping')} - 检查连接状态",
+        f"{_cl('help')} - 显示本帮助",
     ]
     if plugin_config.hermes_session_idle_reset_sec > 0:
         # T1 启用时才暴露超控命令,免得用户对着不存在的功能打命令
-        lines.append("/delay - 暂停空闲自动重置")
-        lines.append("/resume - 恢复空闲自动重置")
+        lines.append(f"{_cl('delay')} - 暂停空闲自动重置")
+        lines.append(f"{_cl('resume')} - 恢复空闲自动重置")
     if is_admin:
         # 管理员才看见运行时状态命令,普通用户视角下此命令"不存在"
-        lines.append("/hermes-status - 查看插件运行时状态(管理员)")
-        lines.append("/run-status - 查看当前会话在跑的 run(管理员)")
-        lines.append("/run-stop - 终止当前会话在跑的 run(管理员)")
-        lines.append("/reasoning - 查看/切换全局推理档位(管理员)")
+        lines.append(f"{_cl('hermes-status')} - 查看插件运行时状态(管理员)")
+        lines.append(f"{_cl('run-status')} - 查看当前会话在跑的 run(管理员)")
+        lines.append(f"{_cl('run-stop')} - 终止当前会话在跑的 run(管理员)")
+        lines.append(f"{_cl('reasoning')} - 查看/切换全局推理档位(管理员)")
 
     if header is not None:
         text = header.strip("\n") + "\n\n命令：\n" + "\n".join(lines)
@@ -247,12 +283,12 @@ async def handle_help(bot: Bot, event: Event, matcher: Matcher):
 
     # 菜单文件读取挪出事件循环(同步 IO 会堵住其他消息处理)
     header, footer = await asyncio.to_thread(load_help_menu_decor, plugin_config.hermes_help_menu_file)
-    help_text = build_help_text(target.private, is_admin, header=header, footer=footer)
+    help_text = build_help_text(target.private, is_admin, header=header, footer=footer, cmd_prefix=CMD_PREFIX)
     await alconna.UniMessage(help_text).send(target=target, bot=bot)
 
 
 # --- /hermes-status ---
-status_command = on_command("hermes-status", force_whitespace=True, priority=88, block=True)
+status_command = on_command(_cmd("hermes-status"), force_whitespace=True, priority=88, block=True)
 
 
 @status_command.handle()
@@ -370,8 +406,8 @@ def build_status_lines(now_ms: int) -> list[str]:
     return lines
 
 # --- /run-status、/run-stop(阶段3a/3b,管理员;群内私聊均可用,非管理员隐身) ---
-run_status_command = on_command("run-status", force_whitespace=True, priority=88, block=True)
-run_stop_command = on_command("run-stop", force_whitespace=True, priority=88, block=True)
+run_status_command = on_command(_cmd("run-status"), force_whitespace=True, priority=88, block=True)
+run_stop_command = on_command(_cmd("run-stop"), force_whitespace=True, priority=88, block=True)
 
 
 def _is_admin(adapter_name: str, user_id: str) -> bool:
@@ -454,7 +490,7 @@ async def handle_run_stop(bot: Bot, event: Event, matcher: Matcher):
 # --- /reasoning(管理员;全局推理档位快切) ---
 # 链路:hermes config set 原子改写 config.yaml → api_server 每请求现读 → 即时全局生效,
 # gateway 与 nb 均无需重启;chat/completions 与 runs 通道共用同一回退路径。
-reasoning_command = on_command("reasoning", force_whitespace=True, priority=88, block=True)
+reasoning_command = on_command(_cmd("reasoning"), force_whitespace=True, priority=88, block=True)
 
 # 线上模型只认这三档(其余内部档位会被归并),故只开放这三个;换模型时按需再扩
 _REASONING_LEVELS = ("low", "high", "max")
@@ -503,17 +539,17 @@ async def handle_reasoning(bot: Bot, event: Event, matcher: Matcher):
     if not _is_admin(adapter_name, user_id):
         logger.debug(f"[HERMES] /reasoning silent skip for {adapter_name}:{user_id}")
         return  # 隐身策略(同 /run-status):不暴露命令存在性
-    # 手剥参数(同 /approve):get_plaintext 含命令本体,取首个空白后的余文
+    # 手剥参数(同 /approve):get_plaintext 含命令本体,剥掉命令头与寻址前缀取余文
     raw = ""
     try:
         raw = event.get_plaintext().strip()
     except Exception:
         pass
-    level = raw.split(maxsplit=1)[1].strip().lower() if " " in raw else ""
+    level = _tail_args(raw).lower()
     if not level:
         current = await reasoning_effort_get()
         await alconna.UniMessage(
-            f"当前全局推理档位: {current}\n切换: /reasoning <low|high|max>(即时生效,无需重启)"
+            f"当前全局推理档位: {current}\n切换: {_display_cmd('reasoning')} <low|high|max>(即时生效,无需重启)"
         ).send(target=target, bot=bot)
         return
     if level not in _REASONING_LEVELS:
@@ -534,7 +570,7 @@ async def handle_reasoning(bot: Bot, event: Event, matcher: Matcher):
         ).send(target=target, bot=bot)
 
 # --- /approve(阶段3c,管理员应答挂起审批) ---
-approve_command = on_command("approve", force_whitespace=True, priority=88, block=True)
+approve_command = on_command(_cmd("approve"), force_whitespace=True, priority=88, block=True)
 
 
 @approve_command.handle()
@@ -554,11 +590,11 @@ async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna
         raw = event.get_plaintext().strip()
     except Exception:
         pass
-    # get_plaintext 含命令本体(/approve xxx),剥掉首个空白前的部分
-    choice = raw.split(maxsplit=1)[1].strip().lower() if " " in raw else ""
+    # get_plaintext 含命令本体(/approve xxx),剥掉命令头与寻址前缀取余文
+    choice = _tail_args(raw).lower()
     if choice not in {"once", "session", "always", "deny"}:
         await alconna.UniMessage(
-            f"用法: /approve <once|session|always|deny>(当前挂起 {approvals_pending_count()} 条)"
+            f"用法: {_display_cmd('approve')} <once|session|always|deny>(当前挂起 {approvals_pending_count()} 条)"
         ).send(target=target, bot=bot)
         return
     # 看→答→删全程持锁,两把并发 /approve 不会 peek 到同一条目
@@ -581,3 +617,18 @@ async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna
         await alconna.UniMessage(f"✅ 审批 #{entry.approval_id} 已应答: {msg}").send(target=target, bot=bot)
     else:
         await alconna.UniMessage(f"审批 #{entry.approval_id} 应答失败: {msg}(可能已超时或已被应答;条目保留,可重试)").send(target=target, bot=bot)
+
+# --- 裸指令吞没(本部署补丁: 寻址前缀启用时) ---
+# 带前缀命令由上面各 matcher 接走(命令名不同互不冲突);裸形态(无前缀)到这里
+# 一律静默吞掉——不执行也不落聊天路径,防止旧习惯的 /clear 被当普通消息发给 LLM。
+# 私聊群聊同口径。hermes_keywords(如 /ai)不在吞没清单,关键词点火不受影响。
+async def _swallow_bare_command() -> None:
+    return
+
+
+if CMD_PREFIX:
+    for _bare_name in (
+        "clear", "delay", "resume", "ping", "help", "帮助",
+        "hermes-status", "run-status", "run-stop", "reasoning", "approve",
+    ):
+        on_command(_bare_name, force_whitespace=True, priority=89, block=True).handle()(_swallow_bare_command)

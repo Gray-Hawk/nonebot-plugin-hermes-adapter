@@ -118,6 +118,14 @@ class Config(BaseModel):
     仅在 hermes_group_trigger = keyword 档生效(at 档关键词通道关闭)。
     匹配范围(2026-10-14 起):只匹配用户消息本体;引用块/转发展开/占位符不参与点火。"""
 
+    # 本部署补丁: 多 bot 共群指令域区分。
+    hermes_bot_name: str = ""
+    """本实例指令寻址名。空(默认)= 旧行为,内置指令直连(如 /clear)。
+
+    非空 = 全部内置指令改带本 bot 名前缀(如设为 normi 后 /clear 变为 /normi clear),
+    全局生效不区分群聊私聊;裸指令(不带前缀)一律静默吞掉——不执行也不落聊天路径。
+    值含空白时只取首段并 WARN 一次。命令注册发生在插件加载期,改名需重启生效。"""
+
     hermes_private_trigger: str = "all"
     """私聊触发方式: all / allowlist"""
 
