@@ -198,7 +198,8 @@ async def push_message_impl(
             f"{len(skipped)} image(s) were NOT delivered: only http(s):// and data: URLs can be sent. "
             "A path on the Hermes host is not reachable from the bot. To send a locally generated "
             "image, put a MEDIA:<absolute path> tag in your submit_decision reply_text instead — "
-            "the gateway inlines it for you. Do not retry this push with the same path."
+            "whitelisted local images are inlined and shipped as real image messages. "
+            "Do not retry this push with the same path."
         )
     if not inp.text and not deliverable:
         return PushMessageResult(
