@@ -214,17 +214,21 @@ To put an image in the chat, write a `MEDIA:<absolute path>` tag **inside** the 
 plugin actually delivers:
 
 - reactive mode → inside `reply_text` of your `submit_decision` object.
-- `push_message` → inside `text`, or pass an http(s) URL in `image_urls`.
+- `push_message` → pass an http(s) URL in `image_urls` (the `text` field's MEDIA tag is
+  NOT processed there).
 
-The gateway replaces the tag with the image itself before the plugin sees the reply, and the
-plugin re-attaches it as a real image segment. Constraints:
+For image files the plugin inlines the bytes itself and the image ships as a real image
+message. Constraints:
 
 - **Absolute path only** (`MEDIA:/home/user/out.png`), extension one of
-  `.png .jpg .jpeg .gif .webp .bmp`, file **≤ 5 MB**.
-- Anything else — non-image files, oversized images, a path that fails the gateway's
-  safety check — is not delivered. The user sees a `[生成了文件: <name>]` placeholder
-  instead, so **say in your reply text that the file couldn't be sent** rather than
-  acting as though it went through.
+  `.png .jpg .jpeg .gif .webp .bmp`, file **≤ 5 MB**, and the path must sit inside the
+  whitelist roots (the Hermes media cache dirs such as `~/.hermes/cache/scratch`).
+- A **non-image** local file (zip, txt, …) is delivered as a group/private file upload
+  instead — the `[生成了文件: <name>]` placeholder in your text is its caption, and the
+  file card follows. That is the intended file-sending path, not a failure.
+- A path that fails the whitelist check is not delivered at all: the placeholder remains
+  with no upload behind it, so **say in your reply text that the file couldn't be sent**
+  rather than acting as though it went through.
 - **Never hand-write a `data:` / base64 URL yourself**, and never put the `MEDIA:` tag
   outside the JSON envelope — content outside the envelope is dropped, not sent.
 - If a reply is cut off mid-image the user gets a `[图片传输不完整]` placeholder. Keep

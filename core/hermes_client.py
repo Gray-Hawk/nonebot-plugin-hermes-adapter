@@ -295,12 +295,15 @@ def _media_basename(ref: str) -> str:
 def extract_response_media(text: str) -> tuple[str, list[str], list[str]]:
     """从 Hermes 回复中提取 markdown 图片 / MEDIA: 标签 URL,返回 (清洗后文本, URL 列表, 本地文件路径列表)。
 
-    两种标签同一套分流规则:http(s) 与 data:image/…;base64 进媒体列表;
-    主机本地路径(本部署补丁起)进 file_paths 供 send_local_files
+    入口先把白名单内的本地**图片**路径内联成 data:image(补齐只在部分上游
+    路径执行的内联步骤, 幂等);此后两种标签同一套分流规则:
+    http(s) 与 data:image/…;base64 进媒体列表;
+    其余主机本地路径(本部署补丁起)进 file_paths 供 send_local_files
     上传文件本体(白名单判定在发送侧), 文本原位仍留 [生成了文件: 文件名]
     占位——上传被白名单拒绝时用户仍能看到提示, 上传成功时占位符即说明文字;
     其余 data: 非图片 payload 直接去掉。
     """
+    text = inline_local_media_images(text)
     media_urls: list[str] = []
     file_paths: list[str] = []
 
