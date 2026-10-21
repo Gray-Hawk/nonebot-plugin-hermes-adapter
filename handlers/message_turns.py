@@ -46,6 +46,7 @@ from ..core.message_buffer import (
     build_media_address_index,
 )
 from ..core import task_notes
+from ..core import user_lists
 from ..core.outbound import (
     get_bot_nickname,
     send_local_files,
@@ -1297,32 +1298,41 @@ async def _run_reactive_turn(
                 f"(group={group_id} starter={merge_starter} user={user_id})"
             )
         elif decision.get("pin_anchor") is True and not decision.get("should_exit_active"):
-            current_session = _mcp.active_sessions.get_if_trigger_alive(adapter_name, group_id, reply_now_ms)
-            if current_session is None:
-                logger.info(f"[HERMES reactive] pin_anchor skipped: no active window (group={group_id} user={user_id})")
-            else:
-                pinned = _mcp.active_sessions.pin_anchor(
-                    current_session,
-                    AnchorRecord(
-                        participants=[
-                            Participant(user_id=user_id, nickname=nickname or user_id, joined_ts=now_ms)
-                        ],
-                        msg_id=trigger_msg_id,
-                        text=(text or "")[:200],
-                        ts=now_ms,
-                    ),
-                    # master_ids 必须拆前缀——
-                    # hermes_admin_users 是「adapter:id」复合键,
-                    # 而 commissioner_id 是裸 user_id,直接比恒不命中,该槽形同虚设。
-                    # 复用 approvals 同款拆法:只取当前适配器名下的裸 id,跨平台不串。
-                    master_ids=set(admin_user_ids(set(plugin_config.hermes_admin_users), adapter_name)),
-                    max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
-                    now_ms=now_ms,
-                )
+            # 本部署补丁: known_bots 挡钉——bot 账号的委托轮不许起任务锚
+            # (bot 派的活不是真人任务,双 bot 互 @ 下 bot 钉锚会占住双槽)。
+            # 门控放调用点不放 pin_anchor 内部:manager 是纯状态机,「谁配钉」
+            # 是 handler 的策略判断。merge 归并(加入别人的锚)不在此闸内。
+            if user_lists.is_known_bot(user_id):
                 logger.info(
-                    f"[HERMES reactive] pin_anchor {'pinned' if pinned else 'declined'} "
-                    f"(group={group_id} user={user_id} msg_id={trigger_msg_id})"
+                    f"[HERMES reactive] pin_anchor skipped: known_bot (group={group_id} user={user_id})"
                 )
+            else:
+                current_session = _mcp.active_sessions.get_if_trigger_alive(adapter_name, group_id, reply_now_ms)
+                if current_session is None:
+                    logger.info(f"[HERMES reactive] pin_anchor skipped: no active window (group={group_id} user={user_id})")
+                else:
+                    pinned = _mcp.active_sessions.pin_anchor(
+                        current_session,
+                        AnchorRecord(
+                            participants=[
+                                Participant(user_id=user_id, nickname=nickname or user_id, joined_ts=now_ms)
+                            ],
+                            msg_id=trigger_msg_id,
+                            text=(text or "")[:200],
+                            ts=now_ms,
+                        ),
+                        # master_ids 必须拆前缀——
+                        # hermes_admin_users 是「adapter:id」复合键,
+                        # 而 commissioner_id 是裸 user_id,直接比恒不命中,该槽形同虚设。
+                        # 复用 approvals 同款拆法:只取当前适配器名下的裸 id,跨平台不串。
+                        master_ids=set(admin_user_ids(set(plugin_config.hermes_admin_users), adapter_name)),
+                        max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
+                        now_ms=now_ms,
+                    )
+                    logger.info(
+                        f"[HERMES reactive] pin_anchor {'pinned' if pinned else 'declined'} "
+                        f"(group={group_id} user={user_id} msg_id={trigger_msg_id})"
+                    )
 
         # answered 改模型自答自标——
         # 信封 answer_anchor=委托人 id|"all",回复真发出才标记(与 pin 同门槛,

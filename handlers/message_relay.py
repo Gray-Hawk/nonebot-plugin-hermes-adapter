@@ -543,11 +543,13 @@ async def _handle_reactive_path(
         )
         return
 
-    # B: post-reply cooldown — bot 刚在本群发出 reactive 回复 N 秒内,非显式触发的
+    # B: post-reply cooldown — bot 刚在本群发出 reactive 回复 N 秒内,
     # 新消息直接静默。压「我刚说完别人接话→我又凑一句」模式 2。
-    # 显式 @bot 触发不受影响(is_direct=True 直接旁路)。
+    # 本部署补丁: 显式 @bot 不再旁路——双 bot 互 @ 穿透冷却等于没有限速器,
+    # 互聊循环全速助燃;砍后冷却窗对一切触发生效(含委托 @,窗内静默、
+    # 内容留 buffer 不丢,窗口短可接受)。
     # 写在 inflight try_enter 之前,避免占用 slot 又立刻退出造成 pending 抖动。
-    if in_active and not is_direct:
+    if in_active:
         # debug 日志保留入口处,便于运维排查;helper 自己不打日志(refire 路径也会用)
         sess = _mcp.active_sessions.get_if_trigger_alive(adapter_name, group_id, now_ms)
         cooldown_sec = plugin_config.hermes_reactive_post_reply_cooldown_sec
@@ -726,17 +728,17 @@ async def _refire(
     refire_now_ms = _now_ms()
 
     # B: refire 路径同款 post-reply cooldown 闸门。
-    # 仅对非显式触发生效——explicit pending(如 @bot)须穿透 cooldown 直达 chat()。
-    # 判定时刻从「接力起跑」改为「跟帖到达」——旧口径下
+    # 本部署补丁: explicit @ 穿透已砍除(与入口闸同批)——接力轮同样吃冷却,
+    # 委托 @ 在窗内被静默(内容留 buffer),steer_recovered 仍单列豁免:回收条目
+    # 的 ts 是回收时刻(网关只还回文本,拿不到原到达时刻),按到达时刻判仍会误拦。
+    # 判定时刻用「跟帖到达」而非「接力起跑」——旧口径下
     # 本 turn 一发回复 last_bot_reply_at 即刷新,refire 必撞 8s 窗,等于把全部
     # 「turn 在跑期间到达的合法跟帖」接力一律静默吞掉(当日受控群两轮实测实锤;
     # 跟帖到达时已过入口闸,是合法排队,该不该再答应交接力轮的 submit_decision
-    # 自决,而不是被闸门越权替模型决定)。steer_recovered 仍单列豁免:回收条目
-    # 的 ts 是回收时刻(网关只还回文本,拿不到原到达时刻),按到达时刻判仍会误拦。
+    # 自决,而不是被闸门越权替模型决定)。
     if (
         mode == "reactive"
         and group_id is not None
-        and not is_direct
         and not steer_recovered
         and _in_post_reply_cooldown(adapter_name, str(group_id), trigger_msg.ts)
     ):

@@ -250,9 +250,10 @@ class Config(BaseModel):
     active_session 关时不触发——passive 是 1:1 Q&A 语义,不适用欢迎场景。"""
 
     hermes_reactive_post_reply_cooldown_sec: int = 8
-    """reactive 模式下,bot 刚回复完群里 N 秒内,非显式 @ 触发的新消息直接静默。
-    用来阻断「我刚说完别人接话→我又凑一句」类型的过触发。
-    0 = 关闭(回退到旧行为)。显式 @bot 不受影响,任何时候都会立刻进入决策。"""
+    """reactive 模式下,bot 刚回复完群里 N 秒内,新消息触发直接静默——显式 @bot
+    同样被闸(穿透已砍除:双 bot 互 @ 穿透冷却等于没有限速器,助燃互聊循环)。
+    阻断「我刚说完别人接话→我又凑一句」类型的过触发。0 = 关闭(回退旧行为)。
+    steer_recovered 回收条目在 refire 路径仍单列豁免(拿不到原到达时刻)。"""
 
     hermes_prompt_timezone: str = ""
     """M21(2026-10-17 维护者定案):喂给模型的时间戳时区覆盖,IANA 名(如 Asia/Shanghai)。
@@ -274,6 +275,19 @@ class Config(BaseModel):
     hermes_reply_debounce_max_wait_sec: float = 8.0
     """防抖顺延硬上限(秒):自首条消息起算最多等待这么久,防止活跃群里截止时间
     被新消息永远顺延、bot 永远不开口。0 = 无上限(不推荐)。"""
+
+    # --- 特定用户强制回复延迟(本部署补丁) ---
+
+    hermes_reply_delay_sec: float = 0.0
+    """名单用户强制回复延迟(秒):生效集合内用户的消息触发时,防抖窗长提升到至少
+    本值(防抖关闭也强制开窗),顺延硬上限同步抬到不低于本值——给需要交互的 bot
+    装限速器:照常交互但节奏放缓不刷屏。0 = 关闭。
+    生效集合 = known_bots(user_lists.yaml,缺省涵盖) ∪ hermes_reply_delay_users。"""
+
+    hermes_reply_delay_users: set[str] = set()
+    """额外强制延迟名单(known_bots 已缺省涵盖,本键只管额外添加)。格式
+    `{adapter}:{user_id}` 前缀制(与 hermes_admin_users 同构),重启生效。
+    例:["onebotv11:12345678"]"""
 
     # --- /help 菜单头尾自定义(只做头尾,独立文件) ---
 
