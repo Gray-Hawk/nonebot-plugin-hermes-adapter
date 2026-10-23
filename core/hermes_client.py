@@ -27,6 +27,7 @@ from .message_context import render_message_context_head
 from .prompt_dump import maybe_dump_system_prompt
 from .routing import HermesTarget, default_target
 from .run_tracker import make_scope_key
+from .bg_tasks import spawn_bg_task
 
 # user_content_override 期望形态:纯文本 或 OpenAI 多模态 parts 列表
 UserContent = str | list[dict[str, Any]]
@@ -1013,6 +1014,28 @@ def missing_memory_capabilities(caps: dict[str, Any]) -> list[str]:
     return [key for key in _MEMORY_CAPABILITY_KEYS if not features.get(key)]
 
 
+def _spawn_steer_reconcile_if_pending(tracker, run_id: str) -> None:
+    """run 终态钩子(本部署补丁: 弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75/84)。
+
+    finish 删行前先取回完整行, 台账有 pending steer 才 spawn 对账(常态零开销)。
+    任何异常只 WARN, 不影响主 turn; 传输异常止损分支与正常 _finish 共用同一入口。
+    """
+    if tracker is None or not plugin_config.hermes_steer_reconcile_enabled:
+        return
+    try:
+        tracked = tracker.get_by_run_id(run_id)
+        if tracked is None or not tracker.pending_steers(run_id):
+            return
+        from .steer_reconcile import reconcile_run_finished
+
+        spawn_bg_task(
+            reconcile_run_finished(tracked),
+            name=f"steer-reconcile-{run_id[:12]}",
+        )
+    except Exception:
+        logger.warning("[HERMES steer对账] 终态钩子异常(不影响主 turn)", exc_info=True)
+
+
 class HermesClient:
     def __init__(self) -> None:
         # 无实例状态:接入点按群解析,缓存会让路由与配置漂移。
@@ -1603,11 +1626,16 @@ class HermesClient:
             if run_id:
                 await self._stop_run_quiet(tgt.base_url, headers, run_id)
             if tracker is not None:
+                # 传输异常止损分支同样走终态钩子: 台账有 pending steer 才 spawn 对账。
+                _spawn_steer_reconcile_if_pending(tracker, run_id)
                 tracker.finish(run_id)
             raise
 
         def _finish() -> None:
             if tracker is not None:
+                # steer 对账补投(alive/84): finish 删行前先取回完整行, 台账有 pending
+                # steer 才 spawn 对账(常态零开销)。
+                _spawn_steer_reconcile_if_pending(tracker, run_id)
                 tracker.finish(run_id)
 
         if parser.interrupted:

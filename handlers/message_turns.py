@@ -106,6 +106,7 @@ async def _dispatch_chat(
             target=target, adapter_name=adapter_name, user_id=user_id, nickname=nickname,
             group_id=group_id, msg_text=msg_text, is_direct=is_direct,
             now_ms=now_ms,
+            event_msg_id=getattr(event, "message_id", None),
         )
     ):
         return
@@ -482,6 +483,11 @@ async def _run_passive_turn(
 
     # 阶段2b:runs 路迟到 steer 回收(被动路径)——私聊/passive 直说按委托排队,
     # 与既有 passive pending 语义一致;turn 结束后的 refire 自然接力。
+    # 台账核销注记(本部署补丁: 弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75/84):
+    # 本点把该 run 的 pending 台账置 recovered(native 路终态 pending_steer 上浮=
+    # 上游已还回这批 steer, 对账不得再补, 防双重投递)。run_id 不可得——ChatResult
+    # 不携带 run_id, 且 run 终态时 run_tracker 行已由 finish 删除——故按文本子串
+    # 核销(recover_by_text): pending_steer 是各条 steer_text 的拼接, 必含其为子串。
     if result is not None and result.pending_steer:
         _scope_key = make_inflight_key(adapter_name, is_private, user_id, group_id)
         _mcp.inflight.try_enter(
@@ -501,6 +507,13 @@ async def _run_passive_turn(
             f"[HERMES passive] 回收 pending_steer 进委托队列 "
             f"(key={_scope_key} len={len(result.pending_steer)})"
         )
+        # 排回队列成功后按文本子串核销 pending 台账(见上方注记)。核销失败只 WARN,
+        # 不影响回收主流程——对账仍以转录 m:id 搜索为最终判据双保险。
+        if _mcp.run_tracker is not None:
+            try:
+                _mcp.run_tracker.recover_by_text(result.pending_steer)
+            except Exception:
+                logger.warning("[HERMES steer对账] 回收核销失败(不影响回收)", exc_info=True)
 
     # 本部署补丁: 403 鉴权类错误硬静默——不发 fallback、
     # 不发 raw_text,不依赖 fallback 配置。403 是运维事件(key/额度),群里通知无意义,
@@ -889,6 +902,11 @@ async def _run_reactive_turn(
     # 阶段2b:runs 路 turn 收尾时,上游漏接的迟到 steer 随 completed 上浮——排回
     # pending refire,不能丢(那是用户在 turn 边界上说的话)。add_followup 合并
     # 语义,不顶掉 turn 期间新来的真实跟帖。
+    # 台账核销注记(本部署补丁: 弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75/84):
+    # 本点把该 run 的 pending 台账置 recovered(native 路终态 pending_steer 上浮=
+    # 上游已还回这批 steer, 对账不得再补, 防双重投递)。run_id 不可得——ChatResult
+    # 不携带 run_id, 且 run 终态时 run_tracker 行已由 finish 删除——故按文本子串
+    # 核销(recover_by_text): pending_steer 是各条 steer_text 的拼接, 必含其为子串。
     if result is not None and result.pending_steer:
         _mcp.inflight.add_followup(
             make_inflight_key(adapter_name, False, user_id, group_id),
@@ -913,6 +931,13 @@ async def _run_reactive_turn(
             f"[HERMES reactive] 回收 pending_steer 进 pending "
             f"(group={group_id} len={len(result.pending_steer)})"
         )
+        # 排回队列成功后按文本子串核销 pending 台账(见上方注记)。核销失败只 WARN,
+        # 不影响回收主流程——对账仍以转录 m:id 搜索为最终判据双保险。
+        if _mcp.run_tracker is not None:
+            try:
+                _mcp.run_tracker.recover_by_text(result.pending_steer)
+            except Exception:
+                logger.warning("[HERMES steer对账] 回收核销失败(不影响回收)", exc_info=True)
 
     # 增量推送水位推进:仅在内容确定落进上游转录时推进(非 transport 错误、
     # 非 403/暂不可用等 provider 报错家族);失败/本 turn 内发生会话轮换则不推进,

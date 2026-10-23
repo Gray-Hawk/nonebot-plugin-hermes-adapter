@@ -33,6 +33,24 @@ CREATE TABLE IF NOT EXISTS active_runs (
 )
 """
 
+# 本部署补丁(弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75 根因、alive/84 方案):
+# steer 对账台账。每条被上游 steer 接口接受(HTTP 200 且 accepted=True)的注入记
+# 一行 pending;run 终态后按 m_id 拉转录精确搜, 搜不到即被静默丢弃, 批 2 补投成新
+# run。无 m:id 的 steer 不入账(对账无锚点)。CREATE TABLE IF NOT EXISTS 幂等。
+_STEER_LEDGER_SCHEMA = """
+CREATE TABLE IF NOT EXISTS steer_ledger (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id      TEXT NOT NULL,
+    m_id        TEXT NOT NULL,          -- 原始消息的 m:id(纯数字串);无 m:id 不入账
+    scope_key   TEXT NOT NULL,
+    session_key TEXT NOT NULL,
+    sender_id   TEXT NOT NULL,
+    steer_text  TEXT NOT NULL,          -- 实际注入的完整文本(含发言人标签与约定行)
+    accepted_at REAL NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending'  -- pending/reconciled/recovered/replayed
+)
+"""
+
 
 @dataclass
 class TrackedRun:
@@ -68,6 +86,7 @@ class RunTracker:
         # 提交只发生在 OS 掉电级事故(应用崩溃不丢),FULL 的每提交 fsync 不值得。
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute(_SCHEMA)
+        self._conn.execute(_STEER_LEDGER_SCHEMA)
         self._conn.commit()
 
     def upsert(
@@ -148,6 +167,23 @@ class RunTracker:
             mode=r[8], expect_structured=bool(r[9]), last_seq=r[10], started_at=r[11],
         )
 
+    def get_by_run_id(self, run_id: str) -> TrackedRun | None:
+        """按主键取一行(run 终态钩子 finish 删行前取回完整行用)。"""
+        rows = self._conn.execute(
+            "SELECT run_id, scope_key, adapter, is_private, user_id, group_id,"
+            " bot_self_id, session_key, mode, expect_structured, last_seq, started_at"
+            " FROM active_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchall()
+        if not rows:
+            return None
+        r = rows[0]
+        return TrackedRun(
+            run_id=r[0], scope_key=r[1], adapter=r[2], is_private=bool(r[3]),
+            user_id=r[4], group_id=r[5], bot_self_id=r[6], session_key=r[7],
+            mode=r[8], expect_structured=bool(r[9]), last_seq=r[10], started_at=r[11],
+        )
+
     def prune_zombies(self, max_age_sec: float, *, now: float | None = None) -> list[str]:
         """删 started_at 超过 max_age_sec 的僵尸行,返回被删 run_id 列表。
 
@@ -165,6 +201,110 @@ class RunTracker:
             self._conn.execute("DELETE FROM active_runs WHERE started_at < ?", (cutoff,))
             self._conn.commit()
         return ids
+
+    # --- steer 对账台账 CRUD(本部署补丁: 弥补 v0.22.1 引入的 steer 丢弃缺陷, ---
+    # alive/75 根因、alive/84 方案)。sqlite 主循环专用, 风格对齐本类其余方法。 ---
+
+    def record_steer(
+        self,
+        *,
+        run_id: str,
+        m_id: str,
+        scope_key: str,
+        session_key: str,
+        sender_id: str,
+        steer_text: str,
+        accepted_at: float,
+    ) -> None:
+        """INSERT 一行 pending 台账(steer 被上游接受后调用)。
+
+        无 m:id 的 steer 不入账(对账无锚点), 由调用方在开关与 m_id 判定后把关。
+        """
+        self._conn.execute(
+            "INSERT INTO steer_ledger "
+            "(run_id, m_id, scope_key, session_key, sender_id, steer_text, accepted_at, status)"
+            " VALUES (?,?,?,?,?,?,?,'pending')",
+            (run_id, m_id, scope_key, session_key, sender_id, steer_text, accepted_at),
+        )
+        self._conn.commit()
+
+    def pending_steers(self, run_id: str) -> list[dict]:
+        """取该 run 全部 pending 台账条目(终态对账用), dict 含全部列。"""
+        rows = self._conn.execute(
+            "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text,"
+            " accepted_at, status FROM steer_ledger WHERE run_id=? AND status='pending'"
+            " ORDER BY id",
+            (run_id,),
+        ).fetchall()
+        return [
+            {
+                "id": r[0],
+                "run_id": r[1],
+                "m_id": r[2],
+                "scope_key": r[3],
+                "session_key": r[4],
+                "sender_id": r[5],
+                "steer_text": r[6],
+                "accepted_at": r[7],
+                "status": r[8],
+            }
+            for r in rows
+        ]
+
+    def mark_steers(self, run_id: str, m_ids: list[str], status: str) -> None:
+        """按 run_id+m_id 批量置状态(reconciled/recovered/replayed 核销用)。"""
+        if not m_ids:
+            return
+        placeholders = ",".join("?" for _ in m_ids)
+        self._conn.execute(
+            f"UPDATE steer_ledger SET status=? WHERE run_id=? AND m_id IN ({placeholders})",
+            (status, run_id, *m_ids),
+        )
+        self._conn.commit()
+
+    def recover_all_pending(self, run_id: str) -> int:
+        """把该 run 全部 pending 台账条目置 recovered, 返回影响行数。
+
+        核销依据:native 路终态 pending_steer 上浮 = 上游已还回这批 steer, 对账不得
+        再补(防双重投递)。按 run_id 全量核销是因回收点拿不到 m:id 列表
+        (pending_steer 是拼接文本)。
+        """
+        cur = self._conn.execute(
+            "UPDATE steer_ledger SET status='recovered' WHERE run_id=? AND status='pending'",
+            (run_id,),
+        )
+        self._conn.commit()
+        return cur.rowcount
+
+    def recover_by_text(self, recovered_text: str) -> int:
+        """按文本子串核销 pending 台账, 返回影响行数。
+
+        回收点(message_turns 两处 pending_steer 回收)拿不到 run_id(ChatResult 不带、
+        tracker 行已 finish), 但拿得到 result.pending_steer 拼接文本; 上游 agent.steer()
+        的拼接是 existing + "\\n" + cleaned, 台账 steer_text 是单次注入文本, 故
+        pending_steer 必然把各条 steer_text 含为子串, 据此反向核销防双重投递。
+        """
+        cur = self._conn.execute(
+            "UPDATE steer_ledger SET status='recovered'"
+            " WHERE status='pending' AND ? LIKE '%'||steer_text||'%'",
+            (recovered_text,),
+        )
+        self._conn.commit()
+        return cur.rowcount
+
+    def prune_steer_ledger(self, max_age_sec: float, *, now: float | None = None) -> int:
+        """删 accepted_at 超龄台账行, 返回删除数。
+
+        挂接点 = tasks/run_resume.py 启动清理处(prune_zombies 旁)。批 1 只提供方法,
+        启动清理接线待批 2(对账/补投落地时一并接)。
+        """
+        now = time.time() if now is None else now
+        cutoff = now - max_age_sec
+        cur = self._conn.execute(
+            "DELETE FROM steer_ledger WHERE accepted_at < ?", (cutoff,)
+        )
+        self._conn.commit()
+        return cur.rowcount
 
     def close(self) -> None:
         self._conn.close()
