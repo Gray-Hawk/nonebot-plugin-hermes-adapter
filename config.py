@@ -71,6 +71,13 @@ class Config(BaseModel):
     (回应只进最终 output), 不会更差。零常态开销: 只有 steer 发生时才注入
     约定行。"""
 
+    # 本部署补丁: steer 对账补投(弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75/84)。
+    hermes_steer_reconcile_enabled: bool = True
+    """steer 被接受但未落账时的终态对账+补投(缺省开)。
+    steer 信封挂 m:id 并入台账, run 终态拉转录精确搜, 缺件补投成新 run。
+    查询失败/会话失效一律不补记 WARN(故障面归 run_resume 层)。零常态开销:
+    只有本 run 期间有 steer 被接受时才触发一次 GET。"""
+
     # 本部署补丁: 本地文件/图片投递的白名单与尺寸上限。
     hermes_media_allow_dirs: str = ""
     """额外的本地文件投递白名单根目录(os.pathsep 分隔, 支持 ~)。

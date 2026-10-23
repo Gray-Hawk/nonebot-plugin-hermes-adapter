@@ -65,6 +65,29 @@ def _inflight_key(row: TrackedRun) -> tuple[str, str]:
     return make_inflight_key(row.adapter, row.is_private, row.user_id, row.group_id)
 
 
+def _maybe_spawn_steer_reconcile(row: TrackedRun) -> None:
+    """run 终态对账补投钩子(本部署补丁: 弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75/84)。
+
+    reattach 终态与正常 turn 终态同样需要对账: nb 重启期间被接受的 steer 台账是持久化的。
+    finish 删行前确认该 run 台账有 pending steer 才 spawn 对账(常态零开销)。任何异常只
+    WARN, 不阻塞删行。
+    """
+    tracker = _mcp.run_tracker
+    if tracker is None or not plugin_config.hermes_steer_reconcile_enabled:
+        return
+    try:
+        if not tracker.pending_steers(row.run_id):
+            return
+        from ..core.steer_reconcile import reconcile_run_finished
+
+        spawn_bg_task(
+            reconcile_run_finished(row),
+            name=f"steer-reconcile-{row.run_id[:12]}",
+        )
+    except Exception:
+        logger.warning("[HERMES steer对账] 终态钩子异常(不影响删行)", exc_info=True)
+
+
 def _build_delivery(output: str, expect_structured: bool, recent_speakers: set[str]) -> tuple[str, str | None] | None:
     """终态 output → (reply_text, at_user_id)。纯函数,离线可测。
 
@@ -96,6 +119,14 @@ async def resume_active_runs() -> None:
     pruned = tracker.prune_zombies(_ZOMBIE_TTL_SEC)
     if pruned:
         logger.warning(f"[HERMES run-resume] 清扫僵尸行 {len(pruned)} 条: {pruned}")
+    # steer 对账台账清理(本部署补丁: 弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75/84):
+    # 启动时清 accepted_at 超龄的台账行(24h, 对齐僵尸行 TTL), 防台账无限累积。
+    try:
+        pruned_steer = tracker.prune_steer_ledger(_ZOMBIE_TTL_SEC)
+        if pruned_steer:
+            logger.info(f"[HERMES steer对账] 启动清理超龄台账 {pruned_steer} 条")
+    except Exception:
+        logger.warning("[HERMES steer对账] 启动清理台账失败", exc_info=True)
     rows = tracker.list_running()
     if not rows:
         return
@@ -140,6 +171,7 @@ async def _drop_if_stale_completed(row: TrackedRun, tracker) -> bool:
             f"[HERMES run-resume] 回复已逾送达时效({_DELIVERY_CAP_SEC}s),丢弃 "
             f"run_id={row.run_id} scope={row.scope_key} age={age}s"
         )
+        _maybe_spawn_steer_reconcile(row)
         tracker.finish(row.run_id)
         return True
     except Exception:
@@ -201,6 +233,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
                     f"[HERMES run-resume] 回复已逾送达时效({_DELIVERY_CAP_SEC}s),丢弃 "
                     f"run_id={row.run_id} scope={row.scope_key} age={int(_now_ms() / 1000 - row.started_at)}s"
                 )
+                _maybe_spawn_steer_reconcile(row)
                 tracker.finish(row.run_id)
                 return
             if status not in _TERMINAL_STATUSES:
@@ -242,6 +275,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
             f"[HERMES run-resume] run 终态不可送达 run_id={row.run_id} "
             f"interrupted={parser.interrupted} error={str(parser.error)[:120]!r}"
         )
+        _maybe_spawn_steer_reconcile(row)
         tracker.finish(row.run_id)
         return
     output = parser.output
@@ -249,6 +283,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
         status = str(status_body.get("status") or "")
         if status != "completed":
             logger.warning(f"[HERMES run-resume] run 终态={status} 不补发 run_id={row.run_id}")
+            _maybe_spawn_steer_reconcile(row)
             tracker.finish(row.run_id)
             return
         output = str(status_body.get("output") or "")
@@ -269,12 +304,14 @@ async def _resume_row_impl(row: TrackedRun) -> None:
     delivery = _build_delivery(output, row.expect_structured, recent_speakers)
     if delivery is None:
         logger.info(f"[HERMES run-resume] 续跑轮静默(解析失败/决定不回) run_id={row.run_id}")
+        _maybe_spawn_steer_reconcile(row)
         tracker.finish(row.run_id)
         return
     reply_text, at_user = delivery
     cleaned, media_urls, file_paths = extract_response_media(reply_text)
     if not cleaned and not media_urls and not file_paths:
         logger.info(f"[HERMES run-resume] 续跑轮回复为空 run_id={row.run_id}")
+        _maybe_spawn_steer_reconcile(row)
         tracker.finish(row.run_id)
         return
     sent = await send_text_with_media(
@@ -293,6 +330,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
         f"sent={sent} text_len={len(cleaned)} media={len(media_urls)} files={len(file_paths)}"
         "(turn 生命周期特性:pin/exit/防抖 跳过)"
     )
+    _maybe_spawn_steer_reconcile(row)
     tracker.finish(row.run_id)
 
 

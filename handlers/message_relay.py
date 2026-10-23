@@ -318,7 +318,8 @@ def _steer_eligible_ids(
     return ids
 
 async def _steer_text_into_live_run(
-    adapter_name: str, is_private: bool, user_id: str, group_id: str | None, text: str
+    adapter_name: str, is_private: bool, user_id: str, group_id: str | None, text: str,
+    *, m_id: str | int | None = None,
 ) -> bool:
     """把纯文本 steer 注入本 scope 在跑的 run。无 live run / 已收尾(409) /
     网络异常 → False(调用方落回正常排队,零丢失)。scope 感知版发送原语
@@ -337,6 +338,22 @@ async def _steer_text_into_live_run(
             f"[HERMES steer] 直注在跑 turn (scope={'private' if is_private else 'group'}:"
             f"{user_id if is_private else group_id} run_id={live.run_id} len={len(text)})"
         )
+        # 本部署补丁(弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75 根因、alive/84 方案):
+        # steer 被上游接受(HTTP 200 且 accepted=True)即记台账 pending, 供 run 终态
+        # 对账:拉转录按 m:id 精确搜, 搜不到即被静默丢弃, 批 2 补投成新 run。仅开关开
+        # 且 m_id 非 None 才入账;记台账失败只 WARN, 不影响 steer 主流程。
+        if m_id is not None and plugin_config.hermes_steer_reconcile_enabled:
+            try:
+                tracker.record_steer(
+                    run_id=live.run_id, m_id=str(m_id), scope_key=live.scope_key,
+                    session_key=live.session_key, sender_id=str(user_id),
+                    steer_text=text, accepted_at=time.time(),
+                )
+            except Exception:
+                logger.warning(
+                    f"[HERMES steer] 记台账失败(不影响 steer 主流程) "
+                    f"run_id={live.run_id} m_id={m_id}"
+                )
     return ok
 
 async def _maybe_steer_direct(
@@ -349,6 +366,7 @@ async def _maybe_steer_direct(
     msg_text: str,
     is_direct: bool,
     now_ms: int,
+    event_msg_id: str | int | None = None,
 ) -> bool:
     """资格内纯文本 steer 直注(规划书§3.2/3.3)。True=已注入,调用方不再 dispatch。
 
@@ -363,10 +381,20 @@ async def _maybe_steer_direct(
             return False
         if user_id not in _steer_eligible_ids(adapter_name, False, user_id, group_id, now_ms):
             return False
-    text = _with_steer_reply_convention(
-        f"{_format_speaker_tag(nickname, user_id)}: {msg_text.strip()}"
+    # 本部署补丁(弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75 根因、alive/84 方案):
+    # 有 m:id 时在发言人标签后挂 [m:xxx], 供批 2 对账按 m:id 精确搜转录;无 id 维持旧形态。
+    speaker_tag = _format_speaker_tag(nickname, user_id)
+    if event_msg_id is not None:
+        text = _with_steer_reply_convention(
+            f"{speaker_tag} [m:{event_msg_id}]: {msg_text.strip()}"
+        )
+    else:
+        text = _with_steer_reply_convention(
+            f"{speaker_tag}: {msg_text.strip()}"
+        )
+    return await _steer_text_into_live_run(
+        adapter_name, target.private, user_id, group_id, text, m_id=event_msg_id
     )
-    return await _steer_text_into_live_run(adapter_name, target.private, user_id, group_id, text)
 
 async def _try_steer_followup(
     key: tuple[str, str],
@@ -432,9 +460,20 @@ async def _try_steer_followup(
             f"(group={group_id})"
         )
         return False
-    text = _with_steer_reply_convention(
-        f"{_format_speaker_tag(entry.msg.nickname, entry.msg.user_id)}: {steer_text}"
-    )
+    # 本部署补丁(弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75 根因、alive/84 方案):
+    # 跟帖槽条目是入库回填过 id 的 BufferedMessage, 有 id 时在发言人标签后挂 [m:xxx]
+    # 供批 2 对账按 m:id 精确搜转录;无 id 维持旧形态。m:id 挂在最终 steer_text 的
+    # 发言人标签行上(上方剥表情包逻辑保持原样)。
+    _m_id = entry.msg.id
+    speaker_tag = _format_speaker_tag(entry.msg.nickname, entry.msg.user_id)
+    if _m_id is not None:
+        text = _with_steer_reply_convention(
+            f"{speaker_tag} [m:{_m_id}]: {steer_text}"
+        )
+    else:
+        text = _with_steer_reply_convention(
+            f"{speaker_tag}: {steer_text}"
+        )
     ok = await hermes_client.steer_run(
         tgt=resolve_target(adapter_name, False, group_id), run_id=live.run_id, text=text
     )
@@ -443,6 +482,22 @@ async def _try_steer_followup(
             f"[HERMES steer探针] 早退: steer_run 返回 False (group={group_id} run_id={live.run_id})"
         )
         return False
+    # 本部署补丁(弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75 根因、alive/84 方案):
+    # 跟帖 steer 被上游接受即记台账 pending(供批 2 对账按 m:id 搜转录)。本路径不经过
+    # _steer_text_into_live_run(直连 hermes_client.steer_run), 故在此内联记账, 条件与
+    # 直注路径一致:仅开关开且 m_id 非 None;记台账失败只 WARN, 不影响 steer 主流程。
+    if _m_id is not None and plugin_config.hermes_steer_reconcile_enabled:
+        try:
+            tracker.record_steer(
+                run_id=live.run_id, m_id=str(_m_id), scope_key=live.scope_key,
+                session_key=live.session_key, sender_id=str(entry.msg.user_id),
+                steer_text=text, accepted_at=time.time(),
+            )
+        except Exception:
+            logger.warning(
+                f"[HERMES steer] 记台账失败(不影响 steer 主流程) "
+                f"run_id={live.run_id} m_id={_m_id}"
+            )
     if _mcp.inflight.peek_followup(key) is entry and entry.msg.content == content_snapshot:
         _mcp.inflight.settle_followup(key, entry)
     else:
@@ -470,6 +525,7 @@ async def _handle_reactive_path(
     nickname: str | None = None,
     event_msg_id: str | int | None = None,
     ephemeral: bool = False,
+    force_skip_cooldown: bool = False,
     droppable: bool = False,
     recent_override: list[BufferedMessage] | None = None,
     replied_msg_id=None,
@@ -549,7 +605,9 @@ async def _handle_reactive_path(
     # 互聊循环全速助燃;砍后冷却窗对一切触发生效(含委托 @,窗内静默、
     # 内容留 buffer 不丢,窗口短可接受)。
     # 写在 inflight try_enter 之前,避免占用 slot 又立刻退出造成 pending 抖动。
-    if in_active:
+    # steer 对账补投(alive/84)专用豁免:补投必在最终回复后的 cooldown 窗内,
+    # 不豁免则被静默吞;其余调用方维持 False 不变。
+    if in_active and not force_skip_cooldown:
         # debug 日志保留入口处,便于运维排查;helper 自己不打日志(refire 路径也会用)
         sess = _mcp.active_sessions.get_if_trigger_alive(adapter_name, group_id, now_ms)
         cooldown_sec = plugin_config.hermes_reactive_post_reply_cooldown_sec
