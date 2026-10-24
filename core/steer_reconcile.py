@@ -24,6 +24,7 @@ from .. import mcp as _mcp
 from ..config import plugin_config
 from ..core.bg_tasks import spawn_bg_task
 from ..core.hermes_client import _try_parse_first_json_block
+from ..core.inflight import _SYNTHETIC_NICKNAME
 from ..core.routing import resolve_target
 from ..core.run_tracker import TrackedRun
 
@@ -170,7 +171,9 @@ async def _replay_case_a(tracked, rows, missing, now_ms) -> None:
             await _replay_direct(tracked, p, now_ms)
         return
     try:
-        _spawn_replay_turn(tracked, text, tracked.user_id, "系统核对", now_ms)
+        # 合成轮昵称用 inflight 单点常量(合并身份分界凭它辨认合成 fragment),
+        # 手抄字面量会漂移(alive/86 普查收口项)。
+        _spawn_replay_turn(tracked, text, tracked.user_id, _SYNTHETIC_NICKNAME, now_ms)
         _mark_status(tracked, m_ids, "replayed")
         logger.info(f"[HERMES steer对账] 情形 A 补投派发成功 (run_id={tracked.run_id} count={len(m_ids)})")
     except Exception as exc:
