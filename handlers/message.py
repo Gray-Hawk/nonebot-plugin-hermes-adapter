@@ -43,7 +43,7 @@ from .message_ingress import (
     _warn_unassembled_throttled,
 )
 
-from .message_perception import _merge_fragment_payload
+from .message_perception import _merge_fragment_payload, _peek_event_db_id
 
 from .message_turns import _dispatch_chat
 from .message_relay import route_synthesized_input
@@ -209,7 +209,8 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # B-0: 非文本段占位拼到 msg_text 末尾。注意这里**不重复**对 replied_message 做
     # collect: 引用消息已通过引用前缀((引用:...) 形态)进来,
     # 引用里的 voice/video 用户感知较低,且会让占位重复堆叠。
-    nontext_placeholders = _collect_nontext_placeholders(uni_msg)
+    event_db_id = _peek_event_db_id(adapter_name, getattr(event, "message_id", None))
+    nontext_placeholders = _collect_nontext_placeholders(uni_msg, file_message_id=event_db_id)
     if nontext_placeholders:
         suffix = " ".join(nontext_placeholders)
         msg_text = (msg_text + " " + suffix).strip() if msg_text else suffix

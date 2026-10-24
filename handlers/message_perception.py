@@ -19,8 +19,10 @@ from ..utils import get_adapter_name
 from .message_ingress import _extract_sender_nickname, _now_ms
 from .message_media import (
     _collect_at_placeholders,
+    _collect_file_placeholders,
     _collect_nontext_placeholders,
     _compose_quote_prefix,
+    _extract_file_entries,
     _extract_forward_full,
     _extract_image_urls,
     _extract_replied_media,
@@ -55,6 +57,17 @@ def _register_event_db_id(adapter_name: str, event_msg_id, db_id: int | None) ->
         now_mono = time.monotonic()
         for k, (_v, exp) in [item for item in _event_db_id_cache.items() if item[1][1] <= now_mono]:
             _event_db_id_cache.pop(k, None)
+
+
+def _peek_event_db_id(adapter_name: str, event_msg_id) -> int | None:
+    """读取本事件的真实 db id 但不领走；占位渲染与后续条目构造可共用。"""
+    if event_msg_id is None:
+        return None
+    hit = _event_db_id_cache.get((adapter_name, str(event_msg_id)))
+    if hit is None:
+        return None
+    db_id, exp = hit
+    return db_id if exp > time.monotonic() else None
 
 
 def _claim_event_db_id(adapter_name: str, event_msg_id) -> int | None:
@@ -111,8 +124,12 @@ async def handle_perception(bot: Bot, event: Event):
         placeholder = " [图片]"
         msg_text = (msg_text + placeholder) if msg_text else placeholder.strip()
 
-    # B-0: 非文本段占位 (sticker/voice/video/emoji)
-    nontext_placeholders = _collect_nontext_placeholders(uni_msg)
+    file_entries = _extract_file_entries(uni_msg)
+    for entry in file_entries:
+        entry["qq_message_id"] = str(getattr(event, "message_id", "") or "") or None
+
+    # B-0: 非文本段占位；文件标签等入库拿到真实 db id 后单独补写。
+    nontext_placeholders = _collect_nontext_placeholders(uni_msg, include_files=False)
     if nontext_placeholders:
         suffix = " ".join(nontext_placeholders)
         msg_text = (msg_text + " " + suffix) if msg_text else suffix
@@ -135,7 +152,7 @@ async def handle_perception(bot: Bot, event: Event):
         summary = _summarize_forward(forward_full)
         msg_text = f"{msg_text}\n{summary}" if msg_text else summary
 
-    if not msg_text and not image_urls and not quote_image_urls and not forward_image_urls:
+    if not msg_text and not image_urls and not quote_image_urls and not forward_image_urls and not file_entries:
         return
 
     # 引用前缀与主 handler 同源调
@@ -160,12 +177,18 @@ async def handle_perception(bot: Bot, event: Event):
             content=msg_text,
             image_urls=image_urls,
             sticker_urls=sticker_urls,
+            file_entries=file_entries,
             quote_image_urls=quote_image_urls,
             forward_image_urls=forward_image_urls,
             is_bot=False,
             forward_content=_forward_full_for_store(forward_full),
         )
         _mcp.message_buffer.append(buffered)
+        if file_entries and buffered.id is not None:
+            labels = _collect_file_placeholders(file_entries, buffered.id)
+            suffix = " ".join(labels)
+            buffered.content = f"{buffered.content} {suffix}".strip() if buffered.content else suffix
+            _mcp.message_buffer.update_content(buffered.id, buffered.content)
         # B 方案:入库即挂号,主 handler 凭同一 event 的 message_id 领真实 db id
         _register_event_db_id(adapter_name, getattr(event, "message_id", None), buffered.id)
 
