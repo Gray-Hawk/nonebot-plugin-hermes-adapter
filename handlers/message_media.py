@@ -16,6 +16,7 @@ from nonebot.adapters import Bot, Event
 
 from ..config import plugin_config
 from ..core.media_config import MediaConfig, load_media_config
+from ..core.file_config import load_file_config
 from ..core.message_buffer import BufferedMessage, media_kind_word
 
 from .message_ingress import (
@@ -163,7 +164,72 @@ def _collect_inline_image_urls(
     return out
 
 
-def _collect_nontext_placeholders(uni_msg: alconna.UniMessage) -> list[str]:
+def _clean_file_name(name) -> str:
+    """文件名只作显示与扩展名来源；路径分隔符和控制字符不进入提示词。"""
+    cleaned = re.sub(r"[\x00-\x1f\x7f/\\]+", " ", str(name or ""))
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    for half, full in (("(", "（"), (")", "）"), ("[", "［"),
+                       ("]", "］"), (":", "："), ("=", "＝")):
+        cleaned = cleaned.replace(half, full)
+    if not cleaned:
+        return "未命名"
+    return cleaned[:160]
+
+
+def _extract_file_entries(uni_msg: alconna.UniMessage, *, cap: int | None = None) -> list[dict]:
+    """提取普通 File 段元数据；接收阶段只登记，不发起下载。"""
+    entries: list[dict] = []
+    effective_cap = cap
+    if (effective_cap is not None and effective_cap <= 0) or not uni_msg.has(alconna.File):
+        return entries
+    for seg in uni_msg[alconna.File]:
+        if effective_cap is None:
+            effective_cap = load_file_config().max_files_per_message
+        if len(entries) >= effective_cap:
+            logger.warning(f"[file] 单消息文件数超过 {effective_cap}，其余仅保留消息到达事实")
+            break
+        size_raw = None
+        origin = getattr(seg, "origin", None)
+        origin_data = getattr(origin, "data", None)
+        if isinstance(origin_data, dict):
+            size_raw = origin_data.get("file_size")
+        if size_raw is None:
+            size_raw = getattr(seg, "size", None)
+        try:
+            size = max(0, int(size_raw or 0))
+        except (TypeError, ValueError):
+            size = 0
+        url = getattr(seg, "url", None)
+        if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+            url = None
+        entries.append({
+            "file_id": str(getattr(seg, "id", "") or ""),
+            "name": _clean_file_name(getattr(seg, "name", None)),
+            "size": size,
+            "url": url,
+            "qq_message_id": None,
+        })
+    return entries
+
+
+def _collect_file_placeholders(file_entries: list[dict], message_id: int | None = None) -> list[str]:
+    labels: list[str] = []
+    for idx, entry in enumerate(file_entries):
+        name = _clean_file_name(entry.get("name"))
+        if message_id is None:
+            labels.append(f"[文件:{name}]")
+        else:
+            labels.append(f"[文件 m:{message_id}#f{idx}:{name}]")
+    return labels
+
+
+def _collect_nontext_placeholders(
+    uni_msg: alconna.UniMessage,
+    *,
+    file_entries: list[dict] | None = None,
+    file_message_id: int | None = None,
+    include_files: bool = True,
+) -> list[str]:
     """扫描非文本/普通图段,返回占位文本列表 (顺序近似按段类型聚合)。
 
     覆盖:
@@ -191,12 +257,9 @@ def _collect_nontext_placeholders(uni_msg: alconna.UniMessage) -> list[str]:
         for face in uni_msg[alconna.Emoji]:
             name = getattr(face, "name", None)
             placeholders.append(f"[表情:{name}]" if name else "[表情]")
-    if uni_msg.has(alconna.File):
-        # File 与 Emoji 的 fallback 风格故意不一致:文件 metadata 几乎只剩"有/没有名字"这两个信号,
-        # 用 [文件:未命名] 保住"曾有文件且名字丢了"的语义,比裸 [文件] 更具信息量。
-        for f in uni_msg[alconna.File]:
-            name = getattr(f, "name", None) or "未命名"
-            placeholders.append(f"[文件:{name}]")
+    if include_files:
+        entries = file_entries if file_entries is not None else _extract_file_entries(uni_msg)
+        placeholders.extend(_collect_file_placeholders(entries, file_message_id))
     return placeholders
 
 

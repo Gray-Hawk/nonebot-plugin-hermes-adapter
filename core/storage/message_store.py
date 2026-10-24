@@ -53,6 +53,24 @@ _SCHEMA_STATEMENTS = [
         content      TEXT    NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS message_files (
+        message_id    INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        idx           INTEGER NOT NULL,
+        file_id       TEXT,
+        file_name     TEXT,
+        file_size     INTEGER,
+        url           TEXT,
+        qq_message_id TEXT,
+        sha256        TEXT,
+        local_path    TEXT,
+        actual_size   INTEGER,
+        status        TEXT    NOT NULL DEFAULT 'pending',
+        error         TEXT,
+        PRIMARY KEY (message_id, idx)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_files_message ON message_files (message_id)",
 ]
 
 
@@ -133,6 +151,25 @@ class MessageStore:
                         "INSERT INTO message_forwards (message_id, content) VALUES (?, ?)",
                         (msg_id, msg.forward_content),
                     )
+                # 文件元数据:独立编号(idx 不与图片共享),只写元数据不下载。
+                # 每条 dict 键 file_id/name/size/url/qq_message_id;下载态
+                # (sha256/local_path/actual_size/status/error)由 get_message_files
+                # 工具下载成功后回填。列表顺序即 idx。
+                for i, entry in enumerate(msg.file_entries):
+                    self._conn.execute(
+                        "INSERT INTO message_files "
+                        "(message_id, idx, file_id, file_name, file_size, url, qq_message_id) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            msg_id,
+                            i,
+                            entry.get("file_id") or None,
+                            entry.get("name") or None,
+                            int(entry.get("size") or 0),
+                            entry.get("url") or None,
+                            entry.get("qq_message_id") or None,
+                        ),
+                    )
             except BaseException:
                 # 任何一步失败整体回滚,不留半截消息行。
                 try:
@@ -206,6 +243,22 @@ class MessageStore:
             ids,
         ).fetchall()
         fwd_by_msg = {fr["message_id"]: fr["content"] for fr in fwd_rows}
+        file_rows = self._conn.execute(
+            "SELECT message_id, idx, file_id, file_name, file_size, url, qq_message_id "
+            f"FROM message_files WHERE message_id IN ({placeholders}) ORDER BY message_id, idx",
+            ids,
+        ).fetchall()
+        files_by_msg: dict[int, list[dict]] = defaultdict(list)
+        for fr in file_rows:
+            files_by_msg[fr["message_id"]].append(
+                {
+                    "file_id": fr["file_id"],
+                    "name": fr["file_name"],
+                    "size": fr["file_size"],
+                    "url": fr["url"],
+                    "qq_message_id": fr["qq_message_id"],
+                }
+            )
         return [
             BufferedMessage(
                 ts=r["ts"],
@@ -222,6 +275,7 @@ class MessageStore:
                 is_bot=bool(r["is_bot"]),
                 id=r["id"],
                 forward_content=fwd_by_msg.get(r["id"]),
+                file_entries=files_by_msg.get(r["id"], []),
             )
             for r in rows
         ]
@@ -267,6 +321,32 @@ class MessageStore:
         ).fetchall()
         return {r["id"]: (r["adapter"], r["group_id"]) for r in rows}
 
+    def get_message_targets(self, message_ids: list[int]) -> dict[int, tuple[str, str | None, str]]:
+        """message_id → (adapter, group_id, user_id)。未找到的 id 不出现在返回里。
+
+        反向通道需要私聊 user_id 来选 bot 连接(多 bot 部署下按私聊对象路由),而
+        get_message_owners 只返回 (adapter, group_id)——群消息用 group_id 路由,
+        私聊(group_id 为空)用 user_id 路由。
+        """
+        if not message_ids:
+            return {}
+        placeholders = ",".join("?" for _ in message_ids)
+        rows = self._conn.execute(
+            f"SELECT id, adapter, group_id, user_id FROM messages WHERE id IN ({placeholders})",
+            message_ids,
+        ).fetchall()
+        return {r["id"]: (r["adapter"], r["group_id"], r["user_id"]) for r in rows}
+
+    def update_content(self, message_id: int, content: str) -> None:
+        """回填指定消息的 content(perception 拿真实 db id 后对含文件消息补
+        m:id#fN 标签)。只改 content 列,不动 ts/媒体行。"""
+        try:
+            self._conn.execute(
+                "UPDATE messages SET content=? WHERE id=?", (content, message_id)
+            )
+        except sqlite3.Error as exc:
+            logger.warning(f"[message_store] update_content m={message_id} failed: {exc}")
+
     def update_image_sha(self, message_id: int, idx: int, sha256: str, mime_type: str) -> None:
         try:
             self._conn.execute(
@@ -275,6 +355,87 @@ class MessageStore:
             )
         except sqlite3.Error as exc:
             logger.warning(f"[message_store] update_image_sha m={message_id} idx={idx} failed: {exc}")
+
+    def get_message_files(self, message_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+        """按 message_id 拉对应的文件元数据(含下载状态)。未找到的 id 不出现在返回里。
+
+        每行键:idx/file_id/name/size/url/qq_message_id/sha256/local_path/
+        actual_size/status/error。其中 file_id/name/size/url/qq_message_id 与
+        BufferedMessage.file_entries 的 dict 键同构(name=file_name、size=file_size,
+        取值同列),其余为下载态扩展——get_message_files 工具据此判缓存命中与刷新。
+        """
+        if not message_ids:
+            return {}
+        placeholders = ",".join("?" for _ in message_ids)
+        rows = self._conn.execute(
+            "SELECT message_id, idx, file_id, file_name, file_size, url, qq_message_id, "
+            "sha256, local_path, actual_size, status, error FROM message_files "
+            f"WHERE message_id IN ({placeholders}) ORDER BY message_id, idx",
+            message_ids,
+        ).fetchall()
+        out: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for r in rows:
+            out[r["message_id"]].append(
+                {
+                    "idx": r["idx"],
+                    "file_id": r["file_id"],
+                    "name": r["file_name"],
+                    "size": r["file_size"],
+                    "url": r["url"],
+                    "qq_message_id": r["qq_message_id"],
+                    "sha256": r["sha256"],
+                    "local_path": r["local_path"],
+                    "actual_size": r["actual_size"],
+                    "status": r["status"],
+                    "error": r["error"],
+                }
+            )
+        return dict(out)
+
+    def update_file_download(
+        self, message_id: int, idx: int, *, sha256: str, local_path: str, actual_size: int
+    ) -> None:
+        """下载成功后回填缓存态(sha256/路径/实际大小),status 置 cached、清 error。"""
+        try:
+            self._conn.execute(
+                "UPDATE message_files SET sha256=?, local_path=?, actual_size=?, "
+                "status='cached', error=NULL WHERE message_id=? AND idx=?",
+                (sha256, local_path, actual_size, message_id, idx),
+            )
+        except sqlite3.Error as exc:
+            logger.warning(f"[message_store] update_file_download m={message_id} idx={idx} failed: {exc}")
+
+    def update_file_failed(self, message_id: int, idx: int, *, error: str) -> None:
+        """下载失败后回填 failed 态与可见错误,不返回半截路径。"""
+        try:
+            self._conn.execute(
+                "UPDATE message_files SET status='failed', error=? WHERE message_id=? AND idx=?",
+                (error, message_id, idx),
+            )
+        except sqlite3.Error as exc:
+            logger.warning(f"[message_store] update_file_failed m={message_id} idx={idx} failed: {exc}")
+
+    def update_file_ref(
+        self,
+        message_id: int,
+        idx: int,
+        *,
+        file_id: str | None = None,
+        url: str | None = None,
+        qq_message_id: str | None = None,
+    ) -> None:
+        """刷新 file_id/url/qq_message_id(群/私聊 file url 或 get_msg 过期恢复后)。
+        只覆盖显式传入的非 None 字段,其余保持原值。"""
+        try:
+            self._conn.execute(
+                "UPDATE message_files SET "
+                "file_id=COALESCE(?, file_id), url=COALESCE(?, url), "
+                "qq_message_id=COALESCE(?, qq_message_id) "
+                "WHERE message_id=? AND idx=?",
+                (file_id, url, qq_message_id, message_id, idx),
+            )
+        except sqlite3.Error as exc:
+            logger.warning(f"[message_store] update_file_ref m={message_id} idx={idx} failed: {exc}")
 
     def vacuum(self, min_ts: int, max_rows: int) -> int:
         """删 ts < min_ts 的行,以及超 max_rows 上限的最老的行。返回删除行数。

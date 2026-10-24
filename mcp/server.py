@@ -12,7 +12,7 @@ from typing import Any
 
 import mcp.types as mcp_types
 from fastmcp import FastMCP
-from nonebot import logger
+from nonebot import get_bot, logger
 from starlette.responses import JSONResponse
 
 from ..core.active_session import ActiveSessionManager
@@ -20,11 +20,28 @@ from ..core.bot_registry import BotRegistry
 from ..core.message_buffer import MessageBuffer
 from ..core.routing import resolve_caller_scope
 from ..core.storage.image_cache import ImageCache
+from ..core.storage.file_cache import FileCache, default_file_cache_dir
+from ..core.storage.file_downloader import FileDownloader
+from ..core.file_config import load_file_config
 from ..core.storage.message_store import MessageStore
-from .auth import caller_scope_from_request
+from .auth import caller_scope_from_request, scope_refusal
 from .tools.get_message_images import (
     GetMessageImagesInput,
     get_message_images_impl,
+)
+from .tools.get_message_files import (
+    FileRef,
+    GetMessageFilesInput,
+    GetMessageFilesResult,
+    get_message_files_impl,
+)
+from .tools.group_files import (
+    BrowseGroupFilesInput,
+    BrowseGroupFilesResult,
+    DownloadGroupFileInput,
+    DownloadGroupFileResult,
+    browse_group_files_impl,
+    download_group_file_impl,
 )
 from .tools.get_recent_messages import (
     GetRecentMessagesInput,
@@ -169,6 +186,18 @@ def _summarize_image_result(blocks: list) -> str:
     return f"images={images}" + (f" unavailable=[{', '.join(missing)}]" if missing else "")
 
 
+def _resolve_registered_bot(bot_registry: BotRegistry, *, adapter: str, group_id: str | None, user_id: str | None):
+    """按消息所属群或私聊选择当时在线的 bot，避免多连接时串用。"""
+    scope = "group" if group_id else "private"
+    scope_id = group_id or user_id
+    if not scope_id:
+        raise LookupError("file bot route missing scope id")
+    entry = bot_registry.get(adapter, scope, scope_id)
+    if entry is None:
+        raise LookupError("file bot route unavailable")
+    return get_bot(entry.bot_self_id)
+
+
 def build_mcp_app(
     *,
     message_buffer: MessageBuffer,
@@ -184,6 +213,18 @@ def build_mcp_app(
     """
 
     mcp = FastMCP("nonebot-bridge")
+    file_config = load_file_config()
+    file_cache = FileCache(
+        cache_dir=default_file_cache_dir(), quota_bytes=file_config.cache_quota_bytes
+    )
+    file_downloader = FileDownloader(
+        cache=file_cache,
+        timeout_s=file_config.timeout_s,
+        max_attempts=file_config.max_attempts,
+        max_size_bytes=file_config.max_file_size_bytes,
+        concurrency=file_config.max_concurrent_downloads,
+        config_loader=load_file_config,
+    )
 
     _suppress_unused_protocol_handlers(mcp)
 
@@ -308,6 +349,118 @@ def build_mcp_app(
             _summarize_image_result(blocks),
         )
         return blocks
+
+    @mcp.tool()
+    async def get_message_files(refs: list[FileRef]) -> GetMessageFilesResult:
+        """Download selected files from QQ messages on demand (max 4 refs).
+
+        Each ref is {message_id, idx}, copied from a [文件 m:<id>#f<idx>:...] tag.
+        Returns local paths, actual sizes and SHA-256 hashes; file bytes are not
+        downloaded until this tool is called. Out-of-scope ids are indistinguishable
+        from missing ids.
+        """
+        inp = GetMessageFilesInput(refs=refs)
+        result = await get_message_files_impl(
+            inp,
+            store=message_store,
+            cache=file_cache,
+            downloader=file_downloader,
+            bot_resolver=lambda adapter, group_id, user_id: _resolve_registered_bot(
+                bot_registry, adapter=adapter, group_id=group_id, user_id=user_id
+            ),
+            scope=caller_scope_from_request(),
+        )
+        available = sum(1 for item in result.results if item.available)
+        _log_tool_call(
+            "get_message_files",
+            f"refs={len(refs)}",
+            f"available={available} failed={len(result.results) - available}",
+        )
+        return result
+
+    @mcp.tool()
+    async def browse_group_files(
+        adapter: str,
+        group_id: str,
+        folder_id: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> BrowseGroupFilesResult:
+        """Browse the QQ group file library without downloading file bytes.
+
+        Omit folder_id for the root. The result includes total file count, folders,
+        file names, sizes, upload times and file_id values for download_group_file.
+        Use offset/limit to page through folders followed by files.
+        """
+        inp = BrowseGroupFilesInput(
+            adapter=adapter,
+            group_id=group_id,
+            folder_id=folder_id,
+            offset=offset,
+            limit=limit,
+        )
+        scope = caller_scope_from_request()
+        refusal = scope_refusal(adapter, group_id, scope)
+        if refusal is not None:
+            return BrowseGroupFilesResult(ok=False, error=refusal)
+        try:
+            bot = _resolve_registered_bot(
+                bot_registry, adapter=adapter, group_id=group_id, user_id=None
+            )
+        except Exception:
+            result = BrowseGroupFilesResult(ok=False, error="Bot route unavailable")
+        else:
+            result = await browse_group_files_impl(inp, bot=bot, scope=scope)
+        _log_tool_call(
+            "browse_group_files",
+            f"adapter={adapter} group={group_id} folder={folder_id} offset={offset} limit={limit}",
+            f"ok={result.ok} folders={len(result.folders)} files={len(result.files)}"
+            + (f" error={_clip(result.error)!r}" if result.error else ""),
+        )
+        return result
+
+    @mcp.tool()
+    async def download_group_file(
+        adapter: str,
+        group_id: str,
+        file_id: str,
+        file_name: str = "group_file.bin",
+        expected_size: int = 0,
+    ) -> DownloadGroupFileResult:
+        """Download one selected QQ group-library file by file_id.
+
+        Use browse_group_files first and copy file_id, file_name and file_size from
+        the chosen entry. Only the selected file is downloaded. Returns its local
+        path, actual size and SHA-256 hash.
+        """
+        inp = DownloadGroupFileInput(
+            adapter=adapter,
+            group_id=group_id,
+            file_id=file_id,
+            file_name=file_name,
+            expected_size=expected_size,
+        )
+        scope = caller_scope_from_request()
+        refusal = scope_refusal(adapter, group_id, scope)
+        if refusal is not None:
+            return DownloadGroupFileResult(ok=False, error=refusal)
+        try:
+            bot = _resolve_registered_bot(
+                bot_registry, adapter=adapter, group_id=group_id, user_id=None
+            )
+        except Exception:
+            result = DownloadGroupFileResult(ok=False, error="Bot route unavailable")
+        else:
+            result = await download_group_file_impl(
+                inp, bot=bot, scope=scope, downloader=file_downloader
+            )
+        _log_tool_call(
+            "download_group_file",
+            f"adapter={adapter} group={group_id} file_id_len={len(file_id)}",
+            f"ok={result.ok} size={result.size}"
+            + (f" error={_clip(result.error)!r}" if result.error else ""),
+        )
+        return result
 
     @mcp.tool()
     async def wake_turn(

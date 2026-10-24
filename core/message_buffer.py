@@ -44,6 +44,12 @@ class BufferedMessage:
     """合并转发的完整展开块(<forwarded_messages>…</forwarded_messages>)。
     content 里只存单行 preview;全文走 message_forwards 附表,由
     MessageStore.append 写入、get_recent 水合。无折叠消息时恒为 None。"""
+    file_entries: list[dict] = field(default_factory=list)
+    """本消息附带的文件元数据(QQ 群文件/私聊文件)。每条 dict 键:
+    file_id:str、name:str、size:int、url:str|None、qq_message_id:str|None。
+    idx 由列表顺序隐式决定,独立文件编号,不与图片共享。文件不自动下载,
+    文件正文不自动进 prompt——perception 拿到真实 db id 后按需回填带
+    m:id#fN 的 content(见 MessageStore.update_content)。"""
 
 
 # --- 媒体枚举序不变量(焊死) ---
@@ -155,6 +161,11 @@ class MessageBuffer:
             before_ts=before_ts,
             owner_user_id=owner_user_id,
         )
+
+    def update_content(self, message_id: int, content: str) -> None:
+        """回填指定消息的 content(perception 拿真实 db id 后对含文件消息补
+        m:id#fN 标签)。只改 content 列,不动 ts/媒体行。"""
+        self._store.update_content(message_id, content)
 
     def counts_by_scope(self) -> dict[tuple[str, str], int]:
         return self._store.counts_by_scope()
