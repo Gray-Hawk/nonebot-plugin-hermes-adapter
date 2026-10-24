@@ -17,7 +17,8 @@
 送达窗口:BotRegistry 重启即清、scope 内可能已有新 turn 在跑——等 entry 出现且
 scope 空闲才送,15s 一拍共 40 拍(10 分钟);超时保留行。保留行两条出路
 :A=同 scope 任意 turn 收尾即
-触发 retry_scope_deliveries 重试;B=已终态回复逾 15 分钟未送达直接丢弃
+触发 retry_scope_deliveries 重试;B=已终态回复逾 15 分钟(自 gateway 报告的
+完成时刻起算,非 run 开始时刻——长任务不被误杀)未送达直接丢弃
 (_DELIVERY_CAP_SEC,在 _resume_row_impl 查得 status 后生效;未终态长任务不受
 cap 影响)。reattach 过程自身的网络失败同样保留行(runs 在 gateway 侧还活着)。
 真僵尸行(群组沉寂/bot 离线超 24h)仍由启动时 TTL 清扫兜底。
@@ -51,6 +52,9 @@ _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
 # 旧回复裸发出来比丢失更糟(当日实证:13:59 的部署汇报在 scope 抢不到空闲窗被保留,
 # 2 小时后第二次部署重启时被补送,被当成凭空冒出的古董消息)。
 # 只作用于已终态行:仍在跑的 run(未终态)不受 cap 影响,长任务不会被误丢。
+# 基准=gateway status 的 updated_at(_set_run_status 每次状态转换刷新,终态落定
+# 时刻即真实完成时刻),非 run 开始时刻——旧实现用 started_at 起算,run 时长超
+# cap 的长任务在完成瞬间即被误判超龄丢弃(alive/86 普查发现)。
 _DELIVERY_CAP_SEC = 15 * 60
 # per-run 恢复去重:启动恢复(resume_active_runs)与 turn 收尾重试
 # (retry_scope_deliveries)可能重叠触发同一行,集合挡一次。
@@ -146,6 +150,27 @@ async def _resume_row(row: TrackedRun) -> None:
         _resume_inflight.discard(row.run_id)
 
 
+def _completed_overdue_age(status_body: dict, now_sec: float) -> int | None:
+    """B 时效闸统一判定:已终态且完成时刻逾 cap → 超龄秒数,否则 None。
+
+    基准取 status 的 updated_at(gateway 每次状态转换刷新,completed 落定时刻
+    即真实完成时刻):长任务(run 时长>cap)完成瞬间 age≈0 不误丢;停机期间
+    完成的古董回复 updated_at 早已超 cap 照丢。updated_at 缺失/非法 → None
+    不丢(宁留待 24h 僵尸清扫,不误丢)。helper 与主路径内联两处共用本判定,
+    口径单点。
+    """
+    if str(status_body.get("status") or "") != "completed":
+        return None
+    try:
+        completed_ts = float(status_body.get("updated_at") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if completed_ts <= 0:
+        return None
+    age = int(now_sec - completed_ts)
+    return age if age > _DELIVERY_CAP_SEC else None
+
+
 async def _drop_if_stale_completed(row: TrackedRun, tracker) -> bool:
     """已终态(completed)且逾 _DELIVERY_CAP_SEC 的行直接丢弃删行(B 时效闸)。
 
@@ -161,11 +186,8 @@ async def _drop_if_stale_completed(row: TrackedRun, tracker) -> bool:
             resp = await client.get(f"{tgt.base_url}/v1/runs/{row.run_id}", headers=headers)
         if resp.status_code != 200:
             return False
-        status = str(resp.json().get("status") or "")
-        if status != "completed":
-            return False
-        age = int(_now_ms() / 1000 - row.started_at)
-        if age <= _DELIVERY_CAP_SEC:
+        age = _completed_overdue_age(resp.json(), _now_ms() / 1000)
+        if age is None:
             return False
         logger.warning(
             f"[HERMES run-resume] 回复已逾送达时效({_DELIVERY_CAP_SEC}s),丢弃 "
@@ -226,12 +248,14 @@ async def _resume_row_impl(row: TrackedRun) -> None:
                 raise RuntimeError(f"status HTTP {resp.status_code}")
             status_body = resp.json()
             status = str(status_body.get("status") or "")
-            # B 时效闸:已终态回复逾 _DELIVERY_CAP_SEC 未送达 →
-            # 直接丢弃删行,不再保留等下次启动。未终态(仍在跑)的行不查 cap。
-            if status == "completed" and (_now_ms() / 1000 - row.started_at) > _DELIVERY_CAP_SEC:
+            # B 时效闸:已终态回复逾 _DELIVERY_CAP_SEC(自 gateway 报告的
+            # 完成时刻起算)未送达 → 直接丢弃删行,不再保留等下次启动。
+            # 未终态(仍在跑)的行不查 cap;判定与 helper 共用 _completed_overdue_age。
+            overdue_age = _completed_overdue_age(status_body, _now_ms() / 1000)
+            if overdue_age is not None:
                 logger.warning(
                     f"[HERMES run-resume] 回复已逾送达时效({_DELIVERY_CAP_SEC}s),丢弃 "
-                    f"run_id={row.run_id} scope={row.scope_key} age={int(_now_ms() / 1000 - row.started_at)}s"
+                    f"run_id={row.run_id} scope={row.scope_key} age={overdue_age}s"
                 )
                 _maybe_spawn_steer_reconcile(row)
                 tracker.finish(row.run_id)
