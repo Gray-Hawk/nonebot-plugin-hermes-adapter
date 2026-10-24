@@ -231,17 +231,19 @@ class SessionManager:
         is_private: bool,
         user_id: str,
         group_id: str | None = None,
+        cutoff_msg_id: int | None = None,
     ) -> None:
-        """重置会话:递增 generation,使下次 get_session_key 返回新 key,
-        Hermes 据此把后续对话当作新会话。"""
+        """重置会话并递增 generation；群聊人工命令可留下瞬态截断水位。"""
         internal_id = self._get_internal_id(adapter_name, is_private, user_id, group_id)
         self._cache.pop(internal_id, None)
-        self._push_watermark.pop(internal_id, None)  # 转录清空,增量推送水位归零
+        self._push_watermark.pop(internal_id, None)
         gen = self._generation.get(internal_id, 0) + 1
         self._generation[internal_id] = gen
         # 立刻把新 key 落库:generation 只活在内存的话,重启后 /clear 会失效,
         # 被清掉的会话原地复活。
-        self.get_session_key(adapter_name, is_private, user_id, group_id)
+        new_key = self.get_session_key(adapter_name, is_private, user_id, group_id)
+        if cutoff_msg_id is not None:
+            self._push_watermark[internal_id] = (new_key, cutoff_msg_id)
         logger.info(f"[SESSION] 会话已重置: {internal_id} (generation={gen})")
 
     # --- 增量推送水位(仅群聊 reactive 使用) ---
@@ -252,8 +254,8 @@ class SessionManager:
         """本会话已推过的最大消息 id;None = 首推/已归零(下轮全量窗口)。
 
         水位与 session key 绑定:存储的 key 与当前映射不一致(上游轮换/
-        /clear 后重建)即视为无效,返回 None 让下轮全量重推——新转录是空的,
-        不推就丢历史。
+        未留 cutoff 的 /clear 后重建)即视为无效,返回 None 让下轮全量重推。
+        群聊人工 /clear 留下 cutoff 时,key 与水位一起换新,仅推 cutoff 后新消息。
         """
         internal_id = self._get_internal_id(adapter_name, False, user_id, group_id)
         entry = self._push_watermark.get(internal_id)
