@@ -26,6 +26,7 @@ from ..core.routing import all_targets, resolve_target
 from ..core.run_tracker import make_scope_key
 from ..core.session import session_manager
 from ..utils import check_isolation, get_adapter_name
+from .message_perception import _claim_event_db_id
 
 # 本部署补丁: 指令寻址前缀(多 bot 共群指令域区分)。
 # 注册期定型(下面全部 on_command 在插件加载期执行),改名需重启 nb 生效。
@@ -76,11 +77,21 @@ async def handle_clear(bot: Bot, event: Event, matcher: Matcher):
         return
     group_id = None if target.private else target.id
 
+    cutoff_msg_id = None
+    if not target.private:
+        # perception 已先入库；领取命令自身的真实 db id 作瞬态截断水位。
+        event_message_id = getattr(event, "message_id", None)
+        if isinstance(event_message_id, int):
+            cutoff_msg_id = _claim_event_db_id(adapter_name, event_message_id)
+        if cutoff_msg_id is None:
+            logger.warning(f"[HERMES] /clear 未取到命令 db id，本轮不设置前文截断 (adapter={adapter_name})")
+
     session_manager.clear_session(
         adapter_name=adapter_name,
         is_private=target.private,
         user_id=user_id,
         group_id=group_id,
+        cutoff_msg_id=cutoff_msg_id,
     )
 
     reply = alconna.UniMessage("✅ 会话已重置，开始新的对话。")
