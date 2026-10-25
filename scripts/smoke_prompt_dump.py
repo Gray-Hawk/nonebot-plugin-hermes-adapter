@@ -1,8 +1,8 @@
 """system_prompt 留痕 smoke 测试。
 
 跑法（shim 挂 work 副本，中立目录执行）：
-    ln -s <work 副本路径> <shim>/nonebot_plugin_hermes
-    cd 技能 scripts/ && PYTHONPATH=<shim> ~/NeonBot/.venv/bin/python smoke_prompt_dump.py
+    ln -s <work 副本路径> <shim>/nonebot_plugin_hermes_adapter
+    cd <中立目录> && PYTHONPATH=<shim> python <work>/scripts/smoke_prompt_dump.py
 
 覆盖：开关关零 IO / init 回读开启 / 首开写文件 / 同 SHA 跳过 / 变 SHA 覆写 /
 私群两桶分流 / 文件名消毒 / 群 id 缺失兜底 / 关回后零留痕。
@@ -17,8 +17,8 @@ import nonebot
 
 nonebot.init()
 
-from nonebot_plugin_hermes import config as cfg  # noqa: E402
-from nonebot_plugin_hermes.core import prompt_dump as pd  # noqa: E402
+from nonebot_plugin_hermes_adapter import config as cfg  # noqa: E402
+from nonebot_plugin_hermes_adapter.core import prompt_dump as pd  # noqa: E402
 
 FAILS = []
 

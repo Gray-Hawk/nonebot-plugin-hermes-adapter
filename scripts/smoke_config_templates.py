@@ -1,7 +1,7 @@
-"""S2 v6 注释 YAML 模板离线 smoke 测试。
+"""注释 YAML 模板离线 smoke 测试。
 
 跑法（离线，不 import nonebot，仅需 PyYAML）：
-    cd <repo root> && ~/NeonBot/.venv/bin/python scripts/smoke_config_templates.py
+    cd <repo root> && python scripts/smoke_config_templates.py
 
 覆盖：
   1. 82 旧键映射表完整且无重复，新 Config 仅 8 键；

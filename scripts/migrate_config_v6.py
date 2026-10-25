@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""S2 v6 配置离线迁移工具（只读旧配置，只写新目录，绝不原地覆盖、绝不回显 secret）。
+"""配置离线迁移工具（只读旧配置，只写新目录，绝不原地覆盖、绝不回显 secret）。
 
 把旧 ``HERMES_*`` 环境变量（.env）与既有 media/user YAML 迁移成：
   - 一份 ``AGENT_*`` 新 .env（8 键，写到 ``--env-output``）
@@ -16,7 +16,7 @@
 
 本脚本只依赖标准库 + PyYAML + python-dotenv，不 import nonebot，可离线运行：
 
-    ~/NeonBot/.venv/bin/python scripts/migrate_config_v6.py \
+    python scripts/migrate_config_v6.py \
         --env-file .env --output-dir ./v6 --env-output ./v6/.env
 
 可选输入（保留既有媒体/名单文件里的自定义值）：

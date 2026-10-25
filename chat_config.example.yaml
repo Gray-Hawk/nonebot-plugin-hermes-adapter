@@ -1,0 +1,93 @@
+# Hermes 聊天配置（chat_config.yaml）。
+# 落位：<AGENT_PLUGIN_CUSTOM_DIR>/chat_config.yaml（未配置该目录时用 localstore 插件数据目录）。
+# 加载：启动缓存 + 管理员手动重载；除逐键标注“重启生效”外不做文件监听。
+# 坏档：完整校验失败时保留旧缓存。键间空行仅为排版，可自由增删。
+
+# ---- 私聊：2 键 ----
+
+# 私聊响应范围：all = 全部用户；allowlist = 仅白名单（名单本体在 user_lists.yaml 的 allow_users）。
+private_trigger: all
+
+# 私聊触发后的防抖等待秒数，用于合并连发碎片；0 = 立即起跑。
+reply_debounce_private_sec: 2.5
+
+# ---- 群聊触发、历史与回复：11 键 ----
+
+# 群聊激活模式：keyword = 关键词隐式激活 + @／引用；at = 只认 @／引用。
+# 非法值一律按 keyword 处理并 WARN 一次。
+group_trigger: keyword
+
+# keyword 模式下可隐式激活对话的关键词集合（命中即隐式激活）。
+keywords: [/ai]
+
+# bot 群回复后的 reactive 冷却秒数，抑制紧跟着反复插话；0 = 关闭。
+reactive_post_reply_cooldown_sec: 8
+
+# 委托锚最长寿命秒数，超时自动释放，防止模型一直忘记松锚。
+anchor_max_age_sec: 150
+
+# 群聊触发后的防抖等待秒数；0 = 立即起跑。
+reply_debounce_group_sec: 3.5
+
+# 只对已知 bot 强制设置的最低回复延迟秒数，即使普通防抖关闭也会开窗；
+# 由 reply_delay_sec 改名。0 = 关闭。
+reply_delay_for_bot_sec: 0.0
+
+# 群聊超长回复是否用合并转发发送完整内容；关闭则截断。
+long_reply_forward: true
+
+# 429 重试仍失败时贴在群聊触发消息上的表情 ID，用作轻量忙信号。
+rate_limit_emoji_id: 96
+
+# 原 T5：活跃窗口只靠隐式续期时的最长存活秒数，0 = 不设此上限；
+# 由 active_session_t5_sec 改名。
+active_session_timeout_sec: 0
+
+# 活跃窗口滑动 TTL 秒数。重启生效。
+active_session_ttl_sec: 300
+
+# 聊天历史条数上限；统一接管增量补历史、关键词软上下文、主动巡查三条链路，
+# 取代 perception_buffer / keyword_soft_context / proactive_max_messages。
+# MCP 工具不走这个键（见 mcp_recent_limit_max）。
+history_message_limit: 10
+
+# ---- 公私共用：3 键 ----
+
+# 以这些前缀开头的消息不触发回复；实际作用于私聊与群聊。
+ignore_prefix: [.]
+
+# 公私聊共用的防抖最长等待秒数，从首条消息起算，防止不断顺延。
+reply_debounce_max_wait_sec: 8.0
+
+# 原 T1：公私聊多久无活动后静默重置会话，0 = 关闭；
+# 手动重载时重建任务。
+session_idle_reset_sec: 0
+
+# ---- 主动回复巡查：4 键 ----
+
+# 原 T2：定时隐性激活的基础检查间隔秒数，0 = 关闭；手动重载时重建调度。
+proactive_interval_sec: 0
+
+# 原 T3：每次定时检查可附加的随机偏移上限秒数。
+proactive_jitter_sec: 0
+
+# 原 T4：每次定时激活向前回看新消息的时间窗口秒数。
+proactive_window_sec: 300
+
+# 主动发言群范围（adapter:group_id 复合 id）；空集 = BotRegistry 已知的全部群。
+proactive_groups: []
+
+# ---- 工具、转发与通知：4 键 ----
+
+# get_recent_messages 工具单次最多返回多少条群消息；作为 MCP 专用上限独立保留，
+# 不并入聊天历史。MCP server 启用时该工具强制注册，不另设开关。
+mcp_recent_limit_max: 50
+
+# 合并转发最多展开多少个节点（由媒体域迁入聊天域）。
+forward_extract_max_nodes: 10
+
+# 合并转发展开文本的总字符上限（由媒体域迁入聊天域）。
+forward_extract_max_chars: 800
+
+# 群里有人加入时是否触发 reactive turn，由模型自行决定是否欢迎。
+greet_on_join: false

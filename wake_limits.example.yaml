@@ -1,6 +1,13 @@
-# 唤起限频:per-target 令牌桶参数(人改,现读现用;保存即生效,无需重启)
-# 落位:<hermes_custom_dir>/wake_limits.yaml
-# 每个 (适配器, 群/私, id) 目标独立一桶:容量内随取随走,耗尽后每 refill_seconds 回 1 格
-# 超限直接拒+报错文案,不排队不延后。文件缺失/坏档 → 3 格 / 300s。
-capacity: 3          # 每 target 令牌容量(连发上限)
-refill_seconds: 300  # 每多少秒回 1 格(300s × 3 格 ≈ 持续 12 条/小时)
+# Hermes 唤起限频（wake_limits.yaml）：per-target 令牌桶参数。
+# 落位：<AGENT_PLUGIN_CUSTOM_DIR>/wake_limits.yaml（未配置该目录时用 localstore 插件数据目录）。
+# 加载：现读现用，保存即生效、无需重启；本文件尚未纳入 YAML 快照与管理员手动重载。
+# 缺失／坏档：回退缺省 3 格、每 300 秒回 1 格（WARN 按内容去重）。
+# 语义：每个（适配器、群或私聊、目标 id）独立一桶，容量内随取随走，耗尽后每
+#       refill_seconds 回 1 格；超限直接拒并回报错文案，不排队、不延后。
+#       桶状态只存内存，重启即清。
+
+# 每个目标的令牌容量（连发上限）；取值 ≥ 1，非整数或越界回退缺省 3。
+capacity: 3
+
+# 每多少秒回 1 格（300 秒 × 3 格 ≈ 持续 12 条/小时）；取值 ≥ 1，越界回退缺省 300。
+refill_seconds: 300

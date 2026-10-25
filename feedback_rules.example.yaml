@@ -1,7 +1,8 @@
 # 分级反馈规则配置模板(schema v2,2026-10-16)
 #
-# 用法:把本文件复制到定制定居目录(缺省 = localstore 插件数据目录,与 messages.db 同目录)
-# 并改名为 feedback_rules.yaml,按需增删规则。文件现读现用,保存即生效、无需重启。
+# 用法:把本文件复制到 <AGENT_PLUGIN_CUSTOM_DIR>(未配置该目录时用 localstore 插件数据目录,
+# 与 messages.db 同目录)并改名为 feedback_rules.yaml,按需增删规则。
+# 本文件现读现用,保存即生效、无需重启,未纳入 YAML 快照与管理员手动重载。
 # 旧 feedback_rules.json 已不再读取(存在只 WARN 提示迁移,不双轨)。
 #
 # 总闸:缺省不拦截——没有任何 relay/bounce 规则时,系统无任何拦截/接力行为。
