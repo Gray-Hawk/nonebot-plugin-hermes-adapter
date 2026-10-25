@@ -10,6 +10,9 @@ from typing import Literal
 from nonebot import get_plugin_config
 from pydantic import BaseModel, ConfigDict, Field
 
+# 发布模块名：仅用于 localstore 调用栈缺失时的按名兜底；实际导入名由包目录决定。
+PLUGIN_MODULE_NAME = "nonebot_plugin_hermes_adapter"
+
 
 class Config(BaseModel):
     """进程启动时读取的 8 个配置项；修改后重启生效。"""
@@ -90,7 +93,7 @@ def resolve_custom_dir() -> "Path | None":
             return store.get_plugin_data_dir()
         except Exception:
             # 单测/脚本直 import 时没有插件调用栈，按插件名解析同一默认目录。
-            path = store.get_data_dir("nonebot_plugin_hermes")
+            path = store.get_data_dir(PLUGIN_MODULE_NAME)
             _resolve_warn_once(
                 "localstore_by_name",
                 f"[HERMES] localstore 调用栈识别失败,定制目录按名解析为 {path}"

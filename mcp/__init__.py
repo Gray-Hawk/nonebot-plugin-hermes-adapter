@@ -92,7 +92,7 @@ _uvicorn_server: uvicorn.Server | None = None
 def _default_db_path() -> Path:
     """SQLite 默认存储位置:走 nonebot-plugin-localstore 的 plugin_data_dir。
 
-    具体路径由 localstore 解析(通常 ~/.local/share/nonebot2/nonebot_plugin_hermes/);
+    具体路径由 localstore 解析(通常 ~/.local/share/nonebot2/nonebot_plugin_hermes_adapter/);
     可被环境变量 LOCALSTORE_DATA_DIR / LOCALSTORE_PLUGIN_DATA_DIR 重定向,这是
     NoneBot 官方约定的存储位置管理方式,优于硬编码 XDG_DATA_HOME。
     """
