@@ -1,7 +1,7 @@
 ---
 name: nonebot-bridge
 description: |
-  Adapter for chatting in third-party group/private chats via the nonebot-plugin-hermes bridge.
+  Adapter for chatting in third-party group/private chats via the nonebot-plugin-hermes-adapter bridge.
   Activates when you see `mode: reactive` in a system message, or a tool result mentions
   `nonebot-bridge`. Use this skill to push messages to a chat group, list active groups, or pull context.
 

@@ -42,8 +42,8 @@ def default_file_cache_dir() -> Path:
     文件字节是可再下载资源,走 cache_dir 而非 data_dir——cache_dir 默认在
     XDG_CACHE_HOME 下,系统/用户可放心整目录清理。正路走 get_plugin_cache_dir
     (尊重 localstore_plugin_cache_dir 重映射);插件未经插件管理器加载(离线冒烟
-    直 import)时调用栈识别会抛 RuntimeError,退化为按名 get_cache_dir
-    ('nonebot_plugin_hermes') 兜底——与正路默认解析结果一致,只是不吃重映射。
+    直 import)时调用栈识别会抛 RuntimeError,退化为按 PLUGIN_MODULE_NAME
+    调用 get_cache_dir 兜底——与正路默认解析结果一致,只是不吃重映射。
     """
     try:
         import nonebot_plugin_localstore as store
@@ -51,7 +51,9 @@ def default_file_cache_dir() -> Path:
         try:
             return store.get_plugin_cache_dir() / "files"
         except Exception:
-            return store.get_cache_dir("nonebot_plugin_hermes") / "files"
+            from ...config import PLUGIN_MODULE_NAME
+
+            return store.get_cache_dir(PLUGIN_MODULE_NAME) / "files"
     except Exception:
         # localstore 不可用:回退到插件包所在位置的兜底缓存目录(尽力而为)。
         return Path(__file__).resolve().parent.parent / "cache" / "files"
