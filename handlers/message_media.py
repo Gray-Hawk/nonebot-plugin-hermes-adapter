@@ -15,6 +15,7 @@ from nonebot import logger
 from nonebot.adapters import Bot, Event
 
 from ..config import plugin_config
+from ..core.chat_config import load_chat_config
 from ..core.media_config import MediaConfig, load_media_config
 from ..core.file_config import load_file_config
 from ..core.message_buffer import BufferedMessage, media_kind_word
@@ -61,7 +62,7 @@ async def _extract_image_urls(uni_msg: alconna.UniMessage, bot: Bot, adapter_nam
     """抽出普通图片 URL 列表(可直接 HTTP GET 拿字节的那种)。
 
     QQ 大表情包(Image.sticker=True)不进本列表,由 _extract_sticker_urls 单独抽;
-    是否喂给模型见 config.hermes_sticker_vision_enabled。
+    是否喂给模型见 media_config.yaml 的 sticker_vision_enabled。
     """
     urls: list[str] = []
     if not uni_msg.has(alconna.Image):
@@ -79,7 +80,7 @@ async def _extract_image_urls(uni_msg: alconna.UniMessage, bot: Bot, adapter_nam
 async def _extract_sticker_urls(uni_msg: alconna.UniMessage, bot: Bot, adapter_name: str) -> list[str]:
     """抽出 QQ 大表情包(Image.sticker=True)URL 列表,与普通图片分开。
 
-    本函数只负责解析;是否内联喂模型由调用方按 hermes_sticker_vision_enabled 门控。
+    本函数只负责解析;是否内联喂模型由调用方按 media_config.sticker_vision_enabled 门控。
     """
     urls: list[str] = []
     if not uni_msg.has(alconna.Image):
@@ -453,8 +454,9 @@ async def _extract_forward_full(
 
     total_nodes = len(nodes)
 
-    max_nodes = plugin_config.hermes_forward_extract_max_nodes
-    max_chars = plugin_config.hermes_forward_extract_max_chars
+    chat_cfg = load_chat_config()
+    max_nodes = chat_cfg.forward_extract_max_nodes
+    max_chars = chat_cfg.forward_extract_max_chars
 
     numbering = number_base is not None
     effective_cap = 0

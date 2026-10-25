@@ -40,6 +40,7 @@ from ..core.hermes_client import (
     extract_response_media,
 )
 from ..core.inflight import make_inflight_key
+from ..core.misc_config import load_misc_config
 from ..core.outbound import send_local_files, send_text_with_media
 from ..core.routing import resolve_target
 from ..core.run_tracker import TrackedRun
@@ -77,7 +78,7 @@ def _maybe_spawn_steer_reconcile(row: TrackedRun) -> None:
     WARN, 不阻塞删行。
     """
     tracker = _mcp.run_tracker
-    if tracker is None or not plugin_config.hermes_steer_reconcile_enabled:
+    if tracker is None:
         return
     try:
         if not tracker.pending_steers(row.run_id):
@@ -274,7 +275,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
                         interim = parser.feed(line)
                         if (
                             interim
-                            and plugin_config.hermes_interim_echo_enabled
+                            and load_misc_config().interim_echo_enabled
                         ):
                             cleaned, _, _ = extract_response_media(interim)
                             if cleaned:

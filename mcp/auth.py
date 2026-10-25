@@ -5,8 +5,8 @@
   2. 工具层范围:caller_scope_from_request() + assert_scope_allows(...)
   3. 工具层上下文:validate_push_context(...)(活跃 session + BotRegistry 路由)
 
-第 1、2 层用的是同一个函数:身份不需要独立的 token 表,呈上哪个接入点的 key 就说明是
-哪个接入点,范围从路由表派生(见 core/routing.py 的 CallerScope)。
+第 1、2 层用的是同一个函数:单上游下身份不需要独立的 token 表,呈上全局 key 即对所有
+群同权(uniform),未配置 key 即 dev 开发模式(见 core/routing.py 的 CallerScope)。
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def scope_refusal(adapter: str, group_id: str, scope: CallerScope | None) -> str
     if scope is not None and scope.allows(adapter, group_id):
         return None
     # 拒绝必须留痕:否则现场症状是"bot 偶尔不吭声、只有某个群不行",极难查。
-    # 这里用 describe()(含被排除的别群标签),它只进日志;回给调用方的是 describe_for_caller()。
+    # 单上游下 scope 非 None 时 allows 恒真,唯一会走到这里的是 scope=None(认不出调用方)。
     detail = "unresolved caller" if scope is None else scope.describe()
     logger.warning(f"[HERMES MCP] 拒绝越权操作 ({adapter}, {group_id}) —— caller: {detail}")
     if scope is None:
@@ -66,8 +66,8 @@ def scope_refusal(adapter: str, group_id: str, scope: CallerScope | None) -> str
     return (
         f"not authorized for ({adapter}, {group_id}): {hint}. "
         "This is a configuration boundary, not a transient failure — do not retry. "
-        "If it should be allowed, the operator has to align this endpoint's MCP token with "
-        "HERMES_GROUP_ENDPOINTS on the bot side."
+        "If it should be allowed, the operator has to configure AGENT_API_KEY on the "
+        "bot side so this caller authenticates."
     )
 
 

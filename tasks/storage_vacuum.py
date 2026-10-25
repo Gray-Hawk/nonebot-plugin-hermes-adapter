@@ -10,7 +10,7 @@ require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
-from ..config import plugin_config
+from ..core.misc_config import load_misc_config
 
 
 def register_storage_vacuum() -> None:
@@ -28,8 +28,9 @@ def register_storage_vacuum() -> None:
     async def _vacuum() -> None:
         if _mcp.message_store is None or _mcp.image_cache is None:
             return
-        retention_days = plugin_config.hermes_storage_message_retention_days
-        max_rows = plugin_config.hermes_storage_message_max_rows
+        misc_cfg = load_misc_config()
+        retention_days = misc_cfg.storage_message_retention_days
+        max_rows = misc_cfg.storage_message_max_rows
         min_ts = int(time.time() * 1000) - retention_days * 86400 * 1000
         msg_deleted = _mcp.message_store.vacuum(min_ts=min_ts, max_rows=max_rows)
         img_bytes_evicted = _mcp.image_cache.evict_if_over_quota()

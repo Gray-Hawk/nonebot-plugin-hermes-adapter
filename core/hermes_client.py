@@ -939,7 +939,7 @@ class ChatResult:
     覆盖三种来源:api_server HTTP 403(key 无效/缺失)、502 包裹的内层 403
     (provider 侧 403 经上游包装)、200 包裹的 provider 报错文本含 HTTP 403。
     handler 层对此标记一律静默(不发 fallback、不发 raw_text),不依赖
-    hermes_transport_error_fallback_text 配置——403 是运维事件(key/额度),
+    transport_error_fallback_text 配置——403 是运维事件(key/额度),
     群里通知无意义,上游持续故障时每条触发一条通知就是刷屏。
     """
 
@@ -998,29 +998,13 @@ class ChatResult:
     """
 
 
-# 上游 /v1/capabilities 里与长期记忆作用域相关的能力键(见 api_server 的 features 块)。
-_MEMORY_CAPABILITY_KEYS = ("session_key_header",)
-
-
-def missing_memory_capabilities(caps: dict[str, Any]) -> list[str]:
-    """返回 caps 中缺失的长期记忆能力键。
-
-    上游把能力放在 {"features": {...}} 下;宽容处理平铺形状,避免因为
-    响应外壳变化就误报"上游不支持"。
-    """
-    features = caps.get("features")
-    if not isinstance(features, dict):
-        features = caps
-    return [key for key in _MEMORY_CAPABILITY_KEYS if not features.get(key)]
-
-
 def _spawn_steer_reconcile_if_pending(tracker, run_id: str) -> None:
     """run 终态钩子(本部署补丁: 弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75/84)。
 
     finish 删行前先取回完整行, 台账有 pending steer 才 spawn 对账(常态零开销)。
     任何异常只 WARN, 不影响主 turn; 传输异常止损分支与正常 _finish 共用同一入口。
     """
-    if tracker is None or not plugin_config.hermes_steer_reconcile_enabled:
+    if tracker is None:
         return
     try:
         tracked = tracker.get_by_run_id(run_id)
@@ -1057,26 +1041,17 @@ class HermesClient:
     def get_headers(
         self,
         session_key: str = "",
-        memory_key: str | None = None,
         *,
         api_key: str | None = None,
     ) -> dict[str, str]:
-        """拼装出向 header。
+        """拼装出向 header；X-Hermes-Session-Id 标识短期 transcript。
 
-        X-Hermes-Session-Id  = 短期 transcript 作用域(每轮必发)
-        X-Hermes-Session-Key = 长期记忆作用域(仅在调用方给了值且本轮有 api_key 时发)
-
-        没有 api_key 却发记忆头会被上游 403 整轮打回,所以这里与 Authorization
-        绑在同一个条件上。
-
-        api_key=None 表示用默认接入点的 key;按群路由时由调用方传入该群接入点的 key。
+        api_key=None 表示用默认接入点的 key;单上游下调用方一般无需显式传入。
         """
         key = self.api_key if api_key is None else api_key
         h = {"Content-Type": "application/json", "X-Hermes-Session-Id": session_key}
         if key:
             h["Authorization"] = f"Bearer {key}"
-            if memory_key:
-                h["X-Hermes-Session-Key"] = memory_key
         return h
 
     async def chat(
@@ -1085,7 +1060,6 @@ class HermesClient:
         text: str,
         image_urls: list[str] | None = None,
         session_key: str,
-        memory_key: str | None = None,
         user_id: str,
         group_id: str | None,
         adapter_name: str,
@@ -1108,13 +1082,10 @@ class HermesClient:
         - system_prompt: 由 prompt_builder 注入;None 走默认 Message Context 拼装。
           **注意**:外部传入 system_prompt 时,Platform/User/Group 上下文须由调用方
           自行包含,本方法不会再额外补。
-        - memory_key: 长期记忆作用域(X-Hermes-Session-Key)。None = 不发该头。
-          由 SessionManager.get_memory_key() 产出,与 session_key 相互独立:后者会随
-          /clear 与上游压缩轮换,前者不会。
         - user_content_override: 由 prompt_builder 直接给出 user message 的 content
           (str 或 OpenAI 多模态 parts 列表;text + image_urls 参数将被忽略)
         - target: 本轮发往的接入点(url + key + timeout)。None = 默认接入点。
-          按群路由时由 handler 经 routing.resolve_target() 解析后传入。
+          单上游下恒为默认接入点(handler 经 routing.resolve_target() 解析后传入)。
         - mode 字段当前为路由元数据,chat() 内部不分支判断;Task 15 handler 据此决定
           如何呈现结果(reactive 走 structured 流,passive 走 raw_text)。
         - interim_callback(本部署补丁): 非 None 时改走 SSE 流式,
@@ -1172,7 +1143,7 @@ class HermesClient:
         }
         # 路径 B:不发 tools / tool_choice(Hermes 透传不可靠,P0-spike 已验)
 
-        headers = self.get_headers(session_key, memory_key, api_key=tgt.api_key)
+        headers = self.get_headers(session_key, api_key=tgt.api_key)
         runs_pending_steer = ""
 
         # 幂等键每轮只造一次,429 自动重试与提交段网络重试都
@@ -1186,7 +1157,7 @@ class HermesClient:
             非 2xx 一律抛 StreamHttpError(含非流式分支——原本直接 return
             _transport_failure),让 429 自动重试只写一个点(阶段2d)。
             """
-            if plugin_config.hermes_runs_channel_enabled:
+            if plugin_config.hermes_api_interface == "runs":
                 # 本部署补丁(runs 迁移阶段1): 开关开启时整路
                 # 改走 /v1/runs;下游持久化/溢出/provider 文案检测与 JSON 解析完全复用。
                 return await self._chat_via_runs(
@@ -1670,18 +1641,6 @@ class HermesClient:
         # completed:与流式分支同形补内联,rotated=None(轮换上游服务端处理)。
         _finish()
         return inline_local_media_images(parser.output or ""), None, None, parser.pending_steer
-
-    async def fetch_capabilities(self) -> dict[str, Any]:
-        """取 /v1/capabilities;任何失败都返回空 dict —— 探测不能阻塞启动。"""
-        try:
-            client = _get_http_client()
-            resp = await client.get(f"{self.api_url}/v1/capabilities", headers=self.get_headers(), timeout=5)
-            if resp.status_code != 200:
-                return {}
-            data = resp.json()
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
 
     async def health_check(self, target: HermesTarget | None = None) -> bool:
         """探活一个接入点。target=None 探默认接入点。

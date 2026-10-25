@@ -37,6 +37,10 @@ class BufferedMessage:
     引用图之后连续编号。只注册发号、按需拉图,恒不内联。"""
     reply_to_ts: int | None = None
     is_bot: bool = False
+    is_synthetic: bool = False
+    """合成轮身份事实：本条是系统合成（离场确认/接力重交/对账补投/任务投递/主动唤起等），
+    而非真人键入。默认 False 是安全方向（真人消息永不误判为合成）。合并函数凭它做
+    合成 fragment 的身份分界，昵称常量（系统核对）只承担显示、不再参与身份识别。"""
     id: int | None = None
     """DB 主键。perception 构造时为 None,MessageStore.append 写入后回填。
     handlers 不应直接读写;由 MessageStore.append 管控。"""

@@ -18,8 +18,9 @@ require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
-from ..config import plugin_config
+from ..core.chat_config import load_chat_config
 from ..core.inflight import make_inflight_key
+from ..core.log_throttle import throttled_info
 from ..core.session import session_manager
 
 # 检查节奏:固定 60s。T1 本身是秒级可配,检查粒度不需要跟着细——
@@ -27,14 +28,31 @@ from ..core.session import session_manager
 _SWEEP_SEC = 60
 
 
+def _reset_and_observe(internal_id: str) -> None:
+    """清会话并补同因节流观测(抽出以便离线行为测试)。
+
+    原实现静默清会话(等价 /clear 但无群提示),排障时无从知晓;观测只记
+    internal_id,不扰用户,不改清会话语义。
+    """
+    session_manager.clear_internal(internal_id)
+    throttled_info(
+        f"gate.t1_clear:{internal_id}",
+        f"[HERMES T1] 闲置重置已清会话 {internal_id}",
+    )
+
+
 def register_session_idle_reset() -> None:
-    idle_sec = plugin_config.hermes_session_idle_reset_sec
-    if idle_sec <= 0:
-        return
+    """T1 空闲自动重置:固定 60s tick,每拍现读 chat_config.session_idle_reset_sec。
+
+    手动重载即时生效,无需重建调度任务:0=跳过本拍(关闭),>0=按新值判定。
+    """
 
     @scheduler.scheduled_job("interval", seconds=_SWEEP_SEC, id="hermes_session_idle_reset")
     async def _sweep() -> None:
         if _mcp.inflight is None:
+            return
+        idle_sec = load_chat_config().session_idle_reset_sec
+        if idle_sec <= 0:
             return
         now = time.time()
         for internal_id, (adapter, is_private, user_id, group_id) in session_manager.idle_expired(
@@ -53,6 +71,10 @@ def register_session_idle_reset() -> None:
                 if _mcp.active_sessions.lease_count(adapter, group_id) > 0:
                     logger.debug(f"[HERMES T1] skip {internal_id}: active session leased")
                     continue
-            session_manager.clear_internal(internal_id)
+            _reset_and_observe(internal_id)
 
-    logger.info(f"[HERMES] T1 空闲自动重置已启用: idle>{idle_sec}s, 每 {_SWEEP_SEC}s 检查")
+    initial = load_chat_config().session_idle_reset_sec
+    if initial > 0:
+        logger.info(f"[HERMES] T1 空闲自动重置已启用: idle>{initial}s, 每 {_SWEEP_SEC}s 检查")
+    else:
+        logger.info(f"[HERMES] T1 空闲自动重置 tick 已注册(当前关闭:0=跳过), 每 {_SWEEP_SEC}s 检查")

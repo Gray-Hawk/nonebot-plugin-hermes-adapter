@@ -41,12 +41,15 @@ from ..core.inflight import (
     PendingEntry,
     make_inflight_key,
 )
+from ..core.log_throttle import throttled_info
 from ..core.message_buffer import (
     BufferedMessage,
     build_media_address_index,
 )
 from ..core import task_notes
 from ..core import user_lists
+from ..core.chat_config import load_chat_config
+from ..core.misc_config import load_misc_config
 from ..core.outbound import (
     get_bot_nickname,
     send_local_files,
@@ -73,6 +76,19 @@ from .message_ingress import (
 
 _SYNTHETIC_USER_IDS = frozenset({"system-check", "timer", "delivery", "wake"})
 
+
+def _observe_silence(path: str, adapter_name: str, group_id: str | None, is_private: bool) -> None:
+    """403/暂不可用硬静默的节流观测(抽出以便离线行为测试)。
+
+    硬静默分支已有一条 error 级日志(每条触发);这里补同因节流 INFO 观测,
+    故障期 1 小时只留一条,不与 error 逐条刷屏重复,也不改静默语义。
+    """
+    scope = "private" if is_private else f"group:{group_id}"
+    throttled_info(
+        f"gate.403:{path}:{adapter_name}:{scope}",
+        f"[HERMES {path}] 403/暂不可用硬静默观测 (group={group_id} is_private={is_private})",
+    )
+
 async def _dispatch_chat(
     *,
     bot: Bot,
@@ -98,7 +114,7 @@ async def _dispatch_chat(
     # 群聊仅委托且发送者在资格集合(在跑 turn 触发者 ∪ 在钉锚全体参与者)。
     # 直注成功即 return;注不进去落回正常 dispatch,零丢失。
     if (
-        plugin_config.hermes_runs_channel_enabled
+        plugin_config.hermes_api_interface == "runs"
         and not ephemeral
         and not image_urls
         and not sticker_urls
@@ -110,7 +126,7 @@ async def _dispatch_chat(
         )
     ):
         return
-    if target.private or not plugin_config.hermes_active_session_enabled:
+    if target.private:
         # 原 v0.1.6 等价路径:passive 模式,raw_text 直接当回复
         await _handle_passive_path(
             bot=bot,
@@ -319,13 +335,8 @@ async def _run_passive_turn(
     current_buffered: BufferedMessage | None = None,
 ):
     """跑一发 passive turn,返回 ChatResult 或 None(被 submit_decision 静默兜底等情况)。"""
+    misc_cfg = load_misc_config()
     session_key = session_manager.get_session_key(
-        adapter_name=adapter_name,
-        is_private=is_private,
-        user_id=user_id,
-        group_id=group_id,
-    )
-    memory_key = session_manager.get_memory_key(
         adapter_name=adapter_name,
         is_private=is_private,
         user_id=user_id,
@@ -339,12 +350,12 @@ async def _run_passive_turn(
     # 私聊不注入(0.1.6 起 perception 在私聊就是 no-op,Hermes session 已覆盖)。
     # 历史从 0.2.x 起放进 user content 而非 system,以维持 system 字节稳定。
     recent: list[BufferedMessage] = []
-    if not is_private and group_id and plugin_config.hermes_perception_enabled and _mcp.message_buffer is not None:
+    if not is_private and group_id and _mcp.message_buffer is not None:
         recent = list(
             _mcp.message_buffer.get_recent(
                 adapter=adapter_name,
                 group_id=group_id,
-                limit=plugin_config.hermes_perception_buffer,
+                limit=load_chat_config().history_message_limit,
                 before_ts=now_ms,
             )
         )
@@ -370,7 +381,7 @@ async def _run_passive_turn(
         # 群记忆外挂:群档案注入块(私聊 group_id=None 内部静默跳过)
         profile_block=build_group_profile_block(adapter_name, group_id),
         # 本部署补丁:传入功能开关,私聊时启用则注入简化版路由提示
-        group_profile_enabled=plugin_config.hermes_group_profile_enabled,
+        group_profile_enabled=misc_cfg.group_profile_enabled,
         memory_root=_memory_root,
     )
     # 图片内联成 data: URL 再出站:上游对 http(s) URL 是纯透传,交出去就把可达性
@@ -404,7 +415,7 @@ async def _run_passive_turn(
     # 帧组结构自配对防张冠李戴(见 image_inline.inline_gif_frames docstring)。
     sticker_inlined = (
         await inline_gif_frames(sticker_urls or [], cfg=media_cfg)
-        if plugin_config.hermes_sticker_vision_enabled
+        if media_cfg.sticker_vision_enabled
         else []
     )
     # 缺席补占位:请求内联但整组缺席的当前消息媒体,在其号上补「(图#k 加载失败)」(§8)。
@@ -459,7 +470,6 @@ async def _run_passive_turn(
         text="",
         image_urls=[],
         session_key=session_key,
-        memory_key=memory_key,
         user_id=user_id,
         group_id=group_id,
         adapter_name=adapter_name,
@@ -470,14 +480,14 @@ async def _run_passive_turn(
         system_prompt=system_prompt,
         user_content_override=user_content,
         target=hermes_target,
-        interim_callback=_interim_echo if plugin_config.hermes_interim_echo_enabled else None,
+        interim_callback=_interim_echo if misc_cfg.interim_echo_enabled else None,
         approval_callback=(
             _make_approval_notify(
                 bot, adapter_name,
                 f"私聊 {user_id}" if is_private else f"群 {group_id}",
                 is_private=is_private, group_id=group_id,
             )
-            if plugin_config.hermes_runs_channel_enabled else None
+            if plugin_config.hermes_api_interface == "runs" else None
         ),
     )
 
@@ -528,6 +538,7 @@ async def _run_passive_turn(
             f"[HERMES passive] {_silence_kind},已静默丢弃 (group={group_id} is_private={is_private})"
             "——检查接入点 key / provider 额度与可用性"
         )
+        _observe_silence("passive", adapter_name, group_id, is_private)
         return result
 
     # 阶段3b:turn 被主动终止,硬静默(同 reactive 分支注释)。
@@ -539,7 +550,7 @@ async def _run_passive_turn(
     # passive 路径下私聊总是显式对话,群聊已通过触发判断进得来,两边都该有可见反馈;
     # 配空 fallback_text 时静默,保留逃生口。
     if result.is_transport_error:
-        fallback_text = plugin_config.hermes_transport_error_fallback_text
+        fallback_text = misc_cfg.transport_error_fallback_text
         logger.warning(
             f"[HERMES passive] transport error fallback "
             f"(group={group_id}, is_private={is_private}, "
@@ -655,10 +666,12 @@ async def _run_reactive_turn(
     ephemeral=True(本部署新增,隐式激活用):无活跃窗口也跑,现场造一个不注册进
     管理器的临时 session;发言即开窗(见发送成功段),沉默不开窗。
     recent_override: 定时巡查(T2)传入的 T4 窗口消息(新→旧),替代默认拉取。
-    context_limit: 覆盖 hermes_perception_buffer 的拉取条数(keyword-soft 的 N1),
+    context_limit: 覆盖 history_message_limit 的拉取条数(keyword-soft 的 N1),
     设置时不再做续发轮裁剪。
     """
     assert _mcp.message_buffer is not None and _mcp.active_sessions is not None
+    chat_cfg = load_chat_config()
+    misc_cfg = load_misc_config()
 
     # 用 get_if_trigger_alive 而非 get():get() 是 debug-only 裸访问,可能返回已过期 session;
     # get_if_trigger_alive 与 is_alive_for_trigger(handle_message 入口处用过)同口径。
@@ -704,7 +717,7 @@ async def _run_reactive_turn(
         recent_full = _mcp.message_buffer.get_recent(
             adapter=adapter_name,
             group_id=group_id,
-            limit=context_limit or plugin_config.hermes_perception_buffer,
+            limit=context_limit or chat_cfg.history_message_limit,
         )
     # 本部署补丁(增量推送): 只推「没推过」的新消息,
     # 旧历史由 Hermes 服务端转录承担——此前每轮全量重推历史块,块随 user 消息落进
@@ -730,7 +743,7 @@ async def _run_reactive_turn(
         # 群记忆外挂:群档案注入块(私聊/无档案返回 None,函数内静默跳过)
         profile_block=build_group_profile_block(adapter_name, group_id),
         # 本部署补丁:传入功能开关,私聊时启用则注入简化版路由提示
-        group_profile_enabled=plugin_config.hermes_group_profile_enabled,
+        group_profile_enabled=misc_cfg.group_profile_enabled,
         memory_root=_memory_root,
         # 本部署补丁:会话上下文挪入系统提示,吃缓存
         adapter=adapter_name,
@@ -753,7 +766,7 @@ async def _run_reactive_turn(
                 adapter_name,
                 group_id,
                 now_ms,
-                max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
+                max_age_ms=chat_cfg.anchor_max_age_sec * 1000,
             )
             if not (a.ts == now_ms and a.commissioner_id == user_id)
         ]
@@ -775,7 +788,7 @@ async def _run_reactive_turn(
     )
     sticker_inlined = (
         await inline_gif_frames(sticker_urls or [], cfg=media_cfg)
-        if plugin_config.hermes_sticker_vision_enabled
+        if media_cfg.sticker_vision_enabled
         else []
     )
     inline_urls = _collect_inline_image_urls(
@@ -847,12 +860,6 @@ async def _run_reactive_turn(
         user_id=user_id,
         group_id=group_id,
     )
-    memory_key = session_manager.get_memory_key(
-        adapter_name=adapter_name,
-        is_private=False,
-        user_id=user_id,
-        group_id=group_id,
-    )
     hermes_target = resolve_target(adapter_name, False, group_id)
     # 注:user_content_override 已携带 user message 的全部内容(text + 多模态);
     # text/image_urls 在 chat() 中会被忽略(见 hermes_client.chat 文档),此处显式传 ""
@@ -881,7 +888,6 @@ async def _run_reactive_turn(
         text="",
         image_urls=[],
         session_key=session_key,
-        memory_key=memory_key,
         user_id=user_id,
         group_id=group_id,
         adapter_name=adapter_name,
@@ -892,10 +898,10 @@ async def _run_reactive_turn(
         system_prompt=system_prompt,
         user_content_override=user_content,
         target=hermes_target,
-        interim_callback=_interim_echo if plugin_config.hermes_interim_echo_enabled else None,
+        interim_callback=_interim_echo if misc_cfg.interim_echo_enabled else None,
         approval_callback=(
             _make_approval_notify(bot, adapter_name, f"群 {group_id}", is_private=False, group_id=group_id)
-            if plugin_config.hermes_runs_channel_enabled else None
+            if plugin_config.hermes_api_interface == "runs" else None
         ),
     )
 
@@ -964,6 +970,7 @@ async def _run_reactive_turn(
                 f"[HERMES reactive] {_silence_kind},已静默丢弃 (group={group_id})"
                 "——检查接入点 key / provider 额度与可用性"
             )
+            _observe_silence("reactive", adapter_name, group_id, False)
             return result
         # 阶段3b:turn 被主动终止(/run-stop 或 gateway 关停)——硬静默。
         # 终止是管理员的主动动作,命令回执已经说明,不再发「被中断」兜底文本。
@@ -995,9 +1002,9 @@ async def _run_reactive_turn(
                 logger.info(
                     f"[HERMES reactive] 429 满额丢单,贴表情 (group={group_id} msg={trigger_msg_id})"
                 )
-                await _emoji_like_quiet(bot, trigger_msg_id, plugin_config.hermes_rate_limit_emoji_id)
+                await _emoji_like_quiet(bot, trigger_msg_id, chat_cfg.rate_limit_emoji_id)
                 return result
-            fallback_text = plugin_config.hermes_transport_error_fallback_text
+            fallback_text = misc_cfg.transport_error_fallback_text
             logger.warning(
                 f"[HERMES reactive] transport error fallback "
                 f"(group={group_id}, fallback={'silent' if not fallback_text else 'friendly_text'}); "
@@ -1347,11 +1354,11 @@ async def _run_reactive_turn(
                             ts=now_ms,
                         ),
                         # master_ids 必须拆前缀——
-                        # hermes_admin_users 是「adapter:id」复合键,
+                        # admin_users(user_lists.yaml)是「adapter:id」复合键,
                         # 而 commissioner_id 是裸 user_id,直接比恒不命中,该槽形同虚设。
                         # 复用 approvals 同款拆法:只取当前适配器名下的裸 id,跨平台不串。
-                        master_ids=set(admin_user_ids(set(plugin_config.hermes_admin_users), adapter_name)),
-                        max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
+                        master_ids=set(admin_user_ids(set(user_lists.load_user_lists().admin_users), adapter_name)),
+                        max_age_ms=chat_cfg.anchor_max_age_sec * 1000,
                         now_ms=now_ms,
                     )
                     logger.info(

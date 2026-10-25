@@ -20,6 +20,7 @@ from typing import Literal
 
 from nonebot import logger
 
+from .log_throttle import throttled_info
 from .message_buffer import BufferedMessage
 
 # Refire 链最大深度。超过则清空队列并释放 slot,等下一个新触发。
@@ -110,8 +111,9 @@ def _strip_stickers_for_queue(msg: BufferedMessage) -> BufferedMessage:
 
 
 # 合成后续轮（离场确认/接力/重交）在私聊沿用真实 user_id 时的身份昵称。
-# 常量化原因:合并函数要凭它辨认「合成 fragment」
-# 给真人消息加身份分界，手抄字面量会漂移。
+# 本常量只承担显示（speaker 标签/补投昵称），不再承担身份识别——合成 fragment
+# 的身份分界由 BufferedMessage.is_synthetic 单一事实承担，手抄字面量会漂移、
+# 且撞真人同名昵称会误判（alive/86 普查收口项）。
 _SYNTHETIC_NICKNAME = "系统核对"
 
 
@@ -138,7 +140,7 @@ def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
     if new_text:
         if not same_user:
             new_text = f"{new.nickname or new.user_id}: {new_text}"
-        elif old.nickname == _SYNTHETIC_NICKNAME and new.nickname != _SYNTHETIC_NICKNAME:
+        elif old.is_synthetic and not new.is_synthetic:
             # 合成后续轮
             # （私聊顶真实 user_id、昵称「系统核对」）与真人消息按同委托人规则合并时，
             # 真人部分必须带身份分界——合成 prompt 自带「(系统核对:」前缀，真人部分
@@ -158,6 +160,9 @@ def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
     if same_user:
         old.nickname = new.nickname
     old.reply_to_ts = new.reply_to_ts
+    # 合成身份 OR 传播：任一片段是合成，合并条目就保持合成——后续真人片段并入时
+    # 仍要带身份分界，不因先并入一条真人文本就把合成底丢成「真人条目」。
+    old.is_synthetic = old.is_synthetic or new.is_synthetic
 
 
 class InflightRegistry:
@@ -283,6 +288,11 @@ class InflightRegistry:
             # queue_full 静默丢弃是设计定案(勿「修」成贴表情/报错):
             # 反馈表情用户看不明白、还可能被刺激反复 @ 刷屏;委托被丢用户自己会察觉
             # 再找 bot。代价不对称,静默是对的。
+            # 补同因节流观测:丢弃方此前无任何对账/观测通道,排障时无法定位。
+            throttled_info(
+                f"gate.queue_full:{key[0]}:{key[1]}",
+                f"[HERMES inflight] 委托队列已满丢弃新委托 key={key}(已在队 {len(slot.commissions)} 条)",
+            )
             return "queue_full"
         slot.commissions.append(entry)
         return "queued"

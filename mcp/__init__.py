@@ -12,6 +12,9 @@ from nonebot import get_driver, logger
 
 from ..config import plugin_config
 from ..core.active_session import ActiveSessionManager
+from ..core.chat_config import load_chat_config
+from ..core.media_config import load_media_config
+from ..core.misc_config import load_misc_config
 from ..core.bot_registry import BotRegistry
 from ..core.inflight import InflightRegistry
 from ..core.message_buffer import MessageBuffer
@@ -114,7 +117,11 @@ def init_runtime_state() -> None:
     global message_buffer, active_sessions, bot_registry, inflight
     global message_store, image_cache, image_fetcher, session_key_store, run_tracker, window_store
 
-    db_path_str = plugin_config.hermes_storage_db_path or ""
+    # 启动捕获一次(重启生效):存储与媒体缓存的构造参数在装配期定型,不随后续重载变化。
+    misc_cfg = load_misc_config()
+    media_cfg = load_media_config()
+
+    db_path_str = misc_cfg.storage_db_path or ""
     db_path = Path(db_path_str) if db_path_str else _default_db_path()
     if message_store is None:
         message_store = MessageStore(db_path=db_path)
@@ -133,26 +140,26 @@ def init_runtime_state() -> None:
 
     _approvals_bind_storage(db_path.parent / "pending_approvals.json")
     if image_cache is None:
-        cache_dir_str = plugin_config.hermes_image_cache_dir or ""
+        cache_dir_str = media_cfg.image_cache_dir or ""
         cache_dir = Path(cache_dir_str) if cache_dir_str else _default_image_cache_dir()
         image_cache = ImageCache(
             cache_dir=cache_dir,
-            quota_bytes=plugin_config.hermes_image_cache_quota_mb * 1024 * 1024,
+            quota_bytes=media_cfg.image_cache_quota_mb * 1024 * 1024,
         )
         image_cache.evict_if_over_quota()
     if image_fetcher is None:
         image_fetcher = ImageFetcher(
             store=message_store,
             cache=image_cache,
-            timeout_s=plugin_config.hermes_image_fetch_timeout_s,
-            max_attempts=plugin_config.hermes_image_fetch_max_attempts,
+            timeout_s=media_cfg.image_fetch_timeout_s,
+            max_attempts=media_cfg.image_fetch_max_attempts,
         )
     if message_buffer is None:
         message_buffer = MessageBuffer(store=message_store, fetcher=image_fetcher)
     if active_sessions is None:
+        # active_session_ttl_sec 重启生效:构造期捕获一次;T5 现读 chat_config(见 _beyond_t5)。
         active_sessions = ActiveSessionManager(
-            default_ttl_sec=plugin_config.hermes_active_session_ttl_sec,
-            t5_sec=plugin_config.hermes_active_session_t5_sec,
+            default_ttl_sec=load_chat_config().active_session_ttl_sec,
         )
         # 阶段2a:窗口持久化镜像——启动装回未死窗口(含委托锚),重启从「失忆」变
         # 「续听」。装回日志有窗才打,无窗启动不刷噪音。
@@ -207,7 +214,7 @@ async def start_mcp_server() -> None:
     global _server_task, _uvicorn_server
 
     if not plugin_config.hermes_mcp_enabled:
-        logger.info("[HERMES MCP] disabled (HERMES_MCP_ENABLED=false)")
+        logger.info("[HERMES MCP] disabled (AGENT_MCP_ENABLED=false)")
         return
     if _server_task is not None and not _server_task.done():
         logger.warning("[HERMES MCP] start_mcp_server called twice; ignoring second call")

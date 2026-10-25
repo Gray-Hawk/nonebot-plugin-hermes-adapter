@@ -11,9 +11,9 @@ from nonebot import logger, on_message
 from nonebot.adapters import Bot, Event
 
 from .. import mcp as _mcp
-from ..config import plugin_config
 from ..core.group_profile import sync_buddy_to_group
 from ..core.message_buffer import BufferedMessage
+from ..core.misc_config import load_misc_config
 from ..utils import get_adapter_name
 
 from .message_ingress import _extract_sender_nickname, _now_ms
@@ -105,7 +105,7 @@ async def handle_perception(bot: Bot, event: Event):
     msg_text = uni_msg.extract_plain_text().strip()
     image_urls = await _extract_image_urls(uni_msg, bot, adapter_name)
     # 收藏表情也入库(kind='sticker'):看过即焚会让历史里的 [表情包] 占位
-    # 永远无法召回字节。是否当轮喂模型仍由 hermes_sticker_vision_enabled 门控,
+    # 永远无法召回字节。是否当轮喂模型仍由 media_config.sticker_vision_enabled 门控,
     # 入库与内联是两件独立的事。
     sticker_urls = await _extract_sticker_urls(uni_msg, bot, adapter_name)
     # 引用图也入库(kind='quote',规划书 §8):提取路径与触发 handler 同源。
@@ -115,12 +115,12 @@ async def handle_perception(bot: Bot, event: Event):
     quote_image_urls = list(replied.image_urls)
     nickname = _extract_sender_nickname(event, adapter_name) or user_id
 
-    # 文本太长截断
-    max_len = plugin_config.hermes_perception_text_length
+    # 文本太长截断(入库与渲染共用 history_text_max_chars,取消「入库 200、渲染 800」双层口径)
+    max_len = load_misc_config().history_text_max_chars
     if msg_text and len(msg_text) > max_len:
         msg_text = msg_text[:max_len] + "..."
 
-    if image_urls and plugin_config.hermes_perception_image_mode != "none":
+    if image_urls:
         placeholder = " [图片]"
         msg_text = (msg_text + placeholder) if msg_text else placeholder.strip()
 
@@ -157,7 +157,7 @@ async def handle_perception(bot: Bot, event: Event):
 
     # 引用前缀与主 handler 同源调
     # _compose_quote_prefix——历史行/换窗口后「谁引用了谁、引文是什么」不再只活在当轮。
-    # 拼在文本截断与空内容闸门之后:前缀绝不被 hermes_perception_text_length 截掉,
+    # 拼在文本截断与空内容闸门之后:前缀绝不被 history_text_max_chars 截掉,
     # 也不改变「本条有无自身内容」的入库判定(纯引用空体消息维持不落库)。
     quote_prefix = _compose_quote_prefix(replied, len(image_urls) + len(sticker_urls))
     if quote_prefix:
@@ -166,31 +166,30 @@ async def handle_perception(bot: Bot, event: Event):
     now = _now_ms()
     group_id = None if target.private else target.id
 
-    # 写 MessageBuffer
-    if plugin_config.hermes_perception_enabled or plugin_config.hermes_active_session_enabled:
-        buffered = BufferedMessage(
-            ts=now,
-            adapter=adapter_name,
-            group_id=group_id,
-            user_id=user_id,
-            nickname=nickname,
-            content=msg_text,
-            image_urls=image_urls,
-            sticker_urls=sticker_urls,
-            file_entries=file_entries,
-            quote_image_urls=quote_image_urls,
-            forward_image_urls=forward_image_urls,
-            is_bot=False,
-            forward_content=_forward_full_for_store(forward_full),
-        )
-        _mcp.message_buffer.append(buffered)
-        if file_entries and buffered.id is not None:
-            labels = _collect_file_placeholders(file_entries, buffered.id)
-            suffix = " ".join(labels)
-            buffered.content = f"{buffered.content} {suffix}".strip() if buffered.content else suffix
-            _mcp.message_buffer.update_content(buffered.id, buffered.content)
-        # B 方案:入库即挂号,主 handler 凭同一 event 的 message_id 领真实 db id
-        _register_event_db_id(adapter_name, getattr(event, "message_id", None), buffered.id)
+    # 写 MessageBuffer(perception 固定开启,恒入库)
+    buffered = BufferedMessage(
+        ts=now,
+        adapter=adapter_name,
+        group_id=group_id,
+        user_id=user_id,
+        nickname=nickname,
+        content=msg_text,
+        image_urls=image_urls,
+        sticker_urls=sticker_urls,
+        file_entries=file_entries,
+        quote_image_urls=quote_image_urls,
+        forward_image_urls=forward_image_urls,
+        is_bot=False,
+        forward_content=_forward_full_for_store(forward_full),
+    )
+    _mcp.message_buffer.append(buffered)
+    if file_entries and buffered.id is not None:
+        labels = _collect_file_placeholders(file_entries, buffered.id)
+        suffix = " ".join(labels)
+        buffered.content = f"{buffered.content} {suffix}".strip() if buffered.content else suffix
+        _mcp.message_buffer.update_content(buffered.id, buffered.content)
+    # B 方案:入库即挂号,主 handler 凭同一 event 的 message_id 领真实 db id
+    _register_event_db_id(adapter_name, getattr(event, "message_id", None), buffered.id)
 
     # 本部署补丁:发言者已有画像但不在群友行时，自动补进群友行
     if group_id:

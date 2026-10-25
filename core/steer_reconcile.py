@@ -21,7 +21,6 @@ import httpx
 from nonebot import get_bot, logger
 
 from .. import mcp as _mcp
-from ..config import plugin_config
 from ..core.bg_tasks import spawn_bg_task
 from ..core.hermes_client import _try_parse_first_json_block
 from ..core.inflight import _SYNTHETIC_NICKNAME
@@ -39,8 +38,6 @@ _OOB_OPEN_PREFIX = "[OUT-OF-BAND USER MESSAGE"
 
 async def reconcile_run_finished(tracked) -> None:
     """run 终态对账入口(终态钩子调用)。tracked = core.run_tracker.TrackedRun。"""
-    if not plugin_config.hermes_steer_reconcile_enabled:
-        return
     tracker = _mcp.run_tracker
     if tracker is None:
         return
@@ -171,9 +168,12 @@ async def _replay_case_a(tracked, rows, missing, now_ms) -> None:
             await _replay_direct(tracked, p, now_ms)
         return
     try:
-        # 合成轮昵称用 inflight 单点常量(合并身份分界凭它辨认合成 fragment),
+        # 情形 A 时间线重构是系统指令文案,合成身份(is_synthetic=True)——真人消息
+        # 并入时须带身份分界;昵称用 inflight 单点常量(只承担显示),
         # 手抄字面量会漂移(alive/86 普查收口项)。
-        _spawn_replay_turn(tracked, text, tracked.user_id, _SYNTHETIC_NICKNAME, now_ms)
+        _spawn_replay_turn(
+            tracked, text, tracked.user_id, _SYNTHETIC_NICKNAME, now_ms, is_synthetic=True
+        )
         _mark_status(tracked, m_ids, "replayed")
         logger.info(f"[HERMES steer对账] 情形 A 补投派发成功 (run_id={tracked.run_id} count={len(m_ids)})")
     except Exception as exc:
@@ -196,6 +196,9 @@ async def _replay_direct(tracked, row, now_ms) -> None:
         text = _strip_convention(row["steer_text"])
         # 私聊 sender 恒为本人; 群聊按原 sender 归因(昵称不可得, 回落 sender_id)。
         user_id = tracked.user_id if tracked.is_private else row["sender_id"]
+        # 情形 B 合理例外(alive/84):原文直插是用户的原始话语、非系统指令文案,
+        # 按正常消息处理——is_synthetic 走缺省 False,不标合成身份,真人消息并入
+        # 不会被合并身份分界误标。
         _spawn_replay_turn(tracked, text, user_id, row["sender_id"], now_ms)
         _mark_status(tracked, [m_id], "replayed")
         logger.info(f"[HERMES steer对账] 原文直插派发成功 (run_id={tracked.run_id} m_id={m_id})")
@@ -208,9 +211,17 @@ async def _replay_direct(tracked, row, now_ms) -> None:
         _mark_status(tracked, [m_id], "replay_failed")
 
 
-def _spawn_replay_turn(tracked, text: str, user_id: str, nickname: str, now_ms: int) -> None:
+def _spawn_replay_turn(
+    tracked, text: str, user_id: str, nickname: str, now_ms: int, *, is_synthetic: bool = False
+) -> None:
     """把补投文案作为正常消息走 passive/reactive 外壳派发(不传 ephemeral, 复用防抖/
-    合并/排队语义)。函数内延迟 import(handlers 依赖 mcp 运行时单例)。"""
+    合并/排队语义)。函数内延迟 import(handlers 依赖 mcp 运行时单例)。
+
+    is_synthetic 区分两类补投身份:情形 A 的时间线重构是系统指令文案(is_synthetic=True),
+    真人消息并入时须带身份分界;情形 B 原文直插是用户的原始话语,按正常消息处理
+    (is_synthetic=False)——这是 alive/84 情形 B 的合理例外,文案自带头、不是系统指令,
+    不该被合并身份分界误标。
+    """
     bot, entry = _resolve_bot(tracked)
     if tracked.is_private:
         from ..handlers.message_relay import _handle_passive_path
@@ -220,6 +231,7 @@ def _spawn_replay_turn(tracked, text: str, user_id: str, nickname: str, now_ms: 
                 bot=bot, target=entry.target, adapter_name=tracked.adapter,
                 user_id=user_id, nickname=nickname, group_id=None,
                 text=text, image_urls=[], is_private=True, now_ms=now_ms,
+                is_synthetic=is_synthetic,
             )
         )
     else:
@@ -232,6 +244,7 @@ def _spawn_replay_turn(tracked, text: str, user_id: str, nickname: str, now_ms: 
                 group_id=tracked.group_id, text=text, image_urls=[],
                 is_direct=False, addressed_to_bot=False, now_ms=now_ms,
                 force_skip_cooldown=True,
+                is_synthetic=is_synthetic,
             )
         )
 

@@ -9,8 +9,8 @@ Hermes 转录不存 system 消息，网关 dump 只在请求失败时生成，�
 - 只留最新一份，不攒历史版本：桶目录
   <custom_dir>/prompt_dumps/private|group/<平台>_<id>.txt，
   SHA256 变了才覆写、没变跳过；磁盘占用随会话数恒定。
-- 开关 .env 的 HERMES_PROMPT_DUMP_ENABLED（缺省 false），启动时装载+缓存，
-  改动需重启生效；custom_dir 不可用（回退 None）时静默跳过。
+- 开关 misc_config.yaml 的 prompt_dump_enabled（缺省 false），启动装载；
+  管理员手动重载成功后同步刷新，坏档重载保留旧状态；custom_dir 不可用时静默跳过。
 - 覆写时 nb 日志 INFO 一行（sha+长度+路径），排查时按日志找文件。
 - 落盘内容含画像与主机路径，仅存本地目录，不进主日志刷屏；排查完记得关回。
 
@@ -26,7 +26,8 @@ from datetime import datetime
 
 from nonebot import logger
 
-from ..config import plugin_config, resolve_custom_dir
+from ..config import resolve_custom_dir
+from .misc_config import load_misc_config
 
 _enabled: bool = False
 
@@ -34,7 +35,7 @@ _enabled: bool = False
 def init_prompt_dump() -> None:
     """启动装载（进程级缓存）。开关开启时启动期明示，防「配了忘了」。"""
     global _enabled
-    _enabled = bool(getattr(plugin_config, "hermes_prompt_dump_enabled", False))
+    _enabled = load_misc_config().prompt_dump_enabled
     if _enabled:
         logger.info("[HERMES] system_prompt 留痕已开启: 落盘 <custom_dir>/prompt_dumps/")
 

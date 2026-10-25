@@ -41,10 +41,12 @@ require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
-from ..config import plugin_config
 from ..core.bg_tasks import spawn_bg_task
+from ..core.bot_registry import BotEntry
 from ..core import task_notes
 from ..core.inflight import make_inflight_key
+from ..core.log_throttle import throttled_info
+from ..core.misc_config import load_misc_config
 from ..core.routing import resolve_target
 from ..core.session import session_manager
 
@@ -137,6 +139,34 @@ async def collect_fresh_rows(
     return fresh, tip, True
 
 
+def _delivery_target_ready(
+    *, adapter: str, is_private: bool, user_id: str, group_id: str | None, internal_id: str
+) -> tuple[bool, BotEntry | None]:
+    """投递目标就绪/并发检查:就绪返回 (True, entry),否则 (False, None) 并补节流观测。
+
+    顺延不丢件(不推进水位,下拍重扫);抽出以便离线行为测试(纯状态判定,
+    不依赖 httpx/bot)。启动窗口期单例未装配不补观测(与消息入口同类)。
+    """
+    if _mcp.bot_registry is None or _mcp.inflight is None:
+        return False, None
+    scope = "private" if is_private else "group"
+    scope_id = user_id if is_private else (group_id or "")
+    entry = _mcp.bot_registry.get(adapter, scope, scope_id)
+    if entry is None:
+        throttled_info(
+            f"gate.delivery_entry_missing:{adapter}:{scope}:{scope_id}",
+            f"[HERMES delivery-poll] 顺延: 目标 BotRegistry entry 缺失 {internal_id}",
+        )
+        return False, None
+    if _mcp.inflight.is_inflight(make_inflight_key(adapter, is_private, user_id, group_id)):
+        throttled_info(
+            f"gate.delivery_inflight:{adapter}:{scope}:{scope_id}",
+            f"[HERMES delivery-poll] 顺延: turn in-flight 占住 {internal_id}",
+        )
+        return False, None
+    return True, entry
+
+
 async def _poll_session(
     *, internal_id: str, adapter: str, is_private: bool, user_id: str, group_id: str | None, session_key: str
 ) -> None:
@@ -194,14 +224,11 @@ async def _poll_session(
         return
 
     # 投递目标与并发检查:任一不满足就顺延下一拍(不推进水位,下拍重扫重试,不丢)
-    if _mcp.bot_registry is None or _mcp.inflight is None:
-        return
-    scope = "private" if is_private else "group"
-    scope_id = user_id if is_private else (group_id or "")
-    entry = _mcp.bot_registry.get(adapter, scope, scope_id)
-    if entry is None:
-        return
-    if _mcp.inflight.is_inflight(make_inflight_key(adapter, is_private, user_id, group_id)):
+    ready, entry = _delivery_target_ready(
+        adapter=adapter, is_private=is_private, user_id=user_id,
+        group_id=group_id, internal_id=internal_id,
+    )
+    if not ready:
         return
     try:
         bot = get_bot(entry.bot_self_id)
@@ -237,6 +264,7 @@ async def _poll_session(
                 image_urls=[],
                 is_private=True,
                 now_ms=now_ms,
+                is_synthetic=True,
             )
         )
     else:
@@ -249,19 +277,20 @@ async def _poll_session(
                 adapter_name=adapter,
                 user_id="delivery",
                 nickname="任务投递",
-                group_id=scope_id,
+                group_id=group_id or "",
                 text=note_suffix + _PROMPT_GROUP,
                 image_urls=[],
                 is_direct=False,
                 addressed_to_bot=False,
                 now_ms=now_ms,
                 ephemeral=True,
+                is_synthetic=True,
             )
         )
 
 
 def register_delivery_poll() -> None:
-    interval = plugin_config.hermes_delivery_poll_interval_sec
+    interval = load_misc_config().delivery_poll_interval_sec
     if interval <= 0:
         return
 

@@ -51,7 +51,7 @@ def main() -> int:
     print("  mcp_servers:")
     print("    nonebot-bridge:")
     print("      url: http://127.0.0.1:8643/mcp")
-    print('      headers: { Authorization: "Bearer <HERMES_API_KEY>" }')
+    print('      headers: { Authorization: "Bearer <AGENT_API_KEY>" }')
     return 0
 
 

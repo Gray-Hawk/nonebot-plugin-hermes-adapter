@@ -10,6 +10,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from ...config import plugin_config
+from ...core.chat_config import load_chat_config
 from ...core.routing import CallerScope
 from ..auth import scope_refusal
 
@@ -57,7 +58,7 @@ async def get_recent_messages_impl(
     if refusal is not None:
         return GetRecentMessagesResult(messages=[], error=refusal)
 
-    cap = plugin_config.hermes_mcp_recent_limit_max
+    cap = load_chat_config().mcp_recent_limit_max
     effective_limit = min(inp.limit, cap)
     rows = message_buffer.get_recent(
         adapter=inp.adapter,
