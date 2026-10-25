@@ -19,7 +19,7 @@ __version__ = "0.1.0"
 __plugin_meta__ = PluginMetadata(
     name="Hermes Agent",
     description="通过 Hermes Agent API Server 实现多平台 AI 聊天机器人",
-    homepage="https://github.com/gsskk/nonebot-plugin-hermes",
+    homepage="https://github.com/Gray-Hawk/nonebot-plugin-hermes-adapter",
     usage=(
         "在群聊中 @机器人 发送消息即可与 Hermes Agent 对话。\n"
         "私聊直接发送消息即可。\n\n"

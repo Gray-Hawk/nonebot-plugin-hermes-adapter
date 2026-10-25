@@ -1,10 +1,10 @@
 """misc 14 键 + media 7 键消费端迁移 smoke 测试。
 
 跑法（shim 挂 work 副本，中立目录执行，显式临时 AGENT_PLUGIN_CUSTOM_DIR）：
-    ln -s <work 副本路径> <shim>/nonebot_plugin_hermes
-    cd /tmp && PYTHONPATH=<shim> ~/NeonBot/.venv/bin/python <work>/scripts/smoke_misc_media.py
+    ln -s <work 副本路径> <shim>/nonebot_plugin_hermes_adapter
+    cd <中立目录> && PYTHONPATH=<shim> python <work>/scripts/smoke_misc_media.py
 
-覆盖（S2 misc/media 消费端迁移离线验收）：
+覆盖（misc/media 消费端的离线验收）：
   1. MiscConfig 14 键 / MediaConfig 7 键形态与默认值；
   2. 历史双截断合并：入库(message_perception)与渲染(prompt_builder)共用
      history_text_max_chars，硬编码 800 与旧 hermes_perception_text_length 零读点；
@@ -36,18 +36,18 @@ os.environ["AGENT_PLUGIN_CUSTOM_DIR"] = str(_SCRATCH / "cfg")
 
 nonebot.init()
 
-import nonebot_plugin_hermes  # noqa: E402  (shim 提供的包名)
-from nonebot_plugin_hermes.core import media_whitelist as mw  # noqa: E402
-from nonebot_plugin_hermes.core import image_inline as ii  # noqa: E402
-from nonebot_plugin_hermes.core import misc_config as misc  # noqa: E402
-from nonebot_plugin_hermes.core import media_config as media  # noqa: E402
-from nonebot_plugin_hermes.core import prompt_builder as pb  # noqa: E402
-from nonebot_plugin_hermes.core.media_config import (  # noqa: E402
+import nonebot_plugin_hermes_adapter  # noqa: E402  (shim 提供的包名)
+from nonebot_plugin_hermes_adapter.core import media_whitelist as mw  # noqa: E402
+from nonebot_plugin_hermes_adapter.core import image_inline as ii  # noqa: E402
+from nonebot_plugin_hermes_adapter.core import misc_config as misc  # noqa: E402
+from nonebot_plugin_hermes_adapter.core import media_config as media  # noqa: E402
+from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
+from nonebot_plugin_hermes_adapter.core.media_config import (  # noqa: E402
     MediaConfig,
     load_media_config,
     parse_media_config,
 )
-from nonebot_plugin_hermes.core.misc_config import (  # noqa: E402
+from nonebot_plugin_hermes_adapter.core.misc_config import (  # noqa: E402
     MiscConfig,
     load_misc_config,
     parse_misc_config,
@@ -68,7 +68,7 @@ def skip(name: str, detail: str = "") -> None:
     SKIPS.append(name)
 
 
-SRC = Path(nonebot_plugin_hermes.__file__).parent
+SRC = Path(nonebot_plugin_hermes_adapter.__file__).parent
 
 
 def src_has_no(relpath: str, token: str) -> bool:

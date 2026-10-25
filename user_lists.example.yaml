@@ -1,22 +1,30 @@
-# 统一用户设置清单(人改,现读现用;保存即生效,无需重启)
-# 落位:<hermes_custom_dir>/user_lists.yaml(把这个模板的三个名单改成真实值后放过去;
-#       未配置 hermes_custom_dir 时放 localstore 插件数据目录)
-# 文件缺失 / 坏档 → 全默认:黑名单空、bot 表空、唤起白名单回落管理员集合
-# id 只允许数字/字母/下划线/横线;识别不了的条目自动跳过
-# 注意:模板里的号码全部是占位号,部署时换成真实账号
+# Hermes 统一用户设置清单（user_lists.yaml）：名单表按数据内容命名，不改名 config。
+# 落位：<AGENT_PLUGIN_CUSTOM_DIR>/user_lists.yaml（未配置该目录时用 localstore 插件数据目录）。
+# 加载：启动缓存 + 管理员手动重载；坏档完整校验失败时保留旧缓存。
+# id 只允许数字/字母/下划线/横线；识别不了的条目自动跳过。
 
-# 黑名单:{群号: [账号id, ...]}——名单账号的消息不置 explicit/addressed(仅群聊生效;
-# 私聊不受名单影响)。语义=不主动响应,消息照常入库、窗内跟帖照常可见。
-blacklist:
-  "20001": ["30001"]
+# 黑名单：{群号: [账号id, ...]}——名单账号的消息不置 explicit/addressed（仅群聊生效；私聊不受影响）。
+# 语义 = 不主动响应，消息照常入库、窗内跟帖照常可见。
+blacklist: {}
 
-# 已知 bot 账号表(裸 id,全局)——名单账号的发言不钉委托锚(防 bot 互相接话
-# 挤占锚位/刷锚龄),仍可被正常响应。
-known_bots: ["30002"]
+# 已知 bot 账号表（裸 id，全局）——名单账号的发言不钉委托锚（防 bot 互相接话挤占锚位/刷锚龄），
+# 仍可被正常响应。
+known_bots: []
 
-# 私聊主动下行白名单(裸 id,全局)——允许被主动下行私聊的账号,唤起(wake_turn)
-# 与直发(push_message)两通道共用同一份名单。
-# 未配置本键(或整文件缺失/坏档)时,回落到管理员集合(hermes_admin_users,
-# 复合键按当前适配器拆前缀取裸 id);显式配置(含空表)以显式值为准——
-# 显式空表 = 不允许任何人被主动下行。
-private_allow: ["10001"]
+# 私聊主动下行白名单（裸 id，全局）——允许被主动下行私聊的账号，唤起（wake_turn）与直发（push_message）
+# 两通道共用。与下方 allow_users（被动聊天白名单，复合 id）语义不同，不得合并。
+# 未配置本键时回落管理员集合（admin_users 复合键按当前适配器拆前缀取裸 id）；
+# 显式配置（含空表 []）以显式值为准——显式空表 = 不允许任何人被主动下行。
+# 需要限制时取消注释并填写真实账号。
+# private_allow: []
+
+# 私聊 allowlist 模式的被动聊天白名单（{adapter}:{user_id} 复合 id）。
+# 仅当 chat_config.yaml 的 private_trigger = allowlist 时生效；与 private_allow 语义不同，不得合并。
+allow_users: []
+
+# 允许响应的群集合（{adapter}:{group_id} 复合 id）；空集 = 全部群。
+allow_groups: []
+
+# 敏感命令与管理操作的管理员集合（{adapter}:{user_id} 复合 id）；空集 = 默认 deny。
+# 手动重载先按旧集合鉴权，成功后再替换新集合。
+admin_users: []

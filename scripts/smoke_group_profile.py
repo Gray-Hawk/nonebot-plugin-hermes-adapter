@@ -2,7 +2,7 @@
 
 跑法（不经过 nb 运行时，直接导入插件包）：
     cd work 副本
-    ~/NeonBot/.venv/bin/python scripts/smoke_group_profile.py
+    python scripts/smoke_group_profile.py
 
 覆盖：无目录跳过 / 无群友行只挂群档案 / 群友行容错 / 缺文件不炸 / 数值升序 /
 字节稳定 + mtime 缓存 / 超限 warning 不截断 / 私聊跳过 / 路径白名单 /
@@ -19,9 +19,9 @@ import nonebot
 
 nonebot.init()
 
-from nonebot_plugin_hermes import config as cfg  # noqa: E402
-from nonebot_plugin_hermes.core import group_profile as gp  # noqa: E402
-from nonebot_plugin_hermes.core import prompt_builder as pb  # noqa: E402
+from nonebot_plugin_hermes_adapter import config as cfg  # noqa: E402
+from nonebot_plugin_hermes_adapter.core import group_profile as gp  # noqa: E402
+from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
 
 FAILS = []
 
@@ -55,7 +55,7 @@ check("记忆开关关闭返回 None", gp.build_group_profile_block("onebotv11",
 cfg.plugin_config = SimpleNamespace(hermes_custom_dir="", hermes_group_profile_enabled=True)
 gp.plugin_config = cfg.plugin_config
 p = cfg.resolve_custom_dir()
-check("空配置回落 localstore 数据目录", p is not None and "nonebot_plugin_hermes" in str(p), str(p))
+check("空配置回落 localstore 数据目录", p is not None and "nonebot_plugin_hermes_adapter" in str(p), str(p))
 base_reactive = pb.build_reactive_system_prompt()
 check("reactive 无块时输出不变", pb.build_reactive_system_prompt(profile_block=None) == base_reactive)
 base_passive = pb.build_passive_system_prompt(adapter="onebotv11", is_private=False, user_id="1", group_id="2000000001")

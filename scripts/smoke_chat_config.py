@@ -1,10 +1,10 @@
 """chat_config 24 键迁移 smoke 测试。
 
 跑法（shim 挂 work 副本，中立目录执行）：
-    ln -s <work 副本路径> <shim>/nonebot_plugin_hermes
-    cd /tmp && PYTHONPATH=<shim> ~/NeonBot/.venv/bin/python <work>/scripts/smoke_chat_config.py
+    ln -s <work 副本路径> <shim>/nonebot_plugin_hermes_adapter
+    cd <中立目录> && PYTHONPATH=<shim> python <work>/scripts/smoke_chat_config.py
 
-覆盖（S2 chat_config 24 键全消费端迁移的离线验收）：
+覆盖（chat_config 24 键消费端的离线验收）：
   1. ChatConfig 24 键形态 + 三链历史统一（perception_buffer / keyword_soft_context /
      proactive_max_messages 三键撤并，只剩 history_message_limit）。
   2. 改名（reply_delay_for_bot_sec / active_session_timeout_sec）与解析映射。
@@ -28,16 +28,16 @@ os.environ["LOCALSTORE_DATA_DIR"] = tempfile.mkdtemp(prefix="nph_smoke_data_")
 
 nonebot.init()
 
-import nonebot_plugin_hermes  # noqa: E402  (shim 提供的包名)
-from nonebot_plugin_hermes import config as cfg  # noqa: E402
-from nonebot_plugin_hermes.core import chat_config as cc  # noqa: E402
-from nonebot_plugin_hermes.core import user_lists as ul  # noqa: E402
-from nonebot_plugin_hermes.core.chat_config import (  # noqa: E402
+import nonebot_plugin_hermes_adapter  # noqa: E402  (shim 提供的包名)
+from nonebot_plugin_hermes_adapter import config as cfg  # noqa: E402
+from nonebot_plugin_hermes_adapter.core import chat_config as cc  # noqa: E402
+from nonebot_plugin_hermes_adapter.core import user_lists as ul  # noqa: E402
+from nonebot_plugin_hermes_adapter.core.chat_config import (  # noqa: E402
     ChatConfig,
     load_chat_config,
     parse_chat_config,
 )
-from nonebot_plugin_hermes.handlers import message as msg  # noqa: E402
+from nonebot_plugin_hermes_adapter.handlers import message as msg  # noqa: E402
 
 FAILS = []
 SKIPS = []
@@ -54,7 +54,7 @@ def skip(name: str, detail: str = "") -> None:
     SKIPS.append(name)
 
 
-SRC = Path(nonebot_plugin_hermes.__file__).parent
+SRC = Path(nonebot_plugin_hermes_adapter.__file__).parent
 
 
 def src_has_no(relpath: str, token: str) -> bool:
@@ -119,8 +119,8 @@ check("bot延迟: 签名只收 user_id(无 adapter_name)", list(_sig.parameters)
 try:
     from nonebot_plugin_apscheduler import scheduler as _sch
 
-    from nonebot_plugin_hermes.tasks.proactive_activation import register_proactive_activation
-    from nonebot_plugin_hermes.tasks.session_idle_reset import register_session_idle_reset
+    from nonebot_plugin_hermes_adapter.tasks.proactive_activation import register_proactive_activation
+    from nonebot_plugin_hermes_adapter.tasks.session_idle_reset import register_session_idle_reset
 
     _before = len(_sch.get_jobs())
     register_session_idle_reset()

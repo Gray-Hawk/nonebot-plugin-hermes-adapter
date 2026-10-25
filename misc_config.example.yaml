@@ -1,0 +1,51 @@
+# Hermes 杂项配置（misc_config.yaml）：历史文本、记忆外挂、输出、排障、后台任务与存储。
+# 落位：<AGENT_PLUGIN_CUSTOM_DIR>/misc_config.yaml（未配置该目录时用 localstore 插件数据目录）。
+# 加载：启动缓存 + 管理员手动重载；除逐键标注“重启生效”外不做文件监听。
+
+# ---- 历史、记忆与输出：9 键 ----
+
+# 单条历史文本在入库和模型渲染时共用的字符上限；取消“入库 200、渲染 800”双层口径，
+# 不提供 0 = 无限制。由 perception_text_length 与旧硬编码 800 合并。
+history_text_max_chars: 800
+
+# 群档案注入及相关画像路由开关；不影响反馈规则等其他定制功能。
+group_profile_enabled: true
+
+# 单条回复最大字符数，与超长截断或合并转发行为联动。
+max_length: 4000
+
+# 上游 4xx、5xx 与传输错误的统一用户侧兜底文本；默认空串表示静默。
+# 内部日志与既定重试仍保留，不被兜底文本开关吞掉。
+transport_error_fallback_text: ''
+
+# 是否实时转发长任务中工具调用间的旁白，默认关闭。
+interim_echo_enabled: false
+
+# /help 菜单头尾自定义文件路径；中间命令清单仍由插件动态生成。空 = 使用内置动态菜单。
+help_menu_file: ''
+
+# 是否在本地保存每轮完整 system prompt 供排障（含画像与主机路径，仅存本地）。
+prompt_dump_enabled: false
+
+# /approve 挂起审批超时秒数，默认 300，与上游默认审批超时一致。
+approval_expiry_sec: 300
+
+# 模型上下文时间戳的时区覆盖（IANA 名，如 Asia/Shanghai）；留空使用部署机本地时区。
+prompt_timezone: ''
+
+# ---- 后台任务与存储：5 键 ----
+
+# 旧后台完成结果投递轮询间隔秒数；旧轮询通道将移除，本键暂留但不接入新通道。重启生效。
+delivery_poll_interval_sec: 30
+
+# 多 bot 共存时的全局指令寻址前缀。重启生效。
+bot_name: ''
+
+# 消息库等持久化 Store 的数据库路径；缺省跟随 AGENT_PLUGIN_CUSTOM_DIR，可独立覆盖。重启生效。
+storage_db_path: ''
+
+# 消息库保留天数，超龄记录在 vacuum 时删除。
+storage_message_retention_days: 30
+
+# 消息库最大行数，超限时从最旧记录开始清理。
+storage_message_max_rows: 100000

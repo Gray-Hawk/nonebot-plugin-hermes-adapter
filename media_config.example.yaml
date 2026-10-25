@@ -1,0 +1,71 @@
+# Hermes 媒体投送配置（media_config.yaml）：图片投送管线三模式 + v6 迁入的 7 键。
+# 落位：<AGENT_PLUGIN_CUSTOM_DIR>/media_config.yaml（未配置该目录时用 localstore 插件数据目录）。
+# 加载：启动缓存 + 管理员手动重载；除逐键标注“重启生效”外不做文件监听。
+# 坏档：完整校验失败时保留旧缓存；单字段非法值回退默认。
+
+# ---- 既有媒体 schema（三模式改造） ----
+
+# 投送总模式：full = 全内联直通；semi = 窗口内有 @bot 才内联；off = 全部占位符。
+mode: semi
+
+# semi 模式的窗口半径：当前消息前后各 N 条内存在 @bot 才内联。
+semi_window: 3
+
+# 内联压缩与字节门（逐级从原图重压）。
+inline:
+
+  # 内联压缩梯度 [[max_edge, quality], ...]。
+  ladder: [[2048, 80], [1024, 70]]
+
+  # 内联单图压缩后字节上限（大小门），梯度走完仍超则回退占位符。
+  max_bytes: 500000
+
+  # 内联动图抽帧上限。
+  gif_max_frames: 5
+
+# 主动拉图门与压缩梯度。
+fetch:
+
+  # 主动拉图大小门：原图不超过则直出，超过走 fetch 梯度压缩。
+  gate_bytes: 2000000
+
+  # 拉图撞门后的压缩梯度（与内联独立）。
+  ladder: [[4096, 95], [4096, 70]]
+
+  # 拉图动图抽帧上限。
+  gif_max_frames: 10
+
+# 表情门控。
+sticker:
+
+  # 表情门控：不超过直出，超过强制走 fetch 梯度压缩。
+  gate_bytes: 200000
+
+# 单条消息合并转发图的注册上限（按内容去重）；转发图恒不内联。
+forward_image_cap: 30
+
+# 例外名单：用户 id → off（永不内联，可拉图）/ semi（按半内联规则收窄）。全局生效。
+exemptions: {}
+
+# ---- v6 迁入的 7 键（旧 .env IMAGE/MEDIA 系列） ----
+
+# 额外允许发送的本地文件与图片根目录白名单（os.pathsep 分隔，支持 ~）。
+media_allow_dirs: ''
+
+# 本地文件通过群文件或私聊文件上传时的尺寸上限（MB）。
+local_file_max_mb: 50
+
+# 是否抓取收藏表情并内联给模型，默认关闭。
+sticker_vision_enabled: false
+
+# 图片字节缓存根目录；缺省跟随 AGENT_PLUGIN_CUSTOM_DIR，也可独立覆盖。重启生效。
+image_cache_dir: ''
+
+# 图片缓存总容量上限（MB），超出后按访问时间从旧到新淘汰。重启生效。
+image_cache_quota_mb: 200
+
+# 单张图片 HTTP 抓取超时秒数。重启生效。
+image_fetch_timeout_s: 10
+
+# 单张图片总抓取尝试次数，包含首次尝试。重启生效。
+image_fetch_max_attempts: 2
