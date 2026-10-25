@@ -8,12 +8,12 @@ import time
 from nonebot import logger
 from nonebot.adapters import Bot
 
-from ..config import plugin_config
 from ..core import task_notes
 from ..core.approvals import add_pending as approvals_add_pending
 from ..core.approvals import notify_admins as approvals_notify_admins
 from ..core.feedback_rules import load_rules
 from ..core.inflight import make_inflight_key
+from ..core.user_lists import load_user_lists
 
 
 # --- 错误分级反馈 + 离场确认轮(规则引擎见 core/feedback_rules.py) ---
@@ -287,7 +287,7 @@ def _make_approval_notify(
         )
         sent = await approvals_notify_admins(
             bot=bot, adapter_name=adapter_name, entry=entry,
-            admin_users=set(plugin_config.hermes_admin_users),
+            admin_users=set(load_user_lists().admin_users),
         )
         logger.info(
             f"[HERMES approval] 审批挂起 #{entry.approval_id} run={entry.run_id} "

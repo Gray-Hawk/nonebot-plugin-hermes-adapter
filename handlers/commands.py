@@ -18,19 +18,24 @@ from nonebot.matcher import Matcher
 from .. import mcp as _mcp
 from ..config import plugin_config
 from ..core.hermes_client import hermes_client
+from ..core.log_throttle import throttled_info
 from ..core.approvals import pending_count as approvals_pending_count
 from ..core.approvals import peek_oldest as approvals_peek_oldest
 from ..core.approvals import acknowledge as approvals_acknowledge
 from ..core.approvals import answer_lock as approvals_answer_lock
-from ..core.routing import all_targets, resolve_target
+from ..core.routing import resolve_target
 from ..core.run_tracker import make_scope_key
+from ..core.config_reload import reload_runtime_config
+from ..core.chat_config import load_chat_config
+from ..core.misc_config import load_misc_config
+from ..core.user_lists import load_user_lists
 from ..core.session import session_manager
 from ..utils import check_isolation, get_adapter_name
 from .message_perception import _claim_event_db_id
 
 # 本部署补丁: 指令寻址前缀(多 bot 共群指令域区分)。
 # 注册期定型(下面全部 on_command 在插件加载期执行),改名需重启 nb 生效。
-_raw_bot_name = plugin_config.hermes_bot_name.strip()
+_raw_bot_name = load_misc_config().bot_name.strip()
 _name_parts = _raw_bot_name.split()
 CMD_PREFIX = _name_parts[0] if _name_parts else ""
 if len(_name_parts) > 1:
@@ -113,7 +118,7 @@ async def handle_delay(bot: Bot, event: Event, matcher: Matcher):
     if not check_isolation(event, target):
         matcher.skip()
 
-    if plugin_config.hermes_session_idle_reset_sec <= 0:
+    if load_chat_config().session_idle_reset_sec <= 0:
         await alconna.UniMessage("ℹ️ 空闲自动重置(T1)当前未启用。").send(target=target, bot=bot)
         return
 
@@ -155,9 +160,8 @@ ping_command = on_command(_cmd("ping"), force_whitespace=True, priority=88, bloc
 def build_ping_message(ok: bool) -> str:
     """/ping 的回复。
 
-    这条命令只过 check_isolation,任何被允许的用户都能打,所以它不能带接入点标签
-    或数量 —— 那等于把别的群的路由配置广播给所有人。逐接入点体检在
-    build_endpoint_health_lines,只出现在管理员命令里。
+    这条命令只过 check_isolation,任何被允许的用户都能打,所以只回报连接结果,
+    不附带内部接入点标签或路由信息。
     """
     if ok:
         return "🏓 pong! Hermes Agent 连接正常。"
@@ -167,13 +171,6 @@ def build_ping_message(ok: bool) -> str:
 async def probe_current_endpoint(adapter_name: str, is_private: bool, group_id: str | None) -> bool:
     """只探当前会话自己的接入点 —— 用户问的是"我这儿能不能用"。"""
     return await hermes_client.health_check(resolve_target(adapter_name, is_private, group_id))
-
-
-def build_endpoint_health_lines(results: list[tuple[str, bool]]) -> list[str]:
-    """逐接入点体检结果。仅供 admin-only 的 /hermes-status 使用(含路由键)。"""
-    if not results:
-        return []
-    return ["", "🌐 接入点体检:"] + [f"  {'✅' if ok else '❌'} {label}" for label, ok in results]
 
 
 @ping_command.handle()
@@ -256,7 +253,7 @@ def build_help_text(
         f"{_cl('ping')} - 检查连接状态",
         f"{_cl('help')} - 显示本帮助",
     ]
-    if plugin_config.hermes_session_idle_reset_sec > 0:
+    if load_chat_config().session_idle_reset_sec > 0:
         # T1 启用时才暴露超控命令,免得用户对着不存在的功能打命令
         lines.append(f"{_cl('delay')} - 暂停空闲自动重置")
         lines.append(f"{_cl('resume')} - 恢复空闲自动重置")
@@ -266,6 +263,7 @@ def build_help_text(
         lines.append(f"{_cl('run-status')} - 查看当前会话在跑的 run(管理员)")
         lines.append(f"{_cl('run-stop')} - 终止当前会话在跑的 run(管理员)")
         lines.append(f"{_cl('reasoning')} - 查看/切换全局推理档位(管理员)")
+        lines.append(f"{_cl('reload-config')} - 手动重载 YAML 配置(管理员)")
 
     if header is not None:
         text = header.strip("\n") + "\n\n命令：\n" + "\n".join(lines)
@@ -290,10 +288,10 @@ async def handle_help(bot: Bot, event: Event, matcher: Matcher):
     # 是否管理员决定要不要把 /hermes-status 暴露给当前用户
     adapter_name = get_adapter_name(target)
     user_id = event.get_user_id() or ""
-    is_admin = f"{adapter_name}:{user_id}" in plugin_config.hermes_admin_users
+    is_admin = _is_admin(adapter_name, user_id)
 
     # 菜单文件读取挪出事件循环(同步 IO 会堵住其他消息处理)
-    header, footer = await asyncio.to_thread(load_help_menu_decor, plugin_config.hermes_help_menu_file)
+    header, footer = await asyncio.to_thread(load_help_menu_decor, load_misc_config().help_menu_file)
     help_text = build_help_text(target.private, is_admin, header=header, footer=footer, cmd_prefix=CMD_PREFIX)
     await alconna.UniMessage(help_text).send(target=target, bot=bot)
 
@@ -315,18 +313,11 @@ async def handle_status(bot: Bot, event: Event, matcher: Matcher):
     adapter_name = get_adapter_name(target)
     user_id = event.get_user_id() or ""
     admin_key = f"{adapter_name}:{user_id}"
-    if admin_key not in plugin_config.hermes_admin_users:
+    if not _is_admin(adapter_name, user_id):
         logger.debug(f"[HERMES] /hermes-status silent skip for {admin_key}")
         return  # block=True 已阻断后续 matcher,直接 return 即静默
 
     lines = build_status_lines(int(time.time() * 1000))
-    if plugin_config.hermes_group_endpoints:
-        # 逐接入点体检只在这条管理员命令里做:它会列出路由键。并发探活,
-        # 否则 N 个接入点最坏要串行等 N×5s。
-        targets = all_targets()
-        oks = await asyncio.gather(*(hermes_client.health_check(t) for t in targets))
-        lines.extend(build_endpoint_health_lines([(t.label, ok) for t, ok in zip(targets, oks)]))
-
     await alconna.UniMessage("\n".join(lines)).send(target=target, bot=bot)
 
 
@@ -343,7 +334,7 @@ def build_status_lines(now_ms: int) -> list[str]:
         if plugin_config.hermes_mcp_enabled
         else "off"
     )
-    active_line = "on" if plugin_config.hermes_active_session_enabled else "off"
+    active_line = "on"
 
     # ActiveSessionManager:统计当前未过期 session
     active_count = 0
@@ -381,12 +372,7 @@ def build_status_lines(now_ms: int) -> list[str]:
         "🔍 Hermes Plugin M1-mem 状态",
         f"MCP: {mcp_line}",
         f"active_session: {active_line}",
-        f"hermes_api: {plugin_config.hermes_api_url}"
-        + (
-            f" (+{len(plugin_config.hermes_group_endpoints)} 个按群接入点)"
-            if plugin_config.hermes_group_endpoints
-            else ""
-        ),
+        f"hermes_api: {plugin_config.hermes_api_url}",
         "",
         f"📊 ActiveSessions: {active_count} 个活跃",
     ]
@@ -423,7 +409,7 @@ run_stop_command = on_command(_cmd("run-stop"), force_whitespace=True, priority=
 
 def _is_admin(adapter_name: str, user_id: str) -> bool:
     """管理员判定(与 /hermes-status 同口径:白名单 {adapter}:{user_id})。"""
-    return f"{adapter_name}:{user_id}" in plugin_config.hermes_admin_users
+    return f"{adapter_name}:{user_id}" in load_user_lists().admin_users
 
 
 def _scope_live_run(adapter_name: str, private: bool, user_id: str, group_id: str | None):
@@ -580,6 +566,34 @@ async def handle_reasoning(bot: Bot, event: Event, matcher: Matcher):
             f"⚠️ 切换失败,config 未改动: {out[:200]}"
         ).send(target=target, bot=bot)
 
+# --- /reload-config(管理员；YAML 快照手动重载) ---
+reload_config_command = on_command(_cmd("reload-config"), force_whitespace=True, priority=88, block=True)
+
+
+def _config_reload_message(adapter_name: str, user_id: str) -> str | None:
+    """先按旧管理员集合鉴权，再统一换配置快照；非管理员不暴露命令。"""
+    if not _is_admin(adapter_name, user_id):
+        logger.debug(f"[HERMES] /reload-config silent skip for {adapter_name}:{user_id}")
+        return None
+    result = reload_runtime_config()
+    if result.ok:
+        logger.info(f"[HERMES] /reload-config: {adapter_name}:{user_id} 重载 {result.reloaded}")
+        return f"✅ {result.message}(标注“重启生效”的键仍需重启)"
+    logger.warning(f"[HERMES] /reload-config 失败: {result.message}")
+    return f"⚠️ {result.message}"
+
+
+@reload_config_command.handle()
+async def handle_reload_config(bot: Bot, event: Event, matcher: Matcher):
+    target = alconna.get_target()
+    if not check_isolation(event, target):
+        matcher.skip()
+    adapter_name = get_adapter_name(target)
+    message = _config_reload_message(adapter_name, event.get_user_id() or "")
+    if message is not None:
+        await alconna.UniMessage(message).send(target=target, bot=bot)
+
+
 # --- /approve(阶段3c,管理员应答挂起审批) ---
 approve_command = on_command(_cmd("approve"), force_whitespace=True, priority=88, block=True)
 
@@ -633,13 +647,29 @@ async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna
 # 带前缀命令由上面各 matcher 接走(命令名不同互不冲突);裸形态(无前缀)到这里
 # 一律静默吞掉——不执行也不落聊天路径,防止旧习惯的 /clear 被当普通消息发给 LLM。
 # 私聊群聊同口径。hermes_keywords(如 /ai)不在吞没清单,关键词点火不受影响。
-async def _swallow_bare_command() -> None:
+async def _swallow_bare_command(bot: Bot, event: Event, matcher: Matcher) -> None:
+    # 补同因节流观测:吞没此前零日志零现场,用户打旧命令无从排查;只记命令名
+    # 与 scope,不带余文,不新增用户可见提示。
+    target = alconna.get_target()
+    adapter_name = get_adapter_name(target)
+    user_id = event.get_user_id() or ""
+    scope = f"private:{user_id}" if target.private else f"group:{target.id}"
+    raw = ""
+    try:
+        raw = event.get_plaintext().strip()
+    except Exception:
+        pass
+    cmd = raw.split()[0] if raw else "?"
+    throttled_info(
+        f"gate.bare_cmd:{cmd}:{adapter_name}:{scope}",
+        f"[HERMES cmd] 裸命令已吞没 cmd={cmd}(adapter={adapter_name} scope={scope})",
+    )
     return
 
 
 if CMD_PREFIX:
     for _bare_name in (
         "clear", "delay", "resume", "ping", "help", "帮助",
-        "hermes-status", "run-status", "run-stop", "reasoning", "approve",
+        "hermes-status", "run-status", "run-stop", "reasoning", "reload-config", "approve",
     ):
         on_command(_bare_name, force_whitespace=True, priority=89, block=True).handle()(_swallow_bare_command)

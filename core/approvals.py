@@ -28,12 +28,12 @@ from pathlib import Path
 
 from nonebot import logger
 
-from ..config import plugin_config
+from .misc_config import load_misc_config
 
 
 def _approval_expiry_sec() -> int:
-    """本条超时秒数(现读配置)。与上游 gateway approvals.timeout 孪生,无同步机制。"""
-    return plugin_config.hermes_approval_expiry_sec
+    """本条超时秒数(现读 misc_config 缓存)。与上游 gateway approvals.timeout 孪生,无同步机制。"""
+    return load_misc_config().approval_expiry_sec
 
 
 @dataclass

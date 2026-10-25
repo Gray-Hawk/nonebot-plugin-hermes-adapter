@@ -68,6 +68,9 @@ async def _hermes_m1_startup():
         register_storage_vacuum,
     )
 
+    from .core.config_reload import initialize_runtime_config
+
+    initialize_runtime_config()
     init_runtime_state()
     await start_storage()
     # system_prompt 留痕开关装载(启动装载+缓存;热载指令随配置专项接入)
@@ -84,9 +87,10 @@ async def _hermes_m1_startup():
 
     if _approvals_pending_count() > 0:
         from .core.bg_tasks import spawn_bg_task
+        from .core.user_lists import load_user_lists
 
         spawn_bg_task(
-            _approvals_renotify(admin_users=set(plugin_config.hermes_admin_users)),
+            _approvals_renotify(admin_users=set(load_user_lists().admin_users)),
             name="hermes-approval-renotify",
         )
     # 进程级共享 httpx client 随 shutdown 释放(连接池复用)
@@ -98,44 +102,46 @@ async def _hermes_m1_startup():
     register_session_idle_reset()
     register_proactive_activation()
     register_delivery_poll()
+    from .core.misc_config import load_misc_config
+
+    _misc_cfg = load_misc_config()
     # 本部署补丁: 指令寻址前缀启用时启动期明示(前缀在 handlers/commands.py 注册期定型)
-    if plugin_config.hermes_bot_name.strip():
+    if _misc_cfg.bot_name.strip():
         logger.info(
             f"[HERMES] 指令寻址已启用: 本实例指令形如 "
-            f"/{plugin_config.hermes_bot_name.strip().split()[0]} <命令>, 裸指令静默不执行"
+            f"/{_misc_cfg.bot_name.strip().split()[0]} <命令>, 裸指令静默不执行"
         )
-    # 阶段2a:nb 重启后续跑在跑 runs turn。仅在 runs 通道开启时有意义
-    # (completions 路不写 tracker,resume 自然空转返回)。
-    if plugin_config.hermes_runs_channel_enabled:
+    # nb 重启后续跑在跑 runs turn;completions 路不写 tracker。
+    if plugin_config.hermes_api_interface == "runs":
         from .tasks import resume_active_runs
 
         await resume_active_runs()
 
     # 投递轮询间隔过小只会白增本地请求与日志噪音,任务完成汇报的时效收益可忽略
-    if 0 < plugin_config.hermes_delivery_poll_interval_sec < 10:
+    if 0 < _misc_cfg.delivery_poll_interval_sec < 10:
         logger.warning(
-            f"[HERMES] HERMES_DELIVERY_POLL_INTERVAL_SEC({plugin_config.hermes_delivery_poll_interval_sec}) "
+            f"[HERMES] delivery_poll_interval_sec({_misc_cfg.delivery_poll_interval_sec}) "
             "小于 10s:汇报时效收益可忽略,只会白增轮询开销;若这是本意可忽略本警告"
         )
 
-    # T5 应大于 TTL,配反了等效于「窗口只能活 T5」——能跑但多半不是本意
-    if (
-        0 < plugin_config.hermes_active_session_t5_sec
-        <= plugin_config.hermes_active_session_ttl_sec
-    ):
+    # T5 应大于 TTL,配反了等效于“窗口只能活 T5”——能跑但多半不是本意
+    from .core.chat_config import load_chat_config as _load_chat_config
+
+    _chat_cfg = _load_chat_config()
+    if 0 < _chat_cfg.active_session_timeout_sec <= _chat_cfg.active_session_ttl_sec:
         logger.warning(
-            f"[HERMES] HERMES_ACTIVE_SESSION_T5_SEC({plugin_config.hermes_active_session_t5_sec}) "
-            f"<= TTL({plugin_config.hermes_active_session_ttl_sec}):窗口实际只能活 T5 秒,"
+            f"[HERMES] active_session_timeout_sec({_chat_cfg.active_session_timeout_sec}) "
+            f"<= active_session_ttl_sec({_chat_cfg.active_session_ttl_sec}):窗口实际只能活 T5 秒,"
             "隐式续期完全失效;若这是本意可忽略本警告"
         )
 
     # /help 菜单文件配了路径但读不到时,启动期先提醒;运行期仍会回退内置菜单
-    if plugin_config.hermes_help_menu_file and not os.path.exists(
-        os.path.expanduser(plugin_config.hermes_help_menu_file)
+    if _misc_cfg.help_menu_file and not os.path.exists(
+        os.path.expanduser(_misc_cfg.help_menu_file)
     ):
         logger.warning(
-            f"[HERMES] HERMES_HELP_MENU_FILE 指向的文件不存在: "
-            f"{plugin_config.hermes_help_menu_file};/help 将回退内置菜单"
+            f"[HERMES] help_menu_file 指向的文件不存在: "
+            f"{_misc_cfg.help_menu_file};/help 将回退内置菜单"
         )
 
     # 定制定居目录:配了但目录不存在时启动期提醒;各功能各自回退内置
@@ -143,56 +149,15 @@ async def _hermes_m1_startup():
         os.path.expanduser(plugin_config.hermes_custom_dir)
     ):
         logger.warning(
-            f"[HERMES] HERMES_CUSTOM_DIR 指向的目录不存在: "
+            f"[HERMES] AGENT_PLUGIN_CUSTOM_DIR 指向的目录不存在: "
             f"{plugin_config.hermes_custom_dir};定制功能将回退内置默认"
         )
 
-    if os.environ.get("HERMES_PERCEPTION_IMAGE_MODE"):
-        logger.warning(
-            "[HERMES] HERMES_PERCEPTION_IMAGE_MODE is deprecated since 2026-05-13. "
-            "Historical image recall now goes through MCP tools (get_message_images). "
-            "You can remove this env var safely."
-        )
-
-    if plugin_config.hermes_honcho_enabled:
-        from .core.hermes_client import hermes_client, missing_memory_capabilities
-        from .core.session import validate_memory_key_templates
-
-        for problem in validate_memory_key_templates():
-            logger.error(f"[HERMES] 记忆 key 模板不可用:{problem}")
-
-        if not plugin_config.hermes_api_key:
-            logger.warning(
-                "[HERMES] HERMES_HONCHO_ENABLED=true 但未配置 HERMES_API_KEY:"
-                "上游对 X-Hermes-Session-Key 要求鉴权,本次启动不会发送该头,长期记忆作用域不生效"
-            )
-        else:
-            missing = missing_memory_capabilities(await hermes_client.fetch_capabilities())
-            if missing:
-                logger.warning(
-                    f"[HERMES] 上游未报告长期记忆能力 {missing}(/v1/capabilities):"
-                    "可能是 Hermes 版本较旧或探测失败。头照发不误,上游不认则忽略"
-                )
-            else:
-                logger.info("[HERMES] 长期记忆作用域已启用(X-Hermes-Session-Key)")
-
-    if plugin_config.hermes_group_endpoints:
-        from .core.routing import multiplex_reverse_channel_notices, validate_endpoints
-
-        for problem in validate_endpoints():
-            logger.warning(f"[HERMES] 接入点路由表配置问题:{problem}")
-        # 无法自动核实的提醒走 INFO —— 它在正确配置上也必报,配 WARNING 只会制造告警疲劳。
-        for notice in multiplex_reverse_channel_notices():
-            logger.info(f"[HERMES] {notice}")
-        logger.info(f"[HERMES] 按群路由已启用,{len(plugin_config.hermes_group_endpoints)} 个接入点")
-
-    if plugin_config.hermes_runs_channel_enabled:
-        # 本部署补丁(阶段1): 实验通道,启动期明示,防止
-        # 「配了忘了」时排查 turn 行为差异无头可查。
-        logger.warning("[HERMES] runs 通道已启用(实验性): turn 走 /v1/runs 而非 chat/completions")
+    if plugin_config.hermes_api_interface == "runs":
+        logger.info("[HERMES] API 接口: runs")
 
     logger.info(
         f"Hermes Plugin loaded — API: {plugin_config.hermes_api_url} | "
         f"MCP: {'on ' + plugin_config.hermes_mcp_host + ':' + str(plugin_config.hermes_mcp_port) if plugin_config.hermes_mcp_enabled else 'off'} | "
-        f"active_session: {'on' if plugin_config.hermes_active_session_enabled else 'off'}"
+        "active_session: on"
     )

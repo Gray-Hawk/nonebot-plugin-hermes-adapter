@@ -25,7 +25,6 @@ from zoneinfo import ZoneInfo
 
 from nonebot import logger
 
-from ..config import plugin_config
 from .decision_contract import render_cn_field_lines, render_field_name_list
 from .hermes_client import UserContent
 from .message_buffer import (
@@ -35,6 +34,7 @@ from .message_buffer import (
     render_media_summary,
 )
 from .message_context import render_message_context_head
+from .misc_config import load_misc_config
 
 
 _WEEKDAY_CN = "一二三四五六日"
@@ -51,7 +51,7 @@ def _current_time_str() -> str:
     缺省空串=部署机本地时区(datetime.now(tz=None) 与裸 now() 同义,现状不变)。
     坏时区名 WARN 一次回退本地(防配置 typo 静默错时间)。"""
     tz = None
-    tz_name = plugin_config.hermes_prompt_timezone.strip()
+    tz_name = load_misc_config().prompt_timezone.strip()
     if tz_name:
         global _tz_warned
         try:
@@ -279,21 +279,23 @@ _FILE_TOOL_GUIDANCE = (
 # 本部署补丁: 群档案启用时的记忆写入路由提示。
 # 路径根需动态跟随 hermes_custom_dir 配置，不能写死。
 def _build_group_profile_routing_note(memory_root: str) -> str:
-    """群聊版路由提示：三层落点，路径根动态跟随配置。"""
+    """群聊版路由提示：三层落点 + 身份索引，路径根动态跟随配置。"""
     return (
         "【群记忆写入路由】本群档案已启用，写入时按内容性质选落点：\n"
         f"- 群层面的事（群规、生态、bot 名单、群梗、群友昵称变动）→ write_file 写 {memory_root}/groups/<群号>.md\n"
         f"- 个人画像（外貌、性格、与我的互动约定）→ write_file 写 {memory_root}/people/<QQ号>.md\n"
-        "- 主人/管理员的通用偏好、跨场景技术/环境事实 → memory 工具写全局库"
+        "- 主人/管理员的通用偏好、跨场景技术/环境事实 → memory 工具写全局库\n"
+        f"- 身份索引：查某人画像前先查 {memory_root}/identities.csv 定位主档（merged 小号归并到主档），再查 {memory_root}/people/<主档QQ>.md"
     )
 
 
 def _build_private_profile_routing_note(memory_root: str) -> str:
-    """私聊版路由提示：两层落点（无群层面），路径根动态跟随配置。"""
+    """私聊版路由提示：两层落点（无群层面）+ 身份索引，路径根动态跟随配置。"""
     return (
         "【记忆写入路由】写入时按内容性质选落点：\n"
         f"- 个人画像（外貌、性格、与我的互动约定）→ write_file 写 {memory_root}/people/<QQ号>.md\n"
-        "- 主人/管理员的通用偏好、跨场景技术/环境事实 → memory 工具写全局库"
+        "- 主人/管理员的通用偏好、跨场景技术/环境事实 → memory 工具写全局库\n"
+        f"- 身份索引：查某人画像前先查 {memory_root}/identities.csv 定位主档（merged 小号归并到主档），再查 {memory_root}/people/<主档QQ>.md"
     )
 
 
@@ -402,15 +404,15 @@ def _render_runtime_state(
     return "\n".join(lines)
 
 
-# 历史行渲染上限。渲染端不能信任存进来的 content:写入端一旦漏过一条超长内容
-# (内联 data URL 的 bot 回复就是典型),它会在之后每一个 turn 被逐字重放进 prompt,
-# 直到被 retention 淘汰 —— 一条就能把整个上下文顶满。写入端修好只保护新行,
-# 已经落库的旧行必须在这里挡住。
-# 上限取得宽松:入站侧本来就按 hermes_perception_text_length(默认 200)截过,
-# 只有 bot 自己的长回复会接近这个数,留 800 字够「自我归因校验」定位到自己说过的话。
-_MAX_HISTORY_LINE_CHARS = 800
+# 历史行渲染上限不再有独立常量:与入库截断共用 misc_config.history_text_max_chars
+# (默认 800,取消「入库 200、渲染 800」双层口径,见 S2 计划 §九.3)。渲染端不能信任
+# 存进来的 content:写入端一旦漏过一条超长内容(内联 data URL 的 bot 回复就是典型),
+# 它会在之后每一个 turn 被逐字重放进 prompt,直到被 retention 淘汰 —— 一条就能把
+# 整个上下文顶满。写入端修好只保护新行,已经落库的旧行必须在这里挡住。
+# 渲染上限取 load_misc_config().history_text_max_chars,由 _sanitize_history_content
+# 缺省 max_chars=None 时现读。
 _HISTORY_TRUNCATION_MARK = "…[历史过长已截断]"
-# 展开后的折叠行上限。真实约束是提取上限(hermes_forward_extract_max_chars,默认 800)——
+# 展开后的折叠行上限。真实约束是提取上限(forward_extract_max_chars,默认 800)——
 # 这里只兜行首 [m:X]/speaker 前缀与原行其余文本的富余,不是新的预算口径;
 # 超大首节点(提取端允许单节点越限)仍会被这里截住,渲染端保持最后一道闸的角色。
 _MAX_EXPANDED_FORWARD_LINE_CHARS = 1200
@@ -434,12 +436,15 @@ def _placeholder_keeping_trailing_space(m: re.Match) -> str:
     return _HISTORY_IMAGE_PLACEHOLDER + matched[len(matched.rstrip()) :]
 
 
-def _sanitize_history_content(content: str, max_chars: int = _MAX_HISTORY_LINE_CHARS) -> str:
+def _sanitize_history_content(content: str, max_chars: int | None = None) -> str:
     """把单条历史内容压到可安全放进 prompt 的形态。
 
     先摘掉 data URL(base64 字节对模型毫无信息量,只会挤掉真实上下文),再按
     字符数封顶。两步都是幂等的纯文本处理,不动 DB。
+    max_chars=None 时现读 misc_config.history_text_max_chars(与入库截断同源)。
     """
+    if max_chars is None:
+        max_chars = load_misc_config().history_text_max_chars
     cleaned = _MD_DATA_IMAGE_IN_HISTORY_RE.sub(_placeholder_keeping_trailing_space, content)
     cleaned = _BARE_DATA_URL_IN_HISTORY_RE.sub(_placeholder_keeping_trailing_space, cleaned)
     if len(cleaned) > max_chars:
@@ -480,6 +485,8 @@ def _render_recent_messages_block(
     新消息——否则模型会把块变短误读成历史被截断/群冷了。
     """
     msgs = list(recent_messages)
+    # 单轮一致快照:历史行截断上限一次取出复用,循环内不反复读 misc_config。
+    history_cap = load_misc_config().history_text_max_chars
     # 新→旧序里第一条带全文的折叠 = 窗口内最新一条;只展开它,更旧的保持 preview——
     # 展开成本按 turn 支付,预算只给最可能被追问的那条。
     expand_target = next((m for m in msgs if m.forward_content), None)
@@ -496,7 +503,7 @@ def _render_recent_messages_block(
             content = _expand_forward_preview(m.content, m.forward_content or "")
             rendered = _sanitize_history_content(content, max_chars=_MAX_EXPANDED_FORWARD_LINE_CHARS)
         else:
-            rendered = _sanitize_history_content(m.content)
+            rendered = _sanitize_history_content(m.content, max_chars=history_cap)
         line = f"{id_prefix}{bot_prefix}{speaker_tag}: {rendered}"
         # 行尾追加紧凑媒体清单(带全局连续 idx,号即 message_images 地址,
         # 供按号拉图/指认)。占位带号不代表该图已内联——豁免/未内联行同样带号。

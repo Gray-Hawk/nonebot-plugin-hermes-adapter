@@ -16,9 +16,8 @@ from nonebot.matcher import Matcher
 from nonebot.rule import Rule
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
-from ..config import plugin_config
 from ..core import user_lists
-from ..core.approvals import admin_user_ids
+from ..core.chat_config import load_chat_config
 from ..core.inflight import make_inflight_key
 from ..utils import check_isolation, get_adapter_name
 
@@ -52,11 +51,6 @@ from .message_relay import route_synthesized_input
 receive_message = on_message(rule=Rule(_ignore_rule), priority=98, block=True)
 
 
-# 本部署补丁:hermes_group_trigger 模式告警去重
-# (keyword-soft 不做兼容保留,与 all 等废弃值同待遇,每种取值只 WARN 一次,重启清空)。
-_TRIGGER_MODE_DEPRECATED_WARNED: set[str] = set()
-
-
 # 本部署补丁: 应答防抖。
 # 设计见 项目文档库「方案:应答防抖」。
 # 要点:perception 在 priority=1 无条件写 buffer,turn 上下文从 buffer 拉,
@@ -88,15 +82,12 @@ def _keyword_soft_hit(keywords, text: str) -> bool:
     return any(kw and kw in text for kw in keywords)
 
 
-def _is_reply_delayed(adapter_name: str, user_id: str) -> bool:
-    """强制回复延迟名单判定(本部署补丁):known_bots 缺省涵盖,.env 名单额外追加。
+def _is_reply_delayed(user_id: str) -> bool:
+    """强制回复延迟名单判定:仅已知 bot(user_lists.yaml 的 known_bots)延迟。
 
-    .env 键是 {adapter}:{user_id} 复合键,拆前缀取本台裸 id 再比(复用
-    admin_user_ids 同款拆法,跨平台不串);known_bots 走 user_lists.yaml 现读现用。
+    旧 .env 额外名单(hermes_reply_delay_users)已删除——延迟只保留给已知 bot。
     """
-    if user_lists.is_known_bot(user_id):
-        return True
-    return user_id in admin_user_ids(set(plugin_config.hermes_reply_delay_users), adapter_name)
+    return user_lists.is_known_bot(user_id)
 
 
 def _debounce_arrive(
@@ -153,6 +144,9 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         _warn_unassembled_throttled("message_buffer/active_sessions")
         return
 
+    # 函数级快照:本 handler 单次调用内全部聊天配置键读同一份 chat_config 快照。
+    chat_cfg = load_chat_config()
+
     try:
         target = alconna.get_target()
     except Exception:
@@ -192,7 +186,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     keyword_match_text = msg_text
     # 本条消息自身媒体先抽(own/sticker):引用图的号接在其后,故先算 base。
     own_image_urls = await _extract_image_urls(uni_msg, bot, adapter_name)
-    # QQ 大表情包单独抽,不进普通 image_urls;是否喂模型由 hermes_sticker_vision_enabled 门控
+    # QQ 大表情包单独抽,不进普通 image_urls;是否喂模型由 media_config.sticker_vision_enabled 门控
     sticker_urls = await _extract_sticker_urls(uni_msg, bot, adapter_name)
     quote_base = len(own_image_urls) + len(sticker_urls)
     # 引用前缀拼装收口到 _compose_quote_prefix(审计修复批,疑似 B):
@@ -287,21 +281,8 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         # _msg_at_only_other_users=True 触发 quoted-only 抑制,完全不响应(连 emoji 都没)。
         has_bot_at = _is_bot_at(uni_msg, str(bot.self_id)) or _has_at_bot_in_original(event, str(bot.self_id))
         is_mentioned = has_bot_at or (event.is_tome() and not _msg_at_only_other_users(uni_msg, str(bot.self_id)))
-        trigger_mode = plugin_config.hermes_group_trigger
-        # 本部署补丁:触发模式收敛 at / keyword 两档。all / keyword-soft 及
-        # 其它非法值一律废弃(WARN 一次)落 keyword(默认落点),keyword-soft 不做
-        # 兼容保留。WARN 去重用模块级
-        # _TRIGGER_MODE_DEPRECATED_WARNED,每种取值只 WARN 一次。
-        if trigger_mode in ("keyword", "at"):
-            effective_trigger_mode = trigger_mode
-        else:
-            effective_trigger_mode = "keyword"
-            if trigger_mode not in _TRIGGER_MODE_DEPRECATED_WARNED:
-                _TRIGGER_MODE_DEPRECATED_WARNED.add(trigger_mode)
-                logger.warning(
-                    f"[HERMES] hermes_group_trigger={trigger_mode!r} 已废弃(有效档:keyword 默认 / at),"
-                    "按 keyword 处理"
-                )
+        # choice_field 已在配置加载层完成非法值回退与同值 WARN 去重。
+        effective_trigger_mode = chat_cfg.group_trigger
         addressed_to_bot = is_mentioned and not sender_blacklisted
         is_direct = addressed_to_bot
         # keyword 档:关键词命中 = 隐式激活,不剥前缀、不升级 addressed_to_bot,
@@ -310,12 +291,11 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         # 判定只跑本体快照(keyword_match_text),引用块/
         # 转发等拼接文本不参与点火;内容本身仍在 msg_text 里完整呈递给 LLM。
         if effective_trigger_mode == "keyword":
-            keyword_soft_hit = _keyword_soft_hit(plugin_config.hermes_keywords, keyword_match_text)
+            keyword_soft_hit = _keyword_soft_hit(chat_cfg.keywords, keyword_match_text)
 
-    # --- 活跃态分支 ---
+    # --- 活跃态分支(固定开启) ---
     in_active_window = (
         not target.private
-        and plugin_config.hermes_active_session_enabled
         and group_id is not None
         and _mcp.active_sessions.is_alive_for_trigger(adapter_name, group_id, now)
     )
@@ -340,7 +320,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         matcher.skip()
 
     # 显式触发(全隐式化后 = addressed):进入 / 续期活跃态(群聊场景)
-    if is_direct and not target.private and group_id and plugin_config.hermes_active_session_enabled:
+    if is_direct and not target.private and group_id:
         _mcp.active_sessions.trigger(adapter_name, group_id, user_id, now_ms=now)
         logger.info(f"[HERMES] active_session triggered/renewed: {adapter_name}/{group_id} by {user_id}")
         # 队列化定案:入口不再自动钉锚。@ 只保证进委托队列并拿到一次
@@ -350,8 +330,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     if not target.private:
         logger.info(
             f"[HERMES] dispatch: group={group_id} direct={is_direct} "
-            f"in_active={in_active_window} mode="
-            f"{'reactive' if plugin_config.hermes_active_session_enabled else 'passive'}"
+            f"in_active={in_active_window} mode=reactive"
         )
 
     # --- 应答防抖(本部署补丁) ---
@@ -362,19 +341,19 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # 豁免让互 @ 零延迟直连、无限制器助燃互聊;砍后防抖窗即限速。跨人替换只换
     # 触发归属,turn 上下文从 buffer 拉,被顶掉的碎片内容不丢。
     debounce_sec = (
-        plugin_config.hermes_reply_debounce_private_sec
+        chat_cfg.reply_debounce_private_sec
         if target.private
-        else plugin_config.hermes_reply_debounce_group_sec
+        else chat_cfg.reply_debounce_group_sec
     )
-    max_wait_sec = plugin_config.hermes_reply_debounce_max_wait_sec
-    # 本部署补丁: 强制延迟名单(known_bots 缺省涵盖 + .env 追加)——名单内用户的
-    # 触发防抖窗提升到 hermes_reply_delay_sec(防抖关闭也强制开窗,bot 交互限速器),
+    max_wait_sec = chat_cfg.reply_debounce_max_wait_sec
+    # 本部署补丁: 强制延迟名单(仅 known_bots)——名单内用户的触发防抖窗提升到
+    # reply_delay_for_bot_sec(防抖关闭也强制开窗,bot 交互限速器),
     # 顺延硬上限同步抬到不低于窗长,否则长窗会被默认 max_wait 钳回去。
-    if plugin_config.hermes_reply_delay_sec > 0 and _is_reply_delayed(adapter_name, user_id):
-        debounce_sec = max(debounce_sec, plugin_config.hermes_reply_delay_sec)
+    if chat_cfg.reply_delay_for_bot_sec > 0 and _is_reply_delayed(user_id):
+        debounce_sec = max(debounce_sec, chat_cfg.reply_delay_for_bot_sec)
         # max_wait 的 0=不限语义优先:仅原本有上限时才抬升,0 严格保持不限
         if max_wait_sec > 0:
-            max_wait_sec = max(max_wait_sec, plugin_config.hermes_reply_delay_sec)
+            max_wait_sec = max(max_wait_sec, chat_cfg.reply_delay_for_bot_sec)
     if debounce_sec > 0:
         debounce_key = make_inflight_key(adapter_name, target.private, user_id, group_id)
         payload = dict(
@@ -393,7 +372,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             now_ms=now,
             replied_msg_id=replied_msg_id,
             ephemeral=keyword_soft_hit and not in_active_window,
-            context_limit=plugin_config.hermes_keyword_soft_context if keyword_soft_hit else None,
+            context_limit=chat_cfg.history_message_limit if keyword_soft_hit else None,
         )
         # get-or-create 与状态更新之间无 await,asyncio 单线程下原子。
         loop = asyncio.get_running_loop()
@@ -454,7 +433,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         now_ms=now,
         replied_msg_id=replied_msg_id,
         ephemeral=keyword_soft_hit and not in_active_window,
-        context_limit=plugin_config.hermes_keyword_soft_context if keyword_soft_hit else None,
+        context_limit=chat_cfg.history_message_limit if keyword_soft_hit else None,
     )
 
 

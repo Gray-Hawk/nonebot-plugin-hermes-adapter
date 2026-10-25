@@ -30,11 +30,17 @@ from pathlib import Path
 
 from nonebot import logger
 
+from .config_bootstrap import ensure_file
+from .misc_config import load_misc_config
+
 # path → (签名, {user_id: entry})；签名失效重建，负缓存（文件不存在）也缓存
 # 签名 = (mtime_ns, size)：本机文件系统 mtime 粒度很粗（同毫秒连写不变，
 # 冒烟实证），单看 mtime 会漏掉快速连改；同长度同瞬间改写仍有
 # 残余风险，生产场景人工编辑间隔远大于此，可接受。
 _cache: dict[str, tuple[tuple[int | None, int], dict[str, dict]]] = {}
+
+# 缺档自动建档写入的表头（严格固定，首行）。
+_HEADER = "user_id,nickname,aliases,merged_into,note\n"
 
 
 def _load_raw(path: Path) -> dict[str, dict]:
@@ -66,8 +72,21 @@ def _path(custom_dir: Path, adapter: str) -> Path:
     return custom_dir / "memory" / adapter / "identities.csv"
 
 
+def _ensure_table(custom_dir: Path | None, adapter: str) -> None:
+    """功能开启且缺档时自动建档（连带建父目录）；失败按空表容错，不抛异常。"""
+    if custom_dir is None:
+        return
+    if not load_misc_config().group_profile_enabled:
+        return
+    try:
+        ensure_file(_path(custom_dir, adapter), _HEADER, "identity", label="身份表")
+    except Exception:
+        return
+
+
 def _resolve_entry(custom_dir: Path, adapter: str, user_id: str) -> tuple[str, dict] | None:
     """返回 (主档 user_id, 主档条目)。merged_into 只跟一跳，自环/断链按无主档。"""
+    _ensure_table(custom_dir, adapter)
     entry = _load_raw(_path(custom_dir, adapter)).get(str(user_id))
     if entry is None:
         return None

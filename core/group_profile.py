@@ -17,8 +17,10 @@ from pathlib import Path
 
 from nonebot import logger
 
-from ..config import plugin_config, resolve_custom_dir
+from ..config import resolve_custom_dir
 from . import identity as _identity
+from .config_bootstrap import ensure_file
+from .misc_config import load_misc_config
 
 # 路径段白名单：适配器名/群号/QQ 号只许这些字符，异常值按档案缺失处理（防穿出目录）。
 _VALID_SEGMENT = re.compile(r"^[0-9A-Za-z_-]+$")
@@ -64,7 +66,7 @@ def sync_buddy_to_group(adapter: str | None, group_id: str | None, user_id: str 
     """
     if not (adapter and group_id and user_id and _valid_segment(adapter) and _valid_segment(group_id) and _valid_segment(user_id)):
         return False
-    if not plugin_config.hermes_group_profile_enabled:
+    if not load_misc_config().group_profile_enabled:
         return False
     try:
         custom_dir = resolve_custom_dir()
@@ -138,14 +140,8 @@ def _build_block(
     if custom_dir is None:
         return (), None  # 开关关闭或解析失败：不缓存，下轮重试
     group_path, people_dir = _profile_paths(custom_dir, adapter, group_id)
-    # 本部署补丁:档案不存在时自动创建基础模板，避免"群档案丢失"漏洞
-    if not group_path.exists():
-        try:
-            group_path.parent.mkdir(parents=True, exist_ok=True)
-            group_path.write_text(f"群 {group_id}。\n群友: \n", encoding="utf-8")
-            logger.info(f"[HERMES group-profile] 自动创建群档案: {group_path}")
-        except OSError as exc:
-            logger.warning(f"[HERMES group-profile] 自动创建失败 {group_path}: {exc}")
+    # 缺档自动建档走公共引线：档案不存在时写基础模板，避免「群档案丢失」漏洞。
+    ensure_file(group_path, f"群 {group_id}。\n群友: \n", "HERMES group-profile", label="群档案")
     signature: list[tuple[str, float | None]] = [(str(group_path), _mtime(group_path))]
     group_text = _read_text(group_path)
     if group_text is None:
@@ -174,7 +170,7 @@ def build_group_profile_block(adapter: str | None, group_id: str | None) -> str 
     档案是增强不是命门，挂了不能拖累消息处理。
     """
     try:
-        if not plugin_config.hermes_group_profile_enabled:
+        if not load_misc_config().group_profile_enabled:
             return None  # 功能开关关闭（缺省开）
         if not (adapter and group_id and _valid_segment(adapter) and _valid_segment(group_id)):
             return None

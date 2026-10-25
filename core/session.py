@@ -10,12 +10,7 @@ import time
 
 from nonebot import logger
 
-from ..config import plugin_config
 from .storage.session_key_store import SessionKeyStore
-
-# 上游对 X-Hermes-Session-Key 的长度上限:超出直接 400,整轮对话被打回。
-# 模板是用户可配的,所以渲染结果必须自己先量一遍。
-_MAX_MEMORY_KEY_LEN = 256
 
 
 class SessionManager:
@@ -73,9 +68,8 @@ class SessionManager:
         """从 internal_id 反解组件,供 T1 播种/清理反查用。
 
         格式由 _get_internal_id 定义:
-          私聊:            adapter+private+user_id
-          群(share_group): adapter+group+group_id
-          群(per-user):    adapter+group+group_id+user_id
+          私聊: adapter+private+user_id
+          群:   adapter+group+group_id(群 session 固定共享)
         依赖「adapter/user_id/group_id 不含 +」的既有约定。解析失败返回 None,
         该会话不参与 T1(比解错强)。
         """
@@ -108,17 +102,15 @@ class SessionManager:
         user_id: str,
         group_id: str | None = None,
     ) -> str:
-        """根据配置生成统一的内部会话 ID。
+        """生成统一的内部会话 ID(群 session 固定共享,不按配置切换)。
 
         注:adapter_name / user_id / group_id 假定不含 '+';真实 adapter 名经
         get_adapter_name() 规整后均为 [a-z0-9],平台 user_id 多为数字串。
         """
         if is_private:
             return f"{adapter_name}+private+{user_id}"
-        elif plugin_config.hermes_session_share_group and group_id:
-            return f"{adapter_name}+group+{group_id}"
-        else:
-            return f"{adapter_name}+group+{group_id or 'unknown'}+{user_id}"
+        # 群 session 固定共享(旧 per-user 分支已删):不再按人细分。
+        return f"{adapter_name}+group+{group_id or 'unknown'}"
 
     def get_session_key(
         self,
@@ -144,62 +136,6 @@ class SessionManager:
         self._persist(internal_id)
         logger.debug(f"[SESSION] 新建会话: {internal_id} -> {session_key}")
         return session_key
-
-    def get_memory_key(
-        self,
-        adapter_name: str,
-        is_private: bool,
-        user_id: str,
-        group_id: str | None = None,
-    ) -> str | None:
-        """长期记忆作用域 key,通过 X-Hermes-Session-Key 送给上游。
-
-        与 get_session_key 的三点关键区别:
-          - 不缓存、不持久化:纯模板渲染,无状态
-          - 不受 clear_session 影响:generation 不参与,/clear 只重置 transcript
-          - 不受上游轮换影响:压缩换掉的是 transcript id,记忆挂在这个稳定 key 上
-
-        上游 memory provider 把这个值当作记忆作用域名。不配它的话作用域由上游
-        strategy 兜底,典型后果是所有会话共写一份,或随 transcript 轮换而重置。
-
-        返回 None 表示本轮不发该头(功能关闭,或模板渲染失败)。
-        """
-        if not plugin_config.hermes_honcho_enabled:
-            return None
-
-        try:
-            if is_private:
-                key = plugin_config.hermes_private_session_key_format.format(
-                    adapter=adapter_name,
-                    user_id=user_id,
-                )
-            else:
-                gid = group_id or "unknown"
-                if plugin_config.hermes_group_sessions_per_user:
-                    key = plugin_config.hermes_group_per_user_session_key_format.format(
-                        adapter=adapter_name,
-                        group_id=gid,
-                        user_id=user_id,
-                    )
-                else:
-                    key = plugin_config.hermes_group_session_key_format.format(
-                        adapter=adapter_name,
-                        group_id=gid,
-                    )
-        except (KeyError, IndexError, ValueError) as exc:
-            # 模板是用户可改的配置,写错只应该让"记不住",不该让整轮对话失败。
-            logger.error(f"[SESSION] 记忆 key 模板渲染失败({type(exc).__name__}: {exc}),本轮不发 X-Hermes-Session-Key")
-            return None
-
-        # 超长同理:发出去会被上游 400,该作用域下每一轮都失败。截断不行——两个不同
-        # 作用域可能截成同一个名字,记忆会串到一起去,那比记不住更糟。
-        if len(key) > _MAX_MEMORY_KEY_LEN:
-            logger.error(
-                f"[SESSION] 记忆 key 渲染后长度 {len(key)} 超过上游上限 {_MAX_MEMORY_KEY_LEN},"
-                "本轮不发 X-Hermes-Session-Key;请缩短 HERMES_*_SESSION_KEY_FORMAT"
-            )
-            return None
-        return key
 
     def adopt_session_key(self, previous_key: str, new_key: str) -> bool:
         """采纳上游轮换后的 session key,返回是否命中一条映射。
@@ -321,12 +257,12 @@ class SessionManager:
         self._last_activity[internal_id] = time.time()
 
     def mark_activity_group(self, adapter_name: str, group_id: str) -> None:
-        """群级活动标记(push_message 用):share_group 与 per-user 两种 internal_id
-        形态一起覆盖——push 不知道也不该猜是哪个用户的会话。"""
+        """群级活动标记(push_message 用):群 session 固定共享,internal_id 即
+        adapter+group+group_id 唯一形态。"""
         prefix = f"{adapter_name}+group+{group_id}"
         now = time.time()
         for internal_id in self._components:
-            if internal_id == prefix or internal_id.startswith(prefix + "+"):
+            if internal_id == prefix:
                 self._last_activity[internal_id] = now
 
     def set_idle_paused(
@@ -372,9 +308,8 @@ class SessionManager:
         """按 internal_id 直接重置会话(T1 自动清用),不发任何用户可见提示。
 
         与 clear_session 同逻辑,但 key 渲染直接作用在传入的 internal_id 上,
-        不经组件反解重算——播种来的会话组件是反解出来的,若期间
-        hermes_session_share_group 配置发生过切换,重算会落到另一个
-        internal_id 上,导致原 id 的 generation 递增永远不持久化。
+        不经组件反解重算,直接作用在传入的 internal_id 上——播种来的会话组件是反解
+        出来的,重算可能落到另一个 internal_id,导致原 id 的 generation 递增不持久化。
         重置后活动基准刷新为现在,给新会话一个完整 T1 周期。"""
         self._cache.pop(internal_id, None)
         self._push_watermark.pop(internal_id, None)  # 转录清空,增量推送水位归零
@@ -384,35 +319,6 @@ class SessionManager:
         self._persist(internal_id)
         self._last_activity[internal_id] = time.time()
         logger.info(f"[SESSION] T1 空闲自动重置: {internal_id} (generation={gen})")
-
-
-def validate_memory_key_templates() -> list[str]:
-    """启动期试渲染三个记忆 key 模板,返回问题描述列表(空 = 全部可用)。
-
-    没有这一步,模板写错只在真的有人说话时才暴露,而且是每轮刷一条 error 日志;
-    有了它,启动日志里一次性说清哪个模板不可用。只描述不修正,也不抛。
-    """
-    samples = (
-        ("HERMES_GROUP_SESSION_KEY_FORMAT", plugin_config.hermes_group_session_key_format, {"group_id": "sample"}),
-        (
-            "HERMES_GROUP_PER_USER_SESSION_KEY_FORMAT",
-            plugin_config.hermes_group_per_user_session_key_format,
-            {"group_id": "sample", "user_id": "sample"},
-        ),
-        ("HERMES_PRIVATE_SESSION_KEY_FORMAT", plugin_config.hermes_private_session_key_format, {"user_id": "sample"}),
-    )
-    problems: list[str] = []
-    for name, template, fields in samples:
-        try:
-            rendered = template.format(adapter="sample", **fields)
-        except (KeyError, IndexError, ValueError) as exc:
-            problems.append(f"{name} 渲染失败({type(exc).__name__}: {exc}),该场景不会发 X-Hermes-Session-Key")
-            continue
-        if len(rendered) > _MAX_MEMORY_KEY_LEN:
-            problems.append(
-                f"{name} 渲染后 {len(rendered)} 字符,超过上游上限 {_MAX_MEMORY_KEY_LEN},该场景不会发 X-Hermes-Session-Key"
-            )
-    return problems
 
 
 # 全局会话管理器

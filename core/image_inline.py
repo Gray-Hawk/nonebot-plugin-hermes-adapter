@@ -29,6 +29,10 @@ from nonebot import logger
 
 from .media_config import MediaConfig, load_media_config
 
+# 抓取超时是启动项：与 ImageFetcher 的尝试次数、缓存目录同一生命周期，
+# 手动重载 media_config 不改变已经定型的 HTTP 行为。
+_FETCH_TIMEOUT_S = load_media_config().image_fetch_timeout_s
+
 # --- 抽帧采样(通用动图通道,原表情专用 通用化) ---
 # 背景:GIF 直输会被静态化且失真(帧叠化/取尾帧),动图感知只有抽帧喂多张
 # 静态图一条路;多帧理解已实测通过(按序描述+动作弧正确)。
@@ -264,9 +268,7 @@ async def _fetch_all(urls: Sequence[str]) -> dict[str, bytes]:
                 logger.warning(f"[image_inline] data URL 解码失败,跳过(前 40 字符): {u[:40]}")
     to_fetch = [u for u in ordered if u.startswith(("http://", "https://"))]
     if to_fetch:
-        from ..config import plugin_config
-
-        timeout = plugin_config.hermes_image_fetch_timeout_s
+        timeout = _FETCH_TIMEOUT_S
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             raws = await asyncio.gather(*(_fetch(client, u) for u in to_fetch))
         for u, raw in zip(to_fetch, raws):

@@ -15,7 +15,7 @@ import nonebot_plugin_alconna as alconna
 from nonebot import logger, on_notice
 from nonebot.adapters import Bot, Event
 
-from ..config import plugin_config
+from ..core.chat_config import load_chat_config
 from ..utils import check_isolation, get_adapter_name
 from .message import route_synthesized_input
 
@@ -31,12 +31,12 @@ async def dispatch(bot: Bot, event: Event):
     """OneBot v11 notice 事件分发入口。
 
     早期 return:
-      - 两个开关都关
       - adapter != OneBot V11
       - ImportError (onebot adapter 未装)
+
+    戳一戳固定开启(语义等同 @ 的隐式激活),入群迎新仍受 greet_on_join 门控。
     """
-    if not (plugin_config.hermes_poke_trigger_enabled or plugin_config.hermes_greet_on_join):
-        return
+    greet_on_join = load_chat_config().greet_on_join
 
     adapter_name = get_adapter_name(bot)
     if adapter_name != "onebotv11":
@@ -51,9 +51,9 @@ async def dispatch(bot: Bot, event: Event):
         logger.debug("[HERMES notice] OneBot v11 adapter not installed; skip")
         return
 
-    if isinstance(event, PokeNotifyEvent) and plugin_config.hermes_poke_trigger_enabled:
+    if isinstance(event, PokeNotifyEvent):
         await _handle_poke(bot, event)
-    elif isinstance(event, GroupIncreaseNoticeEvent) and plugin_config.hermes_greet_on_join:
+    elif isinstance(event, GroupIncreaseNoticeEvent) and greet_on_join:
         await _handle_member_join(bot, event)
 
 

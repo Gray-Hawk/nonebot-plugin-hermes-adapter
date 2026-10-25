@@ -16,6 +16,7 @@ from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..adapter_norm import normalize_adapter_name
 from ..config import plugin_config, steer_reply_push_active
 from ..core import rate_bucket, user_lists
+from ..core.chat_config import load_chat_config
 from ..core.hermes_client import (
     hermes_client,
 )
@@ -109,8 +110,8 @@ def _fire_followup_turn(
     """追加一发合成后续轮(create_task 排队,经 inflight 接力在本 turn 后跑,不并发)。
 
     全族唯一出口(Q1 合族):离场确认轮 / 类①继续执行轮 / 类②重交轮都走这里,
-    只换 tag 与 prompt。合成身份沿用现有约定:群聊 "system-check"(命中 _SYNTHETIC_USER_IDS
-    豁免),私聊真实 user_id + 昵称「系统核对」(不在豁免内,靠硬计数断链)。
+    只换 tag 与 prompt。合成身份由 is_synthetic=True 单一事实标记;昵称沿用现有
+    约定(群聊 "system-check"、私聊真实 user_id + 昵称「系统核对」)只承担显示。
     """
     logger.info(f"[HERMES feedback] 追加后续轮({tag}) {key}")
     if is_private:
@@ -119,7 +120,7 @@ def _fire_followup_turn(
                 bot=bot, target=target, adapter_name=adapter_name,
                 user_id=user_id, nickname=_SYNTHETIC_NICKNAME, group_id=None,
                 text=prompt, image_urls=[], is_private=True,
-                now_ms=_now_ms(),
+                now_ms=_now_ms(), is_synthetic=True,
             )
         )
     else:
@@ -129,6 +130,7 @@ def _fire_followup_turn(
                 user_id="system-check", nickname=_SYNTHETIC_NICKNAME, group_id=group_id,
                 text=prompt, image_urls=[], is_direct=False,
                 addressed_to_bot=False, now_ms=_now_ms(), ephemeral=True,
+                is_synthetic=True,
             )
         )
 
@@ -183,10 +185,13 @@ async def _handle_passive_path(
     now_ms: int,
     nickname: str | None = None,
     event_msg_id: str | int | None = None,
+    is_synthetic: bool = False,
 ):
     """Passive 外壳:inflight 占位 → _run_passive_turn → 合并重燃。
 
     与 reactive 同形,key 含 private/group 前缀区分。
+    is_synthetic=合成轮身份事实（对账补投/任务投递/主动唤起等系统补投），
+    落到 BufferedMessage 供合并函数做身份分界。
     """
     assert _mcp.inflight is not None
 
@@ -203,6 +208,7 @@ async def _handle_passive_path(
         sticker_urls=list(sticker_urls or []),
         reply_to_ts=None,
         is_bot=False,
+        is_synthetic=is_synthetic,
     )
     # B 方案:凭本事件 message_id 领 perception 挂号的 db 真 id;合成消息领不到=None
     current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id)
@@ -283,12 +289,12 @@ def _in_post_reply_cooldown(adapter_name: str, group_id: str, now_ms: int) -> bo
     冷却仅对**非显式触发**生效——显式 @bot 必须立刻进 chat;调用方自行判断
     `is_direct` 后再询问本 helper。
 
-    冷却窗禁用 (`hermes_reactive_post_reply_cooldown_sec == 0`) 或 session 不存在
+    冷却窗禁用 (`reactive_post_reply_cooldown_sec == 0`) 或 session 不存在
     /已过期、未记录过 last_bot_reply_at → 返回 False。
     """
     assert _mcp.active_sessions is not None
 
-    cooldown_sec = plugin_config.hermes_reactive_post_reply_cooldown_sec
+    cooldown_sec = load_chat_config().reactive_post_reply_cooldown_sec
     if cooldown_sec <= 0:
         return False
     sess = _mcp.active_sessions.get_if_trigger_alive(adapter_name, group_id, now_ms)
@@ -312,7 +318,7 @@ def _steer_eligible_ids(
         ids.update(
             _mcp.active_sessions.pinned_participant_ids(
                 adapter_name, group_id, now_ms,
-                max_age_ms=plugin_config.hermes_anchor_max_age_sec * 1000,
+                max_age_ms=load_chat_config().anchor_max_age_sec * 1000,
             )
         )
     return ids
@@ -342,7 +348,7 @@ async def _steer_text_into_live_run(
         # steer 被上游接受(HTTP 200 且 accepted=True)即记台账 pending, 供 run 终态
         # 对账:拉转录按 m:id 精确搜, 搜不到即被静默丢弃, 批 2 补投成新 run。仅开关开
         # 且 m_id 非 None 才入账;记台账失败只 WARN, 不影响 steer 主流程。
-        if m_id is not None and plugin_config.hermes_steer_reconcile_enabled:
+        if m_id is not None:
             try:
                 tracker.record_steer(
                     run_id=live.run_id, m_id=str(m_id), scope_key=live.scope_key,
@@ -486,7 +492,7 @@ async def _try_steer_followup(
     # 跟帖 steer 被上游接受即记台账 pending(供批 2 对账按 m:id 搜转录)。本路径不经过
     # _steer_text_into_live_run(直连 hermes_client.steer_run), 故在此内联记账, 条件与
     # 直注路径一致:仅开关开且 m_id 非 None;记台账失败只 WARN, 不影响 steer 主流程。
-    if _m_id is not None and plugin_config.hermes_steer_reconcile_enabled:
+    if _m_id is not None:
         try:
             tracker.record_steer(
                 run_id=live.run_id, m_id=str(_m_id), scope_key=live.scope_key,
@@ -530,6 +536,7 @@ async def _handle_reactive_path(
     recent_override: list[BufferedMessage] | None = None,
     replied_msg_id=None,
     context_limit: int | None = None,
+    is_synthetic: bool = False,
 ):
     """Reactive 外壳:inflight 占位 → 调 _run_reactive_turn → finally 合并重燃。
 
@@ -559,6 +566,7 @@ async def _handle_reactive_path(
         sticker_urls=list(sticker_urls or []),
         reply_to_ts=None,
         is_bot=False,
+        is_synthetic=is_synthetic,
     )
     # B 方案：凭本事件 message_id 领 perception 挂号的 db 真 id；合成消息领不到=None
     current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id)
@@ -610,7 +618,7 @@ async def _handle_reactive_path(
     if in_active and not force_skip_cooldown:
         # debug 日志保留入口处,便于运维排查;helper 自己不打日志(refire 路径也会用)
         sess = _mcp.active_sessions.get_if_trigger_alive(adapter_name, group_id, now_ms)
-        cooldown_sec = plugin_config.hermes_reactive_post_reply_cooldown_sec
+        cooldown_sec = load_chat_config().reactive_post_reply_cooldown_sec
         logger.debug(
             f"[HERMES reactive] cooldown_check group={group_id} user={user_id} "
             f"sess_exists={sess is not None} "
@@ -653,7 +661,7 @@ async def _handle_reactive_path(
             inflight_result == "queued"
             and not is_commission
             and not ephemeral
-            and plugin_config.hermes_runs_channel_enabled
+            and plugin_config.hermes_api_interface == "runs"
             and await _try_steer_followup(key, adapter_name, user_id, group_id)
         ):
             return
@@ -665,7 +673,7 @@ async def _handle_reactive_path(
             f"[HERMES steer探针] queued behind in-flight turn "
             f"(group={group_id} user={user_id} direct={is_direct} "
             f"commission={is_commission} ephemeral={ephemeral} "
-            f"runs_channel={plugin_config.hermes_runs_channel_enabled} result={inflight_result})"
+            f"runs_channel={plugin_config.hermes_api_interface == 'runs'} result={inflight_result})"
         )
         return
 
@@ -910,19 +918,17 @@ async def route_synthesized_input(
 ):
     """合成消息的统一入口,供 notice handler 复用既有 message routing。
 
-    派发规则:
+    派发规则(active_session 固定开启):
       - private (target.private=True) → 仅 allow_passive=True 才走 passive,否则跳过
-      - group + active_session 开 → 触发 active session 并走 reactive
-        (synth 始终算 is_direct=True)
+      - group → 触发 active session 并走 reactive(synth 始终算 is_direct=True)
 
     `addressed_to_bot` 由合成方按事件语义给:平台确认事件指向 bot 本体(如戳 bot)
     才是 True;群级事件(如入群)虽然 explicit 触发,但不是「冲 bot 说的」,
     断言了就是对模型撒谎,还会让「被点名却静默」的 WARNING 变成噪音。
-      - group + active_session 关 → 仅 allow_passive=True 才走 passive
 
-    `allow_passive` 控制无 active session 时的兜底:
-      - 戳一戳: True (任何 mode 都开口)
-      - 入群: False (仅 active 开时通过 reactive 让 Hermes 自决,否则不打扰)
+    `allow_passive` 只控制私聊兜底:
+      - 戳一戳: True(私聊也开口)
+      - 入群: False(群侧经 reactive 由 Hermes 自决)
     """
     if target.private:
         if not allow_passive:
@@ -938,28 +944,11 @@ async def route_synthesized_input(
             image_urls=[],
             is_private=True,
             now_ms=now_ms,
+            is_synthetic=True,
         )
         return
 
-    # 群聊
-    if not plugin_config.hermes_active_session_enabled:
-        if not allow_passive:
-            return
-        await _handle_passive_path(
-            bot=bot,
-            target=target,
-            adapter_name=adapter_name,
-            user_id=user_id,
-            nickname=nickname,
-            group_id=group_id,
-            text=text,
-            image_urls=[],
-            is_private=False,
-            now_ms=now_ms,
-        )
-        return
-
-    # 群 + active_session 开 → 显式触发 + reactive
+    # 群聊(active_session 固定开启)→ 显式触发 + reactive
     # (与 handle_message 显式触发同语义: 先 trigger,再 _handle_reactive_path)
     assert _mcp.active_sessions is not None
     _mcp.active_sessions.trigger(adapter_name, group_id or "", user_id, now_ms=now_ms)
@@ -976,6 +965,7 @@ async def route_synthesized_input(
         is_direct=True,
         addressed_to_bot=addressed_to_bot,
         now_ms=now_ms,
+        is_synthetic=True,
     )
 
 
@@ -1067,6 +1057,7 @@ async def wake_private_turn(
             image_urls=[],
             is_private=True,
             now_ms=_now_ms(),
+            is_synthetic=True,
         )
     )
     logger.info(f"[HERMES wake] 私聊唤起已点火: {adapter_name}/{user_id} source={source}")
@@ -1101,6 +1092,7 @@ async def wake_group_turn(
             addressed_to_bot=False,
             now_ms=_now_ms(),
             ephemeral=True,
+            is_synthetic=True,
         )
     )
     logger.info(f"[HERMES wake] 群聊唤起已点火: {adapter_name}/{group_id} source={source}")

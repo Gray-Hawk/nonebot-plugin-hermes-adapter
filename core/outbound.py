@@ -17,7 +17,9 @@ import nonebot_plugin_alconna as alconna
 from nonebot import logger
 from nonebot.adapters import Bot
 
-from ..config import plugin_config
+from .chat_config import load_chat_config
+from .media_config import load_media_config
+from .misc_config import load_misc_config
 
 # api_server 把本地生成的图片内联成 data:image/…;base64 URL——没有可抓取的
 # http 地址,必须解码成字节直接附加。仅支持 base64 形态;RFC 2397 的
@@ -201,7 +203,7 @@ async def send_local_files(
         return 0
     from .media_whitelist import validate_local_file
 
-    max_bytes = plugin_config.hermes_local_file_max_mb * 1024 * 1024
+    max_bytes = load_media_config().local_file_max_mb * 1024 * 1024
     sent = 0
     for raw in file_paths:
         path = validate_local_file(raw, max_bytes=max_bytes)
@@ -240,7 +242,7 @@ async def send_text_with_media(
       False 不发,防 Task 12 push 路径在 Hermes 回空时构造空 UniMessage 发送出去。
     """
     original_len = len(text)
-    max_len = plugin_config.hermes_max_length
+    max_len = load_misc_config().max_length
 
     # B-1.2: 群聊 + OneBot v11 + 超长 → 合并转发 (而非截断)
     # 私聊永远走截断 (send_private_forward_msg 实现端覆盖差);
@@ -249,7 +251,7 @@ async def send_text_with_media(
         text
         and not target.private
         and adapter_name == "onebotv11"
-        and plugin_config.hermes_long_reply_forward
+        and load_chat_config().long_reply_forward
         and original_len > max_len
     ):
         try:

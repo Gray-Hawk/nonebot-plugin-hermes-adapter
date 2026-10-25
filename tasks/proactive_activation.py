@@ -24,7 +24,7 @@ require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
-from ..config import plugin_config
+from ..core.chat_config import load_chat_config
 from ..core.bg_tasks import spawn_bg_task
 from ..core.inflight import make_inflight_key
 
@@ -92,9 +92,11 @@ async def _drain_patrol_queue(run_one) -> None:
 
 
 def register_proactive_activation() -> None:
-    interval = plugin_config.hermes_proactive_interval_sec
-    if interval <= 0:
-        return
+    """T2±T3 定时隐性激活:固定 30s tick,每拍现读 chat_config 巡查键。
+
+    手动重载即时生效,无需重建调度:proactive_interval_sec=0 时本拍跳过(关闭)。
+    per-group 的 _next_check_at 状态在开关翻转后自然续用,不重建。
+    """
 
     @scheduler.scheduled_job("interval", seconds=_TICK_SEC, id="hermes_proactive_activation")
     async def _tick() -> None:
@@ -105,24 +107,27 @@ def register_proactive_activation() -> None:
             or _mcp.inflight is None
         ):
             return
+        cfg = load_chat_config()
+        if cfg.proactive_interval_sec <= 0:
+            return
         # 延迟导入:handlers 依赖 mcp 运行时单例,模块级互import 会成环
         from ..handlers.message_relay import _handle_reactive_path
 
         now = time.time()
         now_ms = int(now * 1000)
-        cfg = plugin_config
+        interval = cfg.proactive_interval_sec
 
         for adapter, scope, scope_id in _mcp.bot_registry.known():
             if scope != "group":
                 continue
-            if cfg.hermes_proactive_groups and scope_id not in cfg.hermes_proactive_groups:
+            if cfg.proactive_groups and scope_id not in cfg.proactive_groups:
                 continue
             gkey = (adapter, scope_id)
             if now < _next_check_at.get(gkey, 0):
                 continue
 
             # 无论本次是否触发,都先排下一次:T2 + random(0, T3)
-            jitter = random.uniform(0, cfg.hermes_proactive_jitter_sec) if cfg.hermes_proactive_jitter_sec > 0 else 0.0
+            jitter = random.uniform(0, cfg.proactive_jitter_sec) if cfg.proactive_jitter_sec > 0 else 0.0
             _next_check_at[gkey] = now + interval + jitter
 
             # 触发条件三查:无活跃窗口、无 in-flight turn、窗口内有新消息
@@ -132,14 +137,14 @@ def register_proactive_activation() -> None:
                 continue
 
             since_ms = max(
-                now_ms - cfg.hermes_proactive_window_sec * 1000,
+                now_ms - cfg.proactive_window_sec * 1000,
                 int(_last_check_at.get(gkey, 0) * 1000),
             )
             _last_check_at[gkey] = now
             # get_recent 返回新→旧;过滤保留顺序,条数上限 N2 天然满足(超了取最新)
             msgs = [
                 m
-                for m in _mcp.message_buffer.get_recent(adapter, scope_id, cfg.hermes_proactive_max_messages)
+                for m in _mcp.message_buffer.get_recent(adapter, scope_id, cfg.history_message_limit)
                 if m.ts >= since_ms and not m.is_bot
             ]
             if not msgs:
@@ -158,7 +163,7 @@ def register_proactive_activation() -> None:
 
             logger.info(
                 f"[HERMES proactive] due,进串行队列: {adapter}/{scope_id} "
-                f"msgs={len(msgs)} window_sec={cfg.hermes_proactive_window_sec}"
+                f"msgs={len(msgs)} window_sec={cfg.proactive_window_sec}"
             )
             # 阶段2c:并发点火 → 全局串行队列。kwargs 与旧 create_task 调用一致,
             # 由 worker 逐个 await(全局同一时刻最多 1 发巡查 turn 占槽)。
@@ -189,8 +194,12 @@ def register_proactive_activation() -> None:
             _patrol_running = True
             spawn_bg_task(_drain_patrol_queue(_handle_reactive_path))
 
-    logger.info(
-        f"[HERMES] T2 定时隐性激活已启用: 间隔 {interval}s"
-        f" + 0~{plugin_config.hermes_proactive_jitter_sec}s 随机,"
-        f" 窗口 {plugin_config.hermes_proactive_window_sec}s, 上限 {plugin_config.hermes_proactive_max_messages} 条"
-    )
+    initial = load_chat_config()
+    if initial.proactive_interval_sec > 0:
+        logger.info(
+            f"[HERMES] T2 定时隐性激活已启用: 间隔 {initial.proactive_interval_sec}s"
+            f" + 0~{initial.proactive_jitter_sec}s 随机,"
+            f" 窗口 {initial.proactive_window_sec}s, 上限 {initial.history_message_limit} 条"
+        )
+    else:
+        logger.info("[HERMES] T2 定时隐性激活 tick 已注册(当前关闭:0=跳过)")

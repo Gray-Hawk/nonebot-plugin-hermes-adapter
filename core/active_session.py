@@ -80,7 +80,7 @@ class ActiveSession:
     0 = 本窗口期无实质激活(不可能——trigger 建窗时即赋值,防御用)。"""
 
     # 本部署补丁: 委托锚双槽。管理员槽
-    # (commissioner ∈ hermes_admin_users)只被管理员自己的新委托顶;客人槽全客人
+    # (commissioner ∈ user_lists.admin_users)只被管理员自己的新委托顶;客人槽全客人
     # 共享,顶锚需满足三条件之一(旧锚已应答/超龄/已被 release,见 pin_anchor)。
     # 窗口死(TTL/T5/should_exit_active)= session 实例销毁,锚随窗死;
     # 活窗续期复用同一实例,两槽天然保留。
@@ -119,9 +119,8 @@ class ActiveSessionManager:
     is_alive_for_trigger / get_if_trigger_alive。
     """
 
-    def __init__(self, default_ttl_sec: int = 300, t5_sec: int = 0) -> None:
+    def __init__(self, default_ttl_sec: int = 300) -> None:
         self._ttl_ms = default_ttl_sec * 1000
-        self._t5_ms = t5_sec * 1000
         self._sessions: dict[tuple[str, str], ActiveSession] = {}
         # 本部署补丁: key 级 turn 租约计数。
         # >0 时该 key 下的窗口不判过期、不被 sweep;归零即删条目,不会漏涨。
@@ -166,11 +165,17 @@ class ActiveSessionManager:
         判断放读路径(is_alive_for_trigger / get_if_trigger_alive)而非 sweep cron:窗口被隐式续期的
         前提是消息在流动,每条隐式激活都必经这两个读 API,判断点天然在此;没消息时
         窗口按 TTL 自然过期,T5 无需介入。超 T5 后不做物理删除,expires_at 不再被
-        touch 推动,窗口随 TTL 自然死、由 sweep 清理。"""
+        touch 推动,窗口随 TTL 自然死、由 sweep 清理。
+
+        T5(active_session_timeout_sec)现读 chat_config 缓存:手动重载即时生效,
+        区别于 default_ttl_sec 的构造期捕获(重启生效)。延迟导入避免与配置加载链成环。"""
+        from .chat_config import load_chat_config
+
+        t5_ms = load_chat_config().active_session_timeout_sec * 1000
         return (
-            self._t5_ms > 0
+            t5_ms > 0
             and s.last_strong_activation_at > 0
-            and now_ms - s.last_strong_activation_at > self._t5_ms
+            and now_ms - s.last_strong_activation_at > t5_ms
         )
 
     def trigger(

@@ -21,7 +21,7 @@ from pathlib import Path
 
 from nonebot import logger
 
-from ..config import plugin_config
+from .media_config import load_media_config
 from .media_patterns import _MD_IMAGE_PATTERN, _MEDIA_TAG_PATTERN
 
 # 图片内联的尺寸上限, 与上游 _MEDIA_DATA_URL_MAX_BYTES 对齐(5MB)。
@@ -58,7 +58,7 @@ def _default_roots() -> list[Path]:
 def allowed_roots() -> list[Path]:
     """默认白名单根 + hermes_media_allow_dirs 配置的追加项(逐次 resolve)。"""
     roots = list(_default_roots())
-    extra = plugin_config.hermes_media_allow_dirs or ""
+    extra = load_media_config().media_allow_dirs or ""
     for chunk in extra.split(os.pathsep):
         chunk = chunk.strip()
         if not chunk:

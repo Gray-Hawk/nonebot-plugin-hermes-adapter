@@ -14,6 +14,7 @@ from nonebot.adapters import Event
 
 from ..config import plugin_config
 from ..core import user_lists
+from ..core.chat_config import load_chat_config
 
 
 async def _ignore_rule(event: Event) -> bool:
@@ -23,7 +24,7 @@ async def _ignore_rule(event: Event) -> bool:
         return False
     if not msg_text:
         return True
-    for prefix in plugin_config.hermes_ignore_prefix:
+    for prefix in load_chat_config().ignore_prefix:
         if msg_text.startswith(prefix):
             return False
     return True
@@ -91,7 +92,7 @@ def _is_blacklisted(group_id: str | None, user_id: str) -> bool:
 
     仅群聊生效(名单按群分组);私聊不受名单影响——私聊是显式对话,
     「不主动对话」语义不适用。名单数据源:core/user_lists.py 的
-    user_lists.yaml(现读现用);旧 .env 键 hermes_blacklist 已废弃。
+    user_lists.yaml(启动加载 + 手动重载)。
     """
     return user_lists.is_blacklisted(group_id, user_id)
 
