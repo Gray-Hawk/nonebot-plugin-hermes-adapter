@@ -20,6 +20,7 @@ import json5  # type: ignore[import-untyped]
 from nonebot import logger
 
 from ..config import plugin_config
+from ..backends.astrbot import client as astrbot_client
 from .decision_contract import render_en_field_lines
 from .media_patterns import _MD_IMAGE_PATTERN, _MEDIA_TAG_PATTERN
 from .media_whitelist import inline_local_media_images
@@ -933,6 +934,12 @@ class ChatResult:
     场景下 parse_failed 也设 True 以阻止 caller 误把 raw_text 当模型有效输出)。
     """
 
+    is_local_refusal: bool = False
+    """请求在调用上游前被本地能力边界拒绝。
+
+    提示仍可对用户可见，但本轮内容未进入模型：不得推进增量水位或写模型回复冷却。
+    """
+
     is_forbidden_error: bool = False
     """本部署补丁: 403 鉴权类错误硬标记。
 
@@ -1145,6 +1152,9 @@ class HermesClient:
 
         headers = self.get_headers(session_key, api_key=tgt.api_key)
         runs_pending_steer = ""
+        # AstrBot 分支下载回来的媒体（data URL）。只在分支内 append、不在闭包里
+        # 重新绑定，避免把外层同名局部变成闭包变量。
+        astrbot_media_urls: list[str] = []
 
         # 幂等键每轮只造一次,429 自动重试与提交段网络重试都
         # 复用同一键——网关 lost-acceptance 重放只认同键同指纹,每试一次换键等于
@@ -1157,6 +1167,74 @@ class HermesClient:
             非 2xx 一律抛 StreamHttpError(含非流式分支——原本直接 return
             _transport_failure),让 429 自动重试只写一个点(阶段2d)。
             """
+            if plugin_config.hermes_api_interface == "astrbot":
+                try:
+                    normalized = astrbot_client.normalize_user_content(content)
+                except astrbot_client.AstrBotLocalContentError as exc:
+                    # 上游从未收到本轮内容：给用户可见说明，但不落传输失败面。
+                    notice = f"AstrBot 后端不支持这种内容：{exc}"
+                    refusal = ChatResult(raw_text=notice, is_local_refusal=True)
+                    if expect_structured:
+                        refusal.structured = {"should_reply": True, "reply_text": notice}
+                    return notice, None, refusal, ""
+                try:
+                    # 先把全部图片上传完再发 chat：任一失败整轮失败，不留半轮。
+                    attachment_ids: list[str] = []
+                    for index, image in enumerate(normalized.images, 1):
+                        attachment_ids.append(
+                            await astrbot_client.upload_attachment(
+                                _get_http_client(),
+                                base_url=tgt.base_url,
+                                api_key=tgt.api_key,
+                                data=image.data,
+                                filename=f"image-{index}.{image.mime.partition('/')[2] or 'bin'}",
+                                content_type=image.mime,
+                                timeout=tgt.timeout,
+                            )
+                        )
+                    completion = await astrbot_client.complete_chat_result(
+                        _get_http_client(),
+                        base_url=tgt.base_url,
+                        api_key=tgt.api_key,
+                        session_key=session_key,
+                        system_prompt=system_prompt,
+                        user_text=normalized.text,
+                        timeout=tgt.timeout,
+                        attachment_ids=attachment_ids,
+                    )
+                except astrbot_client.AstrBotHttpError as exc:
+                    # 上传/chat 阶段的 429 沿用外层「满额自动重试一次」：此时上游还没
+                    # 产出本轮回复，整轮重放不会重复任何已完成动作。
+                    raise StreamHttpError(exc.status, exc.body, retry_after=exc.retry_after) from exc
+                # 下载阶段单独处理：chat 已经成功，整轮重放会把一次已完成的对话再跑一遍。
+                # 本轮媒体先攒在局部列表里，全部附件都成功才一次性并入外层；任何失败
+                # （含 429）都不得把这一轮的部分媒体留到后续结果里。
+                attempt_media_urls: list[str] = []
+                for attachment in completion.attachments:
+                    if attachment.kind != "image":
+                        # 上游只给 id 与类型；非图片类型本后端无法转成 QQ 可发的
+                        # 形态，按协议失败上报，不做静默丢弃也不当空轮成功。
+                        raise astrbot_client.AstrBotProtocolError(
+                            f"本轮媒体附件类型不在图片范围内: {attachment.kind}"
+                        )
+                    try:
+                        blob, mime = await astrbot_client.download_attachment(
+                            _get_http_client(),
+                            base_url=tgt.base_url,
+                            api_key=tgt.api_key,
+                            attachment_id=attachment.attachment_id,
+                            timeout=tgt.timeout,
+                        )
+                    except astrbot_client.AstrBotHttpError as exc:
+                        if exc.status == 429:
+                            # 下载阶段的 429 不再进入整轮自动重试，直接按既有传输失败面
+                            # 返回并保留 is_rate_limited（下游据此贴表情）。
+                            return "", None, _transport_failure(exc.status, exc.body), ""
+                        # 其余下载错误面不变：仍走 AstrBotHttpError→StreamHttpError。
+                        raise StreamHttpError(exc.status, exc.body, retry_after=exc.retry_after) from exc
+                    attempt_media_urls.append(astrbot_client.build_data_url(blob, mime))
+                astrbot_media_urls.extend(attempt_media_urls)
+                return inline_local_media_images(completion.text), None, None, ""
             if plugin_config.hermes_api_interface == "runs":
                 # 本部署补丁(runs 迁移阶段1): 开关开启时整路
                 # 改走 /v1/runs;下游持久化/溢出/provider 文案检测与 JSON 解析完全复用。
@@ -1256,10 +1334,18 @@ class HermesClient:
             result.effective_session_key = rotated
             if runs_pending_steer:
                 result.pending_steer = runs_pending_steer
+            # AstrBot 的模型出图统一从这里补进媒体结果：结构化和 passive 两条
+            # 出口共用；同一张图被上游重复登记、或与正文里抽到的媒体撞车时，
+            # 按 URL 去重（同字节必然同 URL）。
+            for media_url in astrbot_media_urls:
+                if media_url not in result.media_urls:
+                    result.media_urls.append(media_url)
             return result
 
+        # Hermes 专属文案识别不套用到其他后端的正常模型输出。
+        hermes_error_text_enabled = plugin_config.hermes_api_interface != "astrbot"
         # 检查是否为上游持久化失败错误(Hermes 返回 200 但 content 为 Session DB 错误提示)
-        if is_persistence_error_text(raw_text):
+        if hermes_error_text_enabled and is_persistence_error_text(raw_text):
             cause = classify_persistence_error(raw_text)
             preview = preview_raw(raw_text, head=200, tail=0)
             logger.warning(
@@ -1276,7 +1362,7 @@ class HermesClient:
                 )
             )
 
-        if is_context_overflow_text(raw_text):
+        if hermes_error_text_enabled and is_context_overflow_text(raw_text):
             preview = preview_raw(raw_text, head=200, tail=0)
             logger.warning(
                 f"[HERMES] 上游上下文溢出且自动压缩已关,本轮被放弃 (raw_len={len(raw_text)} preview={preview!r})"
@@ -1290,7 +1376,7 @@ class HermesClient:
                 )
             )
 
-        if is_provider_error_text(raw_text):
+        if hermes_error_text_enabled and is_provider_error_text(raw_text):
             preview = preview_raw(raw_text, head=200, tail=0)
             logger.warning(
                 f"[HERMES] 上游以 200 返回了 provider 报错,按传输失败处理 (raw_len={len(raw_text)} preview={preview!r})"
@@ -1645,13 +1731,16 @@ class HermesClient:
     async def health_check(self, target: HermesTarget | None = None) -> bool:
         """探活一个接入点。target=None 探默认接入点。
 
-        探 /v1/models 而不是 /health:前者要鉴权,所以 key 配错会如实报 401 ——
-        这正是"命名 profile 的 key 填错 / 忘开 multiplex"能被看见的原因。
+        不同后端各自使用需要鉴权的轻量端点，服务不可达与凭据错误都返回 False。
         """
         tgt = target or default_target()
         try:
-            headers = self.get_headers(api_key=tgt.api_key)
             client = _get_http_client()
+            if plugin_config.hermes_api_interface == "astrbot":
+                return await astrbot_client.check_health(
+                    client, base_url=tgt.base_url, api_key=tgt.api_key, timeout=5,
+                )
+            headers = self.get_headers(api_key=tgt.api_key)
             resp = await client.get(f"{tgt.base_url}/v1/models", headers=headers, timeout=5)
             return resp.status_code == 200
         except Exception:

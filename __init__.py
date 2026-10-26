@@ -101,7 +101,8 @@ async def _hermes_m1_startup():
     register_storage_vacuum()
     register_session_idle_reset()
     register_proactive_activation()
-    register_delivery_poll()
+    if plugin_config.hermes_api_interface != "astrbot":
+        register_delivery_poll()
     from .core.misc_config import load_misc_config
 
     _misc_cfg = load_misc_config()
