@@ -205,8 +205,8 @@ ENV_SPEC: list[tuple[str, Any, str, list[str]]] = [
         "completions",
         "str",
         [
-            "API 接口选择：completions / runs。取代旧 runs_channel_enabled 布尔键，",
-            "默认沿用现行缺省 completions；旧 True 映射为 runs。",
+            "API 接口选择：completions / runs / astrbot。取代旧 runs_channel_enabled 布尔键，",
+            "默认沿用现行缺省 completions；旧 True 映射为 runs；AstrBot 仅开放基础对话。",
         ],
     ),
     (

@@ -29,10 +29,10 @@ class Config(BaseModel):
     hermes_api_timeout: int = Field(default=300, alias="agent_api_timeout")
     """AGENT_API_TIMEOUT：单次上游请求超时秒数。"""
 
-    hermes_api_interface: Literal["completions", "runs"] = Field(
+    hermes_api_interface: Literal["completions", "runs", "astrbot"] = Field(
         default="completions", alias="agent_api_interface"
     )
-    """AGENT_API_INTERFACE：turn 使用 completions 或 runs；runs 同时启用 steer 推送与对账能力。"""
+    """AGENT_API_INTERFACE：turn 使用 completions、runs 或 AstrBot；后两者控制能力按各自后端支持面启用。"""
 
     hermes_mcp_enabled: bool = Field(default=False, alias="agent_mcp_enabled")
     """AGENT_MCP_ENABLED：是否启动反向 MCP server。"""
@@ -47,6 +47,11 @@ class Config(BaseModel):
 
 
 plugin_config = get_plugin_config(Config)
+
+
+def hermes_control_plane_enabled() -> bool:
+    """是否开放依赖 Hermes 专属会话、runs 与 CLI 的控制面。"""
+    return plugin_config.hermes_api_interface != "astrbot"
 
 
 def steer_reply_push_active() -> bool:

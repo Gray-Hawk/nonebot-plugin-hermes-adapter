@@ -16,7 +16,7 @@ from nonebot.adapters import Bot, Event
 from nonebot.matcher import Matcher
 
 from .. import mcp as _mcp
-from ..config import plugin_config
+from ..config import hermes_control_plane_enabled, plugin_config
 from ..core.hermes_client import hermes_client
 from ..core.log_throttle import throttled_info
 from ..core.approvals import pending_count as approvals_pending_count
@@ -260,9 +260,10 @@ def build_help_text(
     if is_admin:
         # 管理员才看见运行时状态命令,普通用户视角下此命令"不存在"
         lines.append(f"{_cl('hermes-status')} - 查看插件运行时状态(管理员)")
-        lines.append(f"{_cl('run-status')} - 查看当前会话在跑的 run(管理员)")
-        lines.append(f"{_cl('run-stop')} - 终止当前会话在跑的 run(管理员)")
-        lines.append(f"{_cl('reasoning')} - 查看/切换全局推理档位(管理员)")
+        if hermes_control_plane_enabled():
+            lines.append(f"{_cl('run-status')} - 查看当前会话在跑的 run(管理员)")
+            lines.append(f"{_cl('run-stop')} - 终止当前会话在跑的 run(管理员)")
+            lines.append(f"{_cl('reasoning')} - 查看/切换全局推理档位(管理员)")
         lines.append(f"{_cl('reload-config')} - 手动重载 YAML 配置(管理员)")
 
     if header is not None:
@@ -412,6 +413,9 @@ def _is_admin(adapter_name: str, user_id: str) -> bool:
     return f"{adapter_name}:{user_id}" in load_user_lists().admin_users
 
 
+_HERMES_CONTROL_UNAVAILABLE = "当前 AstrBot 后端未提供此 Hermes 专用命令"
+
+
 def _scope_live_run(adapter_name: str, private: bool, user_id: str, group_id: str | None):
     """取当前会话登记的 live run(runs 通道开启时才有;tracker 为空=没在跑)。"""
     if _mcp.run_tracker is None:
@@ -430,6 +434,9 @@ async def handle_run_status(bot: Bot, event: Event, matcher: Matcher):
     if not _is_admin(adapter_name, user_id):
         logger.debug(f"[HERMES] /run-status silent skip for {adapter_name}:{user_id}")
         return  # 隐身策略(同 /hermes-status):不暴露命令存在性
+    if not hermes_control_plane_enabled():
+        await alconna.UniMessage(_HERMES_CONTROL_UNAVAILABLE).send(target=target, bot=bot)
+        return
     group_id = None if target.private else target.id
     live = _scope_live_run(adapter_name, target.private, user_id, group_id)
     if live is None:
@@ -469,6 +476,9 @@ async def handle_run_stop(bot: Bot, event: Event, matcher: Matcher):
     user_id = event.get_user_id() or ""
     if not _is_admin(adapter_name, user_id):
         logger.debug(f"[HERMES] /run-stop silent skip for {adapter_name}:{user_id}")
+        return
+    if not hermes_control_plane_enabled():
+        await alconna.UniMessage(_HERMES_CONTROL_UNAVAILABLE).send(target=target, bot=bot)
         return
     group_id = None if target.private else target.id
     live = _scope_live_run(adapter_name, target.private, user_id, group_id)
@@ -536,6 +546,9 @@ async def handle_reasoning(bot: Bot, event: Event, matcher: Matcher):
     if not _is_admin(adapter_name, user_id):
         logger.debug(f"[HERMES] /reasoning silent skip for {adapter_name}:{user_id}")
         return  # 隐身策略(同 /run-status):不暴露命令存在性
+    if not hermes_control_plane_enabled():
+        await alconna.UniMessage(_HERMES_CONTROL_UNAVAILABLE).send(target=target, bot=bot)
+        return
     # 手剥参数(同 /approve):get_plaintext 含命令本体,剥掉命令头与寻址前缀取余文
     raw = ""
     try:
@@ -608,6 +621,9 @@ async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna
     user_id = event.get_user_id() or ""
     if not _is_admin(adapter_name, user_id):
         logger.debug(f"[HERMES] /approve silent skip for {adapter_name}:{user_id}")
+        return
+    if not hermes_control_plane_enabled():
+        await alconna.UniMessage(_HERMES_CONTROL_UNAVAILABLE).send(target=target, bot=bot)
         return
     # nonebot on_command 的参数在 event 余文里;手剥比引 CommandArg 少一层适配器依赖
     raw = ""

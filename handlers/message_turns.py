@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from dataclasses import replace
 
 from nonebot import logger
 from nonebot.adapters import (
@@ -75,6 +76,19 @@ from .message_ingress import (
 )
 
 _SYNTHETIC_USER_IDS = frozenset({"system-check", "timer", "delivery", "wake"})
+
+
+def _inline_media_window(window_msgs: list[BufferedMessage]) -> list[BufferedMessage]:
+    """纯文本后端只让当前消息媒体进入载荷，历史媒体保留文本占位。
+
+    AstrBot 的历史图片不随本轮重复上传，只留文本占位；但不能把窗口清空——
+    `_collect_inline_image_urls` 还要用窗口内容判 semi 门（窗内是否 @bot）与逐行
+    有效模式，清空会让半内联门恒判未命中、连当前消息图一起丢掉。故保留同长浅拷贝、
+    仅清 image_urls，原消息对象一律不动（缓冲里的历史仍可召回）。
+    """
+    if plugin_config.hermes_api_interface == "astrbot":
+        return [replace(m, image_urls=[]) for m in window_msgs]
+    return window_msgs
 
 
 def _observe_silence(path: str, adapter_name: str, group_id: str | None, is_private: bool) -> None:
@@ -404,7 +418,7 @@ async def _run_passive_turn(
     else:
         inline_urls = _collect_inline_image_urls(
             media_cfg,
-            window_msgs=recent,
+            window_msgs=_inline_media_window(recent),
             current_image_urls=image_urls,
             current_user_id=user_id,
             addressed_to_bot=True,
@@ -795,7 +809,7 @@ async def _run_reactive_turn(
         media_cfg,
         # full 用增量窗口(recent=未推送过的新消息,其图从未进过视野);
         # semi 用全量窗口(recent_full,判定前后文需要看到已推送的紧邻消息)
-        window_msgs=recent if media_cfg.mode == "full" else recent_full,
+        window_msgs=_inline_media_window(recent if media_cfg.mode == "full" else recent_full),
         current_image_urls=image_urls,
         current_user_id=user_id,
         addressed_to_bot=addressed_to_bot,
@@ -951,6 +965,7 @@ async def _run_reactive_turn(
     if (
         new_watermark is not None
         and not result.is_transport_error
+        and not result.is_local_refusal
         and not result.is_forbidden_error
         and not result.is_outage_error
     ):
@@ -1131,7 +1146,14 @@ async def _run_reactive_turn(
         return result
 
     reply_text = str(decision.get("reply_text") or "").strip()
-    cleaned_reply_text, media_urls, file_paths = extract_response_media(reply_text)
+    cleaned_reply_text, extracted_media_urls, file_paths = extract_response_media(reply_text)
+    # 结构化出口与 passive 同口径:模型本轮附件由 client 层下载进 result.media_urls,
+    # reply_text 里通常只有一个占位或完全没有媒体引用——只从 reply_text 抽会把已经
+    # 下载好的附件整批丢掉(纯图回复更会被下面的空闸门直接吞掉)。合并顺序与去重
+    # 规则对齐 passive 路径。
+    media_urls = list(result.media_urls) + [
+        u for u in extracted_media_urls if u not in result.media_urls
+    ]
     if not cleaned_reply_text and not media_urls and not file_paths:
         return result
 
@@ -1264,7 +1286,8 @@ async def _run_reactive_turn(
         _mcp.active_sessions.touch(adapter_name, group_id, now_ms=reply_now_ms)
         # B.2: 记下「bot 刚回过」时间戳,供 _handle_reactive_path 入口 + _refire 入口的
         # cooldown 闸门判定。
-        marked = _mcp.active_sessions.mark_bot_replied(
+        # 本地能力拒绝没有模型回复，不写回复冷却；or 短路同时避免误报落空。
+        marked = result.is_local_refusal or _mcp.active_sessions.mark_bot_replied(
             adapter_name,
             group_id,
             now_ms=reply_now_ms,
