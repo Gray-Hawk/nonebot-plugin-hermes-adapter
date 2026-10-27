@@ -29,6 +29,13 @@ from .tools.get_message_images import (
     GetMessageImagesInput,
     get_message_images_impl,
 )
+from .tools.sticker_library import (
+    StickerSearchResult,
+    preview_sticker_impl,
+    search_sticker_library_impl,
+)
+from ..core.sticker_library import default_sticker_library, sticker_feature_enabled
+from ..core.media_config import load_media_config
 from .tools.get_message_files import (
     FileRef,
     GetMessageFilesInput,
@@ -396,6 +403,49 @@ def build_mcp_app(
             _summarize_image_result(blocks),
         )
         return blocks
+
+    async def search_sticker_library(
+        query: str = "",
+        limit: int = 20,
+    ) -> StickerSearchResult:
+        """Search the local sticker library and return a small CSV page.
+
+        query matches stable id, kind and note case-insensitively. Leave it empty
+        to browse. limit is clamped to 1..50. Preview a candidate with
+        preview_sticker before sending if its content is uncertain.
+        """
+        result = search_sticker_library_impl(
+            query, limit, library=default_sticker_library()
+        )
+        _log_tool_call(
+            "search_sticker_library",
+            f"query_len={len(query)} limit={limit}",
+            f"ok={result.ok} count={result.count} total={result.total}",
+        )
+        return result
+
+    async def preview_sticker(sticker_id: str) -> list:
+        """Preview one local library sticker by its stable id.
+
+        Uses the same ImageContent and animated-frame extraction path as message
+        image recall. The preview may be compressed; sending always uses the
+        original library file.
+        """
+        blocks = await preview_sticker_impl(
+            sticker_id,
+            library=default_sticker_library(),
+            cfg=load_media_config(),
+        )
+        _log_tool_call(
+            "preview_sticker",
+            f"id={sticker_id}",
+            f"blocks={len(blocks)}",
+        )
+        return blocks
+
+    if sticker_feature_enabled():
+        mcp.tool()(search_sticker_library)
+        mcp.tool()(preview_sticker)
 
     @mcp.tool()
     async def get_message_files(refs: list[FileRef]) -> GetMessageFilesResult:

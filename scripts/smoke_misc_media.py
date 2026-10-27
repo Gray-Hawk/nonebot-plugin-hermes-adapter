@@ -1,11 +1,11 @@
-"""misc 14 键 + media 7 键消费端迁移 smoke 测试。
+"""misc 15 键 + media 7 键消费端迁移 smoke 测试。
 
 跑法（shim 挂 work 副本，中立目录执行，显式临时 AGENT_PLUGIN_CUSTOM_DIR）：
     ln -s <work 副本路径> <shim>/nonebot_plugin_hermes_adapter
     cd <中立目录> && PYTHONPATH=<shim> python <work>/scripts/smoke_misc_media.py
 
 覆盖（misc/media 消费端的离线验收）：
-  1. MiscConfig 14 键 / MediaConfig 7 键形态与默认值；
+  1. MiscConfig 15 键 / MediaConfig 7 键形态与默认值；
   2. 历史双截断合并：入库(message_perception)与渲染(prompt_builder)共用
      history_text_max_chars，硬编码 800 与旧 hermes_perception_text_length 零读点；
   3. 显式空 fallback：transport_error_fallback_text 默认空串、显式空串仍静默、
@@ -84,13 +84,13 @@ def src_has(relpath: str, token: str) -> bool:
 # --------------------------------------------------------------------------- #
 
 misc_names = {f.name for f in _fields(MiscConfig)}
-check("MiscConfig 共 14 键", len(misc_names) == 14, f"实际 {len(misc_names)} 键")
+check("MiscConfig 共 15 键", len(misc_names) == 15, f"实际 {len(misc_names)} 键")
 for k in (
     "history_text_max_chars", "group_profile_enabled", "max_length",
     "transport_error_fallback_text", "interim_echo_enabled", "help_menu_file",
     "prompt_dump_enabled", "approval_expiry_sec", "prompt_timezone",
     "delivery_poll_interval_sec", "bot_name", "storage_db_path",
-    "storage_message_retention_days", "storage_message_max_rows",
+    "storage_message_retention_days", "storage_message_max_rows", "sticker_enabled",
 ):
     check(f"misc 键 {k} 存在", k in misc_names)
 
@@ -107,6 +107,7 @@ check("默认 delivery_poll_interval_sec=30", mc.delivery_poll_interval_sec == 3
 check("默认 storage_db_path 空串", mc.storage_db_path == "")
 check("默认 storage_message_retention_days=30", mc.storage_message_retention_days == 30)
 check("默认 storage_message_max_rows=100000", mc.storage_message_max_rows == 100_000)
+check("默认 sticker_enabled=False", mc.sticker_enabled is False)
 
 media_names = {f.name for f in _fields(MediaConfig)}
 v6_media = {

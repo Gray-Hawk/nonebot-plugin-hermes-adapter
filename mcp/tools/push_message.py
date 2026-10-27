@@ -28,7 +28,12 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ...core.decision_contract import parse_reply_to
 from ...core.message_buffer import BufferedMessage
-from ...core.outbound import get_bot_nickname, send_text_with_media
+from ...core.outbound import (
+    get_bot_nickname,
+    send_result_history,
+    send_result_sticker_count,
+    send_text_with_media,
+)
 from ...core.reply_resolution import resolve_reply
 from ...core.routing import CallerScope
 from ...core.session import session_manager
@@ -254,7 +259,7 @@ async def push_message_impl(
                     user_id=bot_self_id,
                     # 与群侧回写同一约定:用平台账号名,别写字面 "Bot"。
                     nickname=await get_bot_nickname(bot),
-                    content=inp.text,
+                    content=send_result_history(receipt_ids, inp.text),
                     image_urls=list(deliverable),
                     is_bot=True,
                     qq_message_id=primary_qq_message_id,
@@ -280,7 +285,7 @@ async def push_message_impl(
     # 「文本已答但图还没出去」,把 submit_decision 里能投的图补发出去。
     # 带上原文:同 turn 去重据此判断 submit_decision 是不是在复述这一条。
     if not active_sessions.mark_bot_replied(
-        inp.adapter, gid, now_ms=now_ms, media_count=len(deliverable), text=inp.text
+        inp.adapter, gid, now_ms=now_ms, media_count=len(deliverable) + send_result_sticker_count(receipt_ids), text=inp.text
     ):
         # push 已经发出去了,但窗口在这一刻没了(某一发 turn 返回了 should_exit_active)。
         # 后续 turn 的 cooldown 与同 turn 去重都看不到这一发,可能出现重复答复。
@@ -298,7 +303,7 @@ async def push_message_impl(
                 # 与 reactive 回写同一约定:用平台账号名,别写字面 "Bot" —— 那行会
                 # 进下一轮 <recent_messages>,角色名不叫 Bot 时读起来像另一个 bot。
                 nickname=await get_bot_nickname(bot),
-                content=inp.text,
+                content=send_result_history(receipt_ids, inp.text),
                 image_urls=list(deliverable),
                 is_bot=True,
                 qq_message_id=primary_qq_message_id,
