@@ -29,6 +29,9 @@ from ..core.run_tracker import TrackedRun
 
 _QUERY_LIMIT = 500
 _QUERY_TIMEOUT = 10
+# 分页安全上限(alive/103):10 页=5000 行,覆盖超长 run;达上限仍未覆盖
+# 本 run 按证据不足处理(缺件不补投),不无限翻。
+_MAX_PAGES = 10
 
 # 转录里 steer 行的 OUT-OF-BAND 包裹(upstream 写入形态): 开标记一整行(含 em dash)、
 # 关标记单独一行。剥皮只锚关标记 + 首个换行, 不锚开标记全文, 免随上游措辞漂移。
@@ -48,19 +51,21 @@ async def reconcile_run_finished(tracked) -> None:
         f"[HERMES steer对账] 触发: run_id={tracked.run_id} pending={len(pending)}"
     )
 
-    rows = await _fetch_transcript(tracked)
-    if rows is None:
+    result = await _fetch_transcript(tracked, pending)
+    if result is None:
         _mark_status(tracked, [p["m_id"] for p in pending], "replay_failed")
         logger.warning(
             f"[HERMES steer对账] 转录查询失败, 全部条目置 replay_failed "
             f"(run_id={tracked.run_id} count={len(pending)})"
         )
         return
+    rows, complete = result
 
-    # 逐条判定: 任一转录行 content 含 "[m:{id}]:"(带冒号)即落账。冒号是关键判据
-    # (双 id 空间问题): 直注挂的 m:id 是平台 message_id、跟帖挂的是感知库 db id, 两
-    # 空间可能撞号; 挂载形态是 "标签 [m:xxx]: 内容"(带冒号), 正常消息信封是
-    # "[m:xxx] 内容"(无冒号)——带冒号搜索天然区分。不加 display_kind 过滤: 上游
+    # 逐条判定: 任一转录行 content 含 "[m:{id}]:"(带冒号)即落账。冒号是关键判据:
+    # steer 挂载形态是 "标签 [m:xxx]: 内容"(带冒号), 正常消息信封是 "[m:xxx] 内容"
+    # (无冒号)——带冒号搜索天然区分。直注与跟帖统一挂感知库插件 m:id(alive/103),
+    # 旧台账里的平台 id 条目不做迁移, 与当时实际注入文本保持一致各自核销。
+    # 不加 display_kind 过滤: 上游
     # _merge_leftover_steer 会把 leftover steer 恢复为下一轮正常 user 行、回收路径落账
     # 后也是正常 user 行, 过滤会把这两类恢复误判成缺件导致双重投递。
     reconciled: list[str] = []
@@ -76,41 +81,107 @@ async def reconcile_run_finished(tracked) -> None:
         logger.info(f"[HERMES steer对账] 命中 {len(reconciled)} 条 (run_id={tracked.run_id})")
     if not missing:
         return
+    if not complete:
+        # 证据不足(alive/103 §8):命中条目已正常核销,但未覆盖本 run 范围前
+        # 不得把未命中当「被吞」补投——置 replay_failed 留待人工/下轮排查。
+        _mark_status(tracked, [p["m_id"] for p in missing], "replay_failed")
+        logger.warning(
+            f"[HERMES steer对账] 证据不完整(分页未覆盖本 run), {len(missing)} 条置 "
+            f"replay_failed 不补投 (run_id={tracked.run_id})"
+        )
+        return
     logger.info(f"[HERMES steer对账] 缺件 {len(missing)} 条 (run_id={tracked.run_id}), 补投")
     await _replay_missing(tracked, rows, missing)
 
 
-async def _fetch_transcript(tracked) -> list[dict] | None:
-    """GET 会话转录(latest 序, limit=500)。任何失败/404/非 JSON 返回 None。"""
+async def _fetch_transcript(tracked, pending: list[dict] | None = None):
+    """分页 GET 会话完整持久转录(latest 序, limit=500/页)。
+
+    返回 (rows, complete):rows=按转录 id 去重的累计行(latest 序);
+    complete=True=证据完整(全部 pending 命中/遇到本 run 触发批/页尽),
+    缺件可补投;False=证据不足(中途页失败或超页上限),缺件不得补投。
+    首页失败返回 None(调用方按全部 replay_failed 处理,与旧行为一致)。
+
+    必须显式 include_compacted=true(alive/103):上游缺省 false 只给当前活跃
+    上下文,已压缩的 steer 行会被误判成「被吞」而重复补投;对账要核实的是
+    完整持久转录,不是模型当前可见窗口。
+    分页用上游 limit/offset(latest 序)。查询期间新行只落在页尖,后续页旧行
+    相对后移→页间可能重复(按 id 去重)但不会漏行。停止条件:全部 pending
+    的 "[m:id]:" 命中(无需更多证据)、遇到本 run 触发批(首个普通 user 行,
+    display_kind 空=覆盖本 run 范围)、页返回不足 limit(没有更多)。
+    """
     tgt = resolve_target(tracked.adapter, tracked.is_private, tracked.group_id)
     url = f"{tgt.base_url}/api/sessions/{tracked.session_key}/messages"
     headers = {"Authorization": f"Bearer {tgt.api_key}"} if tgt.api_key else {}
+    needles = [f"[m:{p['m_id']}]:" for p in (pending or [])]
+    rows: list[dict] = []
+    seen: set = set()
+    offset = 0
+
+    def _page_failed(exc_info: bool = False) -> None:
+        logger.warning(
+            f"[HERMES steer对账] 转录分页失败 (run_id={tracked.run_id} offset={offset})",
+            exc_info=exc_info,
+        )
+
     try:
         async with httpx.AsyncClient(timeout=_QUERY_TIMEOUT) as client:
-            resp = await client.get(
-                url, params={"order": "latest", "limit": _QUERY_LIMIT}, headers=headers
-            )
-    except Exception as exc:
-        logger.warning(
-            f"[HERMES steer对账] 转录查询异常 (run_id={tracked.run_id}): {exc}",
-            exc_info=True,
-        )
-        return None
-    if resp.status_code != 200:
-        # 404(会话换代/clear 后无转录)与非 200 同归「查询失败」。
-        logger.warning(
-            f"[HERMES steer对账] 转录查询非 200: {resp.status_code} "
-            f"(run_id={tracked.run_id})"
-        )
-        return None
-    try:
-        return resp.json().get("data") or []
-    except ValueError:
-        logger.warning(
-            f"[HERMES steer对账] 转录响应不是 JSON (run_id={tracked.run_id})",
-            exc_info=True,
-        )
-        return None
+            for _ in range(_MAX_PAGES):
+                try:
+                    resp = await client.get(
+                        url,
+                        params={
+                            "order": "latest",
+                            "limit": _QUERY_LIMIT,
+                            "offset": offset,
+                            "include_compacted": "true",
+                        },
+                        headers=headers,
+                    )
+                except Exception:
+                    _page_failed(exc_info=True)
+                    return None if offset == 0 else (rows, False)
+                if resp.status_code != 200:
+                    # 404(会话换代/clear 后无转录)与非 200 同归「查询失败」。
+                    logger.warning(
+                        f"[HERMES steer对账] 转录查询非 200: {resp.status_code} "
+                        f"(run_id={tracked.run_id} offset={offset})"
+                    )
+                    return None if offset == 0 else (rows, False)
+                try:
+                    page = resp.json().get("data") or []
+                except ValueError:
+                    logger.warning(
+                        f"[HERMES steer对账] 转录响应不是 JSON (run_id={tracked.run_id})",
+                        exc_info=True,
+                    )
+                    return None if offset == 0 else (rows, False)
+                for r in page:
+                    rid = r.get("id")
+                    if rid is not None:
+                        if rid in seen:
+                            continue
+                        seen.add(rid)
+                    rows.append(r)
+                if needles and all(
+                    any(n in (r.get("content") or "") for r in rows) for n in needles
+                ):
+                    return rows, True
+                if any(
+                    r.get("role") == "user" and not r.get("display_kind") for r in page
+                ):
+                    return rows, True
+                if len(page) < _QUERY_LIMIT:
+                    return rows, True
+                offset += _QUERY_LIMIT
+    except Exception:
+        _page_failed(exc_info=True)
+        return None if not rows else (rows, False)
+    logger.warning(
+        f"[HERMES steer对账] 分页达上限 {_MAX_PAGES} 仍未覆盖本 run, 证据按不足处理 "
+        f"(run_id={tracked.run_id})"
+    )
+    return rows, False
 
 
 async def _replay_missing(tracked, rows, missing) -> None:

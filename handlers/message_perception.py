@@ -224,7 +224,9 @@ def _merge_fragment_payload(old: dict, new: dict) -> None:
     文本换行拼接;图片/表情包 URL 追加去重;
     explicit/addressed 取并集(任一碎片被点名,合并触发即被点名);
     ephemeral 两者皆真才真;now_ms 取最新(触发时序以最后一条为准);
-    event 保留首条——dispatch 不再用。"""
+    event 保留首条——dispatch 不再用。
+    fragment_db_ids 按序追加(alive/103):每条碎片的真实插件 m:id 不随合并灭失。
+    """
 
     new_text = (new.get("msg_text") or "").strip()
     if new_text:
@@ -236,6 +238,21 @@ def _merge_fragment_payload(old: dict, new: dict) -> None:
             merged = list(old.get(field) or [])
             merged.extend(u for u in incoming if u not in merged)
             old[field] = merged
+    # 有序 fragment 身份（alive/103）：每条碎片载荷自带真实插件 m:id 序列，
+    # 合并只按序追加、不替换不取末条——后续媒体寻址与钉锚来源靠这份序列
+    # 逐条对位，不再靠首条 event 或末条 id 猜。
+    incoming_ids = list(new.get("fragment_db_ids") or [])
+    if incoming_ids:
+        old_ids = list(old.get("fragment_db_ids") or [])
+        old_ids.extend(incoming_ids)
+        old["fragment_db_ids"] = old_ids
+    # 拆批 fragments 序列(alive/103 §14.2):每条碎片的完整 BufferedMessage
+    # 按序暂存,current 渲染拆回真实消息序列逐行贴真号,不查库。
+    incoming_frags = list(new.get("fragments") or [])
+    if incoming_frags:
+        old_frags = list(old.get("fragments") or [])
+        old_frags.extend(incoming_frags)
+        old["fragments"] = old_frags
     old["is_direct"] = old["is_direct"] or new["is_direct"]
     old["addressed_to_bot"] = old["addressed_to_bot"] or new["addressed_to_bot"]
     old["ephemeral"] = old["ephemeral"] and new["ephemeral"]

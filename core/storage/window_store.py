@@ -90,7 +90,9 @@ def session_to_payload(s) -> dict[str, Any]:
                 {"user_id": p.user_id, "nickname": p.nickname, "joined_ts": p.joined_ts}
                 for p in rec.participants
             ],
-            "msg_id": rec.msg_id,
+            "msg_id": rec.platform_message_id,
+            "m_id": rec.m_id,
+            "platform_message_id": rec.platform_message_id,
             "text": rec.text,
             "ts": rec.ts,
             "answered": rec.answered,
@@ -143,7 +145,14 @@ def session_from_payload(adapter: str, group_id: str, payload: dict[str, Any]):
                 participants = [Participant(user_id=cid, nickname=d.get("commissioner_nickname"), joined_ts=ts)]
         return AnchorRecord(
             participants=participants,
-            msg_id=d.get("msg_id"),
+            # 旧行 msg_id 只迁为内部平台 ID(alive/103);插件 m_id 旧行没有,
+            # 保持 None=无号降级,绝不把平台 id 倒进模型可见的 m_id。
+            m_id=(int(d["m_id"]) if d.get("m_id") is not None else None),
+            platform_message_id=(
+                str(d.get("platform_message_id") or d.get("msg_id"))
+                if (d.get("platform_message_id") or d.get("msg_id")) is not None
+                else None
+            ),
             text=str(d.get("text") or ""),
             ts=ts,
             answered=bool(d.get("answered")),

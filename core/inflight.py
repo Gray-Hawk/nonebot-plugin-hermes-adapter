@@ -84,6 +84,22 @@ class PendingEntry:
     # 不借 is_direct(该字段已钉死为寻址事实,借它会继承破信封 raw 转发、
     # transport 兜底文本等一串负资产)。合并处与 direct 同规取 or,防并入后丢失。
     steer_recovered: bool = False
+    # 拆批 fragments 序列(alive/103 §14.2):本条目覆盖的有序真实碎片
+    # (各自插件 m:id/发送者/媒体),接力时呈递拆回真实消息序列。
+    # None=无拆批信息(旧路径单行);合并时任一侧缺序列整体回退 None,
+    # 不拿半份序列冒充完整。序列是呈递副本,不随入队剥皮(队列条目 msg
+    # 剥皮是 steer 门保护,碎片原文与媒体清单留给拆批渲染按号召回)。
+    fragments: list[BufferedMessage] | None = None
+
+
+def _merge_fragments(
+    old_frags: list[BufferedMessage] | None,
+    new_frags: list[BufferedMessage] | None,
+) -> list[BufferedMessage] | None:
+    """两侧都有完整序列才按序追加;任一侧 None=信息不完整,回退 None。"""
+    if old_frags is None or new_frags is None:
+        return None
+    return list(old_frags) + list(new_frags)
 
 
 @dataclass
@@ -121,8 +137,8 @@ def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
     """排队消息并入旧条目(语义同防抖拼接)。
 
     文本换行拼接;图片 URL 追加去重;ts 取最新(接力时序以最后一条为准);
-    original_msg_id 由调用方随 PendingEntry 换成最新。reply_to_ts 目前全空,
-    仍取最新值,避免未来启用后旧 None 盖掉新值。
+    original_msg_id 由调用方保留首个非空(与 msg.id 首条同源,alive/103)。
+    reply_to_ts 目前全空,仍取最新值,避免未来启用后旧 None 盖掉新值。
 
     表情包不并入(队列不承载表情包):new 带的 sticker
     只折算成一个 [表情包] 文本占位拼进内容,URL 不进场——槽内条目永无
@@ -225,6 +241,7 @@ class InflightRegistry:
             slot.followup = entry
             return
         _merge_pending_message(slot.followup.msg, entry.msg)
+        slot.followup.fragments = _merge_fragments(slot.followup.fragments, entry.fragments)
         # steer_recovered 与 explicit 同规取 or:迟到 steer
         # 回收文本并入已有条目时豁免标记不丢,否则主修复场景之一仍被 cooldown 吞。
         slot.followup.steer_recovered = slot.followup.steer_recovered or entry.steer_recovered
@@ -241,6 +258,7 @@ class InflightRegistry:
         addressed_to_bot: bool = False,
         ephemeral: bool = False,
         commission: bool = False,
+        fragments: list[BufferedMessage] | None = None,
     ) -> Literal["entered", "queued", "queue_full"]:
         """无 slot → 占位 started_at=now_ms,返回 'entered';否则按规则入队。"""
         slot = self._slots.get(key)
@@ -258,6 +276,7 @@ class InflightRegistry:
             original_msg_id=original_msg_id,
             addressed_to_bot=addressed_to_bot,
             ephemeral=ephemeral,
+            fragments=fragments,
         )
         if not commission:
             # 旁观闲聊也不 latest-wins 了(「正常任务会被打趣驱逐」):
@@ -270,7 +289,11 @@ class InflightRegistry:
                 # ephemeral 与防抖合并且同规(两者皆无窗才无窗):任一片段来自
                 # 有窗语境,合并条目就按有窗跑——错开新窗比少跑一发更贵。
                 slot.followup.ephemeral = slot.followup.ephemeral and ephemeral
-                slot.followup.original_msg_id = original_msg_id
+                # 来源保留首条（alive/103）：与 BufferedMessage.id 首条同源，
+                # 钉锚不再出现「插件 ID 取首条、平台 ID 取末条」的错位。
+                if slot.followup.original_msg_id is None:
+                    slot.followup.original_msg_id = original_msg_id
+                slot.followup.fragments = _merge_fragments(slot.followup.fragments, fragments)
             else:
                 slot.followup = entry
             return "queued"
@@ -282,7 +305,10 @@ class InflightRegistry:
                 queued.addressed_to_bot = queued.addressed_to_bot or addressed_to_bot
                 # 同上:ephemeral 取与,防「一条有窗片段被无窗语义跑掉」。
                 queued.ephemeral = queued.ephemeral and ephemeral
-                queued.original_msg_id = original_msg_id
+                # 同 followup 槽：来源保留首条，与 msg.id 首条同源（alive/103）。
+                if queued.original_msg_id is None:
+                    queued.original_msg_id = original_msg_id
+                queued.fragments = _merge_fragments(queued.fragments, fragments)
                 return "queued"
         if len(slot.commissions) >= MAX_PENDING_COMMISSIONS:
             # queue_full 静默丢弃是设计定案(勿「修」成贴表情/报错):

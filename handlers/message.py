@@ -43,6 +43,7 @@ from .message_ingress import (
 )
 
 from .message_perception import _merge_fragment_payload, _peek_event_db_id
+from ..core.message_buffer import BufferedMessage
 
 from .message_turns import _dispatch_chat
 from .message_relay import route_synthesized_input
@@ -127,6 +128,15 @@ def _debounce_arrive(
     if st.payload.get("user_id") == payload.get("user_id"):
         _merge_fragment_payload(st.payload, payload)
     elif replaceable:
+        # 拆批(alive/103 §14.2):跨人替换只换触发归属与外壳,fragments 序列
+        # 前置保留旧人碎片——旧人文本不再只靠 buffer 兜底,current 拆批后
+        # 逐行各贴真号、各自发言人。fragment_db_ids 同规前置(A4 同源序列)。
+        prev_frags = list(st.payload.get("fragments") or [])
+        if prev_frags:
+            payload["fragments"] = prev_frags + list(payload.get("fragments") or [])
+        prev_ids = list(st.payload.get("fragment_db_ids") or [])
+        if prev_ids:
+            payload["fragment_db_ids"] = prev_ids + list(payload.get("fragment_db_ids") or [])
         st.payload = payload
     st.merged += 1
     new_deadline = now_mono + debounce_sec
@@ -340,6 +350,15 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # 显式/隐式一视同仁——委托 @ 的直连豁免已砍除(本部署补丁):双 bot 场景下
     # 豁免让互 @ 零延迟直连、无限制器助燃互聊;砍后防抖窗即限速。跨人替换只换
     # 触发归属,turn 上下文从 buffer 拉,被顶掉的碎片内容不丢。
+    # 拆批 fragments 序列(alive/103 §14.2):本条完整对象(真实入库 m:id 用
+    # peek 读 perception 挂号,不 claim——claim 留给 path 一次性消费)随载荷
+    # 暂存;防抖合并按序追加,current 拆批逐行渲染,不查库。
+    fragment = BufferedMessage(
+        ts=now, adapter=adapter_name, group_id=group_id, user_id=user_id,
+        nickname=nickname, content=msg_text, image_urls=list(image_urls),
+        sticker_urls=list(sticker_urls), reply_to_ts=None, is_bot=False,
+    )
+    fragment.id = _peek_event_db_id(adapter_name, getattr(event, "message_id", None))
     debounce_sec = (
         chat_cfg.reply_debounce_private_sec
         if target.private
@@ -373,6 +392,8 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             replied_msg_id=replied_msg_id,
             ephemeral=keyword_soft_hit and not in_active_window,
             context_limit=chat_cfg.history_message_limit if keyword_soft_hit else None,
+            fragments=[fragment],
+            fragment_db_ids=([fragment.id] if fragment.id is not None else []),
         )
         # get-or-create 与状态更新之间无 await,asyncio 单线程下原子。
         loop = asyncio.get_running_loop()
@@ -434,6 +455,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         replied_msg_id=replied_msg_id,
         ephemeral=keyword_soft_hit and not in_active_window,
         context_limit=chat_cfg.history_message_limit if keyword_soft_hit else None,
+        fragments=[fragment],
     )
 
 
