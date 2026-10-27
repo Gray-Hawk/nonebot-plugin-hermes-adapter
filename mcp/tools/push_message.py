@@ -24,10 +24,12 @@ import time
 from typing import TYPE_CHECKING
 
 from nonebot import get_bot, logger
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from ...core.decision_contract import parse_reply_to
 from ...core.message_buffer import BufferedMessage
 from ...core.outbound import get_bot_nickname, send_text_with_media
+from ...core.reply_resolution import resolve_reply
 from ...core.routing import CallerScope
 from ...core.session import session_manager
 from ..auth import PushContextError, validate_push_context
@@ -44,10 +46,17 @@ class PushMessageInput(BaseModel):
         description="Private-chat target user id (mutually exclusive with group_id; "
         "must be listed in private_allow / the admin set)",
     )
-    text: str = Field(..., description="Reply text. Empty allowed only if image_urls non-empty.")
+    text: str = Field(..., description="Reply text. Empty allowed only if image_urls non-empty. Inline [CQ:at,qq=数字] supports ordered multi-mention.")
     image_urls: list[str] = Field(default_factory=list, description="Image URLs")
-    reply_to_msg_id: str | None = Field(default=None, description="(保留至 M2: 不使用,保留位)")
+    reply_to: str | None = Field(default=None, description="Optional message to quote, exactly m:<positive integer> from this chat")
     task_id: str | None = Field(default=None, description="(M1: 不使用,M2 bg_tasks 接入)")
+
+    @field_validator("reply_to")
+    @classmethod
+    def _reply_to_uses_unified_mid(cls, value: str | None) -> str | None:
+        if value is not None and parse_reply_to(value) is None:
+            raise ValueError("reply_to must be exactly m:<positive integer>")
+        return value
 
     @model_validator(mode="after")
     def _exactly_one_target(self) -> "PushMessageInput":
@@ -209,16 +218,28 @@ async def push_message_impl(
             skipped_images=skipped,
         )
 
-    success = await send_text_with_media(
+    resolved_reply = resolve_reply(
+        message_buffer,
+        adapter=inp.adapter,
+        group_id=None if is_private else gid,
+        owner_user_id=target_id if is_private else None,
+        reply_to=inp.reply_to,
+        log_tag="MCP push_message",
+    )
+    receipt_ids = await send_text_with_media(
         bot=bot,
         target=target,
         text=inp.text,
         media_urls=deliverable,
-        at_user_id=None,  # 主动 push 不 @ 任何用户(对话不针对特定个体)
+        reply_qq_message_id=resolved_reply.qq_message_id if resolved_reply else None,
+        reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
         adapter_name=inp.adapter,
     )
-    if not success:
+    if not receipt_ids:
         return PushMessageResult(ok=False, error="send failed (see nonebot log)", skipped_images=skipped)
+    # 一个逻辑 m:id 首版只保存主回执；普通消息恰好只有一个。forward 多分片的
+    # 精确逐片寻址不伪装成已支持，后续如确有需要再另建一对多映射。
+    primary_qq_message_id = getattr(receipt_ids, "primary_qq_message_id", None)
 
     if is_private:
         # 私侧无窗体系:无 mark_activity/touch/mark_bot_replied(都是群窗机制);
@@ -236,6 +257,8 @@ async def push_message_impl(
                     content=inp.text,
                     image_urls=list(deliverable),
                     is_bot=True,
+                    qq_message_id=primary_qq_message_id,
+                    private_owner_id=inp.user_id,
                 )
             )
         return PushMessageResult(
@@ -278,6 +301,7 @@ async def push_message_impl(
                 content=inp.text,
                 image_urls=list(deliverable),
                 is_bot=True,
+                qq_message_id=primary_qq_message_id,
             )
         )
     return PushMessageResult(ok=True, warning=warning, skipped_images=skipped, note=_SPOKEN_NOTE)

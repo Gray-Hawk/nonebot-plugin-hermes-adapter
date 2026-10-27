@@ -125,8 +125,12 @@ async def handle_perception(bot: Bot, event: Event):
         msg_text = (msg_text + placeholder) if msg_text else placeholder.strip()
 
     file_entries = _extract_file_entries(uni_msg)
+    # 平台真实 message_id:与 m:id 同一行落库(身份映射),供主线回执/取文件回平台侧。
+    # 无 ID 的 event(合成/本地构造)保持 None——NULL 是明确事实,不猜。
+    event_msg_id = getattr(event, "message_id", None)
+    qq_message_id = str(event_msg_id).strip() if event_msg_id not in (None, "") else None
     for entry in file_entries:
-        entry["qq_message_id"] = str(getattr(event, "message_id", "") or "") or None
+        entry["qq_message_id"] = qq_message_id
 
     # B-0: 非文本段占位；文件标签等入库拿到真实 db id 后单独补写。
     nontext_placeholders = _collect_nontext_placeholders(uni_msg, include_files=False)
@@ -181,6 +185,7 @@ async def handle_perception(bot: Bot, event: Event):
         forward_image_urls=forward_image_urls,
         is_bot=False,
         forward_content=_forward_full_for_store(forward_full),
+        qq_message_id=qq_message_id,
     )
     _mcp.message_buffer.append(buffered)
     if file_entries and buffered.id is not None:

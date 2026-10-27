@@ -351,7 +351,7 @@ _SALVAGE_TOPIC_HINT_RE = re.compile(
 )
 _SALVAGE_EXIT_ACTIVE_RE = _salvage_bool_re("should_exit_active")
 # not_final 入救补——布尔抠错概率低,丢失则
-# 回执发出但续跑轮没来=任务烂尾;其余字段(锚家族/at_user_id)抠错代价大于丢失,
+# 回执发出但续跑轮没来=任务烂尾;其余字段(锚家族/reply_to)抠错代价大于丢失,
 # 维持不认。
 _SALVAGE_NOT_FINAL_RE = _salvage_bool_re("not_final")
 
@@ -980,6 +980,10 @@ class ChatResult:
     """runs turn 被取消/中断(阶段3b, /run-stop 或 gateway 关停)。
     handler 硬静默:终止是管理员的主动动作,命令回执已说明,不再发错误兜底文本。"""
 
+    is_run_detached: bool = False
+    """已登记 runs turn 的事件订阅断开,但原 run 仍由恢复链负责。
+    这不是传输失败或取消:handler 硬静默并保留台账,由既有 reattach 续订与投递。"""
+
     is_context_overflow: bool = False
     """上游上下文溢出,且它那边关掉了自动压缩(compression.enabled: false)。
 
@@ -1155,6 +1159,10 @@ class HermesClient:
         # AstrBot 分支下载回来的媒体（data URL）。只在分支内 append、不在闭包里
         # 重新绑定，避免把外层同名局部变成闭包变量。
         astrbot_media_urls: list[str] = []
+        # 本部署补丁：仅供本次 chat() 的 AstrBot 上传／chat 429 重试复用：重进 _do_transport 时
+        # 已拿到 ID 的图片不再上传。严禁跨轮、跨后端或下载阶段复用这些 ID，
+        # 否则会串用历史附件，或把已经完成的对话纳入重放。
+        astrbot_attachment_ids: list[str] = []
 
         # 幂等键每轮只造一次,429 自动重试与提交段网络重试都
         # 复用同一键——网关 lost-acceptance 重放只认同键同指纹,每试一次换键等于
@@ -1178,10 +1186,12 @@ class HermesClient:
                         refusal.structured = {"should_reply": True, "reply_text": notice}
                     return notice, None, refusal, ""
                 try:
-                    # 先把全部图片上传完再发 chat：任一失败整轮失败，不留半轮。
-                    attachment_ids: list[str] = []
+                    # 外层 429 重进这里时只续传没有 ID 的后缀；chat 始终引用同批 ID。
+                    # 最终失败则不产出本轮回复，但不得借此复用其他轮次的远端附件。
                     for index, image in enumerate(normalized.images, 1):
-                        attachment_ids.append(
+                        if index <= len(astrbot_attachment_ids):
+                            continue
+                        astrbot_attachment_ids.append(
                             await astrbot_client.upload_attachment(
                                 _get_http_client(),
                                 base_url=tgt.base_url,
@@ -1200,7 +1210,7 @@ class HermesClient:
                         system_prompt=system_prompt,
                         user_text=normalized.text,
                         timeout=tgt.timeout,
-                        attachment_ids=attachment_ids,
+                        attachment_ids=astrbot_attachment_ids,
                     )
                 except astrbot_client.AstrBotHttpError as exc:
                     # 上传/chat 阶段的 429 沿用外层「满额自动重试一次」：此时上游还没
@@ -1574,10 +1584,10 @@ class HermesClient:
                 )
 
     async def _stop_run_quiet(self, base_url: str, headers: dict[str, str], run_id: str) -> None:
-        """尽力 stop 一个 run(超时/异常止损用),任何失败只记日志。
+        """尽力 stop 一个未登记 run(异常止损用),任何失败只记日志。
 
-        本部署补丁(runs 迁移阶段1):旧路中断=断连接,runs 路
-        中断必须显式 stop,否则孤儿 run 在 gateway 继续占槽跑完。"""
+        已登记 run 不经过这里:事件订阅断开不等于执行所有权消失,
+        其台账必须留给恢复链;无投递归属的探测 run 才需要防止孤儿执行。"""
         try:
             client = _get_http_client()
             await client.post(f"{base_url}/v1/runs/{run_id}/stop", json={}, headers=headers, timeout=10)
@@ -1603,11 +1613,13 @@ class HermesClient:
         - rotated 恒 None:压缩轮换由上游 _resolve_live_session_id 服务端透明处理,
           插件不再手动 adopt;
         - failure 非 None 时 chat() 直接返回该 ChatResult(run.failed / run.cancelled /
-          事件流提早关闭),completed 时 failure=None,raw_text 走下游统一解析;
+          事件流提早关闭 / 已登记订阅 detached),completed 时 failure=None,
+          raw_text 走下游统一解析;
         - 提交带 Idempotency-Key(每轮 chat 一个 key,由调用方造好传入;429 重试与
           提交段网络重试全程复用):网络抖动重交=网关重放同一 run,不重复开;
-        - 错误面与流式分支对齐:提交/订阅非 2xx 抛 StreamHttpError,超时/连接/其他
-          异常向上抛(chat() except 链统一接管),抛出前对 run 发 stop 止损;
+        - 提交阶段错误沿原异常面上抛。run 登记后的订阅异常返回 is_run_detached,
+          不 stop、不清台账,由 slot 收尾或启动恢复 reattach;只有未登记 run
+          才在异常时 stop 止损,避免无人投递的孤儿执行;
         - 图片等 content parts 原样透传(实测 runs 转发给 provider)。
         """
         body = {
@@ -1621,6 +1633,7 @@ class HermesClient:
         parser = RunsEventParser()
         run_id = ""
         tracker = None
+        registered = False
         try:
             client = _get_http_client()
             resp = await self._submit_run_with_replay(client, tgt, body, submit_headers, timeout)
@@ -1653,6 +1666,7 @@ class HermesClient:
                     mode=scope["mode"],
                     expect_structured=bool(scope["expect_structured"]),
                 )
+                registered = True
             # 订阅略早于执行器注册是上游支持的 race 窗口(events 处理器内置等待)
             async with client.stream(
                 "GET", f"{tgt.base_url}/v1/runs/{run_id}/events", headers=headers, timeout=timeout
@@ -1678,12 +1692,16 @@ class HermesClient:
                         tracker.update_seq(run_id, parser.last_seq)
                     if parser.terminal:
                         break
-        except Exception:
-            # 超时/连接/解析任何异常:孤儿 run 止损后原样上抛,chat() except 链归纳
+        except Exception as exc:
+            if registered:
+                # 已登记 run 的所有权不随事件订阅消失。保留 last_seq 与恢复台账，
+                # 当前 turn 由 handler 静默收尾；slot 释放后的既有 retry 会 reattach。
+                logger.warning(f"[HERMES] runs 订阅断开,保留原 run 待恢复 run_id={run_id}: {exc}")
+                return "", None, ChatResult(raw_text="", parse_failed=True, is_run_detached=True), ""
+            # 未登记 run 没有投递归属,超时/连接/解析异常仍须止损,避免孤儿执行。
             if run_id:
                 await self._stop_run_quiet(tgt.base_url, headers, run_id)
             if tracker is not None:
-                # 传输异常止损分支同样走终态钩子: 台账有 pending steer 才 spawn 对账。
                 _spawn_steer_reconcile_if_pending(tracker, run_id)
                 tracker.finish(run_id)
             raise
@@ -1717,7 +1735,13 @@ class HermesClient:
                 is_outage_error=is_provider_outage_text(parser.error),
             ), ""
         if not parser.terminal:
+            if registered:
+                # 干净 EOF 与异常断流同义：没有终态帧就不能猜测 run 已结束。
+                logger.warning(f"[HERMES] runs 事件流未见终态帧即关闭,保留原 run 待恢复 run_id={run_id}")
+                return "", None, ChatResult(raw_text="", parse_failed=True, is_run_detached=True), ""
             logger.warning(f"[HERMES] runs 事件流未见终态帧即关闭 (run_id={run_id})")
+            if run_id:
+                await self._stop_run_quiet(tgt.base_url, headers, run_id)
             _finish()
             return "", None, ChatResult(
                 raw_text="⚠️ AI 服务响应中断(事件流提前关闭),请稍后重试",

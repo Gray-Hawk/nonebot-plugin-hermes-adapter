@@ -1,7 +1,7 @@
 """FastMCP app 工厂。
 
-把 mcp/tools/ 下的工具(push_message / wake_turn / list_active_sessions /
-get_recent_messages / get_message_images)装配进一个 FastMCP 实例,
+把 mcp/tools/ 下的工具(push_message / recall_message / wake_turn /
+list_active_sessions / get_recent_messages / get_message_images)装配进一个 FastMCP 实例,
 供 mcp/__init__.py 启动 uvicorn 时使用。
 """
 
@@ -57,6 +57,11 @@ from .tools.push_message import (
     PushMessageInput,
     PushMessageResult,
     push_message_impl,
+)
+from .tools.recall_message import (
+    RecallMessageInput,
+    RecallMessageResult,
+    recall_message_impl,
 )
 from .tools.wake_turn import (
     WakeTurnInput,
@@ -228,7 +233,7 @@ def build_mcp_app(
 
     _suppress_unused_protocol_handlers(mcp)
 
-    # 注:三个工具的签名都是扁平参数(非 Pydantic model 包装)。FastMCP 单 model 入参
+    # 注:工具签名都是扁平参数(非 Pydantic model 包装)。FastMCP 单 model 入参
     # 会把 schema 暴露成 {properties: {input: {...}}},逼客户端 wrap 一层 input,
     # 调用方传扁平参数会撞上"Missing required argument 'input'"+"Unexpected
     # keyword argument 'adapter/group_id/...'"的混淆错误。扁平签名让 schema 直接
@@ -242,7 +247,7 @@ def build_mcp_app(
         group_id: str | None = None,
         user_id: str | None = None,
         image_urls: list[str] | None = None,
-        reply_to_msg_id: str | None = None,
+        reply_to: str | None = None,
         task_id: str | None = None,
     ) -> PushMessageResult:
         """Send a message to a group or a private user via nonebot (ready-made text, no LLM turn).
@@ -254,6 +259,8 @@ def build_mcp_app(
             private_allow (user_lists.yaml; falls back to the admin set when absent).
             Rate-limited per target by the same token bucket as wake_turn (shared).
           - group_id and user_id are mutually exclusive — give exactly one.
+          - reply_to optionally quotes a message by its plugin m:id (for example m:123).
+            Inline [CQ:at,qq=数字] in text creates ordered mentions; other CQ codes are not enabled.
         """
         inp = PushMessageInput(
             adapter=adapter,
@@ -261,7 +268,7 @@ def build_mcp_app(
             user_id=user_id,
             text=text,
             image_urls=image_urls or [],
-            reply_to_msg_id=reply_to_msg_id,
+            reply_to=reply_to,
             task_id=task_id,
         )
         result = await push_message_impl(
@@ -277,6 +284,46 @@ def build_mcp_app(
             f"ok={result.ok}"
             + (f" error={_clip(result.error)!r}" if result.error else "")
             + (f" skipped_imgs={len(result.skipped_images)}" if result.skipped_images else ""),
+        )
+        return result
+
+    @mcp.tool()
+    async def recall_message(
+        adapter: str,
+        message_id: str,
+        group_id: str | None = None,
+        user_id: str | None = None,
+    ) -> RecallMessageResult:
+        """Withdraw one message previously sent by this bot.
+
+        Use only when the user explicitly requests a recall and a unique target has
+        been identified by its reply or described content. Resolve that target to
+        its logical m:id first; this tool does not search messages, guess, or
+        default to the latest. message_id must be m:<positive integer>.
+        Exactly one of group_id (group chat) or user_id (private chat) is required.
+        Only the current bot's own message in that same chat can be recalled.
+        Missing platform receipts, platform time/permission refusals, and
+        unconfirmed network outcomes are reported without automatic retry.
+        """
+        inp = RecallMessageInput(
+            adapter=adapter,
+            message_id=message_id,
+            group_id=group_id,
+            user_id=user_id,
+        )
+        result = await recall_message_impl(
+            inp,
+            active_sessions=active_sessions,
+            bot_registry=bot_registry,
+            message_buffer=message_buffer,
+            scope=caller_scope_from_request(),
+        )
+        _log_tool_call(
+            "recall_message",
+            f"adapter={adapter} group={group_id} user={user_id} message={message_id}",
+            f"ok={result.ok}"
+            + (f" kind={result.error_kind}" if result.error_kind else "")
+            + (f" error={_clip(result.error)!r}" if result.error else ""),
         )
         return result
 
