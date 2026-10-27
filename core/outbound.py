@@ -22,6 +22,7 @@ from .chat_config import load_chat_config
 from .log_throttle import throttled_info
 from .media_config import load_media_config
 from .misc_config import load_misc_config
+from .sticker_library import StickerLibrary, StickerLibraryError, default_sticker_library
 
 # api_server 把本地生成的图片内联成 data:image/…;base64 URL——没有可抓取的
 # http 地址,必须解码成字节直接附加。仅支持 base64 形态;RFC 2397 的
@@ -78,6 +79,7 @@ _INLINE_AT_MARKER_RE = re.compile(r"\[CQ:at,qq=([0-9]{1,20})\]")
 _CQ_LIKE_RE = re.compile(r"\[CQ:[A-Za-z_]+[,\]]")
 
 _REPLY_ID_RE = re.compile(r"-?[0-9]+")
+_STICKER_MARKER_RE = re.compile(r"表情=([A-Za-z0-9_-]{1,64})")
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,7 @@ class SendResult:
 
     ok: bool
     msg_ids: list[str]
+    sticker_id: str | None = None
 
     def __bool__(self) -> bool:
         return self.ok
@@ -97,6 +100,28 @@ class SendResult:
     @property
     def primary_qq_message_id(self) -> str | None:
         return self.msg_ids[0] if self.msg_ids else None
+
+    @property
+    def sticker_media_count(self) -> int:
+        return 1 if self.ok and self.sticker_id else 0
+
+    def history_content(self, original_text: str) -> str:
+        """bot 历史不暴露内部选图标记，沿用入站表情占位约定。"""
+        return "[表情包]" if self.sticker_media_count else original_text
+
+
+def send_result_history(result: object, original_text: str) -> str:
+    """读取新结果的历史文案；旧结果对象与布尔返回值保持原行为。"""
+    method = getattr(result, "history_content", None)
+    if not callable(method):
+        return original_text
+    value = method(original_text)
+    return value if isinstance(value, str) else original_text
+
+
+def send_result_sticker_count(result: object) -> int:
+    """混合基线下，旧发送结果没有表情字段时按零计。"""
+    return int(getattr(result, "sticker_media_count", 0) or 0)
 
 
 @dataclass(frozen=True)
@@ -442,6 +467,7 @@ async def send_text_with_media(
     reply_qq_message_id: str | int | None = None,
     reply_at_user_id: str | int | None = None,
     adapter_name: str | None = None,
+    sticker_library: StickerLibrary | None = None,
 ) -> SendResult:
     """组装并发送一条消息,分别返回发送状态与平台消息 ID。
 
@@ -456,6 +482,47 @@ async def send_text_with_media(
     - 空消息(text='' 且无 @ 段、无有效媒体——http/https URL 或可解码的 data:image)
       直接返回失败,防 push 路径在 Hermes 回空时构造空 UniMessage 发送出去
     """
+    sticker_match = _STICKER_MARKER_RE.fullmatch(text.strip())
+    if sticker_match is not None:
+        sticker_id = sticker_match.group(1)
+        if adapter_name != "onebotv11":
+            logger.warning(f"[OUTBOUND] 本地表情仅支持 onebotv11 id={sticker_id} adapter={adapter_name}")
+            return SendResult(ok=False, msg_ids=[])
+        library = sticker_library or default_sticker_library()
+        try:
+            raw, mimetype = library.read(sticker_id)
+        except (StickerLibraryError, OSError) as exc:
+            logger.warning(f"[OUTBOUND] 本地表情发送失败 id={sticker_id}: {exc}")
+            return SendResult(ok=False, msg_ids=[])
+        # Alconna Image.sticker 在 OneBot v11 导出的是 subType=1；NapCat
+        # 实测契约是 sub_type=1。这里在统一发送器内走一小段显式 OneBot 载荷，
+        # 避免客户端把它当普通图片。其余文本／媒体仍共用 UniMessage 出口。
+        image = {
+            "type": "image",
+            "data": {
+                "file": "base64://" + base64.b64encode(raw).decode("ascii"),
+                "sub_type": 1,
+            },
+        }
+        try:
+            if target.private:
+                response = await bot.call_api(
+                    "send_private_msg", user_id=int(target.id), message=[image]
+                )
+            else:
+                response = await bot.call_api(
+                    "send_group_msg", group_id=int(target.id), message=[image]
+                )
+        except Exception as exc:
+            logger.warning(f"[OUTBOUND] 本地表情平台发送失败 id={sticker_id}: {exc}")
+            return SendResult(ok=False, msg_ids=[])
+        msg_id = _extract_msg_id(response)
+        msg_ids = [msg_id] if msg_id else []
+        if not msg_ids:
+            logger.warning(f"[OUTBOUND] 本地表情发送成功但无回执 id={sticker_id}")
+        logger.info(f"[OUTBOUND] 本地表情已发送 id={sticker_id} msg_ids={len(msg_ids)}")
+        return SendResult(ok=True, msg_ids=msg_ids, sticker_id=sticker_id)
+
     original_len = len(text)
     max_len = load_misc_config().max_length
 

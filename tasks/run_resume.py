@@ -42,7 +42,13 @@ from ..core.hermes_client import (
 from ..core.inflight import make_inflight_key
 from ..core.message_buffer import BufferedMessage
 from ..core.misc_config import load_misc_config
-from ..core.outbound import get_bot_nickname, send_local_files, send_text_with_media
+from ..core.outbound import (
+    get_bot_nickname,
+    send_local_files,
+    send_result_history,
+    send_result_sticker_count,
+    send_text_with_media,
+)
 from ..core.reply_resolution import resolve_reply
 from ..core.routing import resolve_target
 from ..core.run_tracker import TrackedRun
@@ -354,7 +360,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
     if sent and _mcp.message_buffer is not None:
         # 补发与正常 turn 一样留下可寻址的 bot 行；平台回执缺失时只把
         # qq_message_id 留 NULL，不把“无 ID”误当发送失败。
-        buffered_content = cleaned
+        buffered_content = send_result_history(sent, cleaned)
         if media_urls:
             buffered_content = f"{buffered_content} [图片]".strip()
         _mcp.message_buffer.append(
@@ -375,7 +381,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
         if _mcp.active_sessions.get_if_trigger_alive(row.adapter, row.group_id, _now_ms()) is not None:
             _mcp.active_sessions.mark_bot_replied(
                 row.adapter, row.group_id, now_ms=_now_ms(),
-                media_count=len(media_urls) + len(file_paths), text=cleaned,
+                media_count=len(media_urls) + len(file_paths) + send_result_sticker_count(sent), text=cleaned,
             )
     logger.info(
         f"[HERMES run-resume] 续跑送达完成 run_id={row.run_id} scope={row.scope_key} "

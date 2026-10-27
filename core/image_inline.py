@@ -169,7 +169,12 @@ def encode_gif_frames_bytes(
         logger.warning(f"[image_inline] gif decode failed ({type(exc).__name__}: {exc})")
         return None
 
-    indices = sample_frame_indices(n_frames, max_frames)
+    # QQ 多帧 GIF 的 0 号帧只是封面预览，不是动作内容；先排除它，
+    # 再对真正的动作帧采样。单帧 GIF 的唯一画面必须保留。
+    if n_frames > 1:
+        indices = [i + 1 for i in sample_frame_indices(n_frames - 1, max_frames)]
+    else:
+        indices = [0] if max_frames > 0 else []
     if not indices:
         return None
     try:

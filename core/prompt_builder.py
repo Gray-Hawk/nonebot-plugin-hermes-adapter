@@ -295,6 +295,14 @@ _FILE_TOOL_GUIDANCE = (
     "- 只有下载结果里的 local_path 才是可读文件；失败按 error 说明，不要臆测内容"
 )
 
+_STICKER_TOOL_GUIDANCE = (
+    "本地表情库：\n"
+    "- 有合适表情时用 search_sticker_library 按类型／说明检索稳定 ID；不确定内容先调 "
+    "preview_sticker 预览，不要凭 ID 盲发\n"
+    "- 选定后 reply_text 仅写 表情=ID（半角等号），不要夹其他文字；需要继续发言时本轮填 "
+    "not_final=true 进入续跑（这是闲聊也可用的拆轮例外），下一轮再发文字"
+)
+
 # 本部署补丁: 群档案启用时的记忆写入路由提示。
 # 路径根需动态跟随 hermes_custom_dir 配置，不能写死。
 def _build_group_profile_routing_note(memory_root: str) -> str:
@@ -363,7 +371,7 @@ def build_reactive_system_prompt(
     私聊用简化版(两层,无群层面);功能关闭时不注入。路径根动态跟随 hermes_custom_dir。
     本部署补丁:会话上下文(adapter/group_id/self)挪入系统提示,吃缓存。
     """
-    parts = [_DECISION_PROTOCOL_BLOCK, _FILE_TOOL_GUIDANCE]
+    parts = [_DECISION_PROTOCOL_BLOCK, _FILE_TOOL_GUIDANCE, _STICKER_TOOL_GUIDANCE]
 
     # 会话上下文:稳定信息放路由提示附近,吃缓存
     if adapter and self_id:
@@ -583,7 +591,7 @@ def build_passive_system_prompt(
     )
     if private_decision:
         head += "\n\n" + _PRIVATE_DECISION_PROTOCOL_BLOCK
-    head += "\n\n" + _FILE_TOOL_GUIDANCE
+    head += "\n\n" + _FILE_TOOL_GUIDANCE + "\n\n" + _STICKER_TOOL_GUIDANCE
     # 群记忆外挂(定稿):群档案块拼在最末,字节稳定 per 群。
     # 本部署补丁:群档案功能启用时注入记忆写入路由提示。群聊用完整版(三层),
     # 私聊用简化版(两层,无群层面);功能关闭时不注入。路径根动态跟随 hermes_custom_dir。

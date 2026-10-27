@@ -25,6 +25,7 @@ from ..core.approvals import acknowledge as approvals_acknowledge
 from ..core.approvals import answer_lock as approvals_answer_lock
 from ..core.routing import resolve_target
 from ..core.run_tracker import make_scope_key
+from ..core.sticker_library import default_sticker_library
 from ..core.config_reload import reload_runtime_config
 from ..core.chat_config import load_chat_config
 from ..core.misc_config import load_misc_config
@@ -264,7 +265,7 @@ def build_help_text(
             lines.append(f"{_cl('run-status')} - 查看当前会话在跑的 run(管理员)")
             lines.append(f"{_cl('run-stop')} - 终止当前会话在跑的 run(管理员)")
             lines.append(f"{_cl('reasoning')} - 查看/切换全局推理档位(管理员)")
-        lines.append(f"{_cl('reload-config')} - 手动重载 YAML 配置(管理员)")
+        lines.append(f"{_cl('reload-config')} - 手动重载配置与表情库(管理员)")
 
     if header is not None:
         text = header.strip("\n") + "\n\n命令：\n" + "\n".join(lines)
@@ -590,8 +591,15 @@ def _config_reload_message(adapter_name: str, user_id: str) -> str | None:
         return None
     result = reload_runtime_config()
     if result.ok:
-        logger.info(f"[HERMES] /reload-config: {adapter_name}:{user_id} 重载 {result.reloaded}")
-        return f"✅ {result.message}(标注“重启生效”的键仍需重启)"
+        sticker_count = default_sticker_library().reload()
+        logger.info(
+            f"[HERMES] /reload-config: {adapter_name}:{user_id} "
+            f"重载 {result.reloaded}，表情 {sticker_count} 条"
+        )
+        return (
+            f"✅ {result.message}；表情 {sticker_count} 条"
+            "(标注“重启生效”的键仍需重启)"
+        )
     logger.warning(f"[HERMES] /reload-config 失败: {result.message}")
     return f"⚠️ {result.message}"
 

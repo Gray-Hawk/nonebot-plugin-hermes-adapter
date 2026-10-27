@@ -54,6 +54,8 @@ from ..core.misc_config import load_misc_config
 from ..core.outbound import (
     get_bot_nickname,
     send_local_files,
+    send_result_history,
+    send_result_sticker_count,
     send_text_with_media,
 )
 from ..core.reply_resolution import resolve_reply
@@ -664,7 +666,7 @@ async def _run_passive_turn(
     if is_private and sent and _mcp.message_buffer is not None:
         # 私聊 bot 行保留真实发送者，同时单独记录对端归属；不能用 bot 的
         # user_id 当私聊桶键，也不能靠 is_bot 对所有私聊全局放行。
-        buffered_content = cleaned_text
+        buffered_content = send_result_history(sent, cleaned_text)
         if media_urls:
             buffered_content = f"{buffered_content} [图片]".strip()
         _mcp.message_buffer.append(
@@ -1313,7 +1315,7 @@ async def _run_reactive_turn(
         # data:image;base64 形态,单张图就是几十万字符,原文入库后会被逐 turn 渲染进
         # <recent_messages>,几轮把上下文顶满,模型开始引用错历史。入站侧本来就只存
         # [图片] 占位(见 handle_perception),出站对齐同一约定。
-        buffered_content = cleaned_reply_text
+        buffered_content = send_result_history(sent, cleaned_reply_text)
         if media_urls:
             buffered_content = f"{buffered_content} [图片]".strip()
         _mcp.message_buffer.append(
@@ -1339,7 +1341,7 @@ async def _run_reactive_turn(
             adapter_name,
             group_id,
             now_ms=reply_now_ms,
-            media_count=len(media_urls),
+            media_count=len(media_urls) + send_result_sticker_count(sent),
             text=cleaned_reply_text,
         )
         if not marked and not decision.get("should_exit_active"):
