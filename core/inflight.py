@@ -22,6 +22,7 @@ from nonebot import logger
 
 from .log_throttle import throttled_info
 from .message_buffer import BufferedMessage
+from .message_origin import MessageOrigin, MessageSource
 
 # Refire 链最大深度。超过则清空队列并释放 slot,等下一个新触发。
 # 一次 burst 最多产出 1(主回) + MAX_REFIRE_DEPTH(链尾)= 4 发回复。
@@ -84,22 +85,33 @@ class PendingEntry:
     # 不借 is_direct(该字段已钉死为寻址事实,借它会继承破信封 raw 转发、
     # transport 兜底文本等一串负资产)。合并处与 direct 同规取 or,防并入后丢失。
     steer_recovered: bool = False
-    # 拆批 fragments 序列(alive/103 §14.2):本条目覆盖的有序真实碎片
-    # (各自插件 m:id/发送者/媒体),接力时呈递拆回真实消息序列。
-    # None=无拆批信息(旧路径单行);合并时任一侧缺序列整体回退 None,
-    # 不拿半份序列冒充完整。序列是呈递副本,不随入队剥皮(队列条目 msg
-    # 剥皮是 steer 门保护,碎片原文与媒体清单留给拆批渲染按号召回)。
-    fragments: list[BufferedMessage] | None = None
+    # 拆批 fragments 序列(alive/103 §14.2;alive/104 起恒为列表):本条目覆盖的
+    # 有序真实碎片(各自插件 m:id/发送者/媒体),接力时呈递拆回真实消息序列。
+    # 恒为 list 且长度 ≥1:缺序列=只有这一条消息,构造时以 msg 的独立呈递副本
+    # 播种,不再有 None 语义,也没有「一侧缺序列整批回退首条身份」的分支。
+    # 序列是呈递副本,不随入队剥皮;队列条目 msg 剥皮是 steer 门保护,
+    # 碎片原文与媒体清单留给拆批渲染按号召回。任何碎片都不得与聚合 msg
+    # 共用可变对象,否则合并时会把 MIXED 身份与拼接正文回写进首条碎片。
+    fragments: list[BufferedMessage] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # 播种:调用方没给序列(含沿用旧 None 形参)时本条目就是单条消息。
+        # 复制一层列表,并把任何与聚合 msg 同对象的行改成独立副本:后续
+        # _merge_pending_message 会原地更新 msg 的批级来源/正文,绝不能污染成分。
+        fragments = [replace(row) if row is self.msg else row for row in (self.fragments or ())]
+        self.fragments = fragments or [replace(self.msg)]
 
 
 def _merge_fragments(
-    old_frags: list[BufferedMessage] | None,
-    new_frags: list[BufferedMessage] | None,
-) -> list[BufferedMessage] | None:
-    """两侧都有完整序列才按序追加;任一侧 None=信息不完整,回退 None。"""
-    if old_frags is None or new_frags is None:
-        return None
-    return list(old_frags) + list(new_frags)
+    old_frags: list[BufferedMessage],
+    new_frags: list[BufferedMessage],
+) -> list[BufferedMessage]:
+    """按序追加两侧碎片序列。
+
+    两侧序列恒非空(构造时播种),因此没有「缺序列回退 None」分支;
+    也不做去重或同人相邻折叠——逐段时序与来路原样保留。
+    """
+    return [*old_frags, *new_frags]
 
 
 @dataclass
@@ -126,45 +138,39 @@ def _strip_stickers_for_queue(msg: BufferedMessage) -> BufferedMessage:
     return replace(msg, sticker_urls=[], content=(msg.content + " [表情包]").strip())
 
 
-# 合成后续轮（离场确认/接力/重交）在私聊沿用真实 user_id 时的身份昵称。
-# 本常量只承担显示（speaker 标签/补投昵称），不再承担身份识别——合成 fragment
-# 的身份分界由 BufferedMessage.is_synthetic 单一事实承担，手抄字面量会漂移、
-# 且撞真人同名昵称会误判（alive/86 普查收口项）。
-_SYNTHETIC_NICKNAME = "系统核对"
-
-
 def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
-    """排队消息并入旧条目(语义同防抖拼接)。
+    """排队消息并入旧条目:只更新批级事实,不再表达身份。
 
-    文本换行拼接;图片 URL 追加去重;ts 取最新(接力时序以最后一条为准);
-    original_msg_id 由调用方保留首个非空(与 msg.id 首条同源,alive/103)。
-    reply_to_ts 目前全空,仍取最新值,避免未来启用后旧 None 盖掉新值。
+    正文是非呈递用途的文本载体(steer 注入与日志):同一来源的碎片仍按序拼接,
+    保证跨条文本不丢;一旦这次合并产生混合来源,正文保留首条原文、不再拼接——
+    混合批的逐段身份由 fragments 逐行呈递,正文不拼昵称、不加分段标签
+    之类手写分界(它们是昵称轨与字段轨的混血,表达不了三段以上混合)。
 
-    表情包不并入(队列不承载表情包):new 带的 sticker
-    只折算成一个 [表情包] 文本占位拼进内容,URL 不进场——槽内条目永无
-    sticker_urls,steer 媒体检查不会被毒化。
+    图片 URL 追加去重;ts 取最新(接力时序以最后一条为准);original_msg_id 由
+    调用方保留首个非空(与 msg.id 首条同源,alive/103)。reply_to_ts 目前全空,
+    仍取最新值,避免未来启用后旧 None 盖掉新值。
 
-    归属不再被后到者覆盖——旧实现无条件
-    old.nickname = new.nickname,跨发送者合并(followup 槽)会渲染出「昵称是B
-    id是A」的错配发言者。现在 nickname 只在同发送者合并时刷新;跨发送者拼接的
-    文本带「昵称: 」前缀,归属信息不丢也不错配。
+    表情包不并入(队列不承载表情包):new 带的 sticker 只折算成一个 [表情包]
+    文本占位拼进内容,URL 不进场——槽内条目永无 sticker_urls,steer 媒体检查
+    不会被毒化。
+
+    归属不被后到者覆盖——旧实现无条件 old.nickname = new.nickname,跨发送者
+    合并(followup 槽)会渲染出「昵称是B id是A」的错配发言者。现在 nickname 只在
+    同发送者合并时刷新,跨发送者的逐段归属由 fragments 各自承担,批级留首条。
     """
     same_user = new.user_id == old.user_id
     new_text = (new.content or "").strip()
     if new.sticker_urls:
         new_text = (new_text + " [表情包]").strip()
-    if new_text:
-        if not same_user:
-            new_text = f"{new.nickname or new.user_id}: {new_text}"
-        elif old.is_synthetic and not new.is_synthetic:
-            # 合成后续轮
-            # （私聊顶真实 user_id、昵称「系统核对」）与真人消息按同委托人规则合并时，
-            # 真人部分必须带身份分界——合成 prompt 自带「(系统核对:」前缀，真人部分
-            # 不标会被读成系统指令的延续。反向（真人旧条目+合成新 fragment）不用标：
-            # 合成 prompt 文本自带头。
-            new_text = f"(用户留言: {new_text})"
+    merged_origin = MessageOrigin.merge(old.origin, new.origin)
+    if new_text and merged_origin.source is not MessageSource.MIXED:
         old_text = (old.content or "").strip()
-        old.content = f"{old_text}\n{new_text}" if old_text else new_text
+        # msg.content 仍供 steer 直注使用;同源跨人拼接必须保留后到者归属,
+        # 否则整段会以首条 speaker_tag 注入。模型当前行则由 fragments 呈递,
+        # 不读取这个业务载体,因此不会再出现双 speaker 外壳。
+        speaker_prefix = "" if same_user else f"{new.nickname or new.user_id}: "
+        incoming_text = f"{speaker_prefix}{new_text}"
+        old.content = f"{old_text}\n{incoming_text}" if old_text else incoming_text
     # 只合并普通图片:委托带图接力后仍要看图是真实需求,sticker 见上方说明。
     for field_name in ("image_urls",):
         incoming = list(getattr(new, field_name) or [])
@@ -176,9 +182,11 @@ def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
     if same_user:
         old.nickname = new.nickname
     old.reply_to_ts = new.reply_to_ts
-    # 合成身份 OR 传播：任一片段是合成，合并条目就保持合成——后续真人片段并入时
-    # 仍要带身份分界，不因先并入一条真人文本就把合成底丢成「真人条目」。
-    old.is_synthetic = old.is_synthetic or new.is_synthetic
+    # 来源只在值对象中合并;混合/系统聚合体不再借用首条消息的寻址身份(无号律)。
+    old.origin = merged_origin
+    if old.origin.id_required_none:
+        old.id = None
+        old.qq_message_id = None
 
 
 class InflightRegistry:
@@ -240,8 +248,9 @@ class InflightRegistry:
         if slot.followup is None:
             slot.followup = entry
             return
+        merged_fragments = _merge_fragments(slot.followup.fragments, entry.fragments)
         _merge_pending_message(slot.followup.msg, entry.msg)
-        slot.followup.fragments = _merge_fragments(slot.followup.fragments, entry.fragments)
+        slot.followup.fragments = merged_fragments
         # steer_recovered 与 explicit 同规取 or:迟到 steer
         # 回收文本并入已有条目时豁免标记不丢,否则主修复场景之一仍被 cooldown 吞。
         slot.followup.steer_recovered = slot.followup.steer_recovered or entry.steer_recovered
@@ -260,7 +269,11 @@ class InflightRegistry:
         commission: bool = False,
         fragments: list[BufferedMessage] | None = None,
     ) -> Literal["entered", "queued", "queue_full"]:
-        """无 slot → 占位 started_at=now_ms,返回 'entered';否则按规则入队。"""
+        """无 slot → 占位 started_at=now_ms,返回 'entered';否则按规则入队。
+
+        fragments 缺省(None)由 PendingEntry 播种成 [本条];调用方仍可沿用
+        None 形参,但队列条目恒持有非空列表。
+        """
         slot = self._slots.get(key)
         if slot is None:
             self._slots[key] = InflightSlot(started_at=now_ms)
@@ -276,13 +289,14 @@ class InflightRegistry:
             original_msg_id=original_msg_id,
             addressed_to_bot=addressed_to_bot,
             ephemeral=ephemeral,
-            fragments=fragments,
+            fragments=list(fragments) if fragments else [],
         )
         if not commission:
             # 旁观闲聊也不 latest-wins 了(「正常任务会被打趣驱逐」):
             # 已在队则把内容拼进同一跟进单,触发归属保留首条,文本/媒体不丢;
             # 它只承诺补一次跟进判断,真正的取舍由那次 submit_decision 做。
             if slot.followup is not None:
+                merged_fragments = _merge_fragments(slot.followup.fragments, entry.fragments)
                 _merge_pending_message(slot.followup.msg, current_msg)
                 slot.followup.is_direct = slot.followup.is_direct or is_direct
                 slot.followup.addressed_to_bot = slot.followup.addressed_to_bot or addressed_to_bot
@@ -293,13 +307,14 @@ class InflightRegistry:
                 # 钉锚不再出现「插件 ID 取首条、平台 ID 取末条」的错位。
                 if slot.followup.original_msg_id is None:
                     slot.followup.original_msg_id = original_msg_id
-                slot.followup.fragments = _merge_fragments(slot.followup.fragments, fragments)
+                slot.followup.fragments = merged_fragments
             else:
                 slot.followup = entry
             return "queued"
 
         for queued in slot.commissions:
             if queued.msg.user_id == current_msg.user_id:
+                merged_fragments = _merge_fragments(queued.fragments, entry.fragments)
                 _merge_pending_message(queued.msg, current_msg)
                 queued.is_direct = queued.is_direct or is_direct
                 queued.addressed_to_bot = queued.addressed_to_bot or addressed_to_bot
@@ -308,7 +323,7 @@ class InflightRegistry:
                 # 同 followup 槽：来源保留首条，与 msg.id 首条同源（alive/103）。
                 if queued.original_msg_id is None:
                     queued.original_msg_id = original_msg_id
-                queued.fragments = _merge_fragments(queued.fragments, fragments)
+                queued.fragments = merged_fragments
                 return "queued"
         if len(slot.commissions) >= MAX_PENDING_COMMISSIONS:
             # queue_full 静默丢弃是设计定案(勿「修」成贴表情/报错):

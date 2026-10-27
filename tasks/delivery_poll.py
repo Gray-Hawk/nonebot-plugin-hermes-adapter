@@ -45,6 +45,7 @@ from ..core.bg_tasks import spawn_bg_task
 from ..core.bot_registry import BotEntry
 from ..core import task_notes
 from ..core.inflight import make_inflight_key
+from ..core.message_origin import MessageOrigin, MessageSource
 from ..core.log_throttle import throttled_info
 from ..core.misc_config import load_misc_config
 from ..core.routing import resolve_target
@@ -264,7 +265,7 @@ async def _poll_session(
                 image_urls=[],
                 is_private=True,
                 now_ms=now_ms,
-                is_synthetic=True,
+                origin=MessageOrigin.synthetic(MessageSource.DELIVERY_REPORT),
             )
         )
     else:
@@ -284,7 +285,7 @@ async def _poll_session(
                 addressed_to_bot=False,
                 now_ms=now_ms,
                 ephemeral=True,
-                is_synthetic=True,
+                origin=MessageOrigin.synthetic(MessageSource.DELIVERY_REPORT),
             )
         )
 

@@ -41,6 +41,7 @@ from ..core.hermes_client import (
 )
 from ..core.inflight import make_inflight_key
 from ..core.message_buffer import BufferedMessage
+from ..core.message_origin import MessageOrigin
 from ..core.misc_config import load_misc_config
 from ..core.outbound import (
     get_bot_nickname,
@@ -371,6 +372,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
                 user_id=row.bot_self_id,
                 nickname=await get_bot_nickname(bot),
                 content=buffered_content,
+                origin=MessageOrigin.bot_output(),
                 image_urls=[],
                 is_bot=True,
                 qq_message_id=getattr(sent, "primary_qq_message_id", None),

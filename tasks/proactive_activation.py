@@ -27,6 +27,7 @@ from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..core.chat_config import load_chat_config
 from ..core.bg_tasks import spawn_bg_task
 from ..core.inflight import make_inflight_key
+from ..core.message_origin import MessageOrigin, MessageSource
 
 # 调度 tick 周期:实际触发节奏由 per-group 的 _next_check_at 控制(T2+T3 随机),
 # tick 只是驱动节拍,30s 粒度对分钟级 T2 足够。
@@ -184,6 +185,7 @@ def register_proactive_activation() -> None:
                     now_ms=now_ms,
                     ephemeral=True,
                     droppable=True,  # 巡查天生可弃:撞在跑 turn 不占 followup 槽
+                    origin=MessageOrigin.synthetic(MessageSource.PATROL),
                     recent_override=msgs,
                 ),
             )

@@ -23,8 +23,8 @@ from ..core.hermes_client import (
 from ..core.inflight import (
     PendingEntry,
     make_inflight_key,
-    _SYNTHETIC_NICKNAME,
 )
+from ..core.message_origin import MessageOrigin, MessageSource
 from ..core.message_buffer import (
     BufferedMessage,
     media_label,
@@ -112,27 +112,32 @@ def _fire_followup_turn(
     """追加一发合成后续轮(create_task 排队,经 inflight 接力在本 turn 后跑,不并发)。
 
     全族唯一出口(Q1 合族):离场确认轮 / 类①继续执行轮 / 类②重交轮都走这里,
-    只换 tag 与 prompt。合成身份由 is_synthetic=True 单一事实标记;昵称沿用现有
-    约定(群聊 "system-check"、私聊真实 user_id + 昵称「系统核对」)只承担显示。
+    只换 tag 与 prompt。tag 只用于选择来源枚举；路由 id 不再兼任身份判据。
     """
     logger.info(f"[HERMES feedback] 追加后续轮({tag}) {key}")
+    source = {
+        "confirm": MessageSource.FEEDBACK_CONFIRM,
+        "relay": MessageSource.FEEDBACK_RELAY,
+        "bounce": MessageSource.FEEDBACK_BOUNCE,
+    }[tag.split(":", 1)[0]]
+    origin = MessageOrigin.synthetic(source)
     if is_private:
         spawn_bg_task(
             _handle_passive_path(
                 bot=bot, target=target, adapter_name=adapter_name,
-                user_id=user_id, nickname=_SYNTHETIC_NICKNAME, group_id=None,
+                user_id=user_id, nickname=origin.display_label, group_id=None,
                 text=prompt, image_urls=[], is_private=True,
-                now_ms=_now_ms(), is_synthetic=True,
+                now_ms=_now_ms(), origin=origin,
             )
         )
     else:
         spawn_bg_task(
             _handle_reactive_path(
                 bot=bot, target=target, adapter_name=adapter_name,
-                user_id="system-check", nickname=_SYNTHETIC_NICKNAME, group_id=group_id,
+                user_id="system-check", nickname=origin.display_label, group_id=group_id,
                 text=prompt, image_urls=[], is_direct=False,
                 addressed_to_bot=False, now_ms=_now_ms(), ephemeral=True,
-                is_synthetic=True,
+                origin=origin,
             )
         )
 
@@ -187,16 +192,13 @@ async def _handle_passive_path(
     now_ms: int,
     nickname: str | None = None,
     event_msg_id: str | int | None = None,
-    is_synthetic: bool = False,
-    # 拆批 fragments 序列(alive/103 §14.2):防抖合并后的有序完整碎片;
-    # None(合成轮/旧调用)=单行旧路径。
-    fragments=None,
+    origin: MessageOrigin,
+    rows=None,
 ):
     """Passive 外壳:inflight 占位 → _run_passive_turn → 合并重燃。
 
-    与 reactive 同形,key 含 private/group 前缀区分。
-    is_synthetic=合成轮身份事实（对账补投/任务投递/主动唤起等系统补投），
-    落到 BufferedMessage 供合并函数做身份分界。
+    与 reactive 同形,key 含 private/group 前缀区分。origin 是文本来源唯一事实，
+    路由 user_id、昵称和 m:id 不再参与来源推断。
     """
     assert _mcp.inflight is not None
 
@@ -209,14 +211,15 @@ async def _handle_passive_path(
         user_id=user_id,
         nickname=nickname or user_id,
         content=text,
+        origin=origin,
         image_urls=list(image_urls),
         sticker_urls=list(sticker_urls or []),
         reply_to_ts=None,
         is_bot=False,
-        is_synthetic=is_synthetic,
     )
-    # B 方案:凭本事件 message_id 领 perception 挂号的 db 真 id;合成消息领不到=None
-    current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id)
+    # 只有可入库来源才能领 perception 挂号的真 id；来源与事件号各管各的。
+    current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id) if origin.allows_store else None
+    render_rows = list(rows or [current_buffered])
 
     if (
         _mcp.inflight.try_enter(
@@ -226,7 +229,7 @@ async def _handle_passive_path(
             original_msg_id=event_msg_id,
             now_ms=now_ms,
             commission=True,  # passive/私聊直说都按委托排队,不做闲聊 followup 合并
-            fragments=fragments,
+            fragments=render_rows,
         )
         != "entered"
     ):
@@ -246,7 +249,7 @@ async def _handle_passive_path(
             is_private=is_private,
             now_ms=now_ms,
             current_buffered=current_buffered,
-            current_messages=fragments,
+            current_rows=render_rows,
         )
         should_refire = not (result is not None and result.is_transport_error)
     except Exception:
@@ -272,7 +275,7 @@ async def _handle_passive_path(
                     _refire(
                         key=key,
                         trigger_msg=pending_entry.msg,
-                        current_messages=pending_entry.fragments,
+                        current_rows=pending_entry.fragments,
                         is_direct=pending_entry.is_direct,
                         addressed_to_bot=pending_entry.addressed_to_bot,
                         original_msg_id=pending_entry.original_msg_id,
@@ -389,6 +392,7 @@ async def _maybe_steer_direct(
     msg_text: str,
     is_direct: bool,
     now_ms: int,
+    origin: MessageOrigin,
     event_msg_id: str | int | None = None,
     image_urls: list[str] | None = None,
     sticker_urls: list[str] | None = None,
@@ -406,7 +410,7 @@ async def _maybe_steer_direct(
     媒体按既有 m:id#idx 寻址约定降级为引用标签并附随条读图提示。拿不到插件
     m:id 时带媒体一律失败关闭(落回正常 dispatch 走内联帧),不注断链引用。
     """
-    if not msg_text.strip():
+    if not origin.allows_steer or not msg_text.strip():
         return False
     if not target.private:
         if not is_direct:
@@ -490,6 +494,9 @@ async def _try_steer_followup(
     entry = _mcp.inflight.peek_followup(key)
     if entry is None:
         logger.info(f"[HERMES steer探针] 早退: followup 槽为空 (group={group_id} key={key})")
+        return False
+    if not entry.msg.origin.allows_steer:
+        logger.info(f"[HERMES steer探针] 早退: 来源不允许 steer (group={group_id})")
         return False
     if entry.msg.image_urls or entry.msg.sticker_urls:
         logger.info(
@@ -594,10 +601,8 @@ async def _handle_reactive_path(
     recent_override: list[BufferedMessage] | None = None,
     replied_msg_id=None,
     context_limit: int | None = None,
-    is_synthetic: bool = False,
-    # 拆批 fragments 序列(alive/103 §14.2):防抖合并后的有序完整碎片;
-    # None(合成轮/旧调用)=单行旧路径。
-    fragments=None,
+    origin: MessageOrigin,
+    rows=None,
 ):
     """Reactive 外壳:inflight 占位 → 调 _run_reactive_turn → finally 合并重燃。
 
@@ -623,14 +628,15 @@ async def _handle_reactive_path(
         user_id=user_id,
         nickname=nickname or user_id,
         content=text,
+        origin=origin,
         image_urls=list(image_urls),
         sticker_urls=list(sticker_urls or []),
         reply_to_ts=None,
         is_bot=False,
-        is_synthetic=is_synthetic,
     )
-    # B 方案：凭本事件 message_id 领 perception 挂号的 db 真 id；合成消息领不到=None
-    current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id)
+    # 只有可入库来源才能领 perception 挂号的真 id；来源与事件号各管各的。
+    current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id) if origin.allows_store else None
+    render_rows = list(rows or [current_buffered])
 
     is_commission = addressed_to_bot and not user_lists.is_known_bot(user_id)
 
@@ -656,7 +662,7 @@ async def _handle_reactive_path(
                 addressed_to_bot=addressed_to_bot,
                 ephemeral=ephemeral,
                 commission=is_commission,
-                fragments=fragments,
+                fragments=render_rows,
             )
             logger.debug(
                 f"[HERMES reactive] merged media-only into running turn "
@@ -712,7 +718,7 @@ async def _handle_reactive_path(
         # 「这条排队消息自己的无窗判定」跑,不再被发包 turn 的值污染。
         ephemeral=ephemeral,
         commission=is_commission,  # 群聊只有平台确认冲 bot 的人类 @ 才进委托队列
-        fragments=fragments,
+        fragments=render_rows,
     )
     if inflight_result != "entered":
         # 阶段2b:非委托跟帖在 runs 通道下先尝 steer 注入在跑 turn(成功即不排队);
@@ -768,7 +774,7 @@ async def _handle_reactive_path(
             context_limit=context_limit,
             replied_msg_id=replied_msg_id,
             current_buffered=current_buffered,
-            current_messages=fragments,
+            current_rows=render_rows,
         )
         should_refire_pending = True
     except Exception:
@@ -793,7 +799,7 @@ async def _handle_reactive_path(
                     _refire(
                         key=key,
                         trigger_msg=pending_entry.msg,
-                        current_messages=pending_entry.fragments,
+                        current_rows=pending_entry.fragments,
                         is_direct=pending_entry.is_direct,
                         original_msg_id=pending_entry.original_msg_id,
                         # 补上接力透传——此前这条 finally 链路
@@ -828,7 +834,7 @@ async def _refire(
     steer_recovered: bool = False,
     # 拆批 fragments 序列(alive/103 §14.2):来自 pending_entry.fragments,
     # None=无拆批信息走单行旧路径。
-    current_messages=None,
+    current_rows=None,
     bot: Bot,
     target,
     adapter_name: str,
@@ -860,6 +866,11 @@ async def _refire(
     # 比预期早 N 秒过期、bot 回复时间戳倒退。trigger_msg.ts 只在 finally 的
     # pending.ts 比对里用,那是消息到达时序而非「当前是几点」。
     refire_now_ms = _now_ms()
+    refire_rows = list(current_rows or [trigger_msg])
+    refire_text = "\n".join(row.content for row in refire_rows if row.content)
+    refire_images = []
+    for row in refire_rows:
+        refire_images.extend(u for u in row.image_urls if u not in refire_images)
 
     # B: refire 路径同款 post-reply cooldown 闸门。
     # 本部署补丁: explicit @ 穿透已砍除(与入口闸同批)——接力轮同样吃冷却,
@@ -895,8 +906,8 @@ async def _refire(
                 user_id=trigger_msg.user_id,
                 nickname=trigger_msg.nickname,
                 group_id=group_id,
-                text=trigger_msg.content,
-                image_urls=list(trigger_msg.image_urls),
+                text=refire_text,
+                image_urls=refire_images,
                 sticker_urls=list(trigger_msg.sticker_urls),
                 is_direct=is_direct,
                 addressed_to_bot=addressed_to_bot,
@@ -904,7 +915,7 @@ async def _refire(
                 trigger_msg_id=original_msg_id,
                 ephemeral=ephemeral,
                 current_buffered=trigger_msg,
-                current_messages=current_messages,
+                current_rows=refire_rows,
             )
         else:
             result = await _run_passive_turn(
@@ -913,13 +924,13 @@ async def _refire(
                 adapter_name=adapter_name,
                 user_id=trigger_msg.user_id,
                 group_id=trigger_msg.group_id,
-                text=trigger_msg.content,
-                image_urls=list(trigger_msg.image_urls),
+                text=refire_text,
+                image_urls=refire_images,
                 sticker_urls=list(trigger_msg.sticker_urls),
                 is_private=trigger_msg.group_id is None,
                 now_ms=refire_now_ms,
                 current_buffered=trigger_msg,
-                current_messages=current_messages,
+                current_rows=refire_rows,
             )
         should_refire = not (result is not None and result.is_transport_error)
         if result is None and is_direct:
@@ -953,7 +964,7 @@ async def _refire(
                 _refire(
                     key=key,
                     trigger_msg=pending_entry.msg,
-                    current_messages=pending_entry.fragments,
+                    current_rows=pending_entry.fragments,
                     is_direct=pending_entry.is_direct,
                     addressed_to_bot=pending_entry.addressed_to_bot,
                     original_msg_id=pending_entry.original_msg_id,
@@ -982,6 +993,7 @@ async def route_synthesized_input(
     group_id: str | None,
     nickname: str | None,
     text: str,
+    source: MessageSource,
     allow_passive: bool,
     addressed_to_bot: bool,
     now_ms: int,
@@ -1000,6 +1012,7 @@ async def route_synthesized_input(
       - 戳一戳: True(私聊也开口)
       - 入群: False(群侧经 reactive 由 Hermes 自决)
     """
+    origin = MessageOrigin.synthetic(source)
     if target.private:
         if not allow_passive:
             return
@@ -1014,7 +1027,7 @@ async def route_synthesized_input(
             image_urls=[],
             is_private=True,
             now_ms=now_ms,
-            is_synthetic=True,
+            origin=origin,
         )
         return
 
@@ -1035,7 +1048,7 @@ async def route_synthesized_input(
         is_direct=True,
         addressed_to_bot=addressed_to_bot,
         now_ms=now_ms,
-        is_synthetic=True,
+        origin=origin,
     )
 
 
@@ -1127,7 +1140,7 @@ async def wake_private_turn(
             image_urls=[],
             is_private=True,
             now_ms=_now_ms(),
-            is_synthetic=True,
+            origin=MessageOrigin.synthetic(MessageSource.WAKE_MANUAL, label=source),
         )
     )
     logger.info(f"[HERMES wake] 私聊唤起已点火: {adapter_name}/{user_id} source={source}")
@@ -1162,7 +1175,7 @@ async def wake_group_turn(
             addressed_to_bot=False,
             now_ms=_now_ms(),
             ephemeral=True,
-            is_synthetic=True,
+            origin=MessageOrigin.synthetic(MessageSource.WAKE_MANUAL, label=source),
         )
     )
     logger.info(f"[HERMES wake] 群聊唤起已点火: {adapter_name}/{group_id} source={source}")

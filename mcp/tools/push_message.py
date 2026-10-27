@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ...core.decision_contract import parse_reply_to
 from ...core.message_buffer import BufferedMessage
+from ...core.message_origin import MessageOrigin
 from ...core.outbound import (
     get_bot_nickname,
     send_result_history,
@@ -260,6 +261,7 @@ async def push_message_impl(
                     # 与群侧回写同一约定:用平台账号名,别写字面 "Bot"。
                     nickname=await get_bot_nickname(bot),
                     content=send_result_history(receipt_ids, inp.text),
+                    origin=MessageOrigin.bot_output(),
                     image_urls=list(deliverable),
                     is_bot=True,
                     qq_message_id=primary_qq_message_id,
@@ -304,6 +306,7 @@ async def push_message_impl(
                 # 进下一轮 <recent_messages>,角色名不叫 Bot 时读起来像另一个 bot。
                 nickname=await get_bot_nickname(bot),
                 content=send_result_history(receipt_ids, inp.text),
+                origin=MessageOrigin.bot_output(),
                 image_urls=list(deliverable),
                 is_bot=True,
                 qq_message_id=primary_qq_message_id,

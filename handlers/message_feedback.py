@@ -57,8 +57,8 @@ def _sweep_ts_marks(table: dict, cutoff: float, *, companions: tuple[dict, ...] 
 
 # 打回机制增强(章一;规划书 项目文档库):
 # 类① 放行+接力 / 类② 拦截+重交。两类的防循环都靠同一套「同 scope 连续硬计数」结构
-# (仿 _confirm_fired_at 的 (key, kind) 形态)。私聊合成轮用真实 user_id,不在
-# _SYNTHETIC_USER_IDS 豁免内——身份豁免断不了链,只有硬计数能断(规划书 §3.2 第 5 条)。
+# (仿 _confirm_fired_at 的 (key, kind) 形态)。私聊系统轮虽沿用真实路由 user_id，
+# 来源策略仍会抑制递归；硬计数是最后一道断链保障，与身份判断正交。
 _RELAY_CHAIN_MAX = 2    # 类① 接力上限:超限照发 + WARN
 _BOUNCE_CHAIN_MAX = 1   # 类② 重交上限(规划书 §3.3):第二次检出起放行残片 + 贴便签
 
@@ -135,7 +135,7 @@ async def _post_send_feedback(
     user_id: str,
     group_id: str | None,
     is_private: bool,
-    synthetic: bool = False,
+    suppress_recursion: bool = False,
     not_final: bool = False,
 ) -> None:
     """发送成功后的分级反馈检查(规则引擎驱动)。
@@ -148,11 +148,10 @@ async def _post_send_feedback(
       同轮同填时 not_final 优先续跑,background_task 便签照登记);
     - bounce(类②)→ 不在这里处理:它是发送**前**的拦截(_maybe_intercept_bounce),
       能走到本函数说明该回复已放行。
-    synthetic=True(巡查/确认轮等系统轮)不触发——防合成轮自己的措辞再命中递归。
-    合成轮身份由调用方按 user_id 约定("system-check"/"timer"/"delivery")判定,
-    不在 _handle/_run 签名上加参数。
+    suppress_recursion=True 表示当前输入含系统指令，不再让本轮措辞触发后续轮；
+    该值由调用方从 current_buffered.origin.suppresses_feedback 派生，不看路由 user_id。
     """
-    if synthetic or not reply_text:
+    if suppress_recursion or not reply_text:
         return
     relay_rule = None
     for rule in load_rules():

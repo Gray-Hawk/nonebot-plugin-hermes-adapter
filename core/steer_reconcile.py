@@ -15,6 +15,7 @@ steer 记进台账(steer_ledger, status=pending), 本模块在 run 终态后:
 from __future__ import annotations
 
 import json
+import re
 import time
 
 import httpx
@@ -23,7 +24,7 @@ from nonebot import get_bot, logger
 from .. import mcp as _mcp
 from ..core.bg_tasks import spawn_bg_task
 from ..core.hermes_client import _try_parse_first_json_block
-from ..core.inflight import _SYNTHETIC_NICKNAME
+from ..core.message_origin import MessageOrigin, MessageSource
 from ..core.routing import resolve_target
 from ..core.run_tracker import TrackedRun
 
@@ -239,11 +240,10 @@ async def _replay_case_a(tracked, rows, missing, now_ms) -> None:
             await _replay_direct(tracked, p, now_ms)
         return
     try:
-        # 情形 A 时间线重构是系统指令文案,合成身份(is_synthetic=True)——真人消息
-        # 并入时须带身份分界;昵称用 inflight 单点常量(只承担显示),
-        # 手抄字面量会漂移(alive/86 普查收口项)。
+        # 情形 A 是系统重构指令；情形 B 的真人原文回投走另一来源，不能混用身份。
+        origin = MessageOrigin.synthetic(MessageSource.RECONCILE_TIMELINE)
         _spawn_replay_turn(
-            tracked, text, tracked.user_id, _SYNTHETIC_NICKNAME, now_ms, is_synthetic=True
+            tracked, text, tracked.user_id, origin.display_label, now_ms, origin=origin
         )
         _mark_status(tracked, m_ids, "replayed")
         logger.info(f"[HERMES steer对账] 情形 A 补投派发成功 (run_id={tracked.run_id} count={len(m_ids)})")
@@ -259,18 +259,18 @@ async def _replay_case_a(tracked, rows, missing, now_ms) -> None:
 async def _replay_direct(tracked, row, now_ms) -> None:
     """原文直插补投(情形 B 与情形 A 降级共用)。成功置 replayed, 失败置 replay_failed。
 
-    台账 steer_text 剥尾部约定行后作为正常消息重投; [m:xxx] 标记保留(对账可追溯,
-    被吞条目在转录无重复)。bot 取不到/不在线 → replay_failed(不重试)。
+    台账 steer_text 剥尾部约定行与 speaker／m:id 呈递外壳后作为正常消息重投；
+    原始 m:id 仍留在台账供对账追溯，不回填成新消息的可寻址身份。
     """
     m_id = row["m_id"]
     try:
-        text = _strip_convention(row["steer_text"])
+        text = strip_steer_presentation(row["steer_text"])
         # 私聊 sender 恒为本人; 群聊按原 sender 归因(昵称不可得, 回落 sender_id)。
         user_id = tracked.user_id if tracked.is_private else row["sender_id"]
-        # 情形 B 合理例外(alive/84):原文直插是用户的原始话语、非系统指令文案,
-        # 按正常消息处理——is_synthetic 走缺省 False,不标合成身份,真人消息并入
-        # 不会被合并身份分界误标。
-        _spawn_replay_turn(tracked, text, user_id, row["sender_id"], now_ms)
+        # 情形 B 是真人原文回投：作者是真人，通道与平台入站分开记录，不生成系统署名。
+        _spawn_replay_turn(
+            tracked, text, user_id, row["sender_id"], now_ms, origin=MessageOrigin.human_replay()
+        )
         _mark_status(tracked, [m_id], "replayed")
         logger.info(f"[HERMES steer对账] 原文直插派发成功 (run_id={tracked.run_id} m_id={m_id})")
     except Exception as exc:
@@ -283,15 +283,11 @@ async def _replay_direct(tracked, row, now_ms) -> None:
 
 
 def _spawn_replay_turn(
-    tracked, text: str, user_id: str, nickname: str, now_ms: int, *, is_synthetic: bool = False
+    tracked, text: str, user_id: str, nickname: str, now_ms: int, *, origin: MessageOrigin
 ) -> None:
-    """把补投文案作为正常消息走 passive/reactive 外壳派发(不传 ephemeral, 复用防抖/
-    合并/排队语义)。函数内延迟 import(handlers 依赖 mcp 运行时单例)。
+    """把补投文案走 passive/reactive 外壳派发，复用既有排队与生命周期。
 
-    is_synthetic 区分两类补投身份:情形 A 的时间线重构是系统指令文案(is_synthetic=True),
-    真人消息并入时须带身份分界;情形 B 原文直插是用户的原始话语,按正常消息处理
-    (is_synthetic=False)——这是 alive/84 情形 B 的合理例外,文案自带头、不是系统指令,
-    不该被合并身份分界误标。
+    origin 由情形 A/B 的调用点显式选择；本函数不根据文案或昵称猜来源。
     """
     bot, entry = _resolve_bot(tracked)
     if tracked.is_private:
@@ -302,7 +298,7 @@ def _spawn_replay_turn(
                 bot=bot, target=entry.target, adapter_name=tracked.adapter,
                 user_id=user_id, nickname=nickname, group_id=None,
                 text=text, image_urls=[], is_private=True, now_ms=now_ms,
-                is_synthetic=is_synthetic,
+                origin=origin,
             )
         )
     else:
@@ -315,7 +311,7 @@ def _spawn_replay_turn(
                 group_id=tracked.group_id, text=text, image_urls=[],
                 is_direct=False, addressed_to_bot=False, now_ms=now_ms,
                 force_skip_cooldown=True,
-                is_synthetic=is_synthetic,
+                origin=origin,
             )
         )
 
@@ -443,6 +439,15 @@ def _strip_convention(text: str) -> str:
     if text.endswith(line):
         text = text[: -len(line)]
     return text.rstrip("\n")
+
+
+def strip_steer_presentation(text: str) -> str:
+    """真人原文回投前剥掉 steer 呈递外壳，避免与当前行渲染重复叠加。"""
+    text = _strip_convention(text)
+    return re.sub(
+        r"^(?:\[id=[^\]\n]+\](?:\s+\[m:\d+\])?|\[m:\d+\])\s*:\s*",
+        "", text, flags=re.MULTILINE,
+    )
 
 
 def _strip_out_of_band(content: str) -> str:

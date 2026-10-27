@@ -44,6 +44,7 @@ from .message_ingress import (
 
 from .message_perception import _merge_fragment_payload, _peek_event_db_id
 from ..core.message_buffer import BufferedMessage
+from ..core.message_origin import MessageOrigin
 
 from .message_turns import _dispatch_chat
 from .message_relay import route_synthesized_input
@@ -355,7 +356,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # 暂存;防抖合并按序追加,current 拆批逐行渲染,不查库。
     fragment = BufferedMessage(
         ts=now, adapter=adapter_name, group_id=group_id, user_id=user_id,
-        nickname=nickname, content=msg_text, image_urls=list(image_urls),
+        nickname=nickname, content=msg_text, origin=MessageOrigin.human(), image_urls=list(image_urls),
         sticker_urls=list(sticker_urls), reply_to_ts=None, is_bot=False,
     )
     fragment.id = _peek_event_db_id(adapter_name, getattr(event, "message_id", None))
