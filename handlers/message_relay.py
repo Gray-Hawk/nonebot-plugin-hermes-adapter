@@ -27,6 +27,7 @@ from ..core.inflight import (
 )
 from ..core.message_buffer import (
     BufferedMessage,
+    media_label,
 )
 from ..core.run_tracker import make_scope_key
 from ..core.bg_tasks import spawn_bg_task
@@ -43,6 +44,7 @@ from .message_ingress import (
 )
 from .message_perception import (
     _claim_event_db_id,
+    _peek_event_db_id,
 )
 from .message_feedback import (
     _sweep_ts_marks,
@@ -186,6 +188,9 @@ async def _handle_passive_path(
     nickname: str | None = None,
     event_msg_id: str | int | None = None,
     is_synthetic: bool = False,
+    # 拆批 fragments 序列(alive/103 §14.2):防抖合并后的有序完整碎片;
+    # None(合成轮/旧调用)=单行旧路径。
+    fragments=None,
 ):
     """Passive 外壳:inflight 占位 → _run_passive_turn → 合并重燃。
 
@@ -221,6 +226,7 @@ async def _handle_passive_path(
             original_msg_id=event_msg_id,
             now_ms=now_ms,
             commission=True,  # passive/私聊直说都按委托排队,不做闲聊 followup 合并
+            fragments=fragments,
         )
         != "entered"
     ):
@@ -240,6 +246,7 @@ async def _handle_passive_path(
             is_private=is_private,
             now_ms=now_ms,
             current_buffered=current_buffered,
+            current_messages=fragments,
         )
         should_refire = not (result is not None and result.is_transport_error)
     except Exception:
@@ -253,10 +260,10 @@ async def _handle_passive_path(
             # 私聊被动路径的收尾边界先过聚合窗——窗内尾随消息
             # 并入同一条目后一次性开轮;窗内 slot 不释放(见 helper docstring)。
             pending_entry = await _pop_pending_after_aggregate_window(
-                # 私聊聚合窗回退止血——当日三连 bug(m:id 错标/
-                # 剥皮丢图/延迟送达)均与「合并批无单一 m:id」相关,深层拆批渲染单独立项
-                # (见 planned-mods 私聊 m:id 专项);立项落地前私聊不等聚合窗,批规模压低。
-                key, after_ts=current_buffered.ts, aggregate=False
+                # 私聊聚合窗恢复(alive/103 设计定案):拆批渲染落地后
+                # 批内每条碎片各自持真实 m:id,当年「合并批无单一 m:id」的三连
+                # 故障根因已除,回退止血撤销,恢复私聊被动路径聚合窗。
+                key, after_ts=current_buffered.ts, aggregate=is_private
             )
             if pending_entry is None:
                 _release_slot_and_retry(key, adapter_name, is_private, user_id, group_id)
@@ -265,6 +272,7 @@ async def _handle_passive_path(
                     _refire(
                         key=key,
                         trigger_msg=pending_entry.msg,
+                        current_messages=pending_entry.fragments,
                         is_direct=pending_entry.is_direct,
                         addressed_to_bot=pending_entry.addressed_to_bot,
                         original_msg_id=pending_entry.original_msg_id,
@@ -362,6 +370,15 @@ async def _steer_text_into_live_run(
                 )
     return ok
 
+# --- steer 呈现去重(alive/103 §14.3):实现迁 core/steer_seen.py(turn 渲染侧
+# 也要过滤,relay→turn 单向依赖防循环 import);此处 re-export 保持既有调用面。
+from ..core.steer_seen import (
+    _steer_seen_filter,
+    _steer_seen_mark,
+    _steer_seen_reset_for_test,
+)
+
+
 async def _maybe_steer_direct(
     *,
     target,
@@ -373,12 +390,21 @@ async def _maybe_steer_direct(
     is_direct: bool,
     now_ms: int,
     event_msg_id: str | int | None = None,
+    image_urls: list[str] | None = None,
+    sticker_urls: list[str] | None = None,
+    # 拆批(alive/103 §14.3):本批全部碎片的插件 m:id(含末条)。steer 成功后
+    # 整批记入呈现去重名单;None=单条,只记 plugin_m_id。
+    batch_ids: list[int] | None = None,
 ) -> bool:
-    """资格内纯文本 steer 直注(规划书§3.2/3.3)。True=已注入,调用方不再 dispatch。
+    """资格内 steer 直注(规划书§3.2/3.3)。True=已注入,调用方不再 dispatch。
 
     私聊:本 scope 有 live run 即资格成立(在跑 run 必属本人)。
     群聊:仅委托(explicit=addressed)且发送者 ∈ 资格集合才直试;闲聊不直注,
     维持走 reactive 队尾的 followup 槽 steer(_try_steer_followup,现状)。
+
+    媒体降级(alive/103):带图/表情的消息不再被 steer 门一票否决——文字照注,
+    媒体按既有 m:id#idx 寻址约定降级为引用标签并附随条读图提示。拿不到插件
+    m:id 时带媒体一律失败关闭(落回正常 dispatch 走内联帧),不注断链引用。
     """
     if not msg_text.strip():
         return False
@@ -387,20 +413,48 @@ async def _maybe_steer_direct(
             return False
         if user_id not in _steer_eligible_ids(adapter_name, False, user_id, group_id, now_ms):
             return False
-    # 本部署补丁(弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75 根因、alive/84 方案):
-    # 有 m:id 时在发言人标签后挂 [m:xxx], 供批 2 对账按 m:id 精确搜转录;无 id 维持旧形态。
+    # steer 挂载只认插件 m:id（alive/103 三套编号边界）：平台 event.message_id
+    # 仅作 perception 桥的查找键，不进入模型可见文本与台账。用 peek 不 claim——
+    # 直注失败落回正常 pending 时，正常 turn 条目仍须能领到同一个号。
+    # 取不到插件 id（合成/桥 miss）维持无号形态：不挂标记、不入台账，
+    # 绝不拿平台 ID 顶替。
     speaker_tag = _format_speaker_tag(nickname, user_id)
-    if event_msg_id is not None:
-        text = _with_steer_reply_convention(
-            f"{speaker_tag} [m:{event_msg_id}]: {msg_text.strip()}"
-        )
+    plugin_m_id = _peek_event_db_id(adapter_name, event_msg_id)
+    # 与 iter_message_media 同序(image→sticker),idx 即消息内全局连续编号,
+    # 与历史行媒体清单/parts 寻址同约定。
+    media_items = [
+        (kind, url)
+        for kind, urls in (("image", image_urls or []), ("sticker", sticker_urls or []))
+        for url in urls
+    ]
+    if media_items and plugin_m_id is None:
+        return False
+    if plugin_m_id is not None:
+        text = f"{speaker_tag} [m:{plugin_m_id}]: {msg_text.strip()}"
     else:
-        text = _with_steer_reply_convention(
-            f"{speaker_tag}: {msg_text.strip()}"
+        text = f"{speaker_tag}: {msg_text.strip()}"
+    if media_items and plugin_m_id is not None:
+        labels = " ".join(
+            media_label(kind, plugin_m_id, idx)
+            for idx, (kind, _url) in enumerate(media_items)
         )
-    return await _steer_text_into_live_run(
-        adapter_name, target.private, user_id, group_id, text, m_id=event_msg_id
+        text += (
+            f" {labels}(随条媒体未内联,需要看图/表情时用 get_message_images "
+            f"按 m:{plugin_m_id} 加对应 idx 取)"
+        )
+    text = _with_steer_reply_convention(text)
+    ok = await _steer_text_into_live_run(
+        adapter_name, target.private, user_id, group_id, text, m_id=plugin_m_id
     )
+    if ok:
+        # 呈现去重(alive/103 §14.3):本批已随 steer 给模型看过,recent 不再重复呈现。
+        scope = make_inflight_key(adapter_name, target.private, user_id, group_id)
+        ids = batch_ids if batch_ids is not None else (
+            [plugin_m_id] if plugin_m_id is not None else [])
+        for mid in ids:
+            if mid is not None:
+                _steer_seen_mark(scope, mid)
+    return ok
 
 async def _try_steer_followup(
     key: tuple[str, str],
@@ -513,6 +567,10 @@ async def _try_steer_followup(
         f"[HERMES reactive] 跟帖已 steer 注入在跑 turn (group={group_id} "
         f"user={entry.msg.user_id} run_id={live.run_id} len={len(text)})"
     )
+    # 呈现去重(alive/103 §14.3):已注入内容不再随 recent 重复呈现;
+    # 留槽接力的条目仍会从 current 拆批呈现(current 不过滤),不丢内容。
+    if _m_id is not None:
+        _steer_seen_mark(key, _m_id)
     return True
 
 async def _handle_reactive_path(
@@ -537,6 +595,9 @@ async def _handle_reactive_path(
     replied_msg_id=None,
     context_limit: int | None = None,
     is_synthetic: bool = False,
+    # 拆批 fragments 序列(alive/103 §14.2):防抖合并后的有序完整碎片;
+    # None(合成轮/旧调用)=单行旧路径。
+    fragments=None,
 ):
     """Reactive 外壳:inflight 占位 → 调 _run_reactive_turn → finally 合并重燃。
 
@@ -595,6 +656,7 @@ async def _handle_reactive_path(
                 addressed_to_bot=addressed_to_bot,
                 ephemeral=ephemeral,
                 commission=is_commission,
+                fragments=fragments,
             )
             logger.debug(
                 f"[HERMES reactive] merged media-only into running turn "
@@ -650,6 +712,7 @@ async def _handle_reactive_path(
         # 「这条排队消息自己的无窗判定」跑,不再被发包 turn 的值污染。
         ephemeral=ephemeral,
         commission=is_commission,  # 群聊只有平台确认冲 bot 的人类 @ 才进委托队列
+        fragments=fragments,
     )
     if inflight_result != "entered":
         # 阶段2b:非委托跟帖在 runs 通道下先尝 steer 注入在跑 turn(成功即不排队);
@@ -705,6 +768,7 @@ async def _handle_reactive_path(
             context_limit=context_limit,
             replied_msg_id=replied_msg_id,
             current_buffered=current_buffered,
+            current_messages=fragments,
         )
         should_refire_pending = True
     except Exception:
@@ -729,6 +793,7 @@ async def _handle_reactive_path(
                     _refire(
                         key=key,
                         trigger_msg=pending_entry.msg,
+                        current_messages=pending_entry.fragments,
                         is_direct=pending_entry.is_direct,
                         original_msg_id=pending_entry.original_msg_id,
                         # 补上接力透传——此前这条 finally 链路
@@ -761,6 +826,9 @@ async def _refire(
     addressed_to_bot: bool = False,
     ephemeral: bool = False,
     steer_recovered: bool = False,
+    # 拆批 fragments 序列(alive/103 §14.2):来自 pending_entry.fragments,
+    # None=无拆批信息走单行旧路径。
+    current_messages=None,
     bot: Bot,
     target,
     adapter_name: str,
@@ -836,6 +904,7 @@ async def _refire(
                 trigger_msg_id=original_msg_id,
                 ephemeral=ephemeral,
                 current_buffered=trigger_msg,
+                current_messages=current_messages,
             )
         else:
             result = await _run_passive_turn(
@@ -850,6 +919,7 @@ async def _refire(
                 is_private=trigger_msg.group_id is None,
                 now_ms=refire_now_ms,
                 current_buffered=trigger_msg,
+                current_messages=current_messages,
             )
         should_refire = not (result is not None and result.is_transport_error)
         if result is None and is_direct:
@@ -875,15 +945,15 @@ async def _refire(
             after_ts=trigger_msg.ts,
             # 接力轮的收尾边界是链式连发的另一半——私聊被动接力同样过聚合窗
             # (mode="passive" 且 group_id is None = 私聊);群聊接力/群聊被动保持不变。
-            # 私聊聚合窗回退止血(同 _handle_passive_path 处注释),
-            # 深层拆批渲染立项落地前统一不等窗。
-            aggregate=False,
+            # 私聊聚合窗随 alive/103 恢复(拆批落地,批内碎片各有真实 m:id)。
+            aggregate=(mode == "passive" and group_id is None),
         )
         if pending_entry:
             spawn_bg_task(
                 _refire(
                     key=key,
                     trigger_msg=pending_entry.msg,
+                    current_messages=pending_entry.fragments,
                     is_direct=pending_entry.is_direct,
                     addressed_to_bot=pending_entry.addressed_to_bot,
                     original_msg_id=pending_entry.original_msg_id,

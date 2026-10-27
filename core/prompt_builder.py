@@ -622,7 +622,9 @@ _MAX_ANCHOR_TEXT_CHARS = 120
 def _render_pinned_tasks_block(anchors: Sequence[Any], *, now_ms: int) -> str:
     """渲染 <pinned_tasks> 委托锚块(本部署补丁)。
 
-    每行:📌 [id=QQ user=昵称] (年龄): 委托文本摘要。年龄给模型「新鲜度」
+    每行:📌 [m:插件id] [id=QQ user=昵称] (年龄): 委托文本摘要。m:id 是原委托
+    消息的插件编号(alive/103),模型可据此 reply_to 引用;旧迁移/合成来源的锚
+    无 m_id=无号降级,绝不拿内部平台 quote ID 顶替。年龄给模型「新鲜度」
     直读量,自行降权;块与 <recent_messages> 正文视觉隔开,防止锚被误读成
     最新消息。输入记录只需有 commissioner_id/commissioner_nickname/text/ts
     四个属性(AnchorRecord),用 Any 标注避免 prompt_builder 反向依赖
@@ -637,9 +639,28 @@ def _render_pinned_tasks_block(anchors: Sequence[Any], *, now_ms: int) -> str:
         age = f"{age_sec}秒前" if age_sec < 60 else f"{age_sec // 60}分钟前"
         tag = _format_speaker_tag(rec.commissioner_nickname, rec.commissioner_id)
         text = _sanitize_history_content(rec.text, max_chars=_MAX_ANCHOR_TEXT_CHARS)
-        lines.append(f"📌 {tag} ({age}): {text}")
+        m_id = getattr(rec, "m_id", None)
+        m_prefix = f"[m:{m_id}] " if m_id is not None else ""
+        lines.append(f"📌 {m_prefix}{tag} ({age}): {text}")
     lines.append("</pinned_tasks>")
     return "\n".join(lines)
+
+
+def _render_fragment_line(row: BufferedMessage, *, name_resolver=None) -> str:
+    """拆批 current 多行的单行渲染(alive/103 §14.2):[m:id] speaker: 原文+媒体清单。
+
+    每行各贴真实插件 m:id、各自发言人标签与各自媒体清单;无号(合成 fragment)
+    不虚构前缀,靠发言人标签(系统核对)与正文自带头区分身份。
+    """
+    prefix = f"[m:{row.id}] " if row.id is not None else ""
+    tag = _format_speaker_tag(
+        row.nickname, row.user_id,
+        canonical=name_resolver(row.user_id) if name_resolver else None)
+    line = f"{prefix}{tag}: {row.content or ''}"
+    summary = render_media_summary(row)
+    if summary:
+        line += f" {summary}"
+    return line
 
 
 def build_reactive_user_content(
@@ -655,6 +676,9 @@ def build_reactive_user_content(
     current_image_urls: Sequence[Any],
     current_sticker_urls: Sequence[Any] = (),
     current_message: BufferedMessage | None = None,
+    # 拆批 current 序列(alive/103 §14.2):多元素逐行渲染各贴真号;
+    # 单元素折叠回旧单行路径(字节一致),None=旧路径。
+    current_messages: Sequence[BufferedMessage] | None = None,
     sender_blacklisted: bool = False,
     pinned_anchors: Sequence[Any] = (),
     plugin_note: str | None = None,
@@ -674,6 +698,12 @@ def build_reactive_user_content(
     current_image_urls / current_sticker_urls: 内联帧组,每项为 (寻址三元组, 帧列表) 或
     裸帧列表;三元组 (kind, mid, idx) 用于给 parts 打全称标签 [图 m:ID#idx]。
     """
+    # 单元素序列折叠回旧单行路径:current_text/speaker 仍由外层给定,
+    # 与旧 current_message 单行渲染字节一致(alive/103 §14.2 回归锚)。
+    if current_messages and len(current_messages) == 1:
+        if current_message is None:
+            current_message = current_messages[0]
+        current_messages = None
     runtime_block = _render_runtime_state(
         addressed_to_bot=addressed_to_bot,
         triggered_by=triggered_by,
@@ -698,6 +728,11 @@ def build_reactive_user_content(
     if cur_summary:
         cur_line += f" {cur_summary}"
     current_block_text = f"<current_message>\n{cur_line}\n</current_message>"
+    # 拆批多行:逐行 [m:id] tag: 原文+各自媒体清单;单元素已折叠回旧路径。
+    if current_messages:
+        lines = [_render_fragment_line(row, name_resolver=name_resolver)
+                 for row in current_messages]
+        current_block_text = "<current_message>\n" + "\n".join(lines) + "\n</current_message>"
     if current_sticker_urls:
         current_block_text += _STICKER_MOOD_NOTE
 
@@ -733,6 +768,9 @@ def build_passive_user_content(
     current_image_urls: Sequence[Sequence[str]],
     current_sticker_urls: Sequence[Sequence[str]] = (),
     current_message: BufferedMessage | None = None,
+    # 拆批 current 序列(alive/103 §14.2):多元素逐行渲染各贴真号;
+    # 单元素折叠回旧单行路径(字节一致),None=旧路径。
+    current_messages: Sequence[BufferedMessage] | None = None,
     plugin_note: str | None = None,
     name_resolver: "Callable[[str], str | None] | None" = None,
 ) -> UserContent:
@@ -753,6 +791,21 @@ def build_passive_user_content(
     cur_summary = render_media_summary(current_message) if current_message is not None else None
     if cur_summary:
         cur_line = f"{cur_line} {cur_summary}"
+    # 单元素序列折叠回旧单行路径(与 reactive 同规,alive/103 §14.2)。
+    if current_messages and len(current_messages) == 1:
+        current_message = current_messages[0]
+        current_messages = None
+        cur_line = current_text
+        if current_message.id is not None:
+            cur_line = f"[m:{current_message.id}] {cur_line}"
+        cur_summary = render_media_summary(current_message)
+        if cur_summary:
+            cur_line = f"{cur_line} {cur_summary}"
+    # 拆批多行:私聊也逐行带发言人标签(合成 fragment 与真人身份分界)。
+    if current_messages:
+        cur_line = "\n".join(
+            _render_fragment_line(row, name_resolver=name_resolver)
+            for row in current_messages)
     if recent_messages:
         text_block = _render_recent_messages_block(
             recent_messages, name_resolver=name_resolver) + "\n\n" + cur_line

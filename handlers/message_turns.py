@@ -43,6 +43,7 @@ from ..core.inflight import (
     make_inflight_key,
 )
 from ..core.log_throttle import throttled_info
+from ..core.steer_seen import _steer_seen_filter
 from ..core.message_buffer import (
     BufferedMessage,
     build_media_address_index,
@@ -106,6 +107,24 @@ def _observe_silence(path: str, adapter_name: str, group_id: str | None, is_priv
         f"[HERMES {path}] 403/暂不可用硬静默观测 (group={group_id} is_private={is_private})",
     )
 
+def _filter_current_and_steered(
+    recent: list[BufferedMessage], *, current_messages, scope: tuple[str, str],
+) -> list[BufferedMessage]:
+    """recent 呈现去重(alive/103 §14.2/§14.3)。
+
+    - 已 steer 成功呈现的行不再随 recent 重复(§14.3);
+    - current 拆批序列覆盖的行不再随 recent 重复——拆批后它们已在
+      current_message 逐行各贴真号呈现,recent 再出一次就是双份(§14.2)。
+    current 不过滤自身:留槽接力等场景 current 必须完整呈现。
+    """
+    rows = _steer_seen_filter(scope, recent)
+    if current_messages:
+        ids = {r.id for r in current_messages if r.id is not None}
+        if ids:
+            rows = [r for r in rows if r.id not in ids]
+    return rows
+
+
 async def _dispatch_chat(
     *,
     bot: Bot,
@@ -124,22 +143,28 @@ async def _dispatch_chat(
     ephemeral: bool = False,
     context_limit: int | None = None,
     replied_msg_id=None,
+    # 拆批 fragments 序列(alive/103 §14.2):防抖合并后的有序完整碎片,
+    # None=无拆批信息(旧路径单行)。
+    fragments=None,
 ):
     """passive/reactive 分叉(原 handle_message 末段,防抖批抽出以便
     防抖到期后与防抖关闭路径共用同一 dispatch)。"""
-    # 任务锚+steer(规划书§3):资格内纯文本直注在跑 turn——私聊恒资格,
+    # 任务锚+steer(规划书§3):资格内直注在跑 turn——私聊恒资格,
     # 群聊仅委托且发送者在资格集合(在跑 turn 触发者 ∪ 在钉锚全体参与者)。
     # 直注成功即 return;注不进去落回正常 dispatch,零丢失。
+    # 媒体不再一票否决(alive/103):文字＋图/表情走降级注入(寻址引用＋读图提示),
+    # 无插件 m:id 的带媒体消息在 _maybe_steer_direct 内失败关闭,落回内联帧路径。
     if (
         plugin_config.hermes_api_interface == "runs"
         and not ephemeral
-        and not image_urls
-        and not sticker_urls
         and await _maybe_steer_direct(
             target=target, adapter_name=adapter_name, user_id=user_id, nickname=nickname,
             group_id=group_id, msg_text=msg_text, is_direct=is_direct,
             now_ms=now_ms,
             event_msg_id=getattr(event, "message_id", None),
+            image_urls=image_urls,
+            sticker_urls=sticker_urls,
+            batch_ids=[f.id for f in (fragments or []) if f.id is not None] or None,
         )
     ):
         return
@@ -158,6 +183,7 @@ async def _dispatch_chat(
             is_private=target.private,
             now_ms=now_ms,
             event_msg_id=getattr(event, "message_id", None),
+            fragments=fragments,
         )
         return
 
@@ -181,6 +207,7 @@ async def _dispatch_chat(
         ephemeral=ephemeral,
         context_limit=context_limit,
         replied_msg_id=replied_msg_id,
+        fragments=fragments,
     )
 
 # 上游 locked 类持久化失败 = 别的 Hermes 进程正在写 state.db,上游要求「过一会再发一次」。
@@ -349,6 +376,8 @@ async def _run_passive_turn(
     is_private: bool,
     now_ms: int,
     current_buffered: BufferedMessage | None = None,
+    # 拆批 fragments 序列(alive/103 §14.2):有序完整碎片;None=单行旧路径。
+    current_messages=None,
 ):
     """跑一发 passive turn,返回 ChatResult 或 None(被 submit_decision 静默兜底等情况)。"""
     misc_cfg = load_misc_config()
@@ -375,6 +404,14 @@ async def _run_passive_turn(
                 before_ts=now_ms,
             )
         )
+
+    # 拆批/呈现去重(alive/103 §14.2/§14.3):current 序列覆盖的行与已 steer
+    # 呈现的行不再随 recent 重复出现。私聊 recent 恒空,过滤为 no-op。
+    recent = _filter_current_and_steered(
+        recent,
+        current_messages=current_messages,
+        scope=make_inflight_key(adapter_name, is_private, user_id, group_id),
+    )
 
     # 本部署补丁: 私聊挂 submit_decision 决策信封
     # (全隐式化:私聊不再「硬必回」,模型按私聊版协议自决,无实质内容可静默)。
@@ -414,7 +451,13 @@ async def _run_passive_turn(
     current_row = (
         current_buffered if (current_buffered is not None and current_buffered.id is not None) else None
     )
-    label_index = build_media_address_index(list(recent) + ([current_row] if current_row else []))
+    # 拆批:寻址索引覆盖 current 全序列(各碎片自己的 m:id 与媒体),
+    # 顺序=recent + current 序列,与文本呈递顺序一致(alive/103 §14.2)。
+    if current_messages:
+        current_rows = [r for r in current_messages if r.id is not None]
+    else:
+        current_rows = [current_row] if current_row else []
+    label_index = build_media_address_index(list(recent) + current_rows)
     if is_private:
         inline_urls = list(image_urls)
     else:
@@ -452,6 +495,7 @@ async def _run_passive_turn(
         # 与 reactive 的 current_message 同形同源;B 方案(同日晚):行来自触发条目
         # (构造时已凭 event 领得 db 真 id),不再偷看 buffer 尾部。
         current_message=current_row,
+        current_messages=current_messages,
         # 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
         plugin_note="\n".join(
             task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, is_private, user_id, group_id))
@@ -714,6 +758,8 @@ async def _run_reactive_turn(
     context_limit: int | None = None,
     replied_msg_id=None,
     current_buffered: BufferedMessage | None = None,
+    # 拆批 fragments 序列(alive/103 §14.2):有序完整碎片;None=单行旧路径。
+    current_messages=None,
 ):
     """跑一发 reactive turn,返回 hermes_client.chat() 的 ChatResult,或 None 表示提前 return。
 
@@ -783,6 +829,13 @@ async def _run_reactive_turn(
     # 旧续发轮 OR 双闸/select_followup_window 随之废弃(定:配置削减)。
     watermark = session_manager.get_push_watermark(adapter_name, user_id, group_id)
     recent, new_watermark = split_unpushed_messages(recent_full, watermark)
+    # 拆批/呈现去重(alive/103 §14.2/§14.3):current 序列覆盖的行与已 steer
+    # 呈现的行不再随 recent 重复出现;寻址索引仍用 recent_full 全集不受影响。
+    recent = _filter_current_and_steered(
+        recent,
+        current_messages=current_messages,
+        scope=make_inflight_key(adapter_name, False, user_id, group_id),
+    )
 
     # 平台账号名 + self_id 一起进 prompt:模型判归属只能靠这两样把消息里回填的
     # 裸 `@<id>` 和 [bot] 历史行绑回自己。取值走进程内缓存,首轮一次 RPC。
@@ -840,8 +893,13 @@ async def _run_reactive_turn(
     current_row = (
         current_buffered if (current_buffered is not None and current_buffered.id is not None) else None
     )
+    # 拆批:寻址索引覆盖 current 全序列(alive/103 §14.2)。
+    if current_messages:
+        current_rows = [r for r in current_messages if r.id is not None]
+    else:
+        current_rows = [current_row] if current_row else []
     label_index = build_media_address_index(
-        list(recent_full) + ([current_row] if current_row else [])
+        list(recent_full) + current_rows
     )
     sticker_inlined = (
         await inline_gif_frames(sticker_urls or [], cfg=media_cfg)
@@ -884,6 +942,7 @@ async def _run_reactive_turn(
         current_image_urls=_label_groups(label_index, inlined_frames),
         current_sticker_urls=_label_groups(label_index, sticker_inlined),
         current_message=current_row,
+        current_messages=current_messages,
         sender_blacklisted=sender_blacklisted,
         pinned_anchors=pinned_anchors,
         # 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
@@ -1158,17 +1217,9 @@ async def _run_reactive_turn(
     _record_background_note(_fb_key, decision, log_tag="reactive")
     if decision.get("topic_hint"):
         _mcp.active_sessions.update_topic(adapter_name, group_id, str(decision["topic_hint"]))
-    # 本部署补丁: 模型可控松锚。值=委托人
-    # user_id 或 "all"(bool true 宽容视同 all)。ephemeral 无注册窗口,
-    # release 按 key 查管理器,自然 no-op。
-    release_anchor = decision.get("release_anchor")
-    if release_anchor:
-        who = "all" if release_anchor is True else str(release_anchor)
-        released = _mcp.active_sessions.release_anchor(adapter_name, group_id, who)
-        if released:
-            logger.info(
-                f"[HERMES reactive] anchor released: who={who} count={released} (group={group_id})"
-            )
+    # release_anchor 处理移在 answer_anchor 之后(alive/103):同轮 answer+release
+    # 必须先让合法 answer 标记生效再松锚,否则锚被提前 release 后 answer 校验
+    # 落空,模型反收「非法值」便签。见 turn 尾部。
     if decision.get("should_exit_active") and not _mcp.active_sessions.end_if_current_generation(session, turn_generation):
         # 收窗只对本 turn 入口快照的那个世代生效:期间若有别人 @bot 续期过窗口,
         # 世代号已 +1,旧世代的收窗请求不再匹配,新窗口留在字典里等它的 refire。
@@ -1411,6 +1462,22 @@ async def _run_reactive_turn(
                 logger.info(
                     f"[HERMES reactive] pin_anchor skipped: known_bot (group={group_id} user={user_id})"
                 )
+            elif current_buffered is not None and getattr(current_buffered, "is_synthetic", False):
+                # 来源闸(alive/103):合成 fragment 没有真实消息身份,钉了就是
+                # 无来源锚,失败关闭。
+                logger.info(
+                    f"[HERMES reactive] pin_anchor skipped: synthetic source "
+                    f"(group={group_id} user={user_id})"
+                )
+            elif current_buffered is None or current_buffered.id is None:
+                # 拿不到合法插件 m:id 同样失败关闭——锚必须绑定本轮真实、
+                # 可寻址的来源消息,不允许拿 ambient trigger_msg_id 或平台 ID
+                # 冒充模型可见编号。steer 新任务也因此钉不上:锚来源只认
+                # 当前真实 trigger,steer 内容无从继承原 turn 身份。
+                logger.info(
+                    f"[HERMES reactive] pin_anchor skipped: no plugin m_id on source "
+                    f"(group={group_id} user={user_id})"
+                )
             else:
                 current_session = _mcp.active_sessions.get_if_trigger_alive(adapter_name, group_id, reply_now_ms)
                 if current_session is None:
@@ -1422,7 +1489,12 @@ async def _run_reactive_turn(
                             participants=[
                                 Participant(user_id=user_id, nickname=nickname or user_id, joined_ts=now_ms)
                             ],
-                            msg_id=trigger_msg_id,
+                            # 双字段分型:模型可见 m_id 取来源消息的插件编号,
+                            # 平台 quote ID 只作内部归并匹配,不进模型可见文本。
+                            m_id=current_buffered.id,
+                            platform_message_id=(
+                                str(trigger_msg_id) if trigger_msg_id is not None else None
+                            ),
                             text=(text or "")[:200],
                             ts=now_ms,
                         ),
@@ -1465,6 +1537,19 @@ async def _run_reactive_turn(
                     logger.info(
                         f"[HERMES reactive] anchor answered: who={who} count={marked_anchors} (group={group_id})"
                     )
+
+        # 本部署补丁: 模型可控松锚。值=委托人
+        # user_id 或 "all"(bool true 宽容视同 all)。ephemeral 无注册窗口,
+        # release 按 key 查管理器,自然 no-op。位置在 answer 之后(alive/103):
+        # 同轮 answer+release 是「标记完结并松锚」的合法组合,不可颠倒。
+        release_anchor = decision.get("release_anchor")
+        if release_anchor:
+            who = "all" if release_anchor is True else str(release_anchor)
+            released = _mcp.active_sessions.release_anchor(adapter_name, group_id, who)
+            if released:
+                logger.info(
+                    f"[HERMES reactive] anchor released: who={who} count={released} (group={group_id})"
+                )
 
     return result
 

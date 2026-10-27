@@ -36,10 +36,21 @@ class AnchorRecord:
     """
 
     participants: list[Participant]
-    msg_id: str | int | None
     text: str  # 钉入时已截断(渲染端还会再过一道 sanitize)
     ts: int  # ms
     answered: bool = False
+    # 来源身份双字段(alive/103,不再一个 msg_id 身兼两职):
+    # m_id=模型可见的插件 m:id(感知库 rowid),锚块按此贴号供 reply_to 引用;
+    # 真实来源才有,合成/旧迁移缺失时 None=无号降级,不凭空补号。
+    # platform_message_id=内部平台 quote ID,仅供 quote→发起者归并匹配,
+    # 永不进模型可见文本。
+    m_id: int | None = None
+    platform_message_id: str | None = None
+
+    @property
+    def msg_id(self) -> str | None:
+        """旧字段兼容读取点(=内部平台 quote ID)。新代码用 platform_message_id。"""
+        return self.platform_message_id
 
     @property
     def commissioner_id(self) -> str:
