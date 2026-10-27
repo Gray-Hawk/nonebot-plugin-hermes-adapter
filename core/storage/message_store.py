@@ -17,6 +17,7 @@ from typing import Any
 from nonebot import logger
 
 from ..message_buffer import BufferedMessage, iter_message_media
+from ..message_origin import MessageOrigin
 
 # 写法上分两段:CREATE TABLE 之间用分号分隔的多 statement,
 # sqlite3 单次 execute 只接一条,逐条执行更稳。
@@ -161,6 +162,8 @@ class MessageStore:
         autocommit(isolation_level=None),逐语句各自提交,中途崩溃会留「有消息缺图」
         的半截行。
         """
+        if not msg.origin.allows_store:
+            raise ValueError(f"来源 {msg.origin.source.value} 不允许写入消息库")
         try:
             private_owner_id = msg.private_owner_id
             if msg.group_id is None and not msg.is_bot and private_owner_id is None:
@@ -317,6 +320,7 @@ class MessageStore:
                 user_id=r["user_id"],
                 nickname=r["nickname"],
                 content=r["content"],
+                origin=MessageOrigin.from_stored(is_bot=bool(r["is_bot"])),
                 image_urls=urls_by_msg.get(r["id"], []),
                 sticker_urls=stickers_by_msg.get(r["id"], []),
                 quote_image_urls=quote_by_msg.get(r["id"], []),

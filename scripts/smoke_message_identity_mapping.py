@@ -30,6 +30,7 @@ from nonebot_plugin_hermes_adapter.core.message_buffer import (  # noqa: E402
     BufferedMessage,
     MessageBuffer,
 )
+from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin, MessageSource  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.storage.message_store import MessageStore  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import reply_resolution as reply_resolver  # noqa: E402
 
@@ -74,6 +75,7 @@ def mk(adapter: str, group_id: str | None, user_id: str, content: str, **kw) -> 
     """构造消息；RED 阶段字段还没加，也要能跑完整套（不许在构造处炸掉）。"""
     qq = kw.pop("qq_message_id", None)
     private_owner = kw.pop("private_owner_id", None)
+    origin = kw.pop("origin", None) or MessageOrigin.human()
     base = dict(
         ts=kw.pop("ts", 1_700_000_000_000),
         adapter=adapter,
@@ -81,13 +83,14 @@ def mk(adapter: str, group_id: str | None, user_id: str, content: str, **kw) -> 
         user_id=user_id,
         nickname=kw.pop("nickname", "某人"),
         content=content,
+        origin=origin,
         **kw,
     )
     if _HAS_FIELD:
         base["qq_message_id"] = qq
     if _HAS_OWNER_FIELD:
         base["private_owner_id"] = private_owner
-    return BufferedMessage(**base)
+    return BufferedMessage(origin=base.pop("origin"), **base)
 
 
 def resolve(st, adapter: str, group_id: str | None, message_id, *, owner_user_id: str | None = None):
@@ -230,10 +233,18 @@ check("真实消息写入回填 m:id", real.id is not None and real.id > 0, str(
 real2 = mk("onebotv11", "3000000001", "10002", "第二条", qq_message_id="7180000002")
 buffer.append(real2)
 
-# 合成消息：无平台 id
-syn = mk("onebotv11", "3000000001", "10001", "（系统合成）", is_synthetic=True)
-buffer.append(syn)
-# 空串平台 id：归一成 NULL
+# 合成消息：按统一来源契约拒绝入库；无平台 id 的真人消息仍正常入库。
+syn = mk(
+    "onebotv11", "3000000001", "10001", "（系统合成）",
+    origin=MessageOrigin.synthetic(MessageSource.PATROL),
+)
+try:
+    buffer.append(syn)
+except ValueError:
+    check("合成消息拒绝入库", True)
+else:
+    check("合成消息拒绝入库", False)
+# 空／缺平台 id：真人消息归一成 NULL
 blank = mk("onebotv11", "3000000001", "10001", "空串 id", qq_message_id="")
 buffer.append(blank)
 
@@ -277,8 +288,7 @@ check(
     "MessageBuffer 门面透出同一接口",
     resolve(buffer, "onebotv11", "3000000001", real.id) == "7180000001",
 )
-check("合成消息平台 id 为 NULL", resolve(store, "onebotv11", "3000000001", syn.id) is None)
-check("空串平台 id 归一为 NULL", resolve(store, "onebotv11", "3000000001", blank.id) is None)
+check("无平台 id 的真人消息映射为 NULL", resolve(store, "onebotv11", "3000000001", blank.id) is None)
 conn = sqlite3.connect(db)
 conn.row_factory = sqlite3.Row
 try:
@@ -403,11 +413,8 @@ check(
     by_id.get(real.id) is not None and qid(by_id[real.id]) == "7180000001",
     repr(qid(by_id.get(real.id))),
 )
-check(
-    "get_recent 合成消息水合为 None",
-    by_id.get(syn.id) is not None and qid(by_id[syn.id]) is None,
-    repr(qid(by_id.get(syn.id))),
-)
+# 合成消息已被上方拒绝,不得出现在回读窗口;无平台 id 的真人行正常水合。
+check("合成消息未进入回读窗口", all(r.origin.has_system_content is False for r in rows))
 check(
     "get_recent 空串消息水合为 None",
     by_id.get(blank.id) is not None and qid(by_id[blank.id]) is None,

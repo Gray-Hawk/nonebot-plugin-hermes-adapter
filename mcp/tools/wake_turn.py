@@ -36,6 +36,7 @@ class WakeTurnInput(BaseModel):
     def _exactly_one_target(self) -> "WakeTurnInput":
         if bool(self.user_id) == bool(self.group_id):
             raise ValueError("exactly one of user_id / group_id must be given")
+        self.source = self.source.strip() or "agent-request"
         return self
 
 

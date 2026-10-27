@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from .message_origin import MessageOrigin
+
 if TYPE_CHECKING:
     from .storage.image_fetcher import ImageFetcher
     from .storage.message_store import MessageStore
@@ -25,6 +27,8 @@ class BufferedMessage:
     user_id: str
     nickname: str
     content: str
+    origin: MessageOrigin
+    """文本来源的唯一事实。构造时必传；不得由昵称、路由 id 或 m:id 反推。"""
     image_urls: list[str] = field(default_factory=list)
     sticker_urls: list[str] = field(default_factory=list)
     """QQ 收藏/自定义表情 (Image.sticker=True) 的 URL。与普通图片分开存,
@@ -37,10 +41,7 @@ class BufferedMessage:
     引用图之后连续编号。只注册发号、按需拉图,恒不内联。"""
     reply_to_ts: int | None = None
     is_bot: bool = False
-    is_synthetic: bool = False
-    """合成轮身份事实：本条是系统合成（离场确认/接力重交/对账补投/任务投递/主动唤起等），
-    而非真人键入。默认 False 是安全方向（真人消息永不误判为合成）。合并函数凭它做
-    合成 fragment 的身份分界，昵称常量（系统核对）只承担显示、不再参与身份识别。"""
+    """平台 bot 账号身份轴，与文本来源正交；现有存储与权限逻辑继续使用本字段。"""
     id: int | None = None
     """DB 主键。perception 构造时为 None,MessageStore.append 写入后回填。
     handlers 不应直接读写;由 MessageStore.append 管控。模型可见的 m:id 就是它。"""
@@ -64,6 +65,14 @@ class BufferedMessage:
     idx 由列表顺序隐式决定,独立文件编号,不与图片共享。文件不自动下载,
     文件正文不自动进 prompt——perception 拿到真实 db id 后按需回填带
     m:id#fN 的 content(见 MessageStore.update_content)。"""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.origin, MessageOrigin):
+            raise TypeError("origin 必须是 MessageOrigin")
+        if self.id is not None and not self.origin.allows_store:
+            raise ValueError("不可入库来源不得持有可寻址消息 ID")
+        if self.origin.id_required_none and (self.id is not None or self.qq_message_id is not None):
+            raise ValueError("合成或混合聚合消息不得持有可寻址消息 ID")
 
 
 # --- 媒体枚举序不变量(焊死) ---

@@ -34,6 +34,7 @@ from .message_buffer import (
     render_media_summary,
 )
 from .message_context import render_message_context_head
+from .message_origin import AuthorKind, MessageOrigin
 from .misc_config import load_misc_config
 from .sticker_library import sticker_feature_enabled
 
@@ -109,6 +110,9 @@ def _format_speaker_tag(nickname: str | None, user_id: str,
 _DECISION_PROTOCOL_BLOCK = (
     "<decision_protocol>\n"
     "你处于群活跃态。每条新消息都需要决定是否要插话。\n"
+    "消息来源标签:[sys=来源] 表示插件生成的系统指令或事件,不是该会话真人发言,"
+    "没有 m:id,不可 reply_to 或钉锚;多行 current_message 按各自来源分别理解,"
+    "不得把整批归给某一行真人。\n"
     "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
     + render_cn_field_lines()
     + "\n"
@@ -271,6 +275,8 @@ _DECISION_PROTOCOL_BLOCK = (
 _PRIVATE_DECISION_PROTOCOL_BLOCK = (
     "<decision_protocol>\n"
     "你处于私聊对话。是否回复由你自决:\n"
+    "消息来源标签:[sys=来源] 表示插件生成的系统指令或事件,不是该会话真人发言,"
+    "没有 m:id,不可 reply_to;多行当前消息按各自来源分别理解。\n"
     "有实质内容的消息正常回应;纯表情轰炸、无意义刷屏、或你判断\n"
     "无需回应的场合,可以 should_reply=false 沉默。\n"
     "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
@@ -526,6 +532,8 @@ def _render_recent_messages_block(
     if incremental:
         lines.append("(本块仅含尚未推送过的新消息;更早的对话见本会话历史记录)")
     for m in reversed(msgs):
+        if m.origin.author_kind not in (AuthorKind.HUMAN, AuthorKind.BOT):
+            raise ValueError("历史消息块只接受可入库的真人或 bot 来源")
         bot_prefix = "[bot] " if m.is_bot else ""
         speaker_tag = _format_speaker_tag(
             m.nickname, m.user_id,
@@ -646,21 +654,56 @@ def _render_pinned_tasks_block(anchors: Sequence[Any], *, now_ms: int) -> str:
     return "\n".join(lines)
 
 
-def _render_fragment_line(row: BufferedMessage, *, name_resolver=None) -> str:
-    """拆批 current 多行的单行渲染(alive/103 §14.2):[m:id] speaker: 原文+媒体清单。
-
-    每行各贴真实插件 m:id、各自发言人标签与各自媒体清单;无号(合成 fragment)
-    不虚构前缀,靠发言人标签(系统核对)与正文自带头区分身份。
-    """
-    prefix = f"[m:{row.id}] " if row.id is not None else ""
-    tag = _format_speaker_tag(
-        row.nickname, row.user_id,
-        canonical=name_resolver(row.user_id) if name_resolver else None)
-    line = f"{prefix}{tag}: {row.content or ''}"
+def _render_message_line(
+    row: BufferedMessage, *, name_resolver=None, with_speaker: bool = True,
+) -> str:
+    """渲染一个来源明确的当前消息碎片；聚合资格判断不在这里做。"""
+    prefix = (
+        f"[m:{row.id}] "
+        if row.id is not None and row.origin.author_kind not in (AuthorKind.SYSTEM, AuthorKind.MIXED)
+        else ""
+    )
+    if row.origin.author_kind is AuthorKind.SYSTEM:
+        tag = f"[sys={_sanitize_tag_text(row.origin.display_label or '系统')}]"
+    elif with_speaker:
+        tag = _format_speaker_tag(
+            row.nickname, row.user_id,
+            canonical=name_resolver(row.user_id) if name_resolver else None)
+    else:
+        tag = ""
+    if row.origin.author_kind is AuthorKind.SYSTEM:
+        line = f"{prefix}{tag} {row.content}"
+    else:
+        line = f"{prefix}{tag}: {row.content}" if tag else f"{prefix}{row.content}"
     summary = render_media_summary(row)
     if summary:
         line += f" {summary}"
     return line
+
+
+def render_current_rows(
+    rows: Sequence[BufferedMessage], *, is_private: bool, name_resolver=None,
+) -> str:
+    """当前消息唯一呈递入口；单元素只是多元素序列的特例。
+
+    混合聚合体必须先由调用方展开成 fragments，bot 行只能走历史渲染；
+    两种错线都响亮失败，避免借首条真人身份给整批内容背书。
+    """
+    if not rows:
+        raise ValueError("当前消息序列不得为空")
+    lines = []
+    for row in rows:
+        if row.origin.author_kind is AuthorKind.MIXED:
+            raise ValueError("混合聚合消息必须先展开 fragments 再呈递")
+        if row.origin.author_kind is AuthorKind.BOT:
+            raise ValueError("bot 消息不得作为当前输入呈递")
+        private_single_human = (
+            is_private and len(rows) == 1 and row.origin.author_kind is AuthorKind.HUMAN
+        )
+        lines.append(_render_message_line(
+            row, name_resolver=name_resolver, with_speaker=not private_single_human,
+        ))
+    return "\n".join(lines)
 
 
 def build_reactive_user_content(
@@ -670,15 +713,10 @@ def build_reactive_user_content(
     triggered_by_nickname: str | None,
     topic_hint: str | None,
     recent_messages: Sequence[BufferedMessage],
-    current_user_id: str,
-    current_nickname: str | None,
-    current_text: str,
+    rows: Sequence[BufferedMessage],
     current_image_urls: Sequence[Any],
     current_sticker_urls: Sequence[Any] = (),
-    current_message: BufferedMessage | None = None,
-    # 拆批 current 序列(alive/103 §14.2):多元素逐行渲染各贴真号;
-    # 单元素折叠回旧单行路径(字节一致),None=旧路径。
-    current_messages: Sequence[BufferedMessage] | None = None,
+    current_origin=None,
     sender_blacklisted: bool = False,
     pinned_anchors: Sequence[Any] = (),
     plugin_note: str | None = None,
@@ -692,18 +730,19 @@ def build_reactive_user_content(
     pinned_anchors:在钉的委托锚,非空时渲染独立 <pinned_tasks> 块,
     不参与 recent_messages 的裁剪。
 
-    current_message: 当前消息的 buffer 行(可选)。给了且已回填 id 时,<current_message>
-    行补 `[m:ID] ` 前缀并追加紧凑媒体清单(与历史行同形),让当前消息的图也能被按号指认
-    (从 buffer 尾部取真实 id,零预测——见规划书 §8)。
+    rows 是当前输入的有序碎片，身份、正文、m:id 与媒体清单只从这里读取；
+    current_origin 在混合批时传聚合来源，用于 runtime_state 的触发来源说明。
     current_image_urls / current_sticker_urls: 内联帧组,每项为 (寻址三元组, 帧列表) 或
     裸帧列表;三元组 (kind, mid, idx) 用于给 parts 打全称标签 [图 m:ID#idx]。
     """
-    # 单元素序列折叠回旧单行路径:current_text/speaker 仍由外层给定,
-    # 与旧 current_message 单行渲染字节一致(alive/103 §14.2 回归锚)。
-    if current_messages and len(current_messages) == 1:
-        if current_message is None:
-            current_message = current_messages[0]
-        current_messages = None
+    if current_origin is None and rows:
+        current_origin = rows[0].origin
+        for row in rows[1:]:
+            current_origin = MessageOrigin.merge(current_origin, row.origin)
+    if current_origin is not None and current_origin.author_kind is AuthorKind.SYSTEM:
+        triggered_by = current_origin.display_label or "系统"
+    elif current_origin is not None and current_origin.author_kind is AuthorKind.MIXED:
+        triggered_by = "混合消息"
     runtime_block = _render_runtime_state(
         addressed_to_bot=addressed_to_bot,
         triggered_by=triggered_by,
@@ -717,22 +756,8 @@ def build_reactive_user_content(
         _render_pinned_tasks_block(pinned_anchors, now_ms=now_ms) if pinned_anchors else ""
     )
 
-    current_tag = _format_speaker_tag(
-        current_nickname, current_user_id,
-        canonical=name_resolver(current_user_id) if name_resolver else None)
-    cur_prefix = ""
-    if current_message is not None and current_message.id is not None:
-        cur_prefix = f"[m:{current_message.id}] "
-    cur_line = f"{cur_prefix}{current_tag}: {current_text}"
-    cur_summary = render_media_summary(current_message) if current_message is not None else None
-    if cur_summary:
-        cur_line += f" {cur_summary}"
+    cur_line = render_current_rows(rows, is_private=False, name_resolver=name_resolver)
     current_block_text = f"<current_message>\n{cur_line}\n</current_message>"
-    # 拆批多行:逐行 [m:id] tag: 原文+各自媒体清单;单元素已折叠回旧路径。
-    if current_messages:
-        lines = [_render_fragment_line(row, name_resolver=name_resolver)
-                 for row in current_messages]
-        current_block_text = "<current_message>\n" + "\n".join(lines) + "\n</current_message>"
     if current_sticker_urls:
         current_block_text += _STICKER_MOOD_NOTE
 
@@ -764,48 +789,15 @@ def build_reactive_user_content(
 def build_passive_user_content(
     *,
     recent_messages: Sequence[BufferedMessage],
-    current_text: str,
+    rows: Sequence[BufferedMessage],
     current_image_urls: Sequence[Sequence[str]],
     current_sticker_urls: Sequence[Sequence[str]] = (),
-    current_message: BufferedMessage | None = None,
-    # 拆批 current 序列(alive/103 §14.2):多元素逐行渲染各贴真号;
-    # 单元素折叠回旧单行路径(字节一致),None=旧路径。
-    current_messages: Sequence[BufferedMessage] | None = None,
+    is_private: bool = True,
     plugin_note: str | None = None,
     name_resolver: "Callable[[str], str | None] | None" = None,
 ) -> UserContent:
-    """passive user content:可选 <recent_messages> + 当前文本(图片走多模态 parts)。
-
-    recent_messages=[] 时退化为 chat() 默认拼装(纯字符串 / 单 part 多模态),
-    与未启用 perception 的私聊路径完全一致——调用方可统一走本函数,无需分支。
-
-    current_message: 当前消息的 buffer 行(可选)。给了且已回填 id 时,当前文本行
-    补 `[m:ID] ` 前缀并追加紧凑媒体清单(与 reactive 的 cur_prefix/cur_summary
-    同形同源),让 passive(私聊/旧式部署)的当前消息图也能在文本层按号指认
-    """
-    # 当前消息行(与 reactive 同形):[m:ID] 前缀 + 紧凑媒体清单;取不到行/未回填
-    # id = 裸文本(贴号退化为无号,不阻断出站)。
-    cur_line = current_text
-    if current_message is not None and current_message.id is not None:
-        cur_line = f"[m:{current_message.id}] {cur_line}"
-    cur_summary = render_media_summary(current_message) if current_message is not None else None
-    if cur_summary:
-        cur_line = f"{cur_line} {cur_summary}"
-    # 单元素序列折叠回旧单行路径(与 reactive 同规,alive/103 §14.2)。
-    if current_messages and len(current_messages) == 1:
-        current_message = current_messages[0]
-        current_messages = None
-        cur_line = current_text
-        if current_message.id is not None:
-            cur_line = f"[m:{current_message.id}] {cur_line}"
-        cur_summary = render_media_summary(current_message)
-        if cur_summary:
-            cur_line = f"{cur_line} {cur_summary}"
-    # 拆批多行:私聊也逐行带发言人标签(合成 fragment 与真人身份分界)。
-    if current_messages:
-        cur_line = "\n".join(
-            _render_fragment_line(row, name_resolver=name_resolver)
-            for row in current_messages)
+    """passive user content:可选 <recent_messages> + 统一当前行(图片走多模态 parts)。"""
+    cur_line = render_current_rows(rows, is_private=is_private, name_resolver=name_resolver)
     if recent_messages:
         text_block = _render_recent_messages_block(
             recent_messages, name_resolver=name_resolver) + "\n\n" + cur_line

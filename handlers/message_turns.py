@@ -48,6 +48,7 @@ from ..core.message_buffer import (
     BufferedMessage,
     build_media_address_index,
 )
+from ..core.message_origin import MessageOrigin
 from ..core import task_notes
 from ..core import user_lists
 from ..core.chat_config import load_chat_config
@@ -79,9 +80,6 @@ from .message_ingress import (
     _now_ms,
 )
 
-_SYNTHETIC_USER_IDS = frozenset({"system-check", "timer", "delivery", "wake"})
-
-
 def _inline_media_window(window_msgs: list[BufferedMessage]) -> list[BufferedMessage]:
     """纯文本后端只让当前消息媒体进入载荷，历史媒体保留文本占位。
 
@@ -108,7 +106,7 @@ def _observe_silence(path: str, adapter_name: str, group_id: str | None, is_priv
     )
 
 def _filter_current_and_steered(
-    recent: list[BufferedMessage], *, current_messages, scope: tuple[str, str],
+    recent: list[BufferedMessage], *, current_rows, scope: tuple[str, str],
 ) -> list[BufferedMessage]:
     """recent 呈现去重(alive/103 §14.2/§14.3)。
 
@@ -118,8 +116,8 @@ def _filter_current_and_steered(
     current 不过滤自身:留槽接力等场景 current 必须完整呈现。
     """
     rows = _steer_seen_filter(scope, recent)
-    if current_messages:
-        ids = {r.id for r in current_messages if r.id is not None}
+    if current_rows:
+        ids = {r.id for r in current_rows if r.id is not None}
         if ids:
             rows = [r for r in rows if r.id not in ids]
     return rows
@@ -163,7 +161,7 @@ async def _dispatch_chat(
         and await _maybe_steer_direct(
             target=target, adapter_name=adapter_name, user_id=user_id, nickname=nickname,
             group_id=group_id, msg_text=msg_text, is_direct=is_direct,
-            now_ms=now_ms,
+            now_ms=now_ms, origin=MessageOrigin.human(),
             event_msg_id=getattr(event, "message_id", None),
             image_urls=image_urls,
             sticker_urls=sticker_urls,
@@ -186,7 +184,8 @@ async def _dispatch_chat(
             is_private=target.private,
             now_ms=now_ms,
             event_msg_id=getattr(event, "message_id", None),
-            fragments=fragments,
+            origin=MessageOrigin.human(),
+            rows=fragments,
         )
         return
 
@@ -205,12 +204,13 @@ async def _dispatch_chat(
         addressed_to_bot=addressed_to_bot,
         now_ms=now_ms,
         event_msg_id=getattr(event, "message_id", None),
+        origin=MessageOrigin.human(),
         # keyword-soft 窗口外命中:跑无窗口临时 turn(不开窗);窗口内则正常跑,
         # 两种都推 N1 条上下文(不用续发轮裁剪)。
         ephemeral=ephemeral,
         context_limit=context_limit,
         replied_msg_id=replied_msg_id,
-        fragments=fragments,
+        rows=fragments,
     )
 
 # 上游 locked 类持久化失败 = 别的 Hermes 进程正在写 state.db,上游要求「过一会再发一次」。
@@ -380,7 +380,7 @@ async def _run_passive_turn(
     now_ms: int,
     current_buffered: BufferedMessage | None = None,
     # 拆批 fragments 序列(alive/103 §14.2):有序完整碎片;None=单行旧路径。
-    current_messages=None,
+    current_rows=None,
 ):
     """跑一发 passive turn,返回 ChatResult 或 None(被 submit_decision 静默兜底等情况)。"""
     misc_cfg = load_misc_config()
@@ -412,7 +412,7 @@ async def _run_passive_turn(
     # 呈现的行不再随 recent 重复出现。私聊 recent 恒空,过滤为 no-op。
     recent = _filter_current_and_steered(
         recent,
-        current_messages=current_messages,
+        current_rows=current_rows,
         scope=make_inflight_key(adapter_name, is_private, user_id, group_id),
     )
 
@@ -449,18 +449,12 @@ async def _run_passive_turn(
     # 媒体寻址:窗口行 + 当前行建 url→(kind,m:id,idx) 反向映射,内联收集照旧走 url,
     # 收集完按 url 贴号(规划书 §8)。passive 的 recent 排除了当前消息,故单独拼当前行;
     # B 方案:当前行直接吃触发条目(构造时已凭 event 领得 db 真 id),不再偷看 buffer
-    # 尾部(接力场景尾部≠当前消息必错标)。条目无 id(合成消息)则 current_row=None,
-    # 贴号/寻址走现成无号降级。
-    current_row = (
-        current_buffered if (current_buffered is not None and current_buffered.id is not None) else None
-    )
-    # 拆批:寻址索引覆盖 current 全序列(各碎片自己的 m:id 与媒体),
-    # 顺序=recent + current 序列,与文本呈递顺序一致(alive/103 §14.2)。
-    if current_messages:
-        current_rows = [r for r in current_messages if r.id is not None]
-    else:
-        current_rows = [current_row] if current_row else []
-    label_index = build_media_address_index(list(recent) + current_rows)
+    # 尾部(接力场景尾部≠当前消息必错标)。无号合成条目也保留给统一呈递器；
+    # 只有媒体寻址索引在下方过滤无号行，不再把整条身份与媒体清单一起丢掉。
+    current_row = current_buffered
+    render_rows = list(current_rows or ([current_row] if current_row is not None else []))
+    addressable_current_rows = [r for r in render_rows if r.id is not None]
+    label_index = build_media_address_index(list(recent) + addressable_current_rows)
     if is_private:
         inline_urls = list(image_urls)
     else:
@@ -486,19 +480,22 @@ async def _run_passive_turn(
         requested=list(image_urls) + list(sticker_urls or []),
         succeeded=[u for u, _ in inlined] + [u for u, _ in sticker_inlined],
     )
-    passive_text = text or " "
+    # 呈递正文只从 rows 派生；text 形参保留给日志/兼容调用，不再成为第二事实源。
+    passive_text = "\n".join(row.content for row in render_rows if row.content) or " "
     if absent_note:
         passive_text = f"{passive_text} {absent_note}".strip()
+    if len(render_rows) == 1:
+        render_rows[0] = replace(render_rows[0], content=passive_text)
+    elif absent_note and render_rows:
+        render_rows[-1] = replace(
+            render_rows[-1], content=f"{render_rows[-1].content} {absent_note}".strip(),
+        )
     user_content = build_passive_user_content(
         recent_messages=recent,
-        current_text=passive_text,
+        rows=render_rows,
         current_image_urls=_label_groups(label_index, inlined),
         current_sticker_urls=_label_groups(label_index, sticker_inlined),
-        # 当前消息行补 [m:ID] 前缀 + 媒体清单,
-        # 与 reactive 的 current_message 同形同源;B 方案(同日晚):行来自触发条目
-        # (构造时已凭 event 领得 db 真 id),不再偷看 buffer 尾部。
-        current_message=current_row,
-        current_messages=current_messages,
+        is_private=is_private,
         # 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
         plugin_note="\n".join(
             task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, is_private, user_id, group_id))
@@ -561,13 +558,15 @@ async def _run_passive_turn(
     # 不携带 run_id, 且 run 终态时 run_tracker 行已由 finish 删除——故按文本子串
     # 核销(recover_by_text): pending_steer 是各条 steer_text 的拼接, 必含其为子串。
     if result is not None and result.pending_steer:
+        from ..core.steer_reconcile import strip_steer_presentation
         _scope_key = make_inflight_key(adapter_name, is_private, user_id, group_id)
         _mcp.inflight.try_enter(
             _scope_key,
             BufferedMessage(
                 ts=_now_ms(), adapter=adapter_name, group_id=group_id,
-                user_id=user_id, nickname="(迟到 steer)",
-                content=result.pending_steer, image_urls=[], sticker_urls=[],
+                user_id=user_id, nickname=(current_buffered.nickname if current_buffered is not None else user_id),
+                content=strip_steer_presentation(result.pending_steer), origin=MessageOrigin.human_replay(),
+                image_urls=[], sticker_urls=[],
                 reply_to_ts=None, is_bot=False,
             ),
             is_direct=True,
@@ -724,6 +723,7 @@ async def _run_passive_turn(
                 user_id=str(bot.self_id),
                 nickname=await get_bot_nickname(bot),
                 content=buffered_content,
+                origin=MessageOrigin.bot_output(),
                 image_urls=[],
                 is_bot=True,
                 qq_message_id=getattr(sent, "primary_qq_message_id", None),
@@ -734,7 +734,8 @@ async def _run_passive_turn(
     await _post_send_feedback(
         key=_fb_key, reply_text=cleaned_text, bot=bot, target=target,
         adapter_name=adapter_name, user_id=user_id, group_id=group_id,
-        is_private=is_private, synthetic=user_id in _SYNTHETIC_USER_IDS,
+        is_private=is_private,
+        suppress_recursion=(current_buffered is not None and current_buffered.origin.suppresses_feedback),
         not_final=bool((result.structured or {}).get("not_final")),
     )
     # 文件跟在文本消息之后上传(占位符在前作说明, 文件随后到达)。
@@ -762,7 +763,7 @@ async def _run_reactive_turn(
     replied_msg_id=None,
     current_buffered: BufferedMessage | None = None,
     # 拆批 fragments 序列(alive/103 §14.2):有序完整碎片;None=单行旧路径。
-    current_messages=None,
+    current_rows=None,
 ):
     """跑一发 reactive turn,返回 hermes_client.chat() 的 ChatResult,或 None 表示提前 return。
 
@@ -836,7 +837,7 @@ async def _run_reactive_turn(
     # 呈现的行不再随 recent 重复出现;寻址索引仍用 recent_full 全集不受影响。
     recent = _filter_current_and_steered(
         recent,
-        current_messages=current_messages,
+        current_rows=current_rows,
         scope=make_inflight_key(adapter_name, False, user_id, group_id),
     )
 
@@ -892,17 +893,13 @@ async def _run_reactive_turn(
     # B 方案:当前行直接吃触发条目(构造时已凭 event 领得 db 真 id),不再取
     # recent_full[0]——接力场景尾部≠当前消息;旧 user_id 同源护栏只挡跨用户,
     # 同用户连发接力照样错标,随桥一起拆。条目拼在尾部:与 recent_full 内同一
-    # db 行撞 url 时后者覆盖前者(id 相同,无害)。条目无 id(合成消息)走现成无号降级。
-    current_row = (
-        current_buffered if (current_buffered is not None and current_buffered.id is not None) else None
-    )
-    # 拆批:寻址索引覆盖 current 全序列(alive/103 §14.2)。
-    if current_messages:
-        current_rows = [r for r in current_messages if r.id is not None]
-    else:
-        current_rows = [current_row] if current_row else []
+    # db 行撞 url 时后者覆盖前者(id 相同,无害)。无号合成条目仍交给统一呈递器，
+    # 媒体索引仅收可寻址行，不为系统消息伪造编号。
+    current_row = current_buffered
+    render_rows = list(current_rows or ([current_row] if current_row is not None else []))
+    addressable_current_rows = [r for r in render_rows if r.id is not None]
     label_index = build_media_address_index(
-        list(recent_full) + current_rows
+        list(recent_full) + addressable_current_rows
     )
     sticker_inlined = (
         await inline_gif_frames(sticker_urls or [], cfg=media_cfg)
@@ -927,25 +924,34 @@ async def _run_reactive_turn(
         requested=list(image_urls) + list(sticker_urls or []),
         succeeded=[u for u, _ in inlined_frames] + [u for u, _ in sticker_inlined],
     )
+    # 呈递正文只从 rows 派生；text 形参不再覆盖行内容。媒体补白也只是
+    # 对同一行做 replace，单元素与多元素不会走两套正文来源。
+    current_text = "\n".join(row.content for row in render_rows if row.content)
     if absent_note:
-        text = (text + " " + absent_note).strip() if text else absent_note
-    elif image_urls and not inlined_frames and "[图片]" not in text:
-        # 当前消息带图但未内联且无号可标(模式 off/semi 窗口无 @/例外名单):补粗占位,
-        # 否则模型不知道图存在。纯图消息 text 为空,下游 current_text 兜底,这里幂等。
-        text = (text + " [图片]").strip() if text else "[图片]"
+        current_text = (current_text + " " + absent_note).strip()
+    elif image_urls and not inlined_frames and "[图片]" not in current_text:
+        current_text = (current_text + " [图片]").strip()
+    current_text = current_text or "[图片]"
+    if len(render_rows) == 1:
+        render_rows[0] = replace(render_rows[0], content=current_text)
+    elif absent_note and render_rows:
+        render_rows[-1] = replace(
+            render_rows[-1], content=f"{render_rows[-1].content} {absent_note}".strip(),
+        )
+    elif image_urls and not inlined_frames and render_rows and "[图片]" not in render_rows[-1].content:
+        render_rows[-1] = replace(
+            render_rows[-1], content=f"{render_rows[-1].content} [图片]".strip(),
+        )
     user_content = build_reactive_user_content(
         addressed_to_bot=addressed_to_bot,
         triggered_by=session.triggered_by,
         triggered_by_nickname=None,
         topic_hint=session.topic_hint,
         recent_messages=recent,
-        current_user_id=user_id,
-        current_nickname=nickname or user_id,
-        current_text=text or "[图片]",
+        rows=render_rows,
+        current_origin=current_buffered.origin if current_buffered is not None else None,
         current_image_urls=_label_groups(label_index, inlined_frames),
         current_sticker_urls=_label_groups(label_index, sticker_inlined),
-        current_message=current_row,
-        current_messages=current_messages,
         sender_blacklisted=sender_blacklisted,
         pinned_anchors=pinned_anchors,
         # 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
@@ -1032,13 +1038,15 @@ async def _run_reactive_turn(
     # 不携带 run_id, 且 run 终态时 run_tracker 行已由 finish 删除——故按文本子串
     # 核销(recover_by_text): pending_steer 是各条 steer_text 的拼接, 必含其为子串。
     if result is not None and result.pending_steer:
+        from ..core.steer_reconcile import strip_steer_presentation
         _mcp.inflight.add_followup(
             make_inflight_key(adapter_name, False, user_id, group_id),
             PendingEntry(
                 msg=BufferedMessage(
                     ts=_now_ms(), adapter=adapter_name, group_id=group_id,
-                    user_id=user_id, nickname="(迟到 steer)",
-                    content=result.pending_steer, image_urls=[], sticker_urls=[],
+                    user_id=user_id, nickname=nickname or user_id,
+                    content=strip_steer_presentation(result.pending_steer), origin=MessageOrigin.human_replay(),
+                    image_urls=[], sticker_urls=[],
                     reply_to_ts=None, is_bot=False,
                 ),
                 is_direct=False,
@@ -1346,7 +1354,8 @@ async def _run_reactive_turn(
         await _post_send_feedback(
             key=_fb_key, reply_text=cleaned_reply_text, bot=bot, target=target,
             adapter_name=adapter_name, user_id=user_id, group_id=group_id,
-            is_private=False, synthetic=user_id in _SYNTHETIC_USER_IDS,
+            is_private=False,
+            suppress_recursion=(current_buffered is not None and current_buffered.origin.suppresses_feedback),
             not_final=bool(decision.get("not_final")),
         )
 
@@ -1380,6 +1389,7 @@ async def _run_reactive_turn(
                 user_id=str(bot.self_id),
                 nickname=self_nickname,
                 content=buffered_content,
+                origin=MessageOrigin.bot_output(),
                 image_urls=[],
                 is_bot=True,
                 qq_message_id=primary_qq_message_id,
@@ -1465,12 +1475,11 @@ async def _run_reactive_turn(
                 logger.info(
                     f"[HERMES reactive] pin_anchor skipped: known_bot (group={group_id} user={user_id})"
                 )
-            elif current_buffered is not None and getattr(current_buffered, "is_synthetic", False):
-                # 来源闸(alive/103):合成 fragment 没有真实消息身份,钉了就是
-                # 无来源锚,失败关闭。
+            elif current_buffered is not None and not current_buffered.origin.allows_anchor:
+                # 来源闸：系统指令或混合聚合体没有单一真人委托身份，失败关闭。
                 logger.info(
-                    f"[HERMES reactive] pin_anchor skipped: synthetic source "
-                    f"(group={group_id} user={user_id})"
+                    f"[HERMES reactive] pin_anchor skipped: origin not anchorable "
+                    f"(group={group_id} user={user_id} source={current_buffered.origin.source.value})"
                 )
             elif current_buffered is None or current_buffered.id is None:
                 # 拿不到合法插件 m:id 同样失败关闭——锚必须绑定本轮真实、

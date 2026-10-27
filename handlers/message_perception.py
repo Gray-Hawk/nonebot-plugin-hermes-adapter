@@ -13,6 +13,7 @@ from nonebot.adapters import Bot, Event
 from .. import mcp as _mcp
 from ..core.group_profile import sync_buddy_to_group
 from ..core.message_buffer import BufferedMessage
+from ..core.message_origin import MessageOrigin
 from ..core.misc_config import load_misc_config
 from ..utils import get_adapter_name
 
@@ -178,6 +179,7 @@ async def handle_perception(bot: Bot, event: Event):
         user_id=user_id,
         nickname=nickname,
         content=msg_text,
+        origin=MessageOrigin.human(),
         image_urls=image_urls,
         sticker_urls=sticker_urls,
         file_entries=file_entries,
