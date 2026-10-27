@@ -146,6 +146,9 @@ async def _dispatch_chat(
     # 拆批 fragments 序列(alive/103 §14.2):防抖合并后的有序完整碎片,
     # None=无拆批信息(旧路径单行)。
     fragments=None,
+    # 载荷携带的媒体寻址序列(alive/103 A4):dispatch 层不消费,但必须签收——
+    # _dispatch_chat(**st.payload) 整包展开,缺形参会在入口直接 TypeError。
+    fragment_db_ids=None,
 ):
     """passive/reactive 分叉(原 handle_message 末段,防抖批抽出以便
     防抖到期后与防抖关闭路径共用同一 dispatch)。"""
