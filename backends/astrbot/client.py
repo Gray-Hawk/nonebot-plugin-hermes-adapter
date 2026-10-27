@@ -29,6 +29,8 @@ _TOOL_CHAIN_TYPES = frozenset({"tool_call", "tool_call_result"})
 _DATA_URL_RE = re.compile(
     r"\Adata:(image/[A-Za-z0-9][A-Za-z0-9.+-]*);base64,([A-Za-z0-9+/]+={0,2})\Z"
 )
+# 本部署补丁：只约束 AstrBot 图片附件下载；不要与上传、QQ 文件或缓存限额互相套用。
+_ATTACHMENT_DOWNLOAD_MAX_BYTES = 5 * 1024 * 1024
 
 
 def build_prompt_envelope(system_prompt: str, user_text: str) -> str:
@@ -455,38 +457,63 @@ async def download_attachment(
     api_key: str,
     attachment_id: str,
     timeout: float,
+    max_bytes: int = _ATTACHMENT_DOWNLOAD_MAX_BYTES,
 ) -> tuple[bytes, str]:
     """下载一份图片附件，返回 (字节, MIME)。
 
     失败面分三类：非 200 走 HTTP 错误面；200 + 错误信封与非法 MIME 走协议错误。
     非图片附件不静默丢弃——本后端只消费图片，其它类型按协议失败上报。
+    max_bytes 只限制这一份附件的下载结果，不是上传或通用文件缓存限额。
     """
-    resp = await http.get(
+    if max_bytes < 1:
+        raise ValueError("max_bytes 必须为正整数")
+    async with http.stream(
+        "GET",
         base_url.rstrip("/") + "/api/v1/file",
         params={"attachment_id": attachment_id},
         headers=_auth_headers(api_key),
         timeout=timeout,
-    )
-    raw_content_type = resp.headers.get("content-type") or ""
-    media_type = raw_content_type.split(";")[0].strip().lower()
-    if resp.status_code != 200:
-        raise AstrBotHttpError(
-            resp.status_code,
-            resp.content.decode("utf-8", "replace"),
-            retry_after=_retry_after(resp.headers.get("Retry-After")),
-        )
-    if "json" in media_type:
+    ) as resp:
+        raw_content_type = resp.headers.get("content-type") or ""
+        media_type = raw_content_type.split(";")[0].strip().lower()
+        if resp.status_code != 200:
+            raw = await resp.aread()
+            raise AstrBotHttpError(
+                resp.status_code,
+                raw.decode("utf-8", "replace"),
+                retry_after=_retry_after(resp.headers.get("Retry-After")),
+            )
+        if "json" in media_type:
+            raw = await resp.aread()
+            try:
+                payload = json.loads(raw)
+            except ValueError as exc:
+                raise AstrBotProtocolError("下载响应不是合法 JSON") from exc
+            message = payload.get("message") if isinstance(payload, dict) else payload
+            raise AstrBotProtocolError(f"下载失败: {message or payload}")
+        if not media_type.startswith("image/"):
+            raise AstrBotProtocolError(
+                f"下载到的附件不是图片: {media_type or '缺少 content-type'!r}"
+            )
+        declared_value = resp.headers.get("content-length")
         try:
-            payload = resp.json()
-        except ValueError as exc:
-            raise AstrBotProtocolError("下载响应不是合法 JSON") from exc
-        message = payload.get("message") if isinstance(payload, dict) else payload
-        raise AstrBotProtocolError(f"下载失败: {message or payload}")
-    if not media_type.startswith("image/"):
-        raise AstrBotProtocolError(
-            f"下载到的附件不是图片: {media_type or '缺少 content-type'!r}"
-        )
-    return resp.content, media_type
+            declared_size = int(declared_value) if declared_value else 0
+        except ValueError:
+            declared_size = 0
+        if declared_size > max_bytes:
+            raise AstrBotProtocolError(
+                f"AstrBot 附件超过下载上限: 声明 {declared_size} 字节，上限 {max_bytes} 字节"
+            )
+        # 两道闸缺一不可：声明值用于提前拒绝，累计值防漏报或少报。
+        # 不得改回 aread()／resp.content，否则超限前就已把整份附件读进内存。
+        content = bytearray()
+        async for chunk in resp.aiter_bytes(64 * 1024):
+            if len(content) + len(chunk) > max_bytes:
+                raise AstrBotProtocolError(
+                    f"AstrBot 附件超过下载上限: 实际接收已超过 {max_bytes} 字节"
+                )
+            content.extend(chunk)
+        return bytes(content), media_type
 
 
 async def check_health(

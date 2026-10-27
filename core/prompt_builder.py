@@ -212,6 +212,21 @@ _DECISION_PROTOCOL_BLOCK = (
     "    拉不到就直说看不到\n"
     "  - 指代不明(确定不了用户说的是哪张图)时,可以把相邻几张都拉下来确认再答\n"
     "\n"
+    "正文内联 @(reply_text 里怎么 @ 人):\n"
+    "  - @ 是强提醒会弹通知,只有对方需要被明确通知时才用:点名提问的回答、\n"
+    "    委托受理/完成的回执、许久未发言者的应答。热聊中的即时接话不 @\n"
+    "    (对方正在看,@ 是打扰)。多方混聊里「你回的人」常不是「触发本轮的人」,\n"
+    "    @ 你实际回话的对象。\n"
+    "  - 写法固定为 `[CQ:at,qq=<QQ号>]`,QQ 号取 speaker 标签的 id= 字段(昵称区不算)。\n"
+    "    可以写多个,可以放在正文任意位置:\n"
+    "    「[CQ:at,qq=10001] 这版可以,[CQ:at,qq=10002] 你那边呢」\n"
+    "  - 只认 [CQ:at,qq=数字] 这一种 CQ 码:图片、表情、语音、引用等其它 CQ 码\n"
+    "    一律不支持,不要写。\n"
+    "  - 不引用也能正文内联 @;群聊成功解析 Reply 会自动 @ 被引用者,私聊不自动 @。\n"
+    "    群聊引用时不要再手写同一个首位 @;额外的人或其它位置才用正文内联 @。\n"
+    "    引用的自动 @ 属于引用语义,不受热聊免 @ 限制;正文手写 @ 仍遵守上面的提醒纪律。\n"
+    "  - 不需要 @ 时正文里不要出现任何 CQ 码,正常文字即可。\n"
+    "\n"
     "你自己的身份:runtime_state.you 是你在本平台的账号(格式同 speaker 标签)。\n"
     "  - 消息里出现 `@<你的 id>` 就是在 @ 你 —— 那串数字看着陌生也是你,\n"
     "    不要当成另一个人或另一个 bot。\n"
@@ -241,6 +256,9 @@ _DECISION_PROTOCOL_BLOCK = (
     "  例 B — 不归你:\n"
     "    输入末尾: <current_message>[id=u1 user=小光]: @阿强 帮我看下</current_message>\n"
     '    输出: {"should_reply": false}\n'
+    "  例 C — 引用 + 正文内联 @(看字段与标记位置,不是措辞模板):\n"
+    "    输入末尾: <current_message>[m:57] [id=10002 user=小光]: 那事怎么样了</current_message>\n"
+    '    输出: {"should_reply": true, "reply_to": "m:57", "reply_text": "[CQ:at,qq=10002] 都办完了"}\n'
     "</decision_protocol>"
 )
 
@@ -254,7 +272,8 @@ _PRIVATE_DECISION_PROTOCOL_BLOCK = (
     "有实质内容的消息正常回应;纯表情轰炸、无意义刷屏、或你判断\n"
     "无需回应的场合,可以 should_reply=false 沉默。\n"
     "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
-    + render_cn_field_lines(("should_reply", "reply_text", "not_final"), short=True)
+    + render_cn_field_lines(("should_reply", "reply_text", "reply_to", "not_final"), short=True)
+    + "私聊只有对方一个人:不必 @ 任何人,正文里不要写 [CQ:at,...] 标记。\n"
     + "最终输出必须是该 JSON 对象,不要在 JSON 外面再包文字;\n"
     "即使想用角色口吻说话,也必须把那段话放进 reply_text 字段里。\n"
     "</decision_protocol>"

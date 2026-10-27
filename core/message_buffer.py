@@ -43,7 +43,17 @@ class BufferedMessage:
     合成 fragment 的身份分界，昵称常量（系统核对）只承担显示、不再参与身份识别。"""
     id: int | None = None
     """DB 主键。perception 构造时为 None,MessageStore.append 写入后回填。
-    handlers 不应直接读写;由 MessageStore.append 管控。"""
+    handlers 不应直接读写;由 MessageStore.append 管控。模型可见的 m:id 就是它。"""
+    qq_message_id: str | None = None
+    """平台(OneBot/NapCat)真实 message_id,与 m:id 同一行(见 messages 表同名列)。
+
+    perception 从 event.message_id 捕获;合成消息、无 ID 场景、老库历史行一律 None
+    (NULL = 平台 id 未知,绝不猜)。模型寻址仍只用 m:id;本字段是回平台侧
+    (回执/取文件/取消息)的映射出口,查法见 MessageStore.get_qq_message_id。"""
+    private_owner_id: str | None = None
+    """私聊会话归属；群聊恒 None。user_id 始终表示真实发送者，不能兼任会话键：
+    私聊 bot 行的发送者是 bot，归属则是对端用户。普通私聊入站缺省时由存储层
+    回填为 user_id；归属未知的老 bot 行保持 None，查询失败即闭，避免跨私聊串号。"""
     forward_content: str | None = None
     """合并转发的完整展开块(<forwarded_messages>…</forwarded_messages>)。
     content 里只存单行 preview;全文走 message_forwards 附表,由
@@ -170,6 +180,36 @@ class MessageBuffer:
         """回填指定消息的 content(perception 拿真实 db id 后对含文件消息补
         m:id#fN 标签)。只改 content 列,不动 ts/媒体行。"""
         self._store.update_content(message_id, content)
+
+    def get_qq_message_id(
+        self,
+        adapter: str,
+        group_id: str | None,
+        message_id: int,
+        *,
+        owner_user_id: str | None = None,
+    ) -> str | None:
+        """m:id → 平台真实 message_id(同步,查不到/旧 NULL/跨会话一律 None)。
+
+        门面透传 MessageStore.get_qq_message_id:调用方(主线回执/取文件)只用这一层,
+        不直接摸 store。私聊(group_id=None)必须给 owner_user_id。
+        """
+        return self._store.get_qq_message_id(
+            adapter, group_id, message_id, owner_user_id=owner_user_id
+        )
+
+    def get_reply_target(
+        self,
+        adapter: str,
+        group_id: str | None,
+        message_id: int,
+        *,
+        owner_user_id: str | None = None,
+    ) -> tuple[str, str] | None:
+        """m:id → (平台 message_id, 真实发送者)，沿用同一会话隔离口径。"""
+        return self._store.get_reply_target(
+            adapter, group_id, message_id, owner_user_id=owner_user_id
+        )
 
     def counts_by_scope(self) -> dict[tuple[str, str], int]:
         return self._store.counts_by_scope()

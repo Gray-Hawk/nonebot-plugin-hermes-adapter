@@ -7,6 +7,7 @@ description: |
 
 tools:
   - push_message
+  - recall_message
   - list_active_sessions
   - get_recent_messages
   - get_message_images
@@ -28,9 +29,16 @@ allows you to send messages back via the `push_message` tool.
 
 ## Tools
 
-### `push_message(adapter, group_id, text, image_urls?)`
+### `push_message(adapter, group_id, text, image_urls?, reply_to?)`
 
 Send one message into a group. Constraints:
+- `reply_to` optionally quotes a same-chat message by its plugin `m:id`, for example
+  `m:123`; never pass a NapCat/OneBot message id. Invalid or unavailable mappings degrade
+  to an ordinary unquoted message and are logged. A resolved group Reply automatically
+  adds `At(quoted sender) + one space` after the Reply segment; private replies do not.
+- Insert `[CQ:at,qq=数字]` directly in `text` or decision `reply_text` for ordered
+  mentions. Multiple markers and arbitrary positions are supported. Other CQ codes and
+  `@all` are not enabled.
 - `image_urls` accepts **only** `http(s)://` and `data:` URLs. A path on this host
   (`/root/.hermes/cache/images/…`) is not reachable from the bot process and is
   **not** delivered — the result reports it in `skipped_images` with a `warning`,
@@ -43,6 +51,28 @@ Send one message into a group. Constraints:
 - The (adapter, group_id) must be **known** (the bot has seen at least one message in that
   group since process start). A fresh nonebot restart causes `error="unknown target"` until
   members talk again.
+
+### `recall_message(adapter, message_id, group_id?, user_id?)`
+
+Withdraw one message previously sent by this bot. Call it only when the user explicitly
+asks for a recall and identifies the target by quoting it or describing its content.
+Resolve that target to one unique visible `m:id` before calling; the tool does not search
+message content, guess among candidates, or default to the latest message. If the target
+is ambiguous, do not call it.
+
+- `message_id` is the plugin logical id in strict `m:<positive integer>` form, for example
+  `m:123`; never pass a NapCat/OneBot message id.
+- Give exactly one target: `group_id` for a group or `user_id` for a private chat. It must
+  be the chat that contains the message. Group calls require an active reactive session;
+  private calls follow the same private allowlist as proactive private delivery.
+- Only a message whose recorded sender is the current bot can be recalled. Missing old
+  platform mappings, cross-chat ids, other users' messages, and other bots' messages are
+  rejected locally without calling the platform.
+- `error_kind="local_rejected"` means the target or permission check failed;
+  `"platform_rejected"` means QQ/NapCat refused the operation (time limit, permission,
+  or message state may apply); `"unconfirmed"` means the response was lost or timed out
+  and the message may already have been withdrawn. Do not blindly retry platform refusals
+  or unconfirmed outcomes.
 
 ### `list_active_sessions(adapter?)`
 
@@ -105,7 +135,7 @@ In reactive mode, your reply MUST be a single `submit_decision` tool call:
   "reply_text": "string, required when should_reply=true; leave empty for silent",
   "topic_hint": "short label, optional",
   "should_exit_active": false,  // see exit threshold below
-  "at_user_id": "12345",  // optional; the ONLY way to @ — a specific recent speaker's user_id
+  "reply_to": "m:123",     // optional; group Reply auto-mentions the quoted sender, private Reply does not
   "pin_anchor": true,     // optional; commission judgement turns only — pin this task into <pinned_tasks>
   "release_anchor": "all",  // optional; commissioner user_id or "all", see task anchors below
   "answer_anchor": "12345", // optional; commissioner user_id or "all" — this reply answered that pinned task
@@ -119,16 +149,15 @@ In reactive mode, your reply MUST be a single `submit_decision` tool call:
 }
 ```
 
-`at_user_id` @s a specific speaker from recent_messages by user_id (a strong
-notification ping), and it is the only way to @ anyone — there is no plugin-side
-fallback and no boolean shortcut. Omit it for ordinary in-conversation replies
-(the person is already watching); set it only when they need to be explicitly
-notified: answering a direct question from someone who may have wandered off,
-accepting or reporting back on a commissioned task, replying to someone after a
-long gap. In multi-party chats the person you answer is often NOT the user who
-triggered this turn, so give the id of whoever you actually answer. An id outside
-the recent window is rejected — no @ at all. You are the best judge of whether a
-ping is warranted; when in doubt, don't @.
+Mentions live inside `reply_text`: write `[CQ:at,qq=12345]` exactly where each strong
+notification belongs. Multiple people and arbitrary positions are supported; the plugin
+preserves segment order and does not prepend or infer mentions. Omit markers for ordinary
+replies, and do not use other CQ codes or `@all`.
+
+`reply_to` independently quotes one specific message: set it to the plugin `m:id` already
+shown in history, such as `m:123`. Never substitute a NapCat message id or Hermes transcript
+row id. Unknown, legacy, malformed or cross-chat mappings are ignored with a log rather than
+being sent raw.
 
 Task anchors: when the input contains a `<pinned_tasks>` block, those are pinned
 commission anchors (📌 + attribution + age), NOT latest messages — they keep the
@@ -305,7 +334,9 @@ are transcript snapshots of a "merged forward" message the user shared:
 - Don't call `push_message` to "ping" or "say hi" to inactive groups. The reactive guard
   will return 422 and your message will be discarded.
 - Don't try to set user profiles / facts via this skill. M1 has no user profile support.
-- Don't assume `reply_to_msg_id` works — M1 does not implement it.
+- Use `reply_to="m:123"` to quote a message already visible in this chat's history. It is
+  resolved through the plugin mapping; unknown, legacy or cross-chat ids degrade to an
+  ordinary unquoted message. Never pass a NapCat message id.
 - Don't call `get_message_images` speculatively for every reactive turn — only when the
   user's text actually references a past image. Each call costs bytes + an extra LLM turn.
 - Don't call `get_message_images` against `[语音] [视频] [文件:...]` placeholders inside a

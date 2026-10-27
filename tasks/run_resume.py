@@ -8,8 +8,8 @@
 - failed/cancelled/interrupted → 记 WARN 删行不补发(与现网失败静默语义一致)。
 
 极简送达与正常 turn 的差异(刻意收窄,防半个状态机):
-- reactive/结构化: output 按 submit_decision JSON 解析,失败即静默;at_user_id
-  用 message_buffer 当前 recent 窗口校验(重启后 recent 按新 buffer 算);
+- reactive/结构化: output 按 submit_decision JSON 解析,失败即静默;reply_to=m:id
+  通过消息库解析成当前会话的平台 message_id,内联 @ 由统一出站构造消息段;
 - pin/release anchor、should_exit_active、防抖合并这些 turn 生命周期
   特性在续跑轮一律跳过(记 INFO);mark_bot_replied 照打(窗口若还活着);
 - 续跑期间到达的旁白帧按 interim_echo 同款转发(受 hermes_interim_echo_enabled 控制)。
@@ -40,8 +40,10 @@ from ..core.hermes_client import (
     extract_response_media,
 )
 from ..core.inflight import make_inflight_key
+from ..core.message_buffer import BufferedMessage
 from ..core.misc_config import load_misc_config
-from ..core.outbound import send_local_files, send_text_with_media
+from ..core.outbound import get_bot_nickname, send_local_files, send_text_with_media
+from ..core.reply_resolution import resolve_reply
 from ..core.routing import resolve_target
 from ..core.run_tracker import TrackedRun
 
@@ -93,12 +95,12 @@ def _maybe_spawn_steer_reconcile(row: TrackedRun) -> None:
         logger.warning("[HERMES steer对账] 终态钩子异常(不影响删行)", exc_info=True)
 
 
-def _build_delivery(output: str, expect_structured: bool, recent_speakers: set[str]) -> tuple[str, str | None] | None:
-    """终态 output → (reply_text, at_user_id)。纯函数,离线可测。
+def _build_delivery(output: str, expect_structured: bool) -> tuple[str, str | None] | None:
+    """终态 output → ``(reply_text, reply_to)``。纯函数,离线可测。
 
-    结构化模式:JSON 解析失败或 should_reply=false → None(静默);
-    at_user_id 不在 recent 窗口 → 不 @(与正常 turn 同口径)。
-    非结构化:output 原文即回复;恒不 @(没有信封,无处取 at 依据)。
+    结构化模式在 JSON 解析失败或 should_reply=false 时静默。reply_to 在这里只
+    透传，实际 m:id 形态和会话归属由统一解析器在发送前校验；旧文首 @ 字段不再
+    参与投递，内联 @ 始终留在正文中交给统一出站处理。
     """
     if not expect_structured:
         return (output, None) if output.strip() else None
@@ -110,9 +112,9 @@ def _build_delivery(output: str, expect_structured: bool, recent_speakers: set[s
     reply_text = str(decision.get("reply_text") or "").strip()
     if not reply_text:
         return None
-    at = decision.get("at_user_id")
-    at_user = str(at) if at is not None and str(at) in recent_speakers else None
-    return reply_text, at_user
+    reply_to_raw = decision.get("reply_to")
+    reply_to = str(reply_to_raw) if reply_to_raw is not None else None
+    return reply_text, reply_to
 
 
 async def resume_active_runs() -> None:
@@ -281,7 +283,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
                             if cleaned:
                                 await send_text_with_media(
                                     bot=bot, target=entry.target, text=cleaned,
-                                    media_urls=[], at_user_id=None, adapter_name=row.adapter,
+                                    media_urls=[], adapter_name=row.adapter,
                                 )
                         if tracker and parser.last_seq >= 0 and (interim or parser.terminal):
                             tracker.update_seq(row.run_id, parser.last_seq)
@@ -319,31 +321,56 @@ async def _resume_row_impl(row: TrackedRun) -> None:
         logger.warning(f"[HERMES run-resume] 事件流未见终态帧 run_id={row.run_id},保留行待下次启动")
         return
 
-    # 极简送达
-    recent_speakers: set[str] = set()
-    if _mcp.message_buffer is not None and not row.is_private and row.group_id:
-        recent_speakers = {
-            str(m.user_id)
-            for m in _mcp.message_buffer.get_recent(row.adapter, row.group_id, 20)
-        }
-    delivery = _build_delivery(output, row.expect_structured, recent_speakers)
+    # 极简送达。reply_to 的 m:id 在发送前按 row 中的会话归属解析，重启后也不
+    # 改用“最近发言者”猜测目标；查不到映射只降级普通正文。
+    delivery = _build_delivery(output, row.expect_structured)
     if delivery is None:
         logger.info(f"[HERMES run-resume] 续跑轮静默(解析失败/决定不回) run_id={row.run_id}")
         _maybe_spawn_steer_reconcile(row)
         tracker.finish(row.run_id)
         return
-    reply_text, at_user = delivery
+    reply_text, reply_to = delivery
     cleaned, media_urls, file_paths = extract_response_media(reply_text)
     if not cleaned and not media_urls and not file_paths:
         logger.info(f"[HERMES run-resume] 续跑轮回复为空 run_id={row.run_id}")
         _maybe_spawn_steer_reconcile(row)
         tracker.finish(row.run_id)
         return
+    resolved_reply = resolve_reply(
+        _mcp.message_buffer,
+        adapter=row.adapter,
+        group_id=None if row.is_private else row.group_id,
+        owner_user_id=row.user_id if row.is_private else None,
+        reply_to=reply_to,
+        log_tag="HERMES run-resume",
+    )
     sent = await send_text_with_media(
         bot=bot, target=entry.target, text=cleaned, media_urls=media_urls,
-        at_user_id=at_user, adapter_name=row.adapter,
+        reply_qq_message_id=resolved_reply.qq_message_id if resolved_reply else None,
+        reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
+        adapter_name=row.adapter,
     )
     await send_local_files(bot=bot, target=entry.target, file_paths=file_paths, adapter_name=row.adapter)
+    if sent and _mcp.message_buffer is not None:
+        # 补发与正常 turn 一样留下可寻址的 bot 行；平台回执缺失时只把
+        # qq_message_id 留 NULL，不把“无 ID”误当发送失败。
+        buffered_content = cleaned
+        if media_urls:
+            buffered_content = f"{buffered_content} [图片]".strip()
+        _mcp.message_buffer.append(
+            BufferedMessage(
+                ts=_now_ms(),
+                adapter=row.adapter,
+                group_id=None if row.is_private else row.group_id,
+                user_id=row.bot_self_id,
+                nickname=await get_bot_nickname(bot),
+                content=buffered_content,
+                image_urls=[],
+                is_bot=True,
+                qq_message_id=getattr(sent, "primary_qq_message_id", None),
+                private_owner_id=row.user_id if row.is_private else None,
+            )
+        )
     if sent and not row.is_private and row.group_id and _mcp.active_sessions is not None:
         if _mcp.active_sessions.get_if_trigger_alive(row.adapter, row.group_id, _now_ms()) is not None:
             _mcp.active_sessions.mark_bot_replied(

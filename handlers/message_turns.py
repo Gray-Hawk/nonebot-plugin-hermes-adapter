@@ -56,6 +56,7 @@ from ..core.outbound import (
     send_local_files,
     send_text_with_media,
 )
+from ..core.reply_resolution import resolve_reply
 from ..core.prompt_builder import (
     build_passive_system_prompt,
     build_passive_user_content,
@@ -317,7 +318,6 @@ async def _chat_with_overflow_recovery(label: str, /, *, reply_bot: Bot, reply_t
         target=reply_target,
         text=_SESSION_RESET_NOTICE,
         media_urls=[],
-        at_user_id=None,
         adapter_name=adapter_name,
     )
 
@@ -473,7 +473,6 @@ async def _run_passive_turn(
                 target=target,
                 text=cleaned,
                 media_urls=[],
-                at_user_id=None,
                 adapter_name=adapter_name,
             )
 
@@ -555,6 +554,14 @@ async def _run_passive_turn(
         _observe_silence("passive", adapter_name, group_id, is_private)
         return result
 
+    if getattr(result, "is_run_detached", False):
+        # 与 reactive 同语义：回复仍归原 run 的恢复链，当前轮保持静默。
+        logger.info(
+            f"[HERMES passive] runs 订阅断开,等待原 run 恢复 "
+            f"(group={group_id} is_private={is_private})"
+        )
+        return result
+
     # 阶段3b:turn 被主动终止,硬静默(同 reactive 分支注释)。
     if result.is_interrupted:
         logger.info(f"[HERMES passive] turn 被终止,硬静默 (group={group_id} is_private={is_private})")
@@ -577,7 +584,6 @@ async def _run_passive_turn(
                 target=target,
                 text=fallback_text,
                 media_urls=[],
-                at_user_id=None if is_private else user_id,
                 adapter_name=adapter_name,
             )
         return result
@@ -632,14 +638,49 @@ async def _run_passive_turn(
 
     if not cleaned_text and not media_urls and not file_paths:
         return result
-    await send_text_with_media(
+    reply_to = (
+        (result.structured or {}).get("reply_to")
+        if use_private_decision and result.structured is not None and not result.parse_failed
+        else None
+    )
+    resolved_reply = resolve_reply(
+        _mcp.message_buffer,
+        adapter=adapter_name,
+        group_id=group_id,
+        owner_user_id=user_id if group_id is None else None,
+        reply_to=reply_to,
+        log_tag="HERMES passive",
+    )
+    reply_qq_message_id = resolved_reply.qq_message_id if resolved_reply else None
+    sent = await send_text_with_media(
         bot=bot,
         target=target,
         text=cleaned_text,
         media_urls=media_urls,
-        at_user_id=None if is_private else user_id,
+        reply_qq_message_id=reply_qq_message_id,
+        reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
         adapter_name=adapter_name,
     )
+    if is_private and sent and _mcp.message_buffer is not None:
+        # 私聊 bot 行保留真实发送者，同时单独记录对端归属；不能用 bot 的
+        # user_id 当私聊桶键，也不能靠 is_bot 对所有私聊全局放行。
+        buffered_content = cleaned_text
+        if media_urls:
+            buffered_content = f"{buffered_content} [图片]".strip()
+        _mcp.message_buffer.append(
+            BufferedMessage(
+                ts=_now_ms(),
+                adapter=adapter_name,
+                group_id=None,
+                user_id=str(bot.self_id),
+                nickname=await get_bot_nickname(bot),
+                content=buffered_content,
+                image_urls=[],
+                is_bot=True,
+                qq_message_id=getattr(sent, "primary_qq_message_id", None),
+                private_owner_id=user_id,
+            )
+        )
     # 分级反馈:发送成功后的文书暗示/离场确认检查(合成轮豁免)
     await _post_send_feedback(
         key=_fb_key, reply_text=cleaned_text, bot=bot, target=target,
@@ -891,7 +932,6 @@ async def _run_reactive_turn(
                 target=target,
                 text=cleaned,
                 media_urls=[],
-                at_user_id=None,
                 adapter_name=adapter_name,
             )
 
@@ -959,19 +999,29 @@ async def _run_reactive_turn(
             except Exception:
                 logger.warning("[HERMES steer对账] 回收核销失败(不影响回收)", exc_info=True)
 
+    # 结果对象可能来自尚未带“本地能力拒绝”标记的后端；缺省 False 保持该后端的
+    # 原有水位与冷却行为，不能让一个可选标记在发送前炸掉整个 reactive turn。
+    is_local_refusal = getattr(result, "is_local_refusal", False)
+
     # 增量推送水位推进:仅在内容确定落进上游转录时推进(非 transport 错误、
     # 非 403/暂不可用等 provider 报错家族);失败/本 turn 内发生会话轮换则不推进,
     # 下轮从旧水位(或全量)重推——宁重复,不丢失。
     if (
         new_watermark is not None
         and not result.is_transport_error
-        and not result.is_local_refusal
+        and not is_local_refusal
         and not result.is_forbidden_error
         and not result.is_outage_error
     ):
         session_manager.advance_push_watermark(
             adapter_name, user_id, group_id, new_watermark, expected_key=session_key
         )
+
+    if getattr(result, "is_run_detached", False):
+        # 原 run 已登记且仍在恢复链中；当前轮不发错误兜底或破信封提醒。
+        # 上方水位可推进：网关已接纳本轮内容，slot 释放后由 retry 续订原 run。
+        logger.info(f"[HERMES reactive] runs 订阅断开,等待原 run 恢复 (group={group_id})")
+        return result
 
     if result.parse_failed or result.structured is None:
         # 本部署补丁: 403 鉴权类错误硬静默(同 passive 路径注释)。
@@ -1031,8 +1081,7 @@ async def _run_reactive_turn(
                     target=target,
                     text=fallback_text,
                     media_urls=[],
-                    # 问题5: transport 错误连模型输出都没有,不 @。
-                    at_user_id=None,
+                    # transport 错误没有可靠决策信封，不额外生成 @ 或 Reply。
                     adapter_name=adapter_name,
                 )
             return result
@@ -1077,7 +1126,6 @@ async def _run_reactive_turn(
                 target=target,
                 text=cleaned_text,
                 media_urls=media_urls,
-                at_user_id=None,
                 adapter_name=adapter_name,
             )
             # 本部署补丁:散文兜底同样可能带本地文件引用。
@@ -1182,7 +1230,6 @@ async def _run_reactive_turn(
                 target=target,
                 text="",
                 media_urls=media_urls,
-                at_user_id=None,
                 adapter_name=adapter_name,
             )
             logger.info(
@@ -1201,20 +1248,17 @@ async def _run_reactive_turn(
         )
         return result
 
-    # 本部署补丁(问题5): 彻底废弃插件层 @ 兜底,
-    # @ 完全由 LLM 决策——只认信封里的 at_user_id,且值必须落在本 turn recent
-    # 窗口发言者集合内(防模型 @ 不在场的人);没给/非法就不 @。
-    # 理由:@ 兜底本质是废弃机制,LLM 决策完全足够,兜底反而可能答错;
-    # @ 是强提醒,漏 @ 无害、错 @ 才烦人。at_user 布尔字段随之废弃(协议契约已同步删除)。
-    # 校验集合从 recent(增量水位后新消息)改为 recent_full
-    # (缓冲窗全量)——模型上下文按全量渲染,旧口径下「上一轮刚发言、本轮没说话」
-    # 的在场者会被当不在场,@ 被静默丢弃(「在场」定义与模型视野错位)。
-    _decision_at_id = decision.get("at_user_id")
-    at_user: str | None = None
-    if _decision_at_id is not None and str(_decision_at_id) in {
-        str(m.user_id) for m in recent_full
-    }:
-        at_user = str(_decision_at_id)
+    # 正文内联 @ 保持原顺序；Reply 另从同一条 m:id 记录取平台 ID 和真实发送者，
+    # 群聊按 QQ 原生段序在 Reply 后补被引用者 At，私聊不补。无映射仍降级普通正文。
+    resolved_reply = resolve_reply(
+        _mcp.message_buffer,
+        adapter=adapter_name,
+        group_id=group_id,
+        owner_user_id=None,
+        reply_to=decision.get("reply_to"),
+        log_tag="HERMES reactive",
+    )
+    reply_qq_message_id = resolved_reply.qq_message_id if resolved_reply else None
     # 类②拦截点(reactive,规划书 §3.3):cleaned_reply_text 定稿后、send_text_with_media 前。
     # 命中 action=bounce 规则 → 不投递该回复,立刻追加重交轮(不 mark_bot_replied、不入库)。
     if await _maybe_intercept_bounce(
@@ -1229,14 +1273,17 @@ async def _run_reactive_turn(
         target=target,
         text=cleaned_reply_text,
         media_urls=media_urls,
-        at_user_id=at_user,
+        reply_qq_message_id=reply_qq_message_id,
+        reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
         adapter_name=adapter_name,
     )
+    primary_qq_message_id = getattr(sent, "primary_qq_message_id", None)
     # 本部署补丁:本地文件跟在文本消息之后上传。
     await send_local_files(bot=bot, target=target, file_paths=file_paths, adapter_name=adapter_name)
     logger.debug(
         f"[HERMES reactive] sent adapter={adapter_name} group={group_id} "
-        f"ok={sent} text_len={len(cleaned_reply_text)} media={len(media_urls)} at_user={at_user}"
+        f"ok={bool(sent)} text_len={len(cleaned_reply_text)} media={len(media_urls)} "
+        f"reply_to={decision.get('reply_to')!r} reply_resolved={reply_qq_message_id is not None}"
     )
     # 分级反馈:发送成功后的文书暗示/离场确认检查(合成轮豁免)
     if sent:
@@ -1279,6 +1326,7 @@ async def _run_reactive_turn(
                 content=buffered_content,
                 image_urls=[],
                 is_bot=True,
+                qq_message_id=primary_qq_message_id,
             )
         )
         # 注:若 should_exit_active=True,session 已在上方 end(),touch / mark_bot_replied
@@ -1287,7 +1335,7 @@ async def _run_reactive_turn(
         # B.2: 记下「bot 刚回过」时间戳,供 _handle_reactive_path 入口 + _refire 入口的
         # cooldown 闸门判定。
         # 本地能力拒绝没有模型回复，不写回复冷却；or 短路同时避免误报落空。
-        marked = result.is_local_refusal or _mcp.active_sessions.mark_bot_replied(
+        marked = is_local_refusal or _mcp.active_sessions.mark_bot_replied(
             adapter_name,
             group_id,
             now_ms=reply_now_ms,

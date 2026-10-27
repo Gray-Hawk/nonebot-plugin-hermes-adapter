@@ -12,12 +12,14 @@ import base64
 import binascii
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import nonebot_plugin_alconna as alconna
 from nonebot import logger
 from nonebot.adapters import Bot
 
 from .chat_config import load_chat_config
+from .log_throttle import throttled_info
 from .media_config import load_media_config
 from .misc_config import load_misc_config
 
@@ -62,6 +64,142 @@ def _parse_image_data_url(url: str) -> tuple[bytes, str, str] | None:
 # 所有已知 adapter 上限 ≥ 4500,默认 max_len=4000,溢出安全。
 _TRUNCATION_SUFFIX = "\n\n…（消息过长,已截断）"
 
+# ---------------------------------------------------------------- 受控内联 @ 原语
+#
+# reply_text 里允许出现**唯一一种**控制标记:`[CQ:at,qq=<ASCII 数字>]`,可多次、
+# 可出现在任意位置,与前后文字保持原序。出站前逐个转成 alconna At 段,绝不让标记
+# 字面进 QQ。这里刻意不是「CQ 码解析器」:除 at 之外的任何 CQ 段(image/face/
+# record/music/share…)、以及 at 的非数字形态都不转换,原样留在正文里当普通文本。
+# 理由:模型能写的标记面越小,越不会有「用户收到不可见段」这类无从解释的故障;
+# 需要扩类型时按需显式加白,不做形态猜测。
+_INLINE_AT_MARKER_RE = re.compile(r"\[CQ:at,qq=([0-9]{1,20})\]")
+
+# 观测用:正文里残留的 CQ 段形态。只统计与记日志,一个字节都不改。
+_CQ_LIKE_RE = re.compile(r"\[CQ:[A-Za-z_]+[,\]]")
+
+_REPLY_ID_RE = re.compile(r"-?[0-9]+")
+
+
+@dataclass(frozen=True)
+class SendResult:
+    """一次发送的成功状态与平台回执 ID。
+
+    “发送成功但没有回执 ID”与“发送失败”必须分开：前者仍要写入本地 bot 消息、
+    结束 run-resume 等待并向调用方报告成功，只是 qq_message_id 留 NULL。
+    """
+
+    ok: bool
+    msg_ids: list[str]
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+    @property
+    def primary_qq_message_id(self) -> str | None:
+        return self.msg_ids[0] if self.msg_ids else None
+
+
+@dataclass(frozen=True)
+class _InlineAt:
+    """解析结果里的一个受控内联 @ 目标。"""
+
+    qq: str
+
+
+def _parse_inline_at_markers(text: str) -> list[str | _InlineAt]:
+    """把 reply_text 切成 文本 / 内联 @ 的有序片段。
+
+    只有精确形态 `[CQ:at,qq=<ASCII 数字>]` 转段;其余一律留在文本片段里:
+      - `[CQ:at,qq=all]`、`[CQ:at,qq=0]`:OneBot 侧等同 @全体成员,不开放;
+      - `[CQ:at,qq=]`、`[CQ:at,qq=abc]`、全角逗号等形态不符的:不认;
+      - 任何非 at 类型(`[CQ:image,…]` 等):不认。
+    相邻标记不产生空文本片段;空串返回空列表。
+    """
+
+    tokens: list[str | _InlineAt] = []
+    pos = 0
+    for match in _INLINE_AT_MARKER_RE.finditer(text):
+        qq = match.group(1)
+        if int(qq) == 0:
+            # OneBot v11 把 qq=0 当 @全体成员,不在受控面内:不切断文本,原样留下。
+            continue
+        if match.start() > pos:
+            tokens.append(text[pos : match.start()])
+        tokens.append(_InlineAt(qq))
+        pos = match.end()
+    if pos < len(text):
+        tokens.append(text[pos:])
+    if not tokens and text:
+        tokens.append(text)
+    return tokens
+
+
+def _tokens_to_segments(tokens: Sequence[str | _InlineAt]) -> list:
+    """片段 → alconna 段列表(文本用裸 str,由 UniMessage 构造期收成 Text)。"""
+
+    return [alconna.At("user", tok.qq) if isinstance(tok, _InlineAt) else tok for tok in tokens]
+
+
+def _truncate_tokens(
+    tokens: Sequence[str | _InlineAt], max_len: int
+) -> tuple[list[str | _InlineAt], bool]:
+    """按文本字符数截断片段序列,返回 (截断后片段, 是否发生截断)。
+
+    @ 段不占文本预算(它不是文本);截断点之后的片段(含 @)整体丢弃——与「截断就是
+    不要后半段」的既有语义一致,也保证不会把半个标记发出去。
+    """
+
+    kept: list[str | _InlineAt] = []
+    used = 0
+    for tok in tokens:
+        if isinstance(tok, _InlineAt):
+            kept.append(tok)
+            continue
+        remain = max_len - used
+        if remain <= 0:
+            return kept, True
+        if len(tok) > remain:
+            kept.append(tok[:remain])
+            return kept, True
+        kept.append(tok)
+        used += len(tok)
+    return kept, False
+
+
+def _warn_residual_cq(tokens: Sequence[str | _InlineAt]) -> None:
+    """正文里残留 CQ 段形态(被拒的 at 或其它类型)时留一条节流观测。"""
+
+    samples: list[str] = []
+    for tok in tokens:
+        if isinstance(tok, str):
+            samples.extend(m.group(0) for m in _CQ_LIKE_RE.finditer(tok))
+    if not samples:
+        return
+    throttled_info(
+        "outbound.residual_cq",
+        f"[OUTBOUND] reply_text 有 {len(samples)} 处 CQ 段形态未转换,按普通文本发送: "
+        f"{samples[:3]}",
+    )
+
+
+def _normalize_reply_id(raw: str | int | None, *, target: object = None) -> str | None:
+    """引用消息 id 归一化:OneBot int32 十进制形态才用,其余值返回 None。
+
+    非数字值送进 Reply 段会在导出期 int() 抛错,把整条回复带崩;这里先挡并留 WARN,
+    让“引用没生效”在日志里有据可查,而不是静默不引用。负数是合法 int32,不能误杀。
+    """
+
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    if _REPLY_ID_RE.fullmatch(text) is None:
+        logger.warning(f"[OUTBOUND] 引用消息 id 非法(需 OneBot int32 十进制),已忽略: {text[:32]!r} target={target}")
+        return None
+    return text
+
+
 # Bot self-nickname per process (per bot.self_id). Used for forward-node "name" field.
 # get_login_info is an extra OneBot RPC; cache result for the lifetime of the process.
 # 内存兜底(本部署补丁):插序容量上限,超了把最旧的一批削掉——self_id 集合实际
@@ -95,62 +233,40 @@ async def get_bot_nickname(bot: Bot) -> str:
     return nickname
 
 
-def _split_into_forward_nodes(
-    text: str,
-    *,
-    bot_self_id: str,
-    bot_nickname: str,
-    max_chars_per_node: int = 3500,
-) -> list[dict]:
-    """Split a long text into OneBot v11 forward-node dicts.
+def _split_text_chunks(text: str, max_chars: int) -> list[str]:
+    """把长文本切成若干 ≤ max_chars 的块。
 
-    Strategy:
-      1. Split by '\\n\\n' (paragraph boundaries). Keep paragraphs that fit; if a
-         paragraph alone exceeds max_chars_per_node, recursively split by '\\n',
-         then by hard cut.
-      2. Accumulate paragraphs into the same node until adding another would overshoot
-         max_chars_per_node. Then start a new node.
-      3. Each node carries a text segment in standard OneBot v11 node format.
-
-    Returns a list of at least one node. Empty text returns one node with empty text.
+    策略(与旧转发分包一致,未改语义):
+      1. 先按 '\\n\\n' 分段;单段超限就按 '\\n' 递归切,再不行硬切。
+      2. 段落/碎片再累积成不超过 max_chars 的块。
+    空文本返回 [''](保留「至少一块」语义)。
     """
 
-    def _make_node(segment: str) -> dict:
-        return {
-            "type": "node",
-            "data": {
-                "name": bot_nickname,
-                "uin": bot_self_id,
-                "content": [{"type": "text", "data": {"text": segment}}],
-            },
-        }
+    if len(text) <= max_chars:
+        return [text]
 
     def _split_chunk(chunk: str) -> list[str]:
-        """Return list of strings each ≤ max_chars_per_node."""
-        if len(chunk) <= max_chars_per_node:
+        if len(chunk) <= max_chars:
             return [chunk]
-        # Try splitting by newline
         parts = chunk.split("\n")
         if len(parts) > 1:
             return _accumulate(parts)
-        # Hard cut as last resort
         result = []
         while chunk:
-            result.append(chunk[:max_chars_per_node])
-            chunk = chunk[max_chars_per_node:]
+            result.append(chunk[:max_chars])
+            chunk = chunk[max_chars:]
         return result
 
     def _accumulate(pieces: list[str]) -> list[str]:
-        """Pack pieces into buckets of ≤ max_chars_per_node."""
         buckets: list[str] = []
         current = ""
         for piece in pieces:
-            if len(piece) > max_chars_per_node:
+            if len(piece) > max_chars:
                 if current:
                     buckets.append(current)
                     current = ""
                 buckets.extend(_split_chunk(piece))
-            elif current and len(current) + 1 + len(piece) > max_chars_per_node:
+            elif current and len(current) + 1 + len(piece) > max_chars:
                 buckets.append(current)
                 current = piece
             else:
@@ -162,24 +278,59 @@ def _split_into_forward_nodes(
     paragraphs = text.split("\n\n")
     segments: list[str] = []
     for para in paragraphs:
-        if len(para) > max_chars_per_node:
+        if len(para) > max_chars:
             segments.extend(_split_chunk(para))
         else:
             segments.append(para)
 
-    # Accumulate paragraph-level segments into nodes
-    nodes: list[dict] = []
-    current_text = ""
+    buckets: list[str] = []
+    current = ""
     for seg in segments:
-        separator = "\n\n" if current_text else ""
-        if current_text and len(current_text) + len(separator) + len(seg) > max_chars_per_node:
-            nodes.append(_make_node(current_text))
-            current_text = seg
+        separator = "\n\n" if current else ""
+        if current and len(current) + len(separator) + len(seg) > max_chars:
+            buckets.append(current)
+            current = seg
         else:
-            current_text = current_text + separator + seg
+            current = current + separator + seg
+    if current:
+        buckets.append(current)
+    return buckets or [""]
 
-    nodes.append(_make_node(current_text))
-    return nodes
+
+def _pack_forward_nodes(
+    tokens: Sequence[str | _InlineAt],
+    *,
+    bot_self_id: str,
+    bot_nickname: str,
+    max_chars_per_node: int = 3500,
+) -> list[alconna.CustomNode]:
+    """把 文本/@ 片段装进合并转发的自定义节点。
+
+    与纯文本分包的区别:**@ 段是独立段,不参与字符预算、也不会被切断**——先按片段
+    切分文本,再按预算开新节点,@ 落在它当时所在的节点里,跨节点时各节点自带自己的
+    @,整包不丢人也不重排。返回至少一个节点(空文本返回一个空内容节点)。
+    """
+
+    contents: list[list] = [[]]
+    lengths: list[int] = [0]
+    for tok in tokens:
+        if isinstance(tok, _InlineAt):
+            contents[-1].append(alconna.At("user", tok.qq))
+            continue
+        for chunk in _split_text_chunks(tok, max_chars_per_node):
+            if not chunk:
+                continue
+            if contents[-1] and lengths[-1] + len(chunk) > max_chars_per_node:
+                contents.append([])
+                lengths.append(0)
+            contents[-1].append(alconna.Text(chunk))
+            lengths[-1] += len(chunk)
+    if len(contents) > 1 and not contents[-1]:
+        # 末节点是空壳(切分刚好落在边界)时不留空节点。
+        contents.pop()
+    return [
+        alconna.CustomNode(str(bot_self_id), bot_nickname, content) for content in contents
+    ]
 
 
 # 本部署补丁: 本地文件上传(群文件/私聊文件)。
@@ -222,27 +373,105 @@ async def send_local_files(
     return sent
 
 
+def _extract_msg_id(item: object) -> str | None:
+    """从回执条目里抠出真正的消息 id。
+
+    OneBot v11 的 `Receipt.msg_ids` 装的是 call_api 的**原始返回 dict**
+    (`{"message_id": 12345, "message_id_v2": ...}`),不是裸 id——直接 str() 会得到
+    一串字典字面量,拿去做消息留痕/引用全是废号。这里按平台常见键取 id,裸标量
+    (其它 adapter 的形态)原样透传。
+    """
+
+    if item is None:
+        return None
+    if isinstance(item, dict):
+        for key in ("message_id", "msg_id", "messageId", "id"):
+            value = item.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return None
+    value = getattr(item, "message_id", None)
+    if value is not None:
+        text = str(value).strip()
+        if text:
+            return text
+    text = str(item).strip()
+    return text or None
+
+
+def _receipt_msg_ids(receipt: object) -> list[str]:
+    """把 alconna Receipt.msg_ids 归一化成 list[str](真 id、剔除空值)。"""
+
+    raw = getattr(receipt, "msg_ids", None)
+    if not isinstance(raw, (list, tuple)):
+        return []
+    ids: list[str] = []
+    for item in raw:
+        msg_id = _extract_msg_id(item)
+        if msg_id:
+            ids.append(msg_id)
+    return ids
+
+
+async def _send_unimsg(
+    msg: alconna.UniMessage, *, bot: Bot, target: alconna.Target
+) -> list[str]:
+    """唯一出站出口:发送 UniMessage,返回平台回执里的消息 id 列表。
+
+    普通文本、媒体、长文截断、合并转发、转发后的 @ 提醒全部从这里出去——调用方拿到
+    统一形态的 id(供消息留痕/撤回/后续引用使用),不必各自摸 receipt。平台没回
+    msg_ids 时留 WARN 再返回空列表:「发出去了但拿不到 id」必须可见,不靠猜。
+    """
+
+    receipt = await msg.send(target=target, bot=bot)
+    msg_ids = _receipt_msg_ids(receipt)
+    if not msg_ids:
+        logger.warning(f"[OUTBOUND] 发送成功但回执无 msg_ids(消息 id 无法留痕) target={target}")
+    return msg_ids
+
+
 async def send_text_with_media(
     *,
     bot: Bot,
     target: alconna.Target,
     text: str,
     media_urls: Sequence[str] = (),
-    at_user_id: str | None = None,
-    reply_to_msg_id: str | None = None,
+    reply_qq_message_id: str | int | None = None,
+    reply_at_user_id: str | int | None = None,
     adapter_name: str | None = None,
-) -> bool:
-    """组装并发送一条消息,返回是否发送成功。
+) -> SendResult:
+    """组装并发送一条消息,分别返回发送状态与平台消息 ID。
 
     - target 是 alconna Target(只在内存可用)
-    - 群聊默认在文本前加 At(at_user_id);为 None 不 at
-    - reply_to_msg_id: 保留位。alconna Reply 段在多 adapter 下兼容性不一,
-      当前不强制使用;保留此参数供未来兼容扩展(noqa: ARG001 直到接入)。
-    - 空消息(text='' 且无有效媒体——http/https URL 或可解码的 data:image)直接返回
-      False 不发,防 Task 12 push 路径在 Hermes 回空时构造空 UniMessage 发送出去。
+    - text 里允许受控内联 @ 标记 `[CQ:at,qq=<数字>]`(可多次、任意位置),逐个转成
+      alconna At 段并与前后文字保持原序;非 at/非数字形态原样当普通文本。合法标记
+      绝不会字面发出去。
+    - reply_qq_message_id: 合法 OneBot int32 时在消息最前面构造 Reply(id=...) 引用;
+      None/空串/空白/非数字不引用(非数字留 WARN 后忽略,避免导出期崩掉整条回复)
+    - SendResult.ok 表示是否发出;msg_ids 是真实回执 ID,可能为空。空消息与发送异常
+      都返回 ok=False;已发出但无回执 ID 返回 ok=True,msg_ids=[]
+    - 空消息(text='' 且无 @ 段、无有效媒体——http/https URL 或可解码的 data:image)
+      直接返回失败,防 push 路径在 Hermes 回空时构造空 UniMessage 发送出去
     """
     original_len = len(text)
     max_len = load_misc_config().max_length
+
+    tokens = _parse_inline_at_markers(text)
+    _warn_residual_cq(tokens)
+    reply_id = _normalize_reply_id(reply_qq_message_id, target=target)
+    reply_at = ""
+    if reply_id and not target.private and reply_at_user_id is not None:
+        candidate = str(reply_at_user_id).strip()
+        if re.fullmatch(r"[1-9][0-9]*", candidate):
+            reply_at = candidate
+        else:
+            logger.warning(
+                f"[OUTBOUND] 引用目标发送者 ID 非法，仅保留 Reply target={target} "
+                f"value={str(reply_at_user_id)[:80]!r}"
+            )
 
     # B-1.2: 群聊 + OneBot v11 + 超长 → 合并转发 (而非截断)
     # 私聊永远走截断 (send_private_forward_msg 实现端覆盖差);
@@ -256,58 +485,69 @@ async def send_text_with_media(
     ):
         try:
             nickname = await get_bot_nickname(bot)
-            nodes = _split_into_forward_nodes(
-                text,
+            nodes = _pack_forward_nodes(
+                tokens,
                 bot_self_id=bot.self_id,
                 bot_nickname=nickname,
             )
-            # Media: append at end of last node so it ships in the same forward bundle.
+            # 媒体挂到最后一个节点,跟着同一批转发出去。
             forward_media_count = 0
             if media_urls:
-                last_node_content = nodes[-1]["data"]["content"]
+                last_node_content = nodes[-1].content
                 for u in media_urls:
                     if u.startswith(("http://", "https://")):
-                        last_node_content.append({"type": "image", "data": {"url": u}})
+                        last_node_content.append(alconna.Image(url=u))
                         forward_media_count += 1
                     elif u.startswith("data:"):
                         parsed = _parse_image_data_url(u)
                         if parsed is None:
                             logger.warning(f"[OUTBOUND] unsupported data: URL skipped (len={len(u)})")
                             continue
-                        # OneBot v11 image 段的 base64:// file 形态,免落盘直传字节。
-                        last_node_content.append({"type": "image", "data": {"file": f"base64://{parsed[2]}"}})
+                        last_node_content.append(
+                            alconna.Image(raw=parsed[0], mimetype=parsed[1])
+                        )
                         forward_media_count += 1
-            # The actual merged forward send.
-            await bot.call_api("send_group_forward_msg", group_id=int(target.id), messages=nodes)
-            # At-mention: send AFTER the forward bundle so the @ ping is the most recent
-            # message in the chat list. Moving it here also guarantees no double-@ if the
-            # forward call failed and fell through to the truncation path.
-            if at_user_id:
-                try:
-                    at_msg = alconna.UniMessage([alconna.At("user", at_user_id), " "])
-                    await at_msg.send(target=target, bot=bot)
-                except Exception as exc:
-                    logger.debug(f"[OUTBOUND] post-forward @-ping failed: {exc}")
+                    else:
+                        logger.warning(
+                            f"[OUTBOUND] 无法投递的媒体引用,已跳过(需要 http(s) 或 data:): {u[:120]}"
+                        )
+            if reply_id:
+                # 合并转发 API 没有包外 Reply 槽位。alconna 会把 Reply 导出进首节点
+                # content;客户端是否展示节点内引用仍需 QQ 实测,日志不宣称必然生效。
+                nodes[0].content.insert(0, alconna.Reply(reply_id))
+                if reply_at:
+                    nodes[0].content[1:1] = [alconna.At("user", reply_at), alconna.Text(" ")]
+                logger.warning(
+                    f"[OUTBOUND] 合并转发无外层引用槽位,Reply 已放入首节点首段;"
+                    f"客户端展示待实测 target={target} reply_id={reply_id}"
+                )
+            msg_ids = await _send_unimsg(
+                alconna.UniMessage([alconna.Reference()(*nodes)]), bot=bot, target=target
+            )
             logger.debug(
                 f"[OUTBOUND] sent-via-forward target={target} text_len={original_len} "
-                f"nodes={len(nodes)} media={forward_media_count}"
+                f"nodes={len(nodes)} media={forward_media_count} ats="
+                f"{sum(1 for t in tokens if isinstance(t, _InlineAt))} msg_ids={len(msg_ids)}"
             )
-            return True
+            return SendResult(ok=True, msg_ids=msg_ids)
         except Exception as exc:
             logger.warning(f"[OUTBOUND] long-reply forward failed, falling back to truncation: {exc}")
             # Fall through to existing truncation path
 
     msg = alconna.UniMessage()
 
-    if not target.private and at_user_id:
-        msg += alconna.UniMessage([alconna.At("user", at_user_id), " "])
+    if reply_id:
+        msg += alconna.UniMessage([alconna.Reply(reply_id)])
+        if reply_at:
+            msg += alconna.UniMessage([alconna.At("user", reply_at), alconna.Text(" ")])
 
     truncated = False
-    if text:
-        if original_len > max_len:
-            text = text[:max_len] + _TRUNCATION_SUFFIX
-            truncated = True
-        msg += alconna.UniMessage(text)
+    if text and original_len > max_len:
+        tokens, _ = _truncate_tokens(tokens, max_len)
+        tokens.append(_TRUNCATION_SUFFIX)
+        truncated = True
+    if tokens:
+        msg += alconna.UniMessage(_tokens_to_segments(tokens))
 
     sent_media_count = 0
     for u in media_urls:
@@ -329,22 +569,24 @@ async def send_text_with_media(
             # "发送成功",用户却没看到图,连日志都查不到。
             logger.warning(f"[OUTBOUND] 无法投递的媒体引用,已跳过(需要 http(s) 或 data:): {u[:120]}")
 
-    # 空消息守卫:连 At 都没有(私聊 / 没传 at_user_id),text 空,无合法媒体 → 不发
-    if not msg:
+    # 空消息守卫:正文(含内联 @)与媒体都为空才跳过;Reply 本身不算内容。
+    if not tokens and sent_media_count == 0:
         logger.warning(
             f"[OUTBOUND] empty message skipped target={target} "
             f"(text_len={original_len} input_media={len(media_urls)} "
             f"valid_media={sent_media_count})"
         )
-        return False
+        return SendResult(ok=False, msg_ids=[])
 
     try:
-        await msg.send(target=target, bot=bot)
+        msg_ids = await _send_unimsg(msg, bot=bot, target=target)
         logger.debug(
             f"[OUTBOUND] sent target={target} text_len={original_len} "
-            f"truncated={truncated} media_sent={sent_media_count}/{len(media_urls)}"
+            f"truncated={truncated} media_sent={sent_media_count}/{len(media_urls)} "
+            f"ats={sum(1 for t in tokens if isinstance(t, _InlineAt))} "
+            f"reply={reply_id or '-'} msg_ids={len(msg_ids)}"
         )
-        return True
+        return SendResult(ok=True, msg_ids=msg_ids)
     except Exception as exc:
-        logger.error(f"[OUTBOUND] 发送失败 target={target}: {exc}")
-        return False
+        logger.error(f"[OUTBOUND] 发送失败 target={target}: {exc}", exc_info=True)
+        return SendResult(ok=False, msg_ids=[])

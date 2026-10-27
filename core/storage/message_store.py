@@ -23,15 +23,17 @@ from ..message_buffer import BufferedMessage, iter_message_media
 _SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS messages (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        ts           INTEGER NOT NULL,
-        adapter      TEXT    NOT NULL,
-        group_id     TEXT,
-        user_id      TEXT    NOT NULL,
-        nickname     TEXT    NOT NULL,
-        content      TEXT    NOT NULL,
-        is_bot       INTEGER NOT NULL,
-        reply_to_ts  INTEGER
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts            INTEGER NOT NULL,
+        adapter       TEXT    NOT NULL,
+        group_id      TEXT,
+        user_id       TEXT    NOT NULL,
+        nickname      TEXT    NOT NULL,
+        content       TEXT    NOT NULL,
+        is_bot        INTEGER NOT NULL,
+        reply_to_ts   INTEGER,
+        qq_message_id TEXT,
+        private_owner_id TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_msgs_group_ts ON messages (adapter, group_id, ts DESC)",
@@ -74,6 +76,18 @@ _SCHEMA_STATEMENTS = [
 ]
 
 
+def _norm_qq_message_id(value: Any) -> str | None:
+    """平台 message_id 归一:空串/空白/None → NULL,其余转 str(容忍 int 型 adapter)。
+
+    不在这里做「从内容里猜 id」之类的推断——拿不到真实 id 就存 NULL,
+    NULL 是明确事实(「未知」),猜出来的数字是假事实。
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 class MessageStore:
     """SQLite WAL 模式的消息日志,单进程内多线程读写安全。"""
 
@@ -91,17 +105,45 @@ class MessageStore:
         for stmt in _SCHEMA_STATEMENTS:
             self._conn.execute(stmt)
         self._migrate()
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_msgs_private_owner_ts "
+            "ON messages (adapter, private_owner_id, ts DESC)"
+        )
         self._closed = False
 
     def _migrate(self) -> None:
-        """老库就地升级。新增列一律带默认值,存量行自动落到正确语义。
+        """老库就地升级。新增列按各自语义迁移，不用统一默认值伪造历史事实。
 
         - message_images.kind:前只有普通图片,存量行补 'image' 即正确。
+        - messages.qq_message_id:平台(OneBot/NapCat)真实 message_id,用于把模型可见的
+          m:id(自增主键)映射回平台侧发消息/取文件。老库存量行**留 NULL、一律不猜**:
+          历史内容里的数字、message_files.qq_message_id 都只是线索,不是该消息的平台 id,
+          猜错会把回执发到别的消息上。NULL 语义 = 「该行平台 id 未知」。
+        - messages.private_owner_id:私聊归属与真实发送者分列。普通私聊旧行可确定
+          归属就是 user_id，按此前建；老私聊 bot 行无法反推对端，保持 NULL，
+          绝不拿 bot 自己当 owner 或把该行开放给所有私聊。
         """
         img_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(message_images)")}
         if "kind" not in img_cols:
             self._conn.execute("ALTER TABLE message_images ADD COLUMN kind TEXT NOT NULL DEFAULT 'image'")
             logger.info("[message_store] migrated: message_images +kind column")
+
+        msg_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(messages)")}
+        if "qq_message_id" not in msg_cols:
+            # 可空、无默认值:存量行 NULL,新行由 append 写入。
+            self._conn.execute("ALTER TABLE messages ADD COLUMN qq_message_id TEXT")
+            logger.info("[message_store] migrated: messages +qq_message_id column (legacy rows NULL)")
+
+        msg_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(messages)")}
+        if "private_owner_id" not in msg_cols:
+            self._conn.execute("ALTER TABLE messages ADD COLUMN private_owner_id TEXT")
+            logger.info("[message_store] migrated: messages +private_owner_id column")
+        # 普通私聊行的 sender 就是对端，可确定回填；老 bot 行没有这条事实，
+        # 保持 NULL。重复执行只补仍缺归属的普通行，不覆盖显式归属。
+        self._conn.execute(
+            "UPDATE messages SET private_owner_id = user_id "
+            "WHERE group_id IS NULL AND is_bot = 0 AND private_owner_id IS NULL"
+        )
 
     def close(self) -> None:
         if self._closed:
@@ -120,12 +162,16 @@ class MessageStore:
         的半截行。
         """
         try:
+            private_owner_id = msg.private_owner_id
+            if msg.group_id is None and not msg.is_bot and private_owner_id is None:
+                private_owner_id = msg.user_id
             self._conn.execute("BEGIN")
             try:
                 cur = self._conn.execute(
                     "INSERT INTO messages "
-                    "(ts, adapter, group_id, user_id, nickname, content, is_bot, reply_to_ts) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "(ts, adapter, group_id, user_id, nickname, content, is_bot, reply_to_ts, "
+                    "qq_message_id, private_owner_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         msg.ts,
                         msg.adapter,
@@ -135,6 +181,8 @@ class MessageStore:
                         msg.content,
                         1 if msg.is_bot else 0,
                         msg.reply_to_ts,
+                        _norm_qq_message_id(msg.qq_message_id),
+                        private_owner_id,
                     ),
                 )
                 msg_id = cur.lastrowid
@@ -179,6 +227,7 @@ class MessageStore:
                 raise
             self._conn.execute("COMMIT")
             msg.id = msg_id
+            msg.private_owner_id = private_owner_id
             return msg_id
         except sqlite3.Error as exc:
             logger.error(f"[message_store] append failed: {exc}; msg dropped (ts={msg.ts})")
@@ -198,7 +247,7 @@ class MessageStore:
         params: list[Any] = [adapter]
         where = "adapter = ?"
         if group_id is None:
-            where += " AND group_id IS NULL AND user_id = ?"
+            where += " AND group_id IS NULL AND private_owner_id = ?"
             params.append(owner_user_id)
         else:
             where += " AND group_id = ?"
@@ -208,7 +257,8 @@ class MessageStore:
             params.append(before_ts)
         params.append(limit)
         rows = self._conn.execute(
-            "SELECT id, ts, adapter, group_id, user_id, nickname, content, is_bot, reply_to_ts "
+            "SELECT id, ts, adapter, group_id, user_id, nickname, content, is_bot, reply_to_ts, "
+            "qq_message_id, private_owner_id "
             f"FROM messages WHERE {where} ORDER BY ts DESC LIMIT ?",
             params,
         ).fetchall()
@@ -274,6 +324,8 @@ class MessageStore:
                 reply_to_ts=r["reply_to_ts"],
                 is_bot=bool(r["is_bot"]),
                 id=r["id"],
+                qq_message_id=r["qq_message_id"],
+                private_owner_id=r["private_owner_id"],
                 forward_content=fwd_by_msg.get(r["id"]),
                 file_entries=files_by_msg.get(r["id"], []),
             )
@@ -322,20 +374,85 @@ class MessageStore:
         return {r["id"]: (r["adapter"], r["group_id"]) for r in rows}
 
     def get_message_targets(self, message_ids: list[int]) -> dict[int, tuple[str, str | None, str]]:
-        """message_id → (adapter, group_id, user_id)。未找到的 id 不出现在返回里。
+        """message_id → (adapter, group_id, route_user_id)。未找到的 id 不出现。
 
-        反向通道需要私聊 user_id 来选 bot 连接(多 bot 部署下按私聊对象路由),而
-        get_message_owners 只返回 (adapter, group_id)——群消息用 group_id 路由,
-        私聊(group_id 为空)用 user_id 路由。
+        反向通道需要私聊对端 ID 来选 bot 连接(多 bot 部署下按私聊对象路由)。
+        私聊必须取 private_owner_id，不能取真实发送者 user_id：bot 自己发出的
+        消息也由同一个对端会话路由。归属未知的老 bot 行跳过，不拿 bot 自己冒充对端。
         """
         if not message_ids:
             return {}
         placeholders = ",".join("?" for _ in message_ids)
         rows = self._conn.execute(
-            f"SELECT id, adapter, group_id, user_id FROM messages WHERE id IN ({placeholders})",
+            "SELECT id, adapter, group_id, "
+            "CASE WHEN group_id IS NULL THEN private_owner_id ELSE user_id END AS route_user_id "
+            f"FROM messages WHERE id IN ({placeholders})",
             message_ids,
         ).fetchall()
-        return {r["id"]: (r["adapter"], r["group_id"], r["user_id"]) for r in rows}
+        return {
+            r["id"]: (r["adapter"], r["group_id"], r["route_user_id"])
+            for r in rows
+            if r["route_user_id"] is not None
+        }
+
+    def get_qq_message_id(
+        self,
+        adapter: str,
+        group_id: str | None,
+        message_id: int,
+        *,
+        owner_user_id: str | None = None,
+    ) -> str | None:
+        """m:id → 平台真实 message_id；范围校验与 get_reply_target 完全一致。"""
+        target = self.get_reply_target(
+            adapter, group_id, message_id, owner_user_id=owner_user_id
+        )
+        return target[0] if target is not None else None
+
+    def get_reply_target(
+        self,
+        adapter: str,
+        group_id: str | None,
+        message_id: int,
+        *,
+        owner_user_id: str | None = None,
+    ) -> tuple[str, str] | None:
+        """m:id → (平台真实 message_id, 真实发送者 user_id)，失败即闭。
+
+        群聊按 (adapter, group_id) 收口；私聊必须给 owner_user_id 并按
+        (adapter, private_owner_id) 收口。返回的 user_id 始终是该行真实发送者，
+        供群聊 Reply 后自动 @ 被引用者；私聊路由不能使用这个值代替对端归属。
+        只认正整数内部 m:id，字符串/布尔/None 不隐式转换。
+        """
+        if isinstance(message_id, bool) or not isinstance(message_id, int) or message_id <= 0:
+            return None
+        if not isinstance(adapter, str) or not adapter.strip():
+            return None
+        if group_id is None:
+            if not isinstance(owner_user_id, str) or not owner_user_id.strip():
+                return None
+            sql = (
+                "SELECT qq_message_id, user_id FROM messages "
+                "WHERE id = ? AND adapter = ? AND group_id IS NULL AND private_owner_id = ?"
+            )
+            params: tuple[Any, ...] = (message_id, adapter, owner_user_id)
+        else:
+            sql = (
+                "SELECT qq_message_id, user_id FROM messages "
+                "WHERE id = ? AND adapter = ? AND group_id = ?"
+            )
+            params = (message_id, adapter, group_id)
+        try:
+            row = self._conn.execute(sql, params).fetchone()
+        except sqlite3.Error as exc:
+            logger.warning(f"[message_store] get_reply_target m={message_id} failed: {exc}")
+            return None
+        if row is None:
+            return None
+        qq_message_id = _norm_qq_message_id(row["qq_message_id"])
+        if qq_message_id is None:
+            return None
+        return qq_message_id, str(row["user_id"] or "")
 
     def update_content(self, message_id: int, content: str) -> None:
         """回填指定消息的 content(perception 拿真实 db id 后对含文件消息补
@@ -458,29 +575,35 @@ class MessageStore:
     def counts_by_scope(self) -> dict[tuple[str, str], int]:
         """返回 (adapter, scope_id) → 消息条数。scope_id 口径同 known_groups。
 
-        群按 group_id 合并(不按发言人拆),私聊折成 `@private:<user_id>` —— 这个
-        折叠在 SQL 里做,省得把整表拉回来再在 Python 里分组。
+        群按 group_id 合并(不按发言人拆),私聊折成 `@private:<private_owner_id>`；
+        归属未知的老 bot 行不伪造会话，也不计入任何对端桶。
+        这个折叠在 SQL 里做,省得把整表拉回来再在 Python 里分组。
         """
         rows = self._conn.execute(
-            "SELECT adapter, COALESCE(group_id, '@private:' || user_id) AS scope, COUNT(*) AS n "
-            "FROM messages GROUP BY adapter, scope"
+            "SELECT adapter, COALESCE(group_id, '@private:' || private_owner_id) AS scope, COUNT(*) AS n "
+            "FROM messages WHERE group_id IS NOT NULL OR private_owner_id IS NOT NULL "
+            "GROUP BY adapter, scope"
         ).fetchall()
         return {(r["adapter"], r["scope"]): r["n"] for r in rows}
 
     def known_groups(self) -> list[tuple[str, str]]:
         """返回所有已有消息的 (adapter, scope_id) 唯一集合。
 
-        scope_id:群聊 = group_id,私聊 = `@private:<user_id>`(私聊桶按
-        `@private:` 前缀判别)。
+        scope_id:群聊 = group_id,私聊 = `@private:<private_owner_id>`(私聊桶按
+        `@private:` 前缀判别)；归属未知的老 bot 行不生成假会话。
         """
-        rows = self._conn.execute("SELECT DISTINCT adapter, group_id, user_id FROM messages").fetchall()
+        rows = self._conn.execute(
+            "SELECT DISTINCT adapter, group_id, private_owner_id FROM messages"
+        ).fetchall()
         seen: set[tuple[str, str]] = set()
         out: list[tuple[str, str]] = []
         for r in rows:
             if r["group_id"] is not None:
                 k = (r["adapter"], r["group_id"])
+            elif r["private_owner_id"] is not None:
+                k = (r["adapter"], f"@private:{r['private_owner_id']}")
             else:
-                k = (r["adapter"], f"@private:{r['user_id']}")
+                continue
             if k not in seen:
                 seen.add(k)
                 out.append(k)

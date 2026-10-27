@@ -14,11 +14,18 @@ prompt_builder 的 _DECISION_PROTOCOL_BLOCK(中文主协议块)、同文件近�
   - render_en_field_lines(): _DECISION_HINT 的字段行(英文,desc 在括号内);
   - render_cn_field_lines(): 主协议块字段行(全集)/ 私聊版字段行(names 子集 + short);
   - render_field_name_list(): 近因 reminder 的 slash 字段单。
+
+另收口信封里「消息地址」的解析:parse_reply_to() 只接受 `m:<正整数>`(本会话
+消息库自增号),裸数字 / QQ message_id / 跨格式一律按没给处理。reply_text 正文
+内联 @ 的标记语法(`[CQ:at,qq=<数字>]`,仅此一种 CQ 码)由出站解析方
+`core/outbound.py` 的 `_INLINE_AT_MARKER_RE` 承担,契约模块不重复定义正则。
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -61,6 +68,15 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         cn_desc_short='should_reply=true 时必填',
     ),
     DecisionFieldSpec(
+        name='reply_to',
+        required=False,
+        en_note='string, optional',
+        en_desc='quote one message of this conversation by its ref `m:<id>` — the number in front of a recent_messages / current_message line, e.g. "m:123". Only that exact form is accepted: bare numbers, QQ message ids and any other shape are ignored, refs outside this conversation are rejected. Omit when not quoting. In groups, a resolved Reply automatically mentions the quoted sender immediately after it; do not manually repeat that person at the start. Private replies never auto-mention. Additional people or other positions use [CQ:at,qq=<qq id>] inside reply_text',
+        cn_note='string',
+        cn_desc='引用本会话里的一条消息:值写成 `m:<id>`(如 "m:123"),即 recent_messages\n    / current_message 行首的 m: 号。只认这一种写法:裸数字、QQ 消息 id、别的形态\n    一律当没给,不属于本会话的号会被拒;不确定号就不要引用。\n    群聊成功解析 Reply 会自动 @ 被引用者,私聊不自动 @;\n    额外的人或其它位置用 reply_text 正文内联 @',
+        cn_desc_short='引用某条消息时填它行首的 m 号,如 "m:123"',
+    ),
+    DecisionFieldSpec(
         name='topic_hint',
         required=False,
         en_note='string, optional',
@@ -75,14 +91,6 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         en_desc='',
         cn_note='boolean',
         cn_desc='谨慎使用,见下方退出门槛',
-    ),
-    DecisionFieldSpec(
-        name='at_user_id',
-        required=False,
-        en_note='string, optional',
-        en_desc='@ a specific speaker from recent_messages by user_id as a strong notification. This is the ONLY way to @: absent or outside the recent window means NO @. Omit for ordinary in-conversation replies',
-        cn_note='string',
-        cn_desc='要 @ 就给对方的 user_id(recent_messages 里某位发言者),这是唯一 @ 途径。@ 是强提醒会弹通知,只有对方需要被明确通知时才给:点名提问的回答、\n    委托受理/完成的回执、许久未发言者的应答。热聊中的即时接话不给\n    (对方正在看,@ 是打扰)。多方混聊里「你回的人」常不是「触发本轮的人」,给你实际回话对象的 id。不给 = 不 @;id 不在 recent 窗口内会被拒,同样不 @。\n    你最清楚该不该 @,自己判断',
     ),
     DecisionFieldSpec(
         name='pin_anchor',
@@ -134,6 +142,30 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         cn_desc_short='这不是最终回复,有未完成任务才填',
     ),
 )
+
+
+# 引用槽(reply_to)唯一合法形态:`m:<正整数>`,号 = 消息库自增主键,与
+# recent_messages / current_message 行首的 m 号同源。QQ 的 message_id 与 Hermes
+# 转录行 id 只作内部映射,不接受。
+REPLY_TO_PATTERN = re.compile(r"m:([1-9][0-9]*)")
+
+
+def parse_reply_to(value: Any) -> int | None:
+    """信封 reply_to → 本会话消息库 id;不合法返回 None(按没给处理)。
+
+    严格全串匹配,只认 `m:<正整数>`:
+      - 裸数字 / int / bool:一律拒(分不清是 QQ message_id 还是 m 号,不给猜);
+      - QQ message_id 形态(负数、超长串、带别的前缀):格式不符即拒;
+      - 跨格式(`M:1`、`#1`、`reply:1`、`[m:1]`、`m:1:2`、`m: 1`、尾随空白、
+        前导零):拒绝,不做 trim/补全。
+    归属校验(号是否属于当前 adapter / 会话)由调用方查库,本函数只做形态。
+    """
+    if not isinstance(value, str):
+        return None
+    m = REPLY_TO_PATTERN.fullmatch(value)
+    if m is None:
+        return None
+    return int(m.group(1))
 
 
 def _render_line(
