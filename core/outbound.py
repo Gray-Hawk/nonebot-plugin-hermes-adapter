@@ -22,7 +22,12 @@ from .chat_config import load_chat_config
 from .log_throttle import throttled_info
 from .media_config import load_media_config
 from .misc_config import load_misc_config
-from .sticker_library import StickerLibrary, StickerLibraryError, default_sticker_library
+from .sticker_library import (
+    StickerLibrary,
+    StickerLibraryError,
+    default_sticker_library,
+    sticker_feature_enabled,
+)
 
 # api_server 把本地生成的图片内联成 data:image/…;base64 URL——没有可抓取的
 # http 地址,必须解码成字节直接附加。仅支持 base64 形态;RFC 2397 的
@@ -483,7 +488,7 @@ async def send_text_with_media(
       直接返回失败,防 push 路径在 Hermes 回空时构造空 UniMessage 发送出去
     """
     sticker_match = _STICKER_MARKER_RE.fullmatch(text.strip())
-    if sticker_match is not None:
+    if sticker_match is not None and sticker_feature_enabled():
         sticker_id = sticker_match.group(1)
         if adapter_name != "onebotv11":
             logger.warning(f"[OUTBOUND] 本地表情仅支持 onebotv11 id={sticker_id} adapter={adapter_name}")

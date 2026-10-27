@@ -11,8 +11,16 @@ from .config_templates import MISC_CONFIG_TEMPLATE
 
 @dataclass(frozen=True)
 class MiscConfig:
+    """misc_config.yaml 的不可变快照字段表。
+
+    新增配置域只依赖本模块已接好的快照加载器（解析、缺档建档、显式重载）即可读取；
+    但若新键会被启动期消费方读取（如启动时定型的开关），还须同时核对该消费方的
+    生效方式——``/reload-config`` 只换快照，不会重跑启动初始化。
+    """
+
     history_text_max_chars: int = 800
     group_profile_enabled: bool = True
+    sticker_enabled: bool = False  # 本地表情库总开关，重启生效
     max_length: int = 4000
     transport_error_fallback_text: str = ""
     interim_echo_enabled: bool = False
@@ -31,6 +39,7 @@ def parse_misc_config(doc: dict) -> MiscConfig:
     return MiscConfig(
         history_text_max_chars=int_field(doc, "history_text_max_chars", 800, min_v=1),
         group_profile_enabled=bool_field(doc, "group_profile_enabled", True),
+        sticker_enabled=bool_field(doc, "sticker_enabled", False),
         max_length=int_field(doc, "max_length", 4000, min_v=1),
         transport_error_fallback_text=str_field(doc, "transport_error_fallback_text", ""),
         interim_echo_enabled=bool_field(doc, "interim_echo_enabled", False),

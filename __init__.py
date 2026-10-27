@@ -69,8 +69,11 @@ async def _hermes_m1_startup():
     )
 
     from .core.config_reload import initialize_runtime_config
+    from .core.sticker_library import ensure_sticker_library_template, init_sticker_feature
 
     initialize_runtime_config()
+    init_sticker_feature()
+    ensure_sticker_library_template()
     init_runtime_state()
     await start_storage()
     # system_prompt 留痕开关装载(启动装载+缓存;热载指令随配置专项接入)

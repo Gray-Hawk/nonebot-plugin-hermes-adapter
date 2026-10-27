@@ -5,7 +5,7 @@
 
 覆盖：
   1. 82 旧键映射表完整且无重复，新 Config 仅 8 键；
-  2. 56 目标键对账（8 env + 24 chat + 14 misc + 7 media + 3 user_lists，默认值一致）；
+  2. 57 目标键对账（8 env + 24 chat + 15 misc + 7 media + 3 user_lists，默认值一致）；
   3. 注释与空行（每个键上一行是注释，键间恰好至少一个空行）；
   4. media 保留既有嵌套结构（mode/inline/fetch/sticker/forward_image_cap/exemptions）；
   5. user_lists 保留 private_allow（注释示例，不合并进 allow_users）并新增三键；
@@ -55,19 +55,19 @@ direct = kinds["env"] + kinds["chat"] + kinds["misc"] + kinds["media"] + kinds["
 check("直接迁移 54 键(与 2 合并键合计 56)", direct == 54, f"direct={direct}")
 
 # --------------------------------------------------------------------------- #
-# 2. 56 目标键对账
+# 2. 57 目标键对账
 # --------------------------------------------------------------------------- #
 
-check("目标键总数 56", len(ct.TARGET_KEYS) == 56, f"got {len(ct.TARGET_KEYS)}")
+check("目标键总数 57", len(ct.TARGET_KEYS) == 57, f"got {len(ct.TARGET_KEYS)}")
 by_file = Counter(v["file"] for v in ct.TARGET_KEYS.values())
 expect_files = {
     ".env": 8,
     "chat_config.yaml": 24,
-    "misc_config.yaml": 14,
+    "misc_config.yaml": 15,
     "media_config.yaml": 7,
     "user_lists.yaml": 3,
 }
-check("56 键按文件分布", dict(by_file) == expect_files, str(by_file))
+check("57 键按文件分布", dict(by_file) == expect_files, str(by_file))
 check(".env 规格 8 键", len(ct.ENV_SPEC) == 8, f"got {len(ct.ENV_SPEC)}")
 
 # 每份 YAML 模板可解析，且目标键默认值一致

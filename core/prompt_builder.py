@@ -35,6 +35,7 @@ from .message_buffer import (
 )
 from .message_context import render_message_context_head
 from .misc_config import load_misc_config
+from .sticker_library import sticker_feature_enabled
 
 
 _WEEKDAY_CN = "一二三四五六日"
@@ -223,8 +224,9 @@ _DECISION_PROTOCOL_BLOCK = (
     "  - 只认 [CQ:at,qq=数字] 这一种 CQ 码:图片、表情、语音、引用等其它 CQ 码\n"
     "    一律不支持,不要写。\n"
     "  - 不引用也能正文内联 @;群聊成功解析 Reply 会自动 @ 被引用者,私聊不自动 @。\n"
-    "    群聊引用时不要再手写同一个首位 @;额外的人或其它位置才用正文内联 @。\n"
-    "    引用的自动 @ 属于引用语义,不受热聊免 @ 限制;正文手写 @ 仍遵守上面的提醒纪律。\n"
+    "    群聊引用等同主动 @,同样是强提醒:只有确需通知对方或锚定原文时才引用,\n"
+    "    热聊即时接话不引用。引用后不要再手写同一个首位 @;额外的人或其它位置\n"
+    "    才用正文内联 @,正文手写 @ 仍遵守上面的提醒纪律。\n"
     "  - 不需要 @ 时正文里不要出现任何 CQ 码,正常文字即可。\n"
     "\n"
     "你自己的身份:runtime_state.you 是你在本平台的账号(格式同 speaker 标签)。\n"
@@ -258,7 +260,7 @@ _DECISION_PROTOCOL_BLOCK = (
     '    输出: {"should_reply": false}\n'
     "  例 C — 引用 + 正文内联 @(看字段与标记位置,不是措辞模板):\n"
     "    输入末尾: <current_message>[m:57] [id=10002 user=小光]: 那事怎么样了</current_message>\n"
-    '    输出: {"should_reply": true, "reply_to": "m:57", "reply_text": "[CQ:at,qq=10002] 都办完了"}\n'
+    '    输出: {"should_reply": true, "reply_to": "m:57", "reply_text": "都办完了，[CQ:at,qq=10003] 你那边也同步一下"}\n'
     "</decision_protocol>"
 )
 
@@ -299,6 +301,7 @@ _STICKER_TOOL_GUIDANCE = (
     "本地表情库：\n"
     "- 有合适表情时用 search_sticker_library 按类型／说明检索稳定 ID；不确定内容先调 "
     "preview_sticker 预览，不要凭 ID 盲发\n"
+    "- 当表情已能完整表达回应时，可只回一个表情，不附文字；不要为使用表情而强行使用\n"
     "- 选定后 reply_text 仅写 表情=ID（半角等号），不要夹其他文字；需要继续发言时本轮填 "
     "not_final=true 进入续跑（这是闲聊也可用的拆轮例外），下一轮再发文字"
 )
@@ -371,7 +374,9 @@ def build_reactive_system_prompt(
     私聊用简化版(两层,无群层面);功能关闭时不注入。路径根动态跟随 hermes_custom_dir。
     本部署补丁:会话上下文(adapter/group_id/self)挪入系统提示,吃缓存。
     """
-    parts = [_DECISION_PROTOCOL_BLOCK, _FILE_TOOL_GUIDANCE, _STICKER_TOOL_GUIDANCE]
+    parts = [_DECISION_PROTOCOL_BLOCK, _FILE_TOOL_GUIDANCE]
+    if sticker_feature_enabled():
+        parts.append(_STICKER_TOOL_GUIDANCE)
 
     # 会话上下文:稳定信息放路由提示附近,吃缓存
     if adapter and self_id:
@@ -591,7 +596,9 @@ def build_passive_system_prompt(
     )
     if private_decision:
         head += "\n\n" + _PRIVATE_DECISION_PROTOCOL_BLOCK
-    head += "\n\n" + _FILE_TOOL_GUIDANCE + "\n\n" + _STICKER_TOOL_GUIDANCE
+    head += "\n\n" + _FILE_TOOL_GUIDANCE
+    if sticker_feature_enabled():
+        head += "\n\n" + _STICKER_TOOL_GUIDANCE
     # 群记忆外挂(定稿):群档案块拼在最末,字节稳定 per 群。
     # 本部署补丁:群档案功能启用时注入记忆写入路由提示。群聊用完整版(三层),
     # 私聊用简化版(两层,无群层面);功能关闭时不注入。路径根动态跟随 hermes_custom_dir。

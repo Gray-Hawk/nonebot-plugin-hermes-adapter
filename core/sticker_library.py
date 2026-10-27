@@ -65,7 +65,12 @@ class StickerLibrary:
                 if reader.fieldnames is None or not {"id", "kind", "file"}.issubset(reader.fieldnames):
                     raise ValueError("index.csv 缺少 id,kind,file 表头")
                 for line_no, row in enumerate(reader, start=2):
-                    sticker_id = (row.get("id") or "").strip()
+                    raw_id = row.get("id")
+                    # 本部署补丁：首列 lstrip 后以 # 开头即注释行，整行跳过（在 ID 校验前）；
+                    # # 本就不是合法 ID 字符，不会放过原本会被拒的条目。
+                    if raw_id is not None and raw_id.lstrip().startswith("#"):
+                        continue
+                    sticker_id = (raw_id or "").strip()
                     relative = (row.get("file") or "").strip()
                     if _ID_RE.fullmatch(sticker_id) is None:
                         logger.warning(f"[STICKER] index.csv:{line_no} ID 非法，已跳过: {sticker_id!r}")
@@ -139,10 +144,53 @@ class StickerLibrary:
 
 
 _DEFAULT_LIBRARY: StickerLibrary | None = None
+_STICKER_FEATURE_ENABLED = False
+
+
+def sticker_feature_enabled() -> bool:
+    """返回启动时定型的表情总开关。
+
+    设计如此：开关只在启动初始化时读取一次并固化；``/reload-config`` 只替换配置
+    快照、不会调用 :func:`init_sticker_feature`，故改 ``sticker_enabled`` 需重启
+    进程生效，避免工具注册、提示词与出站半套热切换。
+    """
+    return _STICKER_FEATURE_ENABLED
+
+
+def init_sticker_feature() -> None:
+    """在配置快照初始化后固定本进程的工具、提示词与出站开关（仅启动时调用）。"""
+    global _STICKER_FEATURE_ENABLED
+    from .misc_config import load_misc_config
+
+    _STICKER_FEATURE_ENABLED = load_misc_config().sticker_enabled
+
+
+def default_sticker_index_path() -> Path | None:
+    from ..config import resolve_custom_dir
+
+    custom_dir = resolve_custom_dir()
+    return custom_dir / "sticker_library" / "index.csv" if custom_dir else None
+
+
+def ensure_sticker_library_template() -> bool:
+    """启动时缺档创建目录和 CSV 范本；已有索引绝不覆盖。"""
+    path = default_sticker_index_path()
+    if path is None:
+        return False
+    from .config_bootstrap import ensure_file
+
+    return ensure_file(
+        path,
+        "id,kind,file,note\n"
+        "# 示例行为注释（整行跳过）：表头须保持第一行，图片放本目录，按四列填写真实条目。\n"
+        "# speechless,无语|无奈,speechless.gif,被离谱消息整无语时使用\n",
+        log_tag="HERMES sticker",
+        label="表情索引范本",
+    )
 
 
 def default_sticker_library() -> StickerLibrary:
-    """缺省使用 <custom_dir>/sticker_library，不新增配置开关。"""
+    """缺省使用 <custom_dir>/sticker_library；可用性由 sticker_enabled 启动闸决定。"""
     global _DEFAULT_LIBRARY
     if _DEFAULT_LIBRARY is None:
         from ..config import resolve_custom_dir

@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from tests import _bootstrap  # noqa: F401
 from nonebot_plugin_hermes_adapter.core.sticker_library import StickerLibrary
-from nonebot_plugin_hermes_adapter.core import outbound
+from nonebot_plugin_hermes_adapter.core import outbound, sticker_library
 
 
 PNG = base64.b64decode(
@@ -30,6 +30,7 @@ class StickerOutboundTests(unittest.TestCase):
             return {"message_id": 123}
 
     def setUp(self) -> None:
+        sticker_library._STICKER_FEATURE_ENABLED = True
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         (self.root / "speechless.png").write_bytes(PNG)
@@ -42,6 +43,7 @@ class StickerOutboundTests(unittest.TestCase):
         self.bot = self.FakeBot()
 
     def tearDown(self) -> None:
+        sticker_library._STICKER_FEATURE_ENABLED = False
         self._tmp.cleanup()
 
     async def _fake_send(self, uni, *, bot, target) -> list[str]:
@@ -91,6 +93,15 @@ class StickerOutboundTests(unittest.TestCase):
         result = self._send("表情=missing")
         self.assertFalse(result.ok)
         self.assertEqual(self.sent, [])
+
+    def test_disabled_switch_treats_marker_as_ordinary_text(self) -> None:
+        sticker_library._STICKER_FEATURE_ENABLED = False
+        result = self._send("表情=speechless")
+        self.assertTrue(result.ok)
+        self.assertIsNone(result.sticker_id)
+        self.assertEqual(result.sticker_media_count, 0)
+        self.assertEqual(str(self.sent[0][0]), "表情=speechless")
+        self.assertEqual(self.bot.api_calls, [])
 
     def test_ordinary_text_keeps_existing_behavior(self) -> None:
         result = self._send("普通回复")

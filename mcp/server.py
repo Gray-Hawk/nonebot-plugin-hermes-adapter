@@ -34,7 +34,7 @@ from .tools.sticker_library import (
     preview_sticker_impl,
     search_sticker_library_impl,
 )
-from ..core.sticker_library import default_sticker_library
+from ..core.sticker_library import default_sticker_library, sticker_feature_enabled
 from ..core.media_config import load_media_config
 from .tools.get_message_files import (
     FileRef,
@@ -404,7 +404,6 @@ def build_mcp_app(
         )
         return blocks
 
-    @mcp.tool()
     async def search_sticker_library(
         query: str = "",
         limit: int = 20,
@@ -425,7 +424,6 @@ def build_mcp_app(
         )
         return result
 
-    @mcp.tool()
     async def preview_sticker(sticker_id: str) -> list:
         """Preview one local library sticker by its stable id.
 
@@ -444,6 +442,10 @@ def build_mcp_app(
             f"blocks={len(blocks)}",
         )
         return blocks
+
+    if sticker_feature_enabled():
+        mcp.tool()(search_sticker_library)
+        mcp.tool()(preview_sticker)
 
     @mcp.tool()
     async def get_message_files(refs: list[FileRef]) -> GetMessageFilesResult:

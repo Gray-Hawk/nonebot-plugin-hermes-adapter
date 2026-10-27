@@ -15,10 +15,17 @@ os.environ["AGENT_PLUGIN_CUSTOM_DIR"] = str(_ROOT / "cfg")
 (_ROOT / "cfg").mkdir()
 
 from tests import _bootstrap  # noqa: F401,E402
+from nonebot_plugin_hermes_adapter.core import sticker_library  # noqa: E402
 from nonebot_plugin_hermes_adapter.mcp import server  # noqa: E402
 
 
 class StickerMcpRegistrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        sticker_library._STICKER_FEATURE_ENABLED = True
+
+    def tearDown(self) -> None:
+        sticker_library._STICKER_FEATURE_ENABLED = False
+
     def test_search_and_preview_are_registered(self) -> None:
         real_factory = server.FastMCP
         holder = {}
@@ -39,6 +46,29 @@ class StickerMcpRegistrationTests(unittest.TestCase):
         mcp = holder["mcp"]
         self.assertIsNotNone(asyncio.run(mcp.get_tool("search_sticker_library")))
         self.assertIsNotNone(asyncio.run(mcp.get_tool("preview_sticker")))
+
+    def test_disabled_switch_removes_search_and_preview(self) -> None:
+        sticker_library._STICKER_FEATURE_ENABLED = False
+        real_factory = server.FastMCP
+        holder = {}
+
+        def capture(*args, **kwargs):
+            instance = real_factory(*args, **kwargs)
+            holder["mcp"] = instance
+            return instance
+
+        with patch.object(server, "FastMCP", new=capture):
+            server.build_mcp_app(
+                message_buffer=None,
+                active_sessions=None,
+                bot_registry=None,
+                message_store=None,
+                image_cache=None,
+            )
+        tools = {tool.name for tool in asyncio.run(holder["mcp"].list_tools())}
+        self.assertNotIn("search_sticker_library", tools)
+        self.assertNotIn("preview_sticker", tools)
+        self.assertIn("push_message", tools)
 
 
 if __name__ == "__main__":

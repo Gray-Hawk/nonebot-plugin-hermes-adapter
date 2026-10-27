@@ -7,7 +7,7 @@
   “完整默认模板”，每个设置键逐个功能注释，键与键之间恰好至少一个空行；
   media 保留既有嵌套结构（inline/fetch/sticker），user_lists 保留
   private_allow 并新增被动 allow_users / allow_groups / admin_users。
-- 定义 v6 目标态 56 键的规格（文件、默认值、类型），供对账与迁移取值。
+- 定义 v6 目标态 57 键的规格（文件、默认值、类型），供对账与迁移取值。
 - 定义旧 82 键的完整处置表（迁移 / 撤并 / 固定 / 改名），供迁移工具与
   “82 键映射无遗漏”冒烟对账共用，保证不出现两处各自维护的漂移。
 
@@ -44,7 +44,7 @@ class _Section:
 
 
 class _Key:
-    """一个扁平设置键。target=True 计入 v6 目标 56 键；False 为外围既有键。
+    """一个扁平设置键。target=True 计入 v6 目标 57 键；False 为外围既有键。
 
     optional=True 且取值为 None 时，渲染成注释掉的示例行（用于 private_allow：
     未配置 = 回落管理员集合，模板不能写显式空表，否则把语义改成“拒绝所有人”）。
@@ -429,7 +429,7 @@ YAML_SPECS: dict[str, list[Any]] = {
                 "# 加载：启动缓存 + 管理员手动重载；除逐键标注“重启生效”外不做文件监听。",
             ]
         ),
-        _Section("历史、记忆与输出：9 键"),
+        _Section("历史、记忆与输出：10 键"),
         _Key(
             "history_text_max_chars",
             800,
@@ -443,6 +443,15 @@ YAML_SPECS: dict[str, list[Any]] = {
             "group_profile_enabled",
             True,
             ["群档案注入及相关画像路由开关；不影响反馈规则等其他定制功能。"],
+            type_="bool",
+        ),
+        _Key(
+            "sticker_enabled",
+            False,
+            [
+                "本地表情库总开关，重启生效；关闭时不注册工具、不注入提示词，也不解析表情标记。",
+                "缺省关闭；表情目录与 index.csv 范本仍在启动时缺档创建。",
+            ],
             type_="bool",
         ),
         _Key(
@@ -703,7 +712,7 @@ YAML_SPECS: dict[str, list[Any]] = {
 }
 
 # --------------------------------------------------------------------------- #
-# 目标态 56 键规格（派生自 ENV_SPEC + YAML_SPECS，单一真源）
+# 目标态 57 键规格（派生自 ENV_SPEC + YAML_SPECS，单一真源）
 # --------------------------------------------------------------------------- #
 
 
@@ -720,7 +729,7 @@ def _build_target_keys() -> dict[str, dict]:
 
 TARGET_KEYS: dict[str, dict] = _build_target_keys()
 
-# 按文件分组的 56 键名单（对账用）
+# 按文件分组的 57 键名单（对账用）
 TARGET_BY_FILE: dict[str, dict[str, dict]] = {}
 for _k, _v in TARGET_KEYS.items():
     TARGET_BY_FILE.setdefault(_v["file"], {})[_k] = _v
