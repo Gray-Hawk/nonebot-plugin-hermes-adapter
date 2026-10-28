@@ -52,6 +52,16 @@ CREATE TABLE IF NOT EXISTS steer_ledger (
 """
 
 
+_RECOVERED_REPLY_LEDGER_SCHEMA = """
+CREATE TABLE IF NOT EXISTS recovered_reply_ledger (
+    run_id            TEXT NOT NULL,
+    transcript_row_id INTEGER NOT NULL,
+    delivered_at      REAL NOT NULL,
+    PRIMARY KEY (run_id, transcript_row_id)
+)
+"""
+
+
 @dataclass
 class TrackedRun:
     run_id: str
@@ -87,6 +97,7 @@ class RunTracker:
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute(_SCHEMA)
         self._conn.execute(_STEER_LEDGER_SCHEMA)
+        self._conn.execute(_RECOVERED_REPLY_LEDGER_SCHEMA)
         self._conn.commit()
 
     def upsert(
@@ -302,6 +313,36 @@ class RunTracker:
         cutoff = now - max_age_sec
         cur = self._conn.execute(
             "DELETE FROM steer_ledger WHERE accepted_at < ?", (cutoff,)
+        )
+        self._conn.commit()
+        return cur.rowcount
+
+    def claim_recovered_reply(self, run_id: str, transcript_row_id: int) -> bool:
+        """原子认领一条前序答复；已送达或正在投递的同一行不得重发。"""
+        cur = self._conn.execute(
+            "INSERT OR IGNORE INTO recovered_reply_ledger "
+            "(run_id, transcript_row_id, delivered_at) VALUES (?,?,?)",
+            (run_id, transcript_row_id, time.time()),
+        )
+        self._conn.commit()
+        return cur.rowcount == 1
+
+    def release_recovered_reply(self, run_id: str, transcript_row_id: int) -> None:
+        """发送未成功时释放认领，允许断流恢复或下次重试。"""
+        self._conn.execute(
+            "DELETE FROM recovered_reply_ledger WHERE run_id=? AND transcript_row_id=?",
+            (run_id, transcript_row_id),
+        )
+        self._conn.commit()
+
+    def prune_recovered_reply_ledger(
+        self, max_age_sec: float, *, now: float | None = None
+    ) -> int:
+        """清理只需覆盖 run 恢复窗口的短期去重记录。"""
+        now = time.time() if now is None else now
+        cur = self._conn.execute(
+            "DELETE FROM recovered_reply_ledger WHERE delivered_at < ?",
+            (now - max_age_sec,),
         )
         self._conn.commit()
         return cur.rowcount

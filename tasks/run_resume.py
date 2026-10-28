@@ -51,6 +51,10 @@ from ..core.outbound import (
     send_text_with_media,
 )
 from ..core.reply_resolution import resolve_reply
+from ..core.reply_recovery import (
+    deliver_recovered_replies,
+    recover_run_overwritten_replies,
+)
 from ..core.routing import resolve_target
 from ..core.run_tracker import TrackedRun
 
@@ -77,6 +81,29 @@ _ZOMBIE_TTL_SEC = 24 * 3600
 
 def _inflight_key(row: TrackedRun) -> tuple[str, str]:
     return make_inflight_key(row.adapter, row.is_private, row.user_id, row.group_id)
+
+
+async def _recover_overwritten_replies(row: TrackedRun, output: str, bot, target) -> None:
+    """断流恢复与正常终态共用前序答复回收，末轮仍由旧极简出口处理。"""
+    if not row.expect_structured:
+        return
+    try:
+        recovered = await recover_run_overwritten_replies(row, output)
+        await deliver_recovered_replies(
+            recovered,
+            bot=bot,
+            target=target,
+            adapter_name=row.adapter,
+            user_id=row.user_id,
+            group_id=row.group_id,
+            is_private=row.is_private,
+        )
+    except Exception:
+        # 前序补投失败不能拖垮末轮原恢复路径；缺证据时 recover 自身已静默跳过。
+        logger.warning(
+            f"[HERMES reply-recovery] 断流恢复前序回收异常 run_id={row.run_id}",
+            exc_info=True,
+        )
 
 
 def _maybe_spawn_steer_reconcile(row: TrackedRun) -> None:
@@ -141,6 +168,12 @@ async def resume_active_runs() -> None:
             logger.info(f"[HERMES steer对账] 启动清理超龄台账 {pruned_steer} 条")
     except Exception:
         logger.warning("[HERMES steer对账] 启动清理台账失败", exc_info=True)
+    try:
+        pruned_replies = tracker.prune_recovered_reply_ledger(_ZOMBIE_TTL_SEC)
+        if pruned_replies:
+            logger.info(f"[HERMES reply-recovery] 启动清理超龄台账 {pruned_replies} 条")
+    except Exception:
+        logger.warning("[HERMES reply-recovery] 启动清理台账失败", exc_info=True)
     rows = tracker.list_running()
     if not rows:
         return
@@ -328,6 +361,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
         logger.warning(f"[HERMES run-resume] 事件流未见终态帧 run_id={row.run_id},保留行待下次启动")
         return
 
+    await _recover_overwritten_replies(row, output, bot, entry.target)
     # 极简送达。reply_to 的 m:id 在发送前按 row 中的会话归属解析，重启后也不
     # 改用“最近发言者”猜测目标；查不到映射只降级普通正文。
     delivery = _build_delivery(output, row.expect_structured)

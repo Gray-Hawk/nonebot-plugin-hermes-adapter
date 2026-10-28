@@ -895,6 +895,7 @@ class RunsEventParser:
 
 InterimCallback = Callable[[str], Awaitable[None]]
 ApprovalCallback = Callable[[dict], Awaitable[None]]  # 阶段3c:approval.request 帧原文(已脱敏)
+OverwrittenReplyCallback = Callable[[list[Any]], Awaitable[None]]
 
 
 def is_persistence_error_text(text: str) -> bool:
@@ -1084,6 +1085,7 @@ class HermesClient:
         interim_callback: InterimCallback | None = None,
         bot_self_id: str | None = None,
         approval_callback: "ApprovalCallback | None" = None,
+        overwritten_reply_callback: "OverwrittenReplyCallback | None" = None,
     ) -> ChatResult:
         """调用 Hermes,返回 ChatResult。
 
@@ -1253,6 +1255,7 @@ class HermesClient:
                     system_prompt=system_prompt, session_key=session_key,
                     timeout=tgt.timeout, interim_callback=interim_callback,
                     approval_callback=approval_callback,
+                    overwritten_reply_callback=overwritten_reply_callback,
                     idempotency_key=turn_idem_key,
                     scope=dict(
                         adapter=adapter_name, is_private=is_private, user_id=user_id,
@@ -1605,6 +1608,7 @@ class HermesClient:
         timeout: int,
         interim_callback: InterimCallback | None,
         approval_callback: "ApprovalCallback | None",
+        overwritten_reply_callback: "OverwrittenReplyCallback | None",
         idempotency_key: str,
         scope: dict[str, Any],
     ) -> tuple[str, str | None, "ChatResult | None", str]:
@@ -1748,7 +1752,29 @@ class HermesClient:
                 parse_failed=True,
                 is_transport_error=True,
             ), ""
-        # completed:与流式分支同形补内联,rotated=None(轮换上游服务端处理)。
+        # completed:先回收同 run 被末轮覆盖的前序答复，再删除恢复台账。
+        if (
+            overwritten_reply_callback is not None
+            and parser.output is not None
+            and tracker is not None
+        ):
+            tracked = tracker.get_by_run_id(run_id)
+            if tracked is not None and tracked.expect_structured:
+                try:
+                    from .reply_recovery import recover_run_overwritten_replies
+
+                    overwritten = await recover_run_overwritten_replies(
+                        tracked, parser.output
+                    )
+                    if overwritten:
+                        await overwritten_reply_callback(overwritten)
+                except Exception:
+                    # 前序补投失败不影响末轮原答复与既有恢复生命周期。
+                    logger.warning(
+                        f"[HERMES reply-recovery] 终态回收异常 run_id={run_id}",
+                        exc_info=True,
+                    )
+        # 与流式分支同形补内联,rotated=None(轮换上游服务端处理)。
         _finish()
         return inline_local_media_images(parser.output or ""), None, None, parser.pending_steer
 

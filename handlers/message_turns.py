@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import replace
+from functools import partial
 
 from nonebot import logger
 from nonebot.adapters import (
@@ -61,6 +62,7 @@ from ..core.outbound import (
     send_text_with_media,
 )
 from ..core.reply_resolution import resolve_reply
+from ..core.reply_recovery import deliver_recovered_replies
 from ..core.prompt_builder import (
     build_passive_system_prompt,
     build_passive_user_content,
@@ -548,6 +550,15 @@ async def _run_passive_turn(
             )
             if plugin_config.hermes_api_interface == "runs" else None
         ),
+        overwritten_reply_callback=partial(
+            deliver_recovered_replies,
+            bot=bot,
+            target=target,
+            adapter_name=adapter_name,
+            user_id=user_id,
+            group_id=group_id,
+            is_private=is_private,
+        ),
     )
 
     # 阶段2b:runs 路迟到 steer 回收(被动路径)——私聊/passive 直说按委托排队,
@@ -1026,6 +1037,15 @@ async def _run_reactive_turn(
         approval_callback=(
             _make_approval_notify(bot, adapter_name, f"群 {group_id}", is_private=False, group_id=group_id)
             if plugin_config.hermes_api_interface == "runs" else None
+        ),
+        overwritten_reply_callback=partial(
+            deliver_recovered_replies,
+            bot=bot,
+            target=target,
+            adapter_name=adapter_name,
+            user_id=user_id,
+            group_id=group_id,
+            is_private=False,
         ),
     )
 
