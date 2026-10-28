@@ -22,7 +22,6 @@ class ChatConfig:
     reply_debounce_private_sec: float = 2.5
     group_trigger: str = "keyword"
     keywords: set[str] = field(default_factory=lambda: {"/ai"})
-    reactive_post_reply_cooldown_sec: int = 8
     anchor_max_age_sec: int = 150
     reply_debounce_group_sec: float = 3.5
     reply_delay_for_bot_sec: float = 0.0
@@ -50,7 +49,6 @@ def parse_chat_config(doc: dict) -> ChatConfig:
         reply_debounce_private_sec=float_field(doc, "reply_debounce_private_sec", 2.5),
         group_trigger=choice_field(doc, "group_trigger", "keyword", ("keyword", "at")),
         keywords=str_set_field(doc, "keywords", {"/ai"}),
-        reactive_post_reply_cooldown_sec=int_field(doc, "reactive_post_reply_cooldown_sec", 8),
         anchor_max_age_sec=int_field(doc, "anchor_max_age_sec", 150, min_v=1),
         reply_debounce_group_sec=float_field(doc, "reply_debounce_group_sec", 3.5),
         reply_delay_for_bot_sec=float_field(doc, "reply_delay_for_bot_sec", 0.0),

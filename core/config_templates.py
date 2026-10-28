@@ -7,7 +7,7 @@
   “完整默认模板”，每个设置键逐个功能注释，键与键之间恰好至少一个空行；
   media 保留既有嵌套结构（inline/fetch/sticker），user_lists 保留
   private_allow 并新增被动 allow_users / allow_groups / admin_users。
-- 定义 v6 目标态 57 键的规格（文件、默认值、类型），供对账与迁移取值。
+- 定义 v6 目标态 56 键的规格（文件、默认值、类型），供对账与迁移取值。
 - 定义旧 82 键的完整处置表（迁移 / 撤并 / 固定 / 改名），供迁移工具与
   “82 键映射无遗漏”冒烟对账共用，保证不出现两处各自维护的漂移。
 
@@ -44,7 +44,7 @@ class _Section:
 
 
 class _Key:
-    """一个扁平设置键。target=True 计入 v6 目标 57 键；False 为外围既有键。
+    """一个扁平设置键。target=True 计入 v6 目标 56 键；False 为外围既有键。
 
     optional=True 且取值为 None 时，渲染成注释掉的示例行（用于 private_allow：
     未配置 = 回落管理员集合，模板不能写显式空表，否则把语义改成“拒绝所有人”）。
@@ -265,7 +265,7 @@ YAML_SPECS: dict[str, list[Any]] = {
             ["私聊触发后的防抖等待秒数，用于合并连发碎片；0 = 立即起跑。"],
             type_="float",
         ),
-        _Section("群聊触发、历史与回复：11 键"),
+        _Section("群聊触发、历史与回复：10 键"),
         _Key(
             "group_trigger",
             "keyword",
@@ -280,12 +280,6 @@ YAML_SPECS: dict[str, list[Any]] = {
             ["/ai"],
             ["keyword 模式下可隐式激活对话的关键词集合（命中即隐式激活）。"],
             type_="list",
-        ),
-        _Key(
-            "reactive_post_reply_cooldown_sec",
-            8,
-            ["bot 群回复后的 reactive 冷却秒数，抑制紧跟着反复插话；0 = 关闭。"],
-            type_="int",
         ),
         _Key(
             "anchor_max_age_sec",
@@ -712,7 +706,7 @@ YAML_SPECS: dict[str, list[Any]] = {
 }
 
 # --------------------------------------------------------------------------- #
-# 目标态 57 键规格（派生自 ENV_SPEC + YAML_SPECS，单一真源）
+# 目标态 56 键规格（派生自 ENV_SPEC + YAML_SPECS，单一真源）
 # --------------------------------------------------------------------------- #
 
 
@@ -729,7 +723,7 @@ def _build_target_keys() -> dict[str, dict]:
 
 TARGET_KEYS: dict[str, dict] = _build_target_keys()
 
-# 按文件分组的 57 键名单（对账用）
+# 按文件分组的 56 键名单（对账用）
 TARGET_BY_FILE: dict[str, dict[str, dict]] = {}
 for _k, _v in TARGET_KEYS.items():
     TARGET_BY_FILE.setdefault(_v["file"], {})[_k] = _v
@@ -781,7 +775,7 @@ OLD_KEYS: dict[str, tuple[str, str | None, str]] = {
     "active_sweep_interval_sec": ("fixed", None, "过期窗口清扫间隔固定 30 秒"),
     "poke_trigger_enabled": ("fixed", None, "固定开启戳一戳触发，语义等同 @ 的隐式激活"),
     "greet_on_join": ("chat", "greet_on_join", ""),
-    "reactive_post_reply_cooldown_sec": ("chat", "reactive_post_reply_cooldown_sec", ""),
+    "reactive_post_reply_cooldown_sec": ("deleted", None, "旧 post-reply 冷却闸整体删除，不新增替代键"),
     "prompt_timezone": ("misc", "prompt_timezone", ""),
     "reply_debounce_group_sec": ("chat", "reply_debounce_group_sec", ""),
     "reply_debounce_private_sec": ("chat", "reply_debounce_private_sec", ""),

@@ -9,8 +9,8 @@
 不满足条件返回 422 等价错误(由 FastMCP 序列化为 isError=true)。
 
 成功路径的副作用, 与 reactive submit_decision 回复路径(_run_reactive_turn 末段)等价:
-  1. mark_bot_replied(仅群侧) — 写 ActiveSession.last_bot_reply_at, 供 post-reply cooldown 闸门
-     在后续 reactive turn / refire 入口判定
+  1. mark_bot_replied(仅群侧) — 写 ActiveSession.last_bot_reply_at/text/media, 供同 turn
+     防重与活跃窗状态在后续 reactive turn / refire 判定
   2. message_buffer.append(is_bot=True) — 让后续 turn 拉到的消息历史里能看见 bot
      这条 push 出去的话, LLM 不会"以为自己没说"
 私侧无窗体系,只回写 buffer(形态与群侧同构,group_id=None 的自已条目);
@@ -281,7 +281,7 @@ async def push_message_impl(
     # 300s TTL 下可忽略)。如未来需要精确续期,在此重新读 time.time()。
     active_sessions.touch(inp.adapter, gid, now_ms=now_ms)
 
-    # 与 reactive 回复路径对齐 — 写 last_bot_reply_at(供 cooldown 闸门),
+    # 与 reactive 回复路径对齐 — 写 last_bot_reply_at/text/media(供同 turn 防重),
     # 把 push 的内容注入 buffer(供后续 turn 的 <recent_messages> 看见 bot 已答)
     # media_count 记**实际投出去的**张数(不含 skipped):同 turn 去重闸门据此判断
     # 「文本已答但图还没出去」,把 submit_decision 里能投的图补发出去。
@@ -290,10 +290,10 @@ async def push_message_impl(
         inp.adapter, gid, now_ms=now_ms, media_count=len(deliverable) + send_result_sticker_count(receipt_ids), text=inp.text
     ):
         # push 已经发出去了,但窗口在这一刻没了(某一发 turn 返回了 should_exit_active)。
-        # 后续 turn 的 cooldown 与同 turn 去重都看不到这一发,可能出现重复答复。
+        # 后续 turn 的同 turn 去重看不到这一发,可能出现重复答复。
         logger.warning(
             f"[MCP push_message] mark_bot_replied landed nowhere: no active session "
-            f"for {inp.adapter}/{gid}; cooldown and same-turn dedupe lose this reply"
+            f"for {inp.adapter}/{gid}; same-turn dedupe loses this reply"
         )
     if message_buffer is not None:
         message_buffer.append(

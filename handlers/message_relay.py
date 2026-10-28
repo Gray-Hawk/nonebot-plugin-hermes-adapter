@@ -281,38 +281,12 @@ async def _handle_passive_path(
                         original_msg_id=pending_entry.original_msg_id,
                         depth=1,
                         mode="passive",
-                        steer_recovered=pending_entry.steer_recovered,
                         bot=bot,
                         target=target,
                         adapter_name=adapter_name,
                         group_id=group_id,
                     )
                 )
-
-def _in_post_reply_cooldown(adapter_name: str, group_id: str, now_ms: int) -> bool:
-    """B: 判断 (adapter, group_id) 是否处于 bot 上次回复后的冷却窗内。
-
-    输入路径 (`_handle_reactive_path`) 和重燃路径 (`_refire`) 共用,确保:
-      - 通过 reactive submit_decision 发出的回复 (_run_reactive_turn 末段写 mark_bot_replied)
-      - 通过 MCP push_message 发出的回复 (push_message_impl 写 mark_bot_replied)
-    两条路径都把后续非显式触发的旁观消息压在窗内,避免「同主题二次答复」。
-
-    冷却仅对**非显式触发**生效——显式 @bot 必须立刻进 chat;调用方自行判断
-    `is_direct` 后再询问本 helper。
-
-    冷却窗禁用 (`reactive_post_reply_cooldown_sec == 0`) 或 session 不存在
-    /已过期、未记录过 last_bot_reply_at → 返回 False。
-    """
-    assert _mcp.active_sessions is not None
-
-    cooldown_sec = load_chat_config().reactive_post_reply_cooldown_sec
-    if cooldown_sec <= 0:
-        return False
-    sess = _mcp.active_sessions.get_if_trigger_alive(adapter_name, group_id, now_ms)
-    if sess is None or not sess.last_bot_reply_at:
-        return False
-    elapsed_ms = now_ms - sess.last_bot_reply_at
-    return 0 <= elapsed_ms < cooldown_sec * 1000
 
 def _steer_eligible_ids(
     adapter_name: str, is_private: bool, user_id: str, group_id: str | None, now_ms: int
@@ -596,7 +570,6 @@ async def _handle_reactive_path(
     nickname: str | None = None,
     event_msg_id: str | int | None = None,
     ephemeral: bool = False,
-    force_skip_cooldown: bool = False,
     droppable: bool = False,
     recent_override: list[BufferedMessage] | None = None,
     replied_msg_id=None,
@@ -613,7 +586,7 @@ async def _handle_reactive_path(
 
     ephemeral / recent_override / context_limit(本部署新增)原样透传给
     _run_reactive_turn,语义见该函数 docstring。ephemeral turn 没有窗口,
-    cooldown 与租约本来就是 None 安全路径,照常走。
+    租约本来就是 None 安全路径,照常走。
     """
     assert _mcp.inflight is not None and _mcp.active_sessions is not None
 
@@ -644,8 +617,8 @@ async def _handle_reactive_path(
     # 有在跑 turn → 照常 try_enter 入队合并 followup，消息到场但不点火；无在跑 turn
     # → 躺 buffer 等下个文本触发，语义同窄化前。直说（is_direct，如纯图+@）不受门控，
     # 照常走主流程点火（纯图+@ 照常点火的既有形态不退化）。
-    # 合并分支绕开下方 post-reply cooldown 检查是刻意设计：合并进在跑 turn 不是新点火，
-    # cooldown 闸只管新点火，越权代拦会把 turn 进行中的合法跟帖一并吞掉。
+    # 合并分支排在 droppable/try_enter 之前是刻意设计：合并进在跑 turn 不是新点火，
+    # 排队语义只管「能不能立刻开轮」，越权代拦会把 turn 进行中的合法跟帖一并吞掉。
     # 附带留痕:纯图合并进槽时条目带 image_urls，会触发 steer 探针
     # 带媒体早退（_try_steer_followup），此为已知毒化面，待后续专项处置；表情包入队
     # 时会被入队剥占位实现 _strip_stickers_for_queue 剥成“[表情包]”占位，不毒化。
@@ -675,38 +648,20 @@ async def _handle_reactive_path(
         )
         return
 
-    # B: post-reply cooldown — bot 刚在本群发出 reactive 回复 N 秒内,
-    # 新消息直接静默。压「我刚说完别人接话→我又凑一句」模式 2。
-    # 本部署补丁: 显式 @bot 不再旁路——双 bot 互 @ 穿透冷却等于没有限速器,
-    # 互聊循环全速助燃;砍后冷却窗对一切触发生效(含委托 @,窗内静默、
-    # 内容留 buffer 不丢,窗口短可接受)。
-    # 写在 inflight try_enter 之前,避免占用 slot 又立刻退出造成 pending 抖动。
-    # steer 对账补投(alive/84)专用豁免:补投必在最终回复后的 cooldown 窗内,
-    # 不豁免则被静默吞;其余调用方维持 False 不变。
-    if in_active and not force_skip_cooldown:
-        # debug 日志保留入口处,便于运维排查;helper 自己不打日志(refire 路径也会用)
-        sess = _mcp.active_sessions.get_if_trigger_alive(adapter_name, group_id, now_ms)
-        cooldown_sec = load_chat_config().reactive_post_reply_cooldown_sec
-        logger.debug(
-            f"[HERMES reactive] cooldown_check group={group_id} user={user_id} "
-            f"sess_exists={sess is not None} "
-            f"last_bot_reply_at={sess.last_bot_reply_at if sess else 'n/a'} "
-            f"now_ms={now_ms} window_ms={cooldown_sec * 1000}"
-        )
-        if _in_post_reply_cooldown(adapter_name, group_id, now_ms):
-            elapsed_ms = now_ms - (sess.last_bot_reply_at if sess else 0)
-            logger.debug(
-                f"[HERMES reactive] skip: post-reply cooldown "
-                f"(group={group_id} elapsed_ms={elapsed_ms} window_ms={cooldown_sec * 1000})"
-            )
-            return
-
     # droppable=True 的合成轮(巡查)
     # 撞在跑 turn 直接丢弃——「巡查天生可弃」,不占 followup 槽不接力,否则活跃期
     # 巡查会在用户 turn 结束后不请自来。投递轮询等不可弃合成轮不传此标记。
     if droppable and _mcp.inflight.is_inflight(key):
         logger.debug(f"[HERMES reactive] droppable turn discarded (inflight busy): group={group_id}")
         return
+    # 调度观测(规划书 §11):只记本次入口的最终动作,不记正文。
+    # 防抖等待仍由入口防抖的 DEBUG 记录;这里补上「立即开轮 / inflight 合流」的
+    # INFO 级区分,填掉旧冷却 DEBUG 丢弃日志消失后的定位空档。
+    logger.info(
+        f"[HERMES sched] reactive entry group={group_id} user={user_id} "
+        f"direct={is_direct} addressed={addressed_to_bot} commission={is_commission} "
+        f"ephemeral={ephemeral} inflight_busy={_mcp.inflight.is_inflight(key)}"
+    )
     inflight_result = _mcp.inflight.try_enter(
         key,
         current_buffered,
@@ -735,7 +690,7 @@ async def _handle_reactive_path(
         ):
             return
         # 入队是 coalesce 的正常语义,但必须可观测:这条分支早先对 bystander 完全静默,
-        # 一串消息集体没反应时日志里只剩 cooldown_check,查不出去向。
+        # 一串消息集体没反应时日志里查不出去向。
         # 常备探针:DEBUG→INFO 并
         # 补 steer 门各条件取值,定位「queued 后未走 steer」时卡在哪一项。
         logger.info(
@@ -812,8 +767,6 @@ async def _handle_reactive_path(
                         # 此前透传发包 turn 的值,冷窗关键词 turn 里排队的 addressed
                         # 委托会被以 ephemeral=True 跑掉(不读钉锚 + 二次 trigger 窗口)。
                         ephemeral=pending_entry.ephemeral,
-                        # 迟到 steer 回收标记透传(cooldown 豁免)。
-                        steer_recovered=pending_entry.steer_recovered,
                         bot=bot,
                         target=target,
                         adapter_name=adapter_name,
@@ -831,7 +784,6 @@ async def _refire(
     mode: str,
     addressed_to_bot: bool = False,
     ephemeral: bool = False,
-    steer_recovered: bool = False,
     # 拆批 fragments 序列(alive/103 §14.2):来自 pending_entry.fragments,
     # None=无拆批信息走单行旧路径。
     current_rows=None,
@@ -872,25 +824,8 @@ async def _refire(
     for row in refire_rows:
         refire_images.extend(u for u in row.image_urls if u not in refire_images)
 
-    # B: refire 路径同款 post-reply cooldown 闸门。
-    # 本部署补丁: explicit @ 穿透已砍除(与入口闸同批)——接力轮同样吃冷却,
-    # 委托 @ 在窗内被静默(内容留 buffer),steer_recovered 仍单列豁免:回收条目
-    # 的 ts 是回收时刻(网关只还回文本,拿不到原到达时刻),按到达时刻判仍会误拦。
-    # 判定时刻用「跟帖到达」而非「接力起跑」——旧口径下
-    # 本 turn 一发回复 last_bot_reply_at 即刷新,refire 必撞 8s 窗,等于把全部
-    # 「turn 在跑期间到达的合法跟帖」接力一律静默吞掉(当日受控群两轮实测实锤;
-    # 跟帖到达时已过入口闸,是合法排队,该不该再答应交接力轮的 submit_decision
-    # 自决,而不是被闸门越权替模型决定)。
-    if (
-        mode == "reactive"
-        and group_id is not None
-        and not steer_recovered
-        and _in_post_reply_cooldown(adapter_name, str(group_id), trigger_msg.ts)
-    ):
-        logger.info(f"[HERMES reactive] refire skipped by post-reply cooldown (key={key} depth={depth})")
-        _release_slot_and_retry(key, adapter_name, trigger_msg.group_id is None, trigger_msg.user_id, trigger_msg.group_id)
-        return
-
+    # 接力不再有 post-reply 冷却闸:排队条目在到达时已过入口资格与防抖,
+    # 该不该再答应由接力轮的 submit_decision 自决,而不是被时间窗越权替模型决定。
     lease = None
     if mode == "reactive" and group_id is not None and _mcp.active_sessions is not None:
         lease = _mcp.active_sessions.begin_turn(adapter_name, str(group_id))
@@ -973,8 +908,6 @@ async def _refire(
                     # 链上每一跳都按「当前条目
                     # 自己的 ephemeral」接力,不再把链首外层值一路透传下去。
                     ephemeral=pending_entry.ephemeral,
-                    # 迟到 steer 回收标记沿链透传。
-                    steer_recovered=pending_entry.steer_recovered,
                     bot=bot,
                     target=target,
                     adapter_name=adapter_name,

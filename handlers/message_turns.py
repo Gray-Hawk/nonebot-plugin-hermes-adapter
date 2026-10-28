@@ -1074,9 +1074,6 @@ async def _run_reactive_turn(
                 # 条目自己的值后,这里同步盖出生轮的 ephemeral——冷窗关键词轮里上浮的
                 # steer 仍按无窗跑,不因接力方有窗而切换跑法,避免交接到无窗轮被吞)。
                 ephemeral=ephemeral,
-                # 打回收标记,refire 的 post-reply cooldown 闸门
-                # 放行——此文本已被 steer_run 收过一次,不是「刚说完接话」类过触发。
-                steer_recovered=True,
             ),
         )
         logger.info(
@@ -1291,7 +1288,7 @@ async def _run_reactive_turn(
 
     # B.3: 同 turn 内防重复闸门 — 若 chat() agent loop 期间 last_bot_reply_at
     # 已被推进(即 push_message 在中途答过一次), 抑制本路 submit_decision 的 send。
-    # 与入口 cooldown 不同, 这里对显式触发也生效:同 turn 双答属纯重复,与触发性质无关。
+    # 该闸对显式触发同样生效:同 turn 双答属纯重复,与触发性质无关。
     # 注: mid_turn_push 直接读 `session.last_bot_reply_at` 而非重新查 active_sessions ──
     # mark_bot_replied 是对同一 dataclass 实例原地写, session 变量持有的就是那个实例。
     # 不查 active_sessions 也回避了 TTL 边界判定与 ended-and-retriggered 罕见竞态。
@@ -1382,8 +1379,7 @@ async def _run_reactive_turn(
     # 用 send 完成时的 wall clock,不复用入参 now_ms。
     # 入参 now_ms 是 _handle_reactive_path 进函数那一刻抓的, chat() + send 可能耗时
     # 任意长(上游重试 / 上下文压缩 / 工具调用累加),复用入参会让 last_bot_reply_at
-    # 远早于真实 send 时间, 让下游 cooldown 闸门(_in_post_reply_cooldown)算出来的
-    # elapsed 失真,把窗内的 refire 误判成窗外放过去。
+    # 远早于真实 send 时间,同 turn 防重与活跃窗续期都按错时刻判定。
     # 调一次 _now_ms() 拿到 reply_now_ms,三个写操作复用这一个快照,既校正 stale
     # 入参,又避免多次读时钟在三个字段间引入毫秒级偏差。
     if sent and _mcp.message_buffer is not None:
@@ -1418,9 +1414,8 @@ async def _run_reactive_turn(
         # 注:若 should_exit_active=True,session 已在上方 end(),touch / mark_bot_replied
         # 都是安全 no-op(两者文档统一:session 缺失则 no-op)。
         _mcp.active_sessions.touch(adapter_name, group_id, now_ms=reply_now_ms)
-        # B.2: 记下「bot 刚回过」时间戳,供 _handle_reactive_path 入口 + _refire 入口的
-        # cooldown 闸门判定。
-        # 本地能力拒绝没有模型回复，不写回复冷却；or 短路同时避免误报落空。
+        # B.2: 记下「bot 刚回过」时间戳/文本/媒体数,供同 turn 防重与活跃窗状态使用。
+        # 本地能力拒绝没有模型回复，不写回复时间戳；or 短路同时避免误报落空。
         marked = is_local_refusal or _mcp.active_sessions.mark_bot_replied(
             adapter_name,
             group_id,
@@ -1431,11 +1426,10 @@ async def _run_reactive_turn(
         if not marked and not decision.get("should_exit_active"):
             # 排除 should_exit_active:那是本 turn 自己刚 end() 掉窗口,mark 落空是预期的。
             # 剩下的只能是别人的 turn 在本 turn 期间 end() 掉了这个 key(跨用户场景),
-            # 本群 cooldown 闸门这一轮失去依据 —— 日志里 last_bot_reply_at 会一直是 0,
-            # 没有这条就查不出为什么。
+            # 日志里 last_bot_reply_at 会一直是 0,同 turn 防重也失去依据 —— 没有这条就查不出为什么。
             logger.warning(
                 f"[HERMES reactive] mark_bot_replied landed nowhere: active window gone "
-                f"(group={group_id}); post-reply cooldown will not engage for follow-ups"
+                f"(group={group_id}); same-turn dedupe loses this reply"
             )
         # 队列化定案:委托锚改手动单轨——入口不再自动钉,只有本轮
         # submit_decision 显式 pin_anchor=true 且回复真发出去了才钉。放在 mark_bot_replied

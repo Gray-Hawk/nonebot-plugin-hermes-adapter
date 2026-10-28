@@ -310,7 +310,6 @@ def _spawn_replay_turn(
                 user_id=user_id, nickname=nickname,
                 group_id=tracked.group_id, text=text, image_urls=[],
                 is_direct=False, addressed_to_bot=False, now_ms=now_ms,
-                force_skip_cooldown=True,
                 origin=origin,
             )
         )

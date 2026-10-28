@@ -11,7 +11,7 @@ private_trigger: all
 # 私聊触发后的防抖等待秒数，用于合并连发碎片；0 = 立即起跑。
 reply_debounce_private_sec: 2.5
 
-# ---- 群聊触发、历史与回复：11 键 ----
+# ---- 群聊触发、历史与回复：10 键 ----
 
 # 群聊激活模式：keyword = 关键词隐式激活 + @／引用；at = 只认 @／引用。
 # 非法值一律按 keyword 处理并 WARN 一次。
@@ -19,9 +19,6 @@ group_trigger: keyword
 
 # keyword 模式下可隐式激活对话的关键词集合（命中即隐式激活）。
 keywords: [/ai]
-
-# bot 群回复后的 reactive 冷却秒数，抑制紧跟着反复插话；0 = 关闭。
-reactive_post_reply_cooldown_sec: 8
 
 # 委托锚最长寿命秒数，超时自动释放，防止模型一直忘记松锚。
 anchor_max_age_sec: 150

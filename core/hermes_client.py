@@ -938,7 +938,7 @@ class ChatResult:
     is_local_refusal: bool = False
     """请求在调用上游前被本地能力边界拒绝。
 
-    提示仍可对用户可见，但本轮内容未进入模型：不得推进增量水位或写模型回复冷却。
+    提示仍可对用户可见，但本轮内容未进入模型：不得推进增量水位或写模型回复时间戳。
     """
 
     is_forbidden_error: bool = False
