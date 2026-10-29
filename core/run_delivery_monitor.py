@@ -134,6 +134,8 @@ _send_files = None
 
 _scope_locks: dict[str, asyncio.Lock] = {}
 _scope_events: dict[str, asyncio.Event] = {}
+_LEDGER_PRUNE_INTERVAL_SEC = 6 * 3600
+_last_ledger_prune_monotonic = float("-inf")
 
 
 def _runtime():
@@ -397,11 +399,30 @@ async def reconcile_run(run_id: str, *, reason: str = "") -> dict:
     return stats
 
 
+def _maybe_prune_delivery_ledger(tracker) -> None:
+    """至多每 6 小时清理一次完整结算的旧台账；失败不阻断交付。"""
+    global _last_ledger_prune_monotonic
+    now = time.monotonic()
+    if now - _last_ledger_prune_monotonic < _LEDGER_PRUNE_INTERVAL_SEC:
+        return
+    _last_ledger_prune_monotonic = now
+    try:
+        cfg = load_runs_delivery_config()
+        deleted = tracker.prune_delivery_ledger(
+            retention_sec=cfg.retention_hours * 3600,
+        )
+        if any(deleted.values()):
+            logger.info(f"[runs-reconcile] 旧交付台账已清理 {deleted}")
+    except Exception as exc:
+        logger.warning(f"[runs-reconcile] 旧交付台账清理失败: {exc}")
+
+
 async def reconcile_scope(scope_key: str, *, reason: str = "") -> None:
     """按提交序对账一个 hermes scope 的全部未终态 deliveries。"""
     tracker = _runtime().run_tracker
     if tracker is None:
         return
+    _maybe_prune_delivery_ledger(tracker)
     for delivery in tracker.list_ready_deliveries(scope_key):
         try:
             await reconcile_run(delivery["run_id"], reason=reason)
@@ -415,6 +436,7 @@ async def reconcile_pending_deliveries() -> None:
     tracker = _runtime().run_tracker
     if tracker is None:
         return
+    _maybe_prune_delivery_ledger(tracker)
     rows = tracker.list_ready_deliveries()
     if rows:
         logger.info(f"[runs-reconcile] 启动对账 {len(rows)} 条未终态 deliveries")

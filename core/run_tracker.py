@@ -802,6 +802,7 @@ class RunTracker:
                 raise KeyError(f"no component {component_id!r} for run_id={run_id!r}")
             state, claim_owner, claim_until, attempt_count, updated_at = row
             outcome = "send"
+            reentrant = False
             if state in ("sent", "cancelled", "not_required"):
                 outcome = "sent"
             elif state == "unknown":
@@ -812,11 +813,18 @@ class RunTracker:
                 )
                 outcome = "send" if retryable else "busy"
             elif (
+                state == "claimed" and claim_owner == owner
+                and claim_until is not None and claim_until > now
+            ):
+                # reconcile 已带 unknown 策略认领后，统一出站会持同一 owner 重入；
+                # 有效租约仍归原尝试，不得把一次平台发送重复计成两次。
+                reentrant = True
+            elif (
                 state == "claimed" and claim_owner != owner
                 and claim_until is not None and claim_until > now
             ):
                 outcome = "busy"
-            if outcome == "send":
+            if outcome == "send" and not reentrant:
                 self._conn.execute(
                     "UPDATE delivery_components SET state='claimed', claim_owner=?,"
                     " claim_until=?, attempt_count=attempt_count+1, updated_at=?"
@@ -916,6 +924,48 @@ class RunTracker:
             params = (scope_key,)
         sql += " ORDER BY submission_seq"
         return [self.get_delivery(r[0]) for r in self._conn.execute(sql, params).fetchall()]
+
+    def prune_delivery_ledger(
+        self, *, retention_sec: float, now: float | None = None
+    ) -> dict[str, int]:
+        """清理超期且已完整结算的 runs 交付台账，返回三表删除数。"""
+        cutoff = (time.time() if now is None else now) - retention_sec
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            rows = self._conn.execute(
+                "SELECT d.run_id FROM run_deliveries d"
+                " JOIN run_submissions s ON s.run_id=d.run_id"
+                " WHERE s.state='bound'"
+                " AND NOT EXISTS (SELECT 1 FROM delivery_components c"
+                "   WHERE c.run_id=d.run_id AND c.state IN ('unknown','claimed'))"
+                " AND ((d.expected_state='ready'"
+                "   AND EXISTS (SELECT 1 FROM delivery_components c WHERE c.run_id=d.run_id)"
+                "   AND NOT EXISTS (SELECT 1 FROM delivery_components c"
+                "     WHERE c.run_id=d.run_id AND c.state NOT IN ('sent','cancelled','not_required')))"
+                "  OR d.expected_state<>'ready')"
+                " AND d.updated_at<? AND s.updated_at<?"
+                " AND NOT EXISTS (SELECT 1 FROM active_runs a WHERE a.run_id=d.run_id)"
+                " AND NOT EXISTS (SELECT 1 FROM delivery_components c"
+                "   WHERE c.run_id=d.run_id AND c.updated_at>=?)",
+                (cutoff, cutoff, cutoff),
+            ).fetchall()
+            run_ids = [r[0] for r in rows]
+            counts = {"submissions": 0, "deliveries": 0, "components": 0}
+            for run_id in run_ids:
+                counts["components"] += self._conn.execute(
+                    "DELETE FROM delivery_components WHERE run_id=?", (run_id,)
+                ).rowcount
+                counts["deliveries"] += self._conn.execute(
+                    "DELETE FROM run_deliveries WHERE run_id=?", (run_id,)
+                ).rowcount
+                counts["submissions"] += self._conn.execute(
+                    "DELETE FROM run_submissions WHERE run_id=?", (run_id,)
+                ).rowcount
+            self._conn.commit()
+            return counts
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def list_predecessors(self, *, scope_key: str, submission_seq: int) -> list[dict]:
         """同 scope、提交序更早且仍未终态的 deliveries(顺序门前序)。"""

@@ -16,4 +16,9 @@ order_gate_timeout_sec: 3.0
 
 # unknown 表示平台结果不明，不盲目重发；超过退避后才允许有限次数核实重试。
 unknown_backoff_sec: 60.0
+# unknown_max_attempts 包含首次发送；达到上限后停止自动重试。
 unknown_max_attempts: 2
+
+# 已完整结算台账的保留时间；最短 24 小时，默认 7 天。
+# active、缺计划、unknown、needs_manual 与未绑单不参与自动清理。
+retention_hours: 168.0
