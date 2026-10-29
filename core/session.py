@@ -49,7 +49,12 @@ class SessionManager:
         scope_id = user_id if is_private else (group_id or "")
         scope_key = f"{adapter_name}:{scope}:{scope_id}"
         try:
-            result = tracker.fence_scope_generation(scope_key)
+            result = tracker.fence_scope_generation(
+                scope_key,
+                fence_generation=self.get_delivery_generation(
+                    adapter_name, is_private, user_id, group_id
+                ),
+            )
             if result["deliveries"] or result["submissions"]:
                 logger.info(f"[SESSION] 旧代交付已取消: scope={scope_key} {result}")
         except Exception:
@@ -134,6 +139,13 @@ class SessionManager:
             return f"{adapter_name}+private+{user_id}"
         # 群 session 固定共享(旧 per-user 分支已删):不再按人细分。
         return f"{adapter_name}+group+{group_id or 'unknown'}"
+
+    def get_delivery_generation(
+        self, adapter_name: str, is_private: bool, user_id: str, group_id: str | None = None
+    ) -> int:
+        """消息入场时取交付代际；上游压缩轮换 session key 不改变此值。"""
+        internal_id = self._get_internal_id(adapter_name, is_private, user_id, group_id)
+        return int(self._generation.get(internal_id, 0))
 
     def get_session_key(
         self,

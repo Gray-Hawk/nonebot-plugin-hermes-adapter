@@ -19,6 +19,11 @@ import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
+
+class StaleGenerationError(RuntimeError):
+    """消息入场代际早于 clear 栅栏；原子提交门拒绝旧代开新 run。"""
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS active_runs (
     run_id      TEXT PRIMARY KEY,
@@ -82,6 +87,7 @@ CREATE TABLE IF NOT EXISTS run_submissions (
     mode            TEXT NOT NULL,
     expect_structured INTEGER NOT NULL DEFAULT 0,
     bot_self_id     TEXT NOT NULL,
+    delivery_generation INTEGER,
     run_id          TEXT UNIQUE,
     state           TEXT NOT NULL DEFAULT 'submitted',
     created_at      REAL NOT NULL,
@@ -124,6 +130,7 @@ CREATE TABLE IF NOT EXISTS delivery_components (
 CREATE TABLE IF NOT EXISTS delivery_generation_fences (
     scope_key       TEXT PRIMARY KEY,
     fence_seq       INTEGER NOT NULL,
+    fence_generation INTEGER,
     updated_at      REAL NOT NULL
 )
 """
@@ -190,6 +197,15 @@ class RunTracker:
         ):
             if col not in existing:
                 self._conn.execute(f"ALTER TABLE run_deliveries ADD COLUMN {col} {ddl}")
+        # 方案2：消息入场代际随 submission 持久化；clear 栅栏同时记录新代。
+        # 旧行保持 NULL，继续走 submission_seq 兼容判定。
+        for table, col in (
+            ("run_submissions", "delivery_generation"),
+            ("delivery_generation_fences", "fence_generation"),
+        ):
+            existing = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            if col not in existing:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER")
         self._conn.commit()
 
     def upsert(
@@ -443,47 +459,67 @@ class RunTracker:
         mode: str,
         expect_structured: bool,
         bot_self_id: str,
+        delivery_generation: int | None = None,
     ) -> int:
-        """第一次 POST 前持久化提交意图,返回 submission_seq。
+        """第一次 POST 前原子核验入场代际并持久化提交意图。
 
         原始请求体规范化 JSON 后压缩落库——同键重放要求请求指纹一致,重启后
         不能用新 prompt 重建字段冒充同一提交。同键同体重记入幂等(429 重试与
         提交段网络重试会复用同 key);同键不同体说明调用方身份串了,失败关闭。
+        新 submission 与 clear 栅栏检查共用 BEGIN IMMEDIATE：消息在 clear 前
+        入场、clear 后才提交时，旧代在 HTTP 前失败关闭，不产生新 run。
         request_gzip 可能含图片 data URL,任何日志都不得 dump 该列。
         """
         canonical = json.dumps(
             request_body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
         ).encode("utf-8")
         digest = hashlib.sha256(canonical).hexdigest()
-        row = self._conn.execute(
-            "SELECT submission_seq, request_sha256 FROM run_submissions WHERE idempotency_key=?",
-            (idempotency_key,),
-        ).fetchone()
-        if row is not None:
-            if row[1] != digest:
-                raise ValueError("idempotency_key reused with a different request body")
-            return int(row[0])
         now = time.time()
-        cur = self._conn.execute(
-            "INSERT INTO run_submissions "
-            "(idempotency_key, request_gzip, request_sha256, target_fingerprint,"
-            " scope_key, session_key, mode, expect_structured, bot_self_id,"
-            " state, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,'submitted',?,?)",
-            (
-                idempotency_key, zlib.compress(canonical), digest, target_fingerprint,
-                scope_key, session_key, mode, int(expect_structured), bot_self_id, now, now,
-            ),
-        )
-        self._conn.commit()
-        return int(cur.lastrowid or 0)
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._conn.execute(
+                "SELECT submission_seq, request_sha256 FROM run_submissions WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+            if row is not None:
+                if row[1] != digest:
+                    raise ValueError("idempotency_key reused with a different request body")
+                self._conn.commit()
+                return int(row[0])
+            if delivery_generation is not None:
+                fence = self._conn.execute(
+                    "SELECT fence_generation FROM delivery_generation_fences WHERE scope_key=?",
+                    (scope_key,),
+                ).fetchone()
+                if fence is not None and fence[0] is not None and int(delivery_generation) < int(fence[0]):
+                    raise StaleGenerationError(
+                        f"stale delivery generation: scope={scope_key} "
+                        f"generation={delivery_generation} fence={fence[0]}"
+                    )
+            cur = self._conn.execute(
+                "INSERT INTO run_submissions "
+                "(idempotency_key, request_gzip, request_sha256, target_fingerprint,"
+                " scope_key, session_key, mode, expect_structured, bot_self_id,"
+                " delivery_generation, state, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,'submitted',?,?)",
+                (
+                    idempotency_key, zlib.compress(canonical), digest, target_fingerprint,
+                    scope_key, session_key, mode, int(expect_structured), bot_self_id,
+                    delivery_generation, now, now,
+                ),
+            )
+            self._conn.commit()
+            return int(cur.lastrowid or 0)
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def get_submission(self, idempotency_key: str) -> dict | None:
         """按 key 取提交记录(含解压还原的原始请求体),不存在返回 None。"""
         r = self._conn.execute(
             "SELECT submission_seq, idempotency_key, request_gzip, request_sha256,"
             " target_fingerprint, scope_key, session_key, mode, expect_structured,"
-            " bot_self_id, run_id, state, created_at, updated_at"
+            " bot_self_id, run_id, state, created_at, updated_at, delivery_generation"
             " FROM run_submissions WHERE idempotency_key=?",
             (idempotency_key,),
         ).fetchone()
@@ -504,6 +540,7 @@ class RunTracker:
             "state": r[11],
             "created_at": r[12],
             "updated_at": r[13],
+            "delivery_generation": r[14],
         }
 
     def list_unbound_submissions(self) -> list[dict]:
@@ -599,12 +636,16 @@ class RunTracker:
         )
         self._conn.commit()
 
-    def fence_scope_generation(self, scope_key: str, *, reason: str = "generation_cleared") -> dict:
-        """clear/T1 换代:以提交序水位取消旧代,并持久化出站栅栏。
+    def fence_scope_generation(
+        self, scope_key: str, *, reason: str = "generation_cleared",
+        fence_generation: int | None = None,
+    ) -> dict:
+        """clear/T1 换代：记录提交序与 SessionManager 新代际双水位。
 
-        水位取本 scope 已存在的最大 submission_seq;之后的新 run 序号更大,
-        不受旧 fence 影响。相比直接比较 session_key,上游压缩轮换 key 不会被
-        误判成 clear。已 sent 组件与历史事实保留,只取消未发送部分。
+        已存在 run 仍按 submission_seq 立即取消；消息先入场、clear 后才提交的
+        竞态由 fence_generation 在原子提交门与出站 guard 失败关闭。旧 NULL 行
+        继续按序号兼容，上游压缩不换 SessionManager generation，不会误伤。
+        已 sent 组件与历史事实保留,只取消未发送部分。
         """
         now = time.time()
         with self._conn:
@@ -613,15 +654,20 @@ class RunTracker:
                 (scope_key,),
             ).fetchone()
             previous = self._conn.execute(
-                "SELECT fence_seq FROM delivery_generation_fences WHERE scope_key=?",
+                "SELECT fence_seq, fence_generation FROM delivery_generation_fences WHERE scope_key=?",
                 (scope_key,),
             ).fetchone()
             fence_seq = max(int(row[0] or 0), int(previous[0]) if previous else 0)
+            if fence_generation is not None and previous is not None and previous[1] is not None:
+                fence_generation = max(int(fence_generation), int(previous[1]))
+            elif fence_generation is None and previous is not None:
+                fence_generation = previous[1]
             self._conn.execute(
-                "INSERT INTO delivery_generation_fences(scope_key, fence_seq, updated_at)"
-                " VALUES(?,?,?) ON CONFLICT(scope_key) DO UPDATE SET"
-                " fence_seq=excluded.fence_seq, updated_at=excluded.updated_at",
-                (scope_key, fence_seq, now),
+                "INSERT INTO delivery_generation_fences(scope_key, fence_seq, fence_generation, updated_at)"
+                " VALUES(?,?,?,?) ON CONFLICT(scope_key) DO UPDATE SET"
+                " fence_seq=excluded.fence_seq, fence_generation=excluded.fence_generation,"
+                " updated_at=excluded.updated_at",
+                (scope_key, fence_seq, fence_generation, now),
             )
             old_deliveries = (
                 "SELECT run_id FROM run_deliveries WHERE scope_key=?"
@@ -651,16 +697,19 @@ class RunTracker:
         }
 
     def is_delivery_current(self, run_id: str) -> bool:
-        """出站前再核代际:run 的提交序必须高于该 scope 的 clear 水位。"""
+        """出站前再核代际：新 token 比代际，旧 NULL 行退回提交序水位。"""
         row = self._conn.execute(
-            "SELECT d.scope_key, d.submission_seq, f.fence_seq"
-            " FROM run_deliveries d LEFT JOIN delivery_generation_fences f"
-            " ON f.scope_key=d.scope_key WHERE d.run_id=?",
+            "SELECT d.submission_seq, s.delivery_generation, f.fence_seq, f.fence_generation"
+            " FROM run_deliveries d LEFT JOIN run_submissions s ON s.run_id=d.run_id"
+            " LEFT JOIN delivery_generation_fences f ON f.scope_key=d.scope_key"
+            " WHERE d.run_id=?",
             (run_id,),
         ).fetchone()
-        if row is None or row[1] is None:
+        if row is None or row[0] is None:
             return False
-        return row[2] is None or int(row[1]) > int(row[2])
+        if row[1] is not None and row[3] is not None:
+            return int(row[1]) >= int(row[3])
+        return row[2] is None or int(row[0]) > int(row[2])
 
     def get_delivery(self, run_id: str) -> dict | None:
         """按 run_id 取交付台账行,不存在返回 None。"""
@@ -753,6 +802,7 @@ class RunTracker:
                 raise KeyError(f"no component {component_id!r} for run_id={run_id!r}")
             state, claim_owner, claim_until, attempt_count, updated_at = row
             outcome = "send"
+            reentrant = False
             if state in ("sent", "cancelled", "not_required"):
                 outcome = "sent"
             elif state == "unknown":
@@ -763,11 +813,18 @@ class RunTracker:
                 )
                 outcome = "send" if retryable else "busy"
             elif (
+                state == "claimed" and claim_owner == owner
+                and claim_until is not None and claim_until > now
+            ):
+                # reconcile 已带 unknown 策略认领后，统一出站会持同一 owner 重入；
+                # 有效租约仍归原尝试，不得把一次平台发送重复计成两次。
+                reentrant = True
+            elif (
                 state == "claimed" and claim_owner != owner
                 and claim_until is not None and claim_until > now
             ):
                 outcome = "busy"
-            if outcome == "send":
+            if outcome == "send" and not reentrant:
                 self._conn.execute(
                     "UPDATE delivery_components SET state='claimed', claim_owner=?,"
                     " claim_until=?, attempt_count=attempt_count+1, updated_at=?"
@@ -867,6 +924,48 @@ class RunTracker:
             params = (scope_key,)
         sql += " ORDER BY submission_seq"
         return [self.get_delivery(r[0]) for r in self._conn.execute(sql, params).fetchall()]
+
+    def prune_delivery_ledger(
+        self, *, retention_sec: float, now: float | None = None
+    ) -> dict[str, int]:
+        """清理超期且已完整结算的 runs 交付台账，返回三表删除数。"""
+        cutoff = (time.time() if now is None else now) - retention_sec
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            rows = self._conn.execute(
+                "SELECT d.run_id FROM run_deliveries d"
+                " JOIN run_submissions s ON s.run_id=d.run_id"
+                " WHERE s.state='bound'"
+                " AND NOT EXISTS (SELECT 1 FROM delivery_components c"
+                "   WHERE c.run_id=d.run_id AND c.state IN ('unknown','claimed'))"
+                " AND ((d.expected_state='ready'"
+                "   AND EXISTS (SELECT 1 FROM delivery_components c WHERE c.run_id=d.run_id)"
+                "   AND NOT EXISTS (SELECT 1 FROM delivery_components c"
+                "     WHERE c.run_id=d.run_id AND c.state NOT IN ('sent','cancelled','not_required')))"
+                "  OR d.expected_state<>'ready')"
+                " AND d.updated_at<? AND s.updated_at<?"
+                " AND NOT EXISTS (SELECT 1 FROM active_runs a WHERE a.run_id=d.run_id)"
+                " AND NOT EXISTS (SELECT 1 FROM delivery_components c"
+                "   WHERE c.run_id=d.run_id AND c.updated_at>=?)",
+                (cutoff, cutoff, cutoff),
+            ).fetchall()
+            run_ids = [r[0] for r in rows]
+            counts = {"submissions": 0, "deliveries": 0, "components": 0}
+            for run_id in run_ids:
+                counts["components"] += self._conn.execute(
+                    "DELETE FROM delivery_components WHERE run_id=?", (run_id,)
+                ).rowcount
+                counts["deliveries"] += self._conn.execute(
+                    "DELETE FROM run_deliveries WHERE run_id=?", (run_id,)
+                ).rowcount
+                counts["submissions"] += self._conn.execute(
+                    "DELETE FROM run_submissions WHERE run_id=?", (run_id,)
+                ).rowcount
+            self._conn.commit()
+            return counts
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def list_predecessors(self, *, scope_key: str, submission_seq: int) -> list[dict]:
         """同 scope、提交序更早且仍未终态的 deliveries(顺序门前序)。"""

@@ -27,7 +27,7 @@ from .media_whitelist import inline_local_media_images
 from .message_context import render_message_context_head
 from .prompt_dump import maybe_dump_system_prompt
 from .routing import HermesTarget, default_target
-from .run_tracker import make_scope_key
+from .run_tracker import StaleGenerationError, make_scope_key
 from .bg_tasks import spawn_bg_task
 
 # user_content_override 期望形态:纯文本 或 OpenAI 多模态 parts 列表
@@ -1090,6 +1090,7 @@ class HermesClient:
         bot_self_id: str | None = None,
         approval_callback: "ApprovalCallback | None" = None,
         overwritten_reply_callback: "OverwrittenReplyCallback | None" = None,
+        delivery_generation: int | None = None,
     ) -> ChatResult:
         """调用 Hermes,返回 ChatResult。
 
@@ -1268,6 +1269,7 @@ class HermesClient:
                         adapter=adapter_name, is_private=is_private, user_id=user_id,
                         group_id=group_id, bot_self_id=bot_self_id or "",
                         mode=mode, expect_structured=expect_structured,
+                        delivery_generation=delivery_generation,
                     ),
                 )
                 runs_run_id[0] = run_id_r
@@ -1668,8 +1670,17 @@ class HermesClient:
                     mode=scope["mode"],
                     expect_structured=bool(scope["expect_structured"]),
                     bot_self_id=scope["bot_self_id"],
+                    delivery_generation=scope.get("delivery_generation"),
                 )
                 submission_tracked = True
+            except StaleGenerationError:
+                # 消息在 clear 前入场、clear 后才提交：原子门已拒绝落账，
+                # 不得进入通用“untracked 仍 legacy POST”兜底，否则旧代照样开 run。
+                logger.info(f"[HERMES] 旧代 turn 已在提交前取消 scope={scope_key}")
+                cancelled = ChatResult(raw_text="")
+                if scope.get("expect_structured"):
+                    cancelled.structured = {"should_reply": False}
+                return "", None, cancelled, "", ""
             except Exception:
                 logger.warning(
                     "[HERMES] untracked_submission:提交意图入账失败,本轮不纳入可恢复交付保证",

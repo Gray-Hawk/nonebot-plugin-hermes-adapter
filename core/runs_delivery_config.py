@@ -8,6 +8,7 @@ custom_dir/runs_delivery.yaml，全部键可缺省：
   order_gate_timeout_sec: 3.0  # 顺序门等待前序的上限，超时放行并记录
   unknown_backoff_sec: 60.0    # unknown 结果不明组件的重试退避
   unknown_max_attempts: 2      # unknown 最多认领次数（含首次），耗尽转人工
+  retention_hours: 168.0       # 已完整结算台账保留期，最短 24 小时
 
 缺省 observe：事实记录齐全但不自动补发、不实际延迟，与灰度第一步一致。
 """
@@ -32,6 +33,7 @@ class RunsDeliveryConfig:
     order_gate_timeout_sec: float = 3.0
     unknown_backoff_sec: float = 60.0
     unknown_max_attempts: int = 2
+    retention_hours: float = 168.0
 
 
 def load_runs_delivery_config() -> RunsDeliveryConfig:
@@ -49,6 +51,11 @@ def load_runs_delivery_config() -> RunsDeliveryConfig:
         scopes = data.get("repair_scopes") or []
         if not isinstance(scopes, list):
             raise ValueError("repair_scopes 必须是列表")
+        try:
+            retention_hours = max(24.0, float(data.get("retention_hours", 168.0)))
+        except (TypeError, ValueError) as exc:
+            logger.warning(f"[runs-delivery] retention_hours 无效,回退 168 小时: {exc}")
+            retention_hours = 168.0
         return RunsDeliveryConfig(
             mode=mode,
             repair_scopes=tuple(str(s) for s in scopes),
@@ -56,6 +63,7 @@ def load_runs_delivery_config() -> RunsDeliveryConfig:
             order_gate_timeout_sec=max(0.05, float(data.get("order_gate_timeout_sec", 3.0))),
             unknown_backoff_sec=max(0.0, float(data.get("unknown_backoff_sec", 60.0))),
             unknown_max_attempts=max(1, int(data.get("unknown_max_attempts", 2))),
+            retention_hours=retention_hours,
         )
     except Exception as exc:
         logger.warning(f"[runs-delivery] 配置读取失败,回退 observe: {exc}")

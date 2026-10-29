@@ -484,12 +484,20 @@ async def send_local_files(
                 )
             logger.warning(f"[OUTBOUND] 本地文件被白名单拒绝或不存在, 跳过: {raw[:120]}")
             continue
-        outcome, _existing = _delivery_begin(ctx)
-        if outcome == "sent":
-            sent += 1
-            continue
-        if ctx is not None:
-            _delivery_raise_if_busy(outcome, ctx)
+        try:
+            outcome, _existing = _delivery_begin(ctx)
+            if outcome == "sent":
+                sent += 1
+                continue
+            if ctx is not None:
+                _delivery_raise_if_busy(outcome, ctx)
+        except DeliveryClaimBusy as exc:
+            assert ctx is not None  # 无交付上下文时不会产生认领拒绝。
+            logger.info(
+                f"[OUTBOUND] 文件组件按台账取消上传 run={ctx.run_id} "
+                f"component={ctx.component_id}: {exc}"
+            )
+            break
         try:
             if target.private:
                 await bot.call_api("upload_private_file", user_id=int(target.id), file=str(path), name=path.name)
@@ -632,11 +640,19 @@ async def send_text_with_media(
                 "sub_type": 1,
             },
         }
-        outcome, existing = _delivery_begin(delivery)
-        if outcome == "sent":
-            return SendResult(ok=True, msg_ids=existing, sticker_id=sticker_id)
-        if delivery is not None:
-            _delivery_raise_if_busy(outcome, delivery)
+        try:
+            outcome, existing = _delivery_begin(delivery)
+            if outcome == "sent":
+                return SendResult(ok=True, msg_ids=existing, sticker_id=sticker_id)
+            if delivery is not None:
+                _delivery_raise_if_busy(outcome, delivery)
+        except DeliveryClaimBusy as exc:
+            assert delivery is not None  # 无交付上下文时不会产生认领拒绝。
+            logger.info(
+                f"[OUTBOUND] 表情组件按台账取消出站 run={delivery.run_id} "
+                f"component={delivery.component_id}: {exc}"
+            )
+            return SendResult(ok=False, msg_ids=[])
         try:
             if target.private:
                 response = await bot.call_api(
@@ -737,6 +753,13 @@ async def send_text_with_media(
                 f"{sum(1 for t in tokens if isinstance(t, _InlineAt))} msg_ids={len(msg_ids)}"
             )
             return SendResult(ok=True, msg_ids=msg_ids)
+        except DeliveryClaimBusy as exc:
+            assert delivery is not None  # 长文分支只在携带交付上下文时产生此异常。
+            logger.info(
+                f"[OUTBOUND] 长文组件按台账取消出站 run={delivery.run_id} "
+                f"component={delivery.component_id}: {exc}"
+            )
+            return SendResult(ok=False, msg_ids=[])
         except Exception as exc:
             logger.warning(f"[OUTBOUND] long-reply forward failed, falling back to truncation: {exc}")
             # Fall through to existing truncation path
@@ -797,6 +820,19 @@ async def send_text_with_media(
             f"reply={reply_id or '-'} msg_ids={len(msg_ids)}"
         )
         return SendResult(ok=True, msg_ids=msg_ids)
+    except DeliveryClaimBusy as exc:
+        # 旧代、他人持有租约或 unknown 都是预期的“不得出站”，不是平台故障。
+        run_id = delivery.run_id if delivery is not None else "-"
+        component_id = delivery.component_id if delivery is not None else "-"
+        logger.info(
+            f"[OUTBOUND] 交付组件按台账取消出站 run={run_id} "
+            f"component={component_id}: {exc}"
+        )
+        return SendResult(ok=False, msg_ids=[])
     except Exception as exc:
-        logger.error(f"[OUTBOUND] 发送失败 target={target}: {exc}", exc_info=True)
+        # Target 的字符串化自身可能依赖平台字段；错误路径不能再被二次异常吞掉。
+        logger.error(
+            f"[OUTBOUND] 发送失败 target_type={type(target).__name__}: {exc}",
+            exc_info=True,
+        )
         return SendResult(ok=False, msg_ids=[])

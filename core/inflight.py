@@ -132,6 +132,15 @@ def _strip_stickers_for_queue(msg: BufferedMessage) -> BufferedMessage:
     return replace(msg, sticker_urls=[], content=(msg.content + " [表情包]").strip())
 
 
+def _different_delivery_generation(a: BufferedMessage, b: BufferedMessage) -> bool:
+    """两侧都有入场章且不同才分代；None 旧调用维持原合并兼容。"""
+    return (
+        a.delivery_generation is not None
+        and b.delivery_generation is not None
+        and a.delivery_generation != b.delivery_generation
+    )
+
+
 def _merge_pending_message(old: BufferedMessage, new: BufferedMessage) -> None:
     """排队消息并入旧条目:只更新批级事实,不再表达身份。
 
@@ -242,6 +251,11 @@ class InflightRegistry:
         if slot.followup is None:
             slot.followup = entry
             return
+        if _different_delivery_generation(slot.followup.msg, entry.msg):
+            # clear 两侧不混批；新代整槽替换，迟到旧代不得反向覆盖。
+            if (entry.msg.delivery_generation or 0) > (slot.followup.msg.delivery_generation or 0):
+                slot.followup = entry
+            return
         merged_fragments = _merge_fragments(slot.followup.fragments, entry.fragments)
         _merge_pending_message(slot.followup.msg, entry.msg)
         slot.followup.fragments = merged_fragments
@@ -286,6 +300,11 @@ class InflightRegistry:
             # 已在队则把内容拼进同一跟进单,触发归属保留首条,文本/媒体不丢;
             # 它只承诺补一次跟进判断,真正的取舍由那次 submit_decision 做。
             if slot.followup is not None:
+                if _different_delivery_generation(slot.followup.msg, current_msg):
+                    # 新代只替换旧 followup；迟到旧代不覆盖新代，也不混入 fragments。
+                    if (current_msg.delivery_generation or 0) > (slot.followup.msg.delivery_generation or 0):
+                        slot.followup = entry
+                    return "queued"
                 merged_fragments = _merge_fragments(slot.followup.fragments, entry.fragments)
                 _merge_pending_message(slot.followup.msg, current_msg)
                 slot.followup.is_direct = slot.followup.is_direct or is_direct
@@ -304,6 +323,12 @@ class InflightRegistry:
 
         for queued in slot.commissions:
             if queued.msg.user_id == current_msg.user_id:
+                if _different_delivery_generation(queued.msg, current_msg):
+                    # 不同代各占一条，旧条稍后由原子门拒绝；新条不被旧文合并吞掉。
+                    # 迟到的更旧委托直接丢弃，不能排到新代后面再次开轮。
+                    if (current_msg.delivery_generation or 0) < (queued.msg.delivery_generation or 0):
+                        return "queued"
+                    continue
                 merged_fragments = _merge_fragments(queued.fragments, entry.fragments)
                 _merge_pending_message(queued.msg, current_msg)
                 queued.is_direct = queued.is_direct or is_direct

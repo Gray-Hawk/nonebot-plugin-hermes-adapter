@@ -65,6 +65,9 @@ class BufferedMessage:
     idx 由列表顺序隐式决定,独立文件编号,不与图片共享。文件不自动下载,
     文件正文不自动进 prompt——perception 拿到真实 db id 后按需回填带
     m:id#fN 的 content(见 MessageStore.update_content)。"""
+    delivery_generation: int | None = None
+    """消息入场时的 SessionManager 交付代际；仅随实时 turn/排队载体传播，不入库。
+    clear 后旧代迟提交由 runs 原子门拒绝；None 保留旧调用与合成消息兼容。"""
 
     def __post_init__(self) -> None:
         if not isinstance(self.origin, MessageOrigin):
