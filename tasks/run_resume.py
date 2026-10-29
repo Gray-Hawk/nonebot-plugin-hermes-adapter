@@ -361,7 +361,8 @@ async def _resume_row_impl(row: TrackedRun) -> None:
         logger.warning(f"[HERMES run-resume] 事件流未见终态帧 run_id={row.run_id},保留行待下次启动")
         return
 
-    await _recover_overwritten_replies(row, output, bot, entry.target)
+    # 前序答复回收与正常终态同步紧急禁用（alive/105 生产回归）：
+    # 未按 run 边界截断转录前，恢复路径同样可能补投历史答复。
     # 极简送达。reply_to 的 m:id 在发送前按 row 中的会话归属解析，重启后也不
     # 改用“最近发言者”猜测目标；查不到映射只降级普通正文。
     delivery = _build_delivery(output, row.expect_structured)
