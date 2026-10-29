@@ -578,5 +578,149 @@ class RunTracker:
             "cancel_reason": r[12],
         }
 
+    # --- 出站组件计划、认领与回执(本部署补丁, alive/108 提交 B)。 ---
+
+    def upsert_delivery_plan(
+        self, *, run_id: str, plan: dict, components: list[dict]
+    ) -> None:
+        """首次形成的投递计划与组件清单落库。
+
+        计划一旦形成不得因后续配置变化悄悄变形:同 run 重复 upsert 只接受
+        逐字相同的计划;组件用 INSERT OR IGNORE,已 sent 的组件不被重置。
+        """
+        canonical = json.dumps(plan, sort_keys=True, ensure_ascii=False)
+        row = self._conn.execute(
+            "SELECT plan_json FROM run_deliveries WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"no delivery for run_id={run_id!r}")
+        if row[0] is not None and row[0] != canonical:
+            raise ValueError(f"delivery plan changed for run_id={run_id!r}")
+        now = time.time()
+        with self._conn:
+            self._conn.execute(
+                "UPDATE run_deliveries SET plan_json=?, updated_at=? WHERE run_id=?",
+                (canonical, now, run_id),
+            )
+            for comp in components:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO delivery_components "
+                    "(run_id, component_id, kind, payload_sha256, state, created_at, updated_at)"
+                    " VALUES (?,?,?,?,'pending',?,?)",
+                    (
+                        run_id, comp["component_id"], comp["kind"],
+                        comp.get("payload_sha256"), now, now,
+                    ),
+                )
+
+    def claim_component(
+        self, *, run_id: str, component_id: str, owner: str, lease_sec: float = 30.0
+    ) -> str:
+        """原子认领一个出站组件,返回 send／sent／busy。
+
+        send=取得认领可以调平台;sent=已完成(含 cancelled/not_required 的
+        业务免发),调用方直接读既有事实,绝不再调平台;busy=他人有效租约或
+        unknown(平台结果不明,不盲补)。failed 是平台调用前的本地失败,允许
+        修复后重试。BEGIN IMMEDIATE 保证跨进程只有一个认领者。
+        """
+        now = time.time()
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._conn.execute(
+                "SELECT state, claim_owner, claim_until FROM delivery_components"
+                " WHERE run_id=? AND component_id=?",
+                (run_id, component_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"no component {component_id!r} for run_id={run_id!r}")
+            state, claim_owner, claim_until = row
+            outcome = "send"
+            if state in ("sent", "cancelled", "not_required"):
+                outcome = "sent"
+            elif state == "unknown":
+                outcome = "busy"
+            elif (
+                state == "claimed" and claim_owner != owner
+                and claim_until is not None and claim_until > now
+            ):
+                outcome = "busy"
+            if outcome == "send":
+                self._conn.execute(
+                    "UPDATE delivery_components SET state='claimed', claim_owner=?,"
+                    " claim_until=?, attempt_count=attempt_count+1, updated_at=?"
+                    " WHERE run_id=? AND component_id=?",
+                    (owner, now + max(0.0, lease_sec), now, run_id, component_id),
+                )
+            self._conn.commit()
+            return outcome
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    def get_component(self, *, run_id: str, component_id: str) -> dict | None:
+        """按主键取组件事实(含 msg_ids 解析),不存在返回 None。"""
+        r = self._conn.execute(
+            "SELECT kind, payload_sha256, state, claim_owner, claim_until,"
+            " attempt_count, msg_ids_json, last_error, created_at, updated_at"
+            " FROM delivery_components WHERE run_id=? AND component_id=?",
+            (run_id, component_id),
+        ).fetchone()
+        if r is None:
+            return None
+        return {
+            "run_id": run_id,
+            "component_id": component_id,
+            "kind": r[0],
+            "payload_sha256": r[1],
+            "state": r[2],
+            "claim_owner": r[3],
+            "claim_until": r[4],
+            "attempt_count": r[5],
+            "msg_ids": json.loads(r[6]) if r[6] else [],
+            "last_error": r[7],
+            "created_at": r[8],
+            "updated_at": r[9],
+        }
+
+    def _mark_component(
+        self, run_id: str, component_id: str, state: str, *, msg_ids=None, error=None
+    ) -> None:
+        self._conn.execute(
+            "UPDATE delivery_components SET state=?, msg_ids_json=COALESCE(?, msg_ids_json),"
+            " last_error=?, claim_owner=NULL, claim_until=NULL, updated_at=?"
+            " WHERE run_id=? AND component_id=?",
+            (
+                state,
+                json.dumps(list(msg_ids)) if msg_ids is not None else None,
+                (str(error)[:300] if error is not None else None),
+                time.time(), run_id, component_id,
+            ),
+        )
+        self._conn.commit()
+
+    def mark_component_sent(self, *, run_id: str, component_id: str, msg_ids: list) -> None:
+        """平台成功后立即写回执;发送成功但无 msg_id 同样记 sent(空列表)。"""
+        self._mark_component(run_id, component_id, "sent", msg_ids=msg_ids)
+
+    def mark_component_unknown(self, *, run_id: str, component_id: str, error) -> None:
+        """平台调用已发起但结果不明(异常/超时/崩溃);不得立即盲补。"""
+        self._mark_component(run_id, component_id, "unknown", error=error)
+
+    def mark_component_failed(self, *, run_id: str, component_id: str, error) -> None:
+        """平台调用前的本地失败(白名单/校验),允许修复后重试。"""
+        self._mark_component(run_id, component_id, "failed", error=error)
+
+    def set_expected_state(
+        self, run_id: str, expected_state: str, *, cancel_reason: str | None = None
+    ) -> bool:
+        """业务销账:静默／抑制／取消／超期。无台账行返回 False(不伪造)。"""
+        cur = self._conn.execute(
+            "UPDATE run_deliveries SET expected_state=?, cancel_reason=?, updated_at=?"
+            " WHERE run_id=?",
+            (expected_state, cancel_reason, time.time(), run_id),
+        )
+        self._conn.commit()
+        return cur.rowcount == 1
+
     def close(self) -> None:
         self._conn.close()

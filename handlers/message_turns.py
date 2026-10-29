@@ -44,6 +44,7 @@ from ..core.inflight import (
     make_inflight_key,
 )
 from ..core.log_throttle import throttled_info
+from ..core.run_delivery_monitor import prepare_outbound_delivery, settle_expected
 from ..core.steer_seen import _steer_seen_filter
 from ..core.message_buffer import (
     BufferedMessage,
@@ -368,6 +369,28 @@ async def _chat_with_overflow_recovery(label: str, /, *, reply_bot: Bot, reply_t
         )
     return retried
 
+def _delivery_identity(result) -> tuple[object, str | None]:
+    """runs 半接管交付身份(alive/108):旧结果对象/非 runs 通道安全返回 None。"""
+    return getattr(_mcp, "run_tracker", None), getattr(result, "run_id", None)
+
+
+def _settle(result, expected_state: str, reason: str) -> None:
+    """业务销账:把本轮不发送的事实落到台账;未入账 run 安全无操作。"""
+    tracker, run_id = _delivery_identity(result)
+    settle_expected(tracker=tracker, run_id=run_id, expected_state=expected_state, reason=reason)
+
+
+def _prepare_delivery(result, *, cleaned_text: str, media_urls, file_paths,
+                      reply_to=None, reply_qq_message_id=None, reply_at_user_id=None):
+    """按最终输出构造投递计划;失败/未入账返回 None,发送按 legacy 照常。"""
+    tracker, run_id = _delivery_identity(result)
+    return prepare_outbound_delivery(
+        tracker=tracker, run_id=run_id, cleaned_text=cleaned_text,
+        media_urls=media_urls, file_paths=file_paths, reply_to=reply_to,
+        reply_qq_message_id=reply_qq_message_id, reply_at_user_id=reply_at_user_id,
+    )
+
+
 async def _run_passive_turn(
     *,
     bot: Bot,
@@ -611,6 +634,7 @@ async def _run_passive_turn(
             "——检查接入点 key / provider 额度与可用性"
         )
         _observe_silence("passive", adapter_name, group_id, is_private)
+        _settle(result, "cancelled", "forbidden" if result.is_forbidden_error else "outage")
         return result
 
     if getattr(result, "is_run_detached", False):
@@ -624,6 +648,7 @@ async def _run_passive_turn(
     # 阶段3b:turn 被主动终止,硬静默(同 reactive 分支注释)。
     if result.is_interrupted:
         logger.info(f"[HERMES passive] turn 被终止,硬静默 (group={group_id} is_private={is_private})")
+        _settle(result, "cancelled", "interrupted")
         return result
 
     # 上游 transport_error 同款保护(见 _run_reactive_turn 同名分支注释)。
@@ -656,6 +681,7 @@ async def _run_passive_turn(
         _record_background_note(_fb_key, result.structured, log_tag="passive")
         if not result.structured.get("should_reply"):
             logger.info(f"[HERMES passive] 私聊自决静默 (user={user_id})")
+            _settle(result, "silent", "should_reply_false")
             return result
         reply_text = str(result.structured.get("reply_text") or "").strip()
     else:
@@ -675,6 +701,7 @@ async def _run_passive_turn(
         if extracted is not None:
             if extracted == "":
                 logger.info(f"[HERMES passive] LLM 返回 should_reply=false 结构,静默(group={group_id})")
+                _settle(result, "silent", "should_reply_false")
                 return result
             logger.warning(f"[HERMES passive] 检测到 submit_decision 形 JSON 残留,抠 reply_text 后发送(group={group_id})")
             reply_text = extracted
@@ -687,6 +714,7 @@ async def _run_passive_turn(
         adapter_name=adapter_name, user_id=user_id, group_id=group_id,
         is_private=is_private,
     ):
+        _settle(result, "suppressed", "bounce")
         return result
 
     cleaned_text, extracted_media_urls, extracted_files = extract_response_media(reply_text)
@@ -696,6 +724,7 @@ async def _run_passive_turn(
     file_paths = list(result.file_paths) + [p for p in extracted_files if p not in result.file_paths]
 
     if not cleaned_text and not media_urls and not file_paths:
+        _settle(result, "silent", "empty_content")
         return result
     reply_to = (
         (result.structured or {}).get("reply_to")
@@ -711,6 +740,11 @@ async def _run_passive_turn(
         log_tag="HERMES passive",
     )
     reply_qq_message_id = resolved_reply.qq_message_id if resolved_reply else None
+    delivery = _prepare_delivery(
+        result, cleaned_text=cleaned_text, media_urls=media_urls, file_paths=file_paths,
+        reply_to=reply_to, reply_qq_message_id=reply_qq_message_id,
+        reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
+    )
     sent = await send_text_with_media(
         bot=bot,
         target=target,
@@ -719,6 +753,7 @@ async def _run_passive_turn(
         reply_qq_message_id=reply_qq_message_id,
         reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
         adapter_name=adapter_name,
+        **({"delivery": delivery} if delivery is not None else {}),
     )
     if is_private and sent and _mcp.message_buffer is not None:
         # 私聊 bot 行保留真实发送者，同时单独记录对端归属；不能用 bot 的
@@ -750,7 +785,7 @@ async def _run_passive_turn(
         not_final=bool((result.structured or {}).get("not_final")),
     )
     # 文件跟在文本消息之后上传(占位符在前作说明, 文件随后到达)。
-    await send_local_files(bot=bot, target=target, file_paths=file_paths, adapter_name=adapter_name)
+    await send_local_files(bot=bot, target=target, file_paths=file_paths, adapter_name=adapter_name, **({"delivery": delivery} if delivery is not None else {}))
     return result
 
 async def _run_reactive_turn(
@@ -1125,11 +1160,13 @@ async def _run_reactive_turn(
                 "——检查接入点 key / provider 额度与可用性"
             )
             _observe_silence("reactive", adapter_name, group_id, False)
+            _settle(result, "cancelled", "forbidden" if result.is_forbidden_error else "outage")
             return result
         # 阶段3b:turn 被主动终止(/run-stop 或 gateway 关停)——硬静默。
         # 终止是管理员的主动动作,命令回执已经说明,不再发「被中断」兜底文本。
         if result.is_interrupted:
             logger.info(f"[HERMES reactive] turn 被终止,硬静默 (group={group_id})")
+            _settle(result, "cancelled", "interrupted")
             return result
         # 闭环提醒:决策轮信封缺失(模型写散文忘包 JSON;
         # 403/outage/interrupted/transport 均已提前分流,到这里是模型自己的形状问题)
@@ -1208,6 +1245,10 @@ async def _run_reactive_turn(
                 fallback_text = extracted
             cleaned_text, extracted_media_urls, extracted_files = extract_response_media(fallback_text)
             media_urls = list(result.media_urls) + [u for u in extracted_media_urls if u not in result.media_urls]
+            fallback_files = list(result.file_paths) + [p for p in extracted_files if p not in result.file_paths]
+            delivery = _prepare_delivery(
+                result, cleaned_text=cleaned_text, media_urls=media_urls, file_paths=fallback_files
+            )
             # 本部署补丁(问题5): 散文兜底恒不 @——
             # 信封破了拿不到决策,没有任何 @ 依据,顺带消掉「兜底答错」。
             await send_text_with_media(
@@ -1216,13 +1257,18 @@ async def _run_reactive_turn(
                 text=cleaned_text,
                 media_urls=media_urls,
                 adapter_name=adapter_name,
+                **({"delivery": delivery} if delivery is not None else {}),
             )
             # 本部署补丁:散文兜底同样可能带本地文件引用。
             await send_local_files(
                 bot=bot, target=target,
-                file_paths=list(result.file_paths) + [p for p in extracted_files if p not in result.file_paths],
+                file_paths=fallback_files,
                 adapter_name=adapter_name,
+                **({"delivery": delivery} if delivery is not None else {}),
             )
+        else:
+            # 破信封且现有语义为静默:销账,监控不得把它当丢失补发。
+            _settle(result, "silent", "parse_failed")
         return result
 
     logger.info(
@@ -1272,6 +1318,7 @@ async def _run_reactive_turn(
             f"addressed={addressed_to_bot} answered_mid_turn={mid_turn_push} "
             f"topic_hint={result.structured.get('topic_hint')!r})"
         )
+        _settle(result, "silent", "should_reply_false")
         return result
 
     reply_text = str(decision.get("reply_text") or "").strip()
@@ -1284,6 +1331,7 @@ async def _run_reactive_turn(
         u for u in extracted_media_urls if u not in result.media_urls
     ]
     if not cleaned_reply_text and not media_urls and not file_paths:
+        _settle(result, "silent", "empty_content")
         return result
 
     # B.3: 同 turn 内防重复闸门 — 若 chat() agent loop 期间 last_bot_reply_at
@@ -1306,12 +1354,17 @@ async def _run_reactive_turn(
         # Hermes 主机本地路径(投不出去),随后 submit_decision 里带着网关内联好的
         # data URL。整条抑制会把那张图彻底丢掉,所以只补媒体、不重复文本。
         if media_urls and session.last_bot_reply_media == 0:
+            delivery = _prepare_delivery(
+                result, cleaned_text="", media_urls=media_urls, file_paths=[],
+                reply_to=decision.get("reply_to"),
+            )
             media_sent = await send_text_with_media(
                 bot=bot,
                 target=target,
                 text="",
                 media_urls=media_urls,
                 adapter_name=adapter_name,
+                **({"delivery": delivery} if delivery is not None else {}),
             )
             logger.info(
                 f"[HERMES reactive] mid-turn push had no media; delivered submit_decision media only "
@@ -1327,6 +1380,7 @@ async def _run_reactive_turn(
             f"(group={group_id} user={user_id} direct={is_direct} "
             f"reply_text_len={len(reply_text)} mid_turn_media={session.last_bot_reply_media})"
         )
+        _settle(result, "suppressed", "external_delivery")
         return result
 
     # 正文内联 @ 保持原顺序；Reply 另从同一条 m:id 记录取平台 ID 和真实发送者，
@@ -1347,8 +1401,14 @@ async def _run_reactive_turn(
         adapter_name=adapter_name, user_id=user_id, group_id=group_id,
         is_private=False,
     ):
+        _settle(result, "suppressed", "bounce")
         return result
 
+    delivery = _prepare_delivery(
+        result, cleaned_text=cleaned_reply_text, media_urls=media_urls, file_paths=file_paths,
+        reply_to=decision.get("reply_to"), reply_qq_message_id=reply_qq_message_id,
+        reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
+    )
     sent = await send_text_with_media(
         bot=bot,
         target=target,
@@ -1357,10 +1417,11 @@ async def _run_reactive_turn(
         reply_qq_message_id=reply_qq_message_id,
         reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
         adapter_name=adapter_name,
+        **({"delivery": delivery} if delivery is not None else {}),
     )
     primary_qq_message_id = getattr(sent, "primary_qq_message_id", None)
     # 本部署补丁:本地文件跟在文本消息之后上传。
-    await send_local_files(bot=bot, target=target, file_paths=file_paths, adapter_name=adapter_name)
+    await send_local_files(bot=bot, target=target, file_paths=file_paths, adapter_name=adapter_name, **({"delivery": delivery} if delivery is not None else {}))
     logger.debug(
         f"[HERMES reactive] sent adapter={adapter_name} group={group_id} "
         f"ok={bool(sent)} text_len={len(cleaned_reply_text)} media={len(media_urls)} "

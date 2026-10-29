@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
+import os
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 import nonebot_plugin_alconna as alconna
 from nonebot import logger
@@ -28,6 +31,68 @@ from .sticker_library import (
     default_sticker_library,
     sticker_feature_enabled,
 )
+
+
+# --- runs 半接管交付上下文(本部署补丁, alive/108 提交 B)。 ---
+# delivery 为 None 时所有行为与旧版逐字一致;携带时发送前先原子认领组件,
+# 平台成功后立即写回执。已 sent 的组件绝不再次调平台,unknown(平台结果
+# 不明)一律失败关闭,不盲补。
+
+
+@dataclass(frozen=True)
+class DeliveryContext:
+    """一次出站发送的交付台账身份;tracker 只依赖 run_tracker 的公开方法。"""
+
+    tracker: Any
+    run_id: str
+    component_id: str = "primary"
+    owner: str = field(default_factory=lambda: f"nb-{os.getpid()}")
+    lease_sec: float = 30.0
+
+    def for_component(self, component_id: str) -> "DeliveryContext":
+        return replace(self, component_id=component_id)
+
+
+class DeliveryClaimBusy(RuntimeError):
+    """组件被他人认领或处于 unknown;调用方不得继续调平台。"""
+
+
+def _delivery_begin(delivery: DeliveryContext | None) -> tuple[str, list]:
+    """认领组件;sent 时同时返回既有 msg_ids(可能为空列表)。"""
+    if delivery is None:
+        return "send", []
+    outcome = delivery.tracker.claim_component(
+        run_id=delivery.run_id, component_id=delivery.component_id,
+        owner=delivery.owner, lease_sec=delivery.lease_sec,
+    )
+    existing = []
+    if outcome == "sent":
+        comp = delivery.tracker.get_component(
+            run_id=delivery.run_id, component_id=delivery.component_id
+        )
+        existing = list((comp or {}).get("msg_ids") or [])
+    return outcome, existing
+
+
+def _delivery_raise_if_busy(outcome: str, delivery: DeliveryContext) -> None:
+    if outcome == "busy":
+        raise DeliveryClaimBusy(
+            f"delivery component busy/unknown: run={delivery.run_id} "
+            f"component={delivery.component_id}"
+        )
+
+
+def _delivery_mark_unknown(delivery: DeliveryContext | None, error) -> None:
+    if delivery is None:
+        return
+    try:
+        delivery.tracker.mark_component_unknown(
+            run_id=delivery.run_id, component_id=delivery.component_id, error=error
+        )
+    except Exception as exc:
+        # 回执写入失败不改变原异常面;组件保持 claimed,租约过期后由
+        # reconcile 按 unknown 事实处理。
+        logger.warning(f"run={delivery.run_id} 组件异常回执写入失败: {exc}")
 
 # api_server 把本地生成的图片内联成 data:image/…;base64 URL——没有可抓取的
 # http 地址,必须解码成字节直接附加。仅支持 base64 形态;RFC 2397 的
@@ -370,12 +435,17 @@ async def send_local_files(
     target: alconna.Target,
     file_paths: Sequence[str],
     adapter_name: str | None = None,
+    delivery: DeliveryContext | None = None,
 ) -> int:
     """把白名单内的本地文件经 upload_group_file / upload_private_file 上传,返回成功数。
 
     只在 onebotv11 启用(其余 adapter 没有对应 API);白名单判定逐文件进行,
     被拒/上传失败的单个文件不影响其余, 日志各记一条。文件与文本消息分开发:
     OneBot 的文件上传是独立 API, 不混在消息段里。
+
+    携带 delivery(alive/108)时按原列表位置派生 file:<index> 组件:白名单拒绝
+    是平台调用前的本地失败记 failed;已 sent 的文件跳过上传但计入成功数;
+    上传 API 异常记 unknown(不自动重传)。
     """
     if not file_paths:
         return 0
@@ -386,19 +456,37 @@ async def send_local_files(
 
     max_bytes = load_media_config().local_file_max_mb * 1024 * 1024
     sent = 0
-    for raw in file_paths:
+    for idx, raw in enumerate(file_paths):
+        ctx = delivery.for_component(f"file:{idx}") if delivery is not None else None
         path = validate_local_file(raw, max_bytes=max_bytes)
         if path is None:
+            if ctx is not None:
+                ctx.tracker.mark_component_failed(
+                    run_id=ctx.run_id, component_id=ctx.component_id,
+                    error="whitelist rejected or missing",
+                )
             logger.warning(f"[OUTBOUND] 本地文件被白名单拒绝或不存在, 跳过: {raw[:120]}")
             continue
+        outcome, _existing = _delivery_begin(ctx)
+        if outcome == "sent":
+            sent += 1
+            continue
+        if ctx is not None:
+            _delivery_raise_if_busy(outcome, ctx)
         try:
             if target.private:
                 await bot.call_api("upload_private_file", user_id=int(target.id), file=str(path), name=path.name)
             else:
                 await bot.call_api("upload_group_file", group_id=int(target.id), file=str(path), name=path.name)
+            if ctx is not None:
+                # 文件上传没有 QQ 消息 id;以组件事实作为回执。
+                ctx.tracker.mark_component_sent(
+                    run_id=ctx.run_id, component_id=ctx.component_id, msg_ids=[]
+                )
             sent += 1
             logger.debug(f"[OUTBOUND] 文件已上传 target={target} name={path.name} size={path.stat().st_size}")
         except Exception as exc:
+            _delivery_mark_unknown(ctx, exc)
             logger.warning(f"[OUTBOUND] 文件上传失败 {path.name}: {exc}")
     return sent
 
@@ -447,17 +535,34 @@ def _receipt_msg_ids(receipt: object) -> list[str]:
 
 
 async def _send_unimsg(
-    msg: alconna.UniMessage, *, bot: Bot, target: alconna.Target
+    msg: alconna.UniMessage, *, bot: Bot, target: alconna.Target,
+    delivery: DeliveryContext | None = None,
 ) -> list[str]:
     """唯一出站出口:发送 UniMessage,返回平台回执里的消息 id 列表。
 
     普通文本、媒体、长文截断、合并转发、转发后的 @ 提醒全部从这里出去——调用方拿到
     统一形态的 id(供消息留痕/撤回/后续引用使用),不必各自摸 receipt。平台没回
     msg_ids 时留 WARN 再返回空列表:「发出去了但拿不到 id」必须可见,不靠猜。
-    """
 
-    receipt = await msg.send(target=target, bot=bot)
+    携带 delivery(alive/108)时:发送前先原子认领组件;已 sent 直接返回既有
+    回执,绝不再调平台;平台异常记 unknown 后沿原异常面上抛;回执写库失败
+    向外传播,调用方不得把本轮当成已完成(DeliveryUnknown 语义)。
+    """
+    outcome, existing = _delivery_begin(delivery)
+    if outcome == "sent":
+        return existing
+    if delivery is not None:
+        _delivery_raise_if_busy(outcome, delivery)
+    try:
+        receipt = await msg.send(target=target, bot=bot)
+    except Exception as exc:
+        _delivery_mark_unknown(delivery, exc)
+        raise
     msg_ids = _receipt_msg_ids(receipt)
+    if delivery is not None:
+        delivery.tracker.mark_component_sent(
+            run_id=delivery.run_id, component_id=delivery.component_id, msg_ids=msg_ids
+        )
     if not msg_ids:
         logger.warning(f"[OUTBOUND] 发送成功但回执无 msg_ids(消息 id 无法留痕) target={target}")
     return msg_ids
@@ -473,6 +578,7 @@ async def send_text_with_media(
     reply_at_user_id: str | int | None = None,
     adapter_name: str | None = None,
     sticker_library: StickerLibrary | None = None,
+    delivery: DeliveryContext | None = None,
 ) -> SendResult:
     """组装并发送一条消息,分别返回发送状态与平台消息 ID。
 
@@ -509,6 +615,11 @@ async def send_text_with_media(
                 "sub_type": 1,
             },
         }
+        outcome, existing = _delivery_begin(delivery)
+        if outcome == "sent":
+            return SendResult(ok=True, msg_ids=existing, sticker_id=sticker_id)
+        if delivery is not None:
+            _delivery_raise_if_busy(outcome, delivery)
         try:
             if target.private:
                 response = await bot.call_api(
@@ -519,10 +630,15 @@ async def send_text_with_media(
                     "send_group_msg", group_id=int(target.id), message=[image]
                 )
         except Exception as exc:
+            _delivery_mark_unknown(delivery, exc)
             logger.warning(f"[OUTBOUND] 本地表情平台发送失败 id={sticker_id}: {exc}")
             return SendResult(ok=False, msg_ids=[])
         msg_id = _extract_msg_id(response)
         msg_ids = [msg_id] if msg_id else []
+        if delivery is not None:
+            delivery.tracker.mark_component_sent(
+                run_id=delivery.run_id, component_id=delivery.component_id, msg_ids=msg_ids
+            )
         if not msg_ids:
             logger.warning(f"[OUTBOUND] 本地表情发送成功但无回执 id={sticker_id}")
         logger.info(f"[OUTBOUND] 本地表情已发送 id={sticker_id} msg_ids={len(msg_ids)}")
@@ -594,7 +710,9 @@ async def send_text_with_media(
                     f"客户端展示待实测 target={target} reply_id={reply_id}"
                 )
             msg_ids = await _send_unimsg(
-                alconna.UniMessage([alconna.Reference()(*nodes)]), bot=bot, target=target
+                alconna.UniMessage([alconna.Reference()(*nodes)]), bot=bot, target=target,
+                # 无交付上下文时保持旧调用形状(兼容既有 monkeypatch/包装)。
+                **({"delivery": delivery} if delivery is not None else {}),
             )
             logger.debug(
                 f"[OUTBOUND] sent-via-forward target={target} text_len={original_len} "
@@ -651,7 +769,10 @@ async def send_text_with_media(
         return SendResult(ok=False, msg_ids=[])
 
     try:
-        msg_ids = await _send_unimsg(msg, bot=bot, target=target)
+        msg_ids = await _send_unimsg(
+            msg, bot=bot, target=target,
+            **({"delivery": delivery} if delivery is not None else {}),
+        )
         logger.debug(
             f"[OUTBOUND] sent target={target} text_len={original_len} "
             f"truncated={truncated} media_sent={sent_media_count}/{len(media_urls)} "
