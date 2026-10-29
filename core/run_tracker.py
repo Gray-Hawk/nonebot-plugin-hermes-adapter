@@ -120,6 +120,11 @@ CREATE TABLE IF NOT EXISTS delivery_components (
     created_at      REAL NOT NULL,
     updated_at      REAL NOT NULL,
     PRIMARY KEY (run_id, component_id)
+);
+CREATE TABLE IF NOT EXISTS delivery_generation_fences (
+    scope_key       TEXT PRIMARY KEY,
+    fence_seq       INTEGER NOT NULL,
+    updated_at      REAL NOT NULL
 )
 """
 
@@ -501,6 +506,22 @@ class RunTracker:
             "updated_at": r[13],
         }
 
+    def list_unbound_submissions(self) -> list[dict]:
+        """启动 reclaim 候选:已持久化、尚未取得 run_id 且未被 clear 取消。"""
+        rows = self._conn.execute(
+            "SELECT idempotency_key FROM run_submissions"
+            " WHERE run_id IS NULL AND state='submitted' ORDER BY submission_seq"
+        ).fetchall()
+        return [self.get_submission(r[0]) for r in rows]
+
+    def mark_submission_state(self, idempotency_key: str, state: str) -> None:
+        """记录 reclaim 结果(needs_manual/cancelled 等),不改原 key 与原请求体。"""
+        self._conn.execute(
+            "UPDATE run_submissions SET state=?, updated_at=? WHERE idempotency_key=?",
+            (state, time.time(), idempotency_key),
+        )
+        self._conn.commit()
+
     def bind_submission_and_register(
         self,
         *,
@@ -577,6 +598,69 @@ class RunTracker:
              adapter, is_private, user_id, group_id),
         )
         self._conn.commit()
+
+    def fence_scope_generation(self, scope_key: str, *, reason: str = "generation_cleared") -> dict:
+        """clear/T1 换代:以提交序水位取消旧代,并持久化出站栅栏。
+
+        水位取本 scope 已存在的最大 submission_seq;之后的新 run 序号更大,
+        不受旧 fence 影响。相比直接比较 session_key,上游压缩轮换 key 不会被
+        误判成 clear。已 sent 组件与历史事实保留,只取消未发送部分。
+        """
+        now = time.time()
+        with self._conn:
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(submission_seq), 0) FROM run_submissions WHERE scope_key=?",
+                (scope_key,),
+            ).fetchone()
+            previous = self._conn.execute(
+                "SELECT fence_seq FROM delivery_generation_fences WHERE scope_key=?",
+                (scope_key,),
+            ).fetchone()
+            fence_seq = max(int(row[0] or 0), int(previous[0]) if previous else 0)
+            self._conn.execute(
+                "INSERT INTO delivery_generation_fences(scope_key, fence_seq, updated_at)"
+                " VALUES(?,?,?) ON CONFLICT(scope_key) DO UPDATE SET"
+                " fence_seq=excluded.fence_seq, updated_at=excluded.updated_at",
+                (scope_key, fence_seq, now),
+            )
+            old_deliveries = (
+                "SELECT run_id FROM run_deliveries WHERE scope_key=?"
+                " AND submission_seq<=? AND expected_state='ready'"
+            )
+            component_cur = self._conn.execute(
+                "UPDATE delivery_components SET state='cancelled', claim_owner=NULL,"
+                " claim_until=NULL, last_error=?, updated_at=?"
+                " WHERE state IN ('pending','claimed','failed') AND run_id IN (" + old_deliveries + ")",
+                (reason, now, scope_key, fence_seq),
+            )
+            delivery_cur = self._conn.execute(
+                "UPDATE run_deliveries SET expected_state='cancelled', cancel_reason=?, updated_at=?"
+                " WHERE scope_key=? AND submission_seq<=? AND expected_state='ready'",
+                (reason, now, scope_key, fence_seq),
+            )
+            submission_cur = self._conn.execute(
+                "UPDATE run_submissions SET state='cancelled', updated_at=?"
+                " WHERE scope_key=? AND submission_seq<=? AND run_id IS NULL AND state='submitted'",
+                (now, scope_key, fence_seq),
+            )
+        return {
+            "fence_seq": fence_seq,
+            "deliveries": int(delivery_cur.rowcount or 0),
+            "components": int(component_cur.rowcount or 0),
+            "submissions": int(submission_cur.rowcount or 0),
+        }
+
+    def is_delivery_current(self, run_id: str) -> bool:
+        """出站前再核代际:run 的提交序必须高于该 scope 的 clear 水位。"""
+        row = self._conn.execute(
+            "SELECT d.scope_key, d.submission_seq, f.fence_seq"
+            " FROM run_deliveries d LEFT JOIN delivery_generation_fences f"
+            " ON f.scope_key=d.scope_key WHERE d.run_id=?",
+            (run_id,),
+        ).fetchone()
+        if row is None or row[1] is None:
+            return False
+        return row[2] is None or int(row[1]) > int(row[2])
 
     def get_delivery(self, run_id: str) -> dict | None:
         """按 run_id 取交付台账行,不存在返回 None。"""

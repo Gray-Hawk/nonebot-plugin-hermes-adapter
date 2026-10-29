@@ -48,6 +48,8 @@ class DeliveryContext:
     component_id: str = "primary"
     owner: str = field(default_factory=lambda: f"nb-{os.getpid()}")
     lease_sec: float = 30.0
+    # alive/108:每次真正认领出站前再核 clear 水位;None 保持旧调用零变化。
+    generation_guard: Any = None
 
     def for_component(self, component_id: str) -> "DeliveryContext":
         return replace(self, component_id=component_id)
@@ -61,6 +63,21 @@ def _delivery_begin(delivery: DeliveryContext | None) -> tuple[str, list]:
     """认领组件;sent 时同时返回既有 msg_ids(可能为空列表)。"""
     if delivery is None:
         return "send", []
+    if delivery.generation_guard is not None:
+        try:
+            current = bool(delivery.generation_guard())
+        except Exception as exc:
+            logger.warning(f"[OUTBOUND] 代际栅栏读取失败,失败关闭 run={delivery.run_id}: {exc}")
+            current = False
+        if not current:
+            # clear 与旧 run 晚完成/状态回写并发时,仍不得让旧答复穿透。
+            try:
+                delivery.tracker.set_expected_state(
+                    delivery.run_id, "cancelled", cancel_reason="generation_cleared"
+                )
+            except Exception:
+                logger.warning(f"[OUTBOUND] 旧代销账失败 run={delivery.run_id}", exc_info=True)
+            raise DeliveryClaimBusy(f"stale generation: run={delivery.run_id}")
     outcome = delivery.tracker.claim_component(
         run_id=delivery.run_id, component_id=delivery.component_id,
         owner=delivery.owner, lease_sec=delivery.lease_sec,

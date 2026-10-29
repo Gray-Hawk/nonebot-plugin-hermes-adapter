@@ -62,6 +62,7 @@ from ..core.run_delivery_monitor import (
     reconcile_run,
     settle_expected,
 )
+from ..core.run_reclaim import reclaim_pending_submissions
 from ..core.run_tracker import TrackedRun
 
 _RESUME_RETRY_SEC = 15
@@ -170,6 +171,11 @@ async def resume_active_runs() -> None:
     tracker = _mcp.run_tracker
     if tracker is None:
         return
+    # alive/108:先认领“已提交但尚未登记 run_id”的崩溃窗口,再统一恢复 active_runs。
+    try:
+        await reclaim_pending_submissions()
+    except Exception:
+        logger.warning("[HERMES run-reclaim] 启动认领异常,继续既有 active_runs 恢复", exc_info=True)
     # 先扫僵尸行(龄期超 TTL 的行——网关早已遗忘那些 run,送不出去了)
     pruned = tracker.prune_zombies(_ZOMBIE_TTL_SEC)
     if pruned:

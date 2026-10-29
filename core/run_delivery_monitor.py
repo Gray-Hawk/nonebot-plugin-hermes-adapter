@@ -90,7 +90,10 @@ def prepare_outbound_delivery(
                 "payload_sha256": _sha256_json(entry),
             })
         tracker.upsert_delivery_plan(run_id=run_id, plan=plan, components=components)
-        return DeliveryContext(tracker=tracker, run_id=run_id)
+        return DeliveryContext(
+            tracker=tracker, run_id=run_id,
+            generation_guard=lambda: tracker.is_delivery_current(run_id),
+        )
     except Exception as exc:
         logger.warning(f"run={run_id} 投递计划生成失败, 本轮按 legacy 无台账发送: {exc}")
         return None
@@ -243,7 +246,10 @@ async def _repair_components(tracker, delivery: dict, cfg, stats: dict) -> None:
                 stats["unknown"] = stats.get("unknown", 0) + 1
                 primary = None
         if primary is not None:
-            ctx = DeliveryContext(tracker=tracker, run_id=run_id, component_id="primary", owner=owner)
+            ctx = DeliveryContext(
+                tracker=tracker, run_id=run_id, component_id="primary", owner=owner,
+                generation_guard=lambda: tracker.is_delivery_current(run_id),
+            )
             try:
                 await (_send_text or _ob.send_text_with_media)(
                     bot=bot, target=entry.target, text=plan.get("cleaned_text", ""),
@@ -274,7 +280,10 @@ async def _repair_components(tracker, delivery: dict, cfg, stats: dict) -> None:
         unresolved_files.append(comp)
     if unresolved_files:
         paths = [f["path"] for f in plan.get("files", [])]
-        ctx = DeliveryContext(tracker=tracker, run_id=run_id, owner=owner)
+        ctx = DeliveryContext(
+            tracker=tracker, run_id=run_id, owner=owner,
+            generation_guard=lambda: tracker.is_delivery_current(run_id),
+        )
         try:
             await (_send_files or _ob.send_local_files)(
                 bot=bot, target=entry.target, file_paths=paths,
@@ -340,6 +349,10 @@ async def reconcile_run(run_id: str, *, reason: str = "") -> dict:
     delivery = tracker.get_delivery(run_id)
     if delivery is None or delivery["expected_state"] != "ready":
         stats["skipped"] = "settled_or_missing"
+        return stats
+    if not tracker.is_delivery_current(run_id):
+        tracker.set_expected_state(run_id, "cancelled", cancel_reason="generation_cleared")
+        stats["skipped"] = "generation_cleared"
         return stats
     cfg = load_runs_delivery_config()
     mode = effective_mode(
