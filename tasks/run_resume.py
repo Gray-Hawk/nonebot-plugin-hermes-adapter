@@ -56,7 +56,12 @@ from ..core.reply_recovery import (
     recover_run_overwritten_replies,
 )
 from ..core.routing import resolve_target
-from ..core.run_delivery_monitor import prepare_outbound_delivery, settle_expected
+from ..core.run_delivery_monitor import (
+    prepare_outbound_delivery,
+    reconcile_pending_deliveries,
+    reconcile_run,
+    settle_expected,
+)
 from ..core.run_tracker import TrackedRun
 
 _RESUME_RETRY_SEC = 15
@@ -184,11 +189,13 @@ async def resume_active_runs() -> None:
     except Exception:
         logger.warning("[HERMES reply-recovery] 启动清理台账失败", exc_info=True)
     rows = tracker.list_running()
-    if not rows:
-        return
-    logger.info(f"[HERMES run-resume] 启动恢复: {len(rows)} 个在跑 run 待 reattach")
-    for row in rows:
-        spawn_bg_task(_resume_row(row))
+    if rows:
+        logger.info(f"[HERMES run-resume] 启动恢复: {len(rows)} 个在跑 run 待 reattach")
+        for row in rows:
+            spawn_bg_task(_resume_row(row))
+    # 提交 C:启动再扫 expected 已落账但未终态的 deliveries(含 active_runs 已
+    # finish 的),与正常终态共用同一对账器;observe 模式只记录不补发。
+    spawn_bg_task(reconcile_pending_deliveries(), name="delivery-reconcile-startup")
 
 
 async def _resume_row(row: TrackedRun) -> None:
@@ -454,6 +461,23 @@ async def _resume_row_impl(row: TrackedRun) -> None:
         f"sent={sent} text_len={len(cleaned)} media={len(media_urls)} files={len(file_paths)}"
         "(turn 生命周期特性:pin/exit/防抖 跳过)"
     )
+    if delivery_ctx is not None:
+        # history 组件:legacy 已写库回执,缺写库路径记免发;之后统一对账兜底。
+        try:
+            if sent and _mcp.message_buffer is not None:
+                tracker.mark_component_sent(
+                    run_id=row.run_id, component_id="history",
+                    msg_ids=list(getattr(sent, "msg_ids", []) or []),
+                )
+            elif sent:
+                tracker.mark_component_not_required(run_id=row.run_id, component_id="history")
+        except Exception as exc:
+            logger.warning(f"[runs-resume] history 回执失败 run={row.run_id}: {exc}")
+        # 恢复路径与正常路由共用同一个对账器;未启用 repair 时只记录事实。
+        try:
+            await reconcile_run(row.run_id, reason="resume")
+        except Exception as exc:
+            logger.warning(f"[runs-resume] reconcile 异常 run={row.run_id}: {exc}")
     _maybe_spawn_steer_reconcile(row)
     tracker.finish(row.run_id)
 

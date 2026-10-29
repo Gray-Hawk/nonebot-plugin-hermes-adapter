@@ -44,7 +44,12 @@ from ..core.inflight import (
     make_inflight_key,
 )
 from ..core.log_throttle import throttled_info
-from ..core.run_delivery_monitor import prepare_outbound_delivery, settle_expected
+from ..core.run_delivery_monitor import (
+    order_gate,
+    prepare_outbound_delivery,
+    schedule_reconcile_for_run,
+    settle_expected,
+)
 from ..core.steer_seen import _steer_seen_filter
 from ..core.message_buffer import (
     BufferedMessage,
@@ -389,6 +394,45 @@ def _prepare_delivery(result, *, cleaned_text: str, media_urls, file_paths,
         media_urls=media_urls, file_paths=file_paths, reply_to=reply_to,
         reply_qq_message_id=reply_qq_message_id, reply_at_user_id=reply_at_user_id,
     )
+
+
+async def _await_order_gate(result) -> None:
+    """最终答复出站前的短暂顺序门;异常不阻断 legacy 发送。"""
+    _, run_id = _delivery_identity(result)
+    if not run_id:
+        return
+    try:
+        await order_gate(run_id)
+    except Exception as exc:
+        logger.warning(f"[runs-delivery] 顺序门异常(按 legacy 直接发送): {exc}")
+
+
+def _finish_history(result, delivery, sent, *, wrote_history: bool) -> None:
+    """legacy 历史写库后回执 history 组件;该路本就不写历史的记免发。"""
+    if delivery is None or not sent:
+        return
+    tracker, run_id = _delivery_identity(result)
+    try:
+        if wrote_history:
+            tracker.mark_component_sent(
+                run_id=run_id, component_id="history",
+                msg_ids=list(getattr(sent, "msg_ids", []) or []),
+            )
+        else:
+            tracker.mark_component_not_required(run_id=run_id, component_id="history")
+    except Exception as exc:
+        logger.warning(f"[runs-delivery] history 组件回执失败 run={run_id}: {exc}")
+
+
+def _schedule_reconcile(result) -> None:
+    """turn 收尾调度统一对账;异常不影响既有收尾。"""
+    _, run_id = _delivery_identity(result)
+    if not run_id:
+        return
+    try:
+        schedule_reconcile_for_run(run_id)
+    except Exception as exc:
+        logger.warning(f"[runs-delivery] 对账调度失败 run={run_id}: {exc}")
 
 
 async def _run_passive_turn(
@@ -745,6 +789,7 @@ async def _run_passive_turn(
         reply_to=reply_to, reply_qq_message_id=reply_qq_message_id,
         reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
     )
+    await _await_order_gate(result)
     sent = await send_text_with_media(
         bot=bot,
         target=target,
@@ -776,6 +821,10 @@ async def _run_passive_turn(
                 private_owner_id=user_id,
             )
         )
+    _finish_history(
+        result, delivery, sent,
+        wrote_history=bool(is_private and sent and _mcp.message_buffer is not None),
+    )
     # 分级反馈:发送成功后的文书暗示/离场确认检查(合成轮豁免)
     await _post_send_feedback(
         key=_fb_key, reply_text=cleaned_text, bot=bot, target=target,
@@ -786,6 +835,7 @@ async def _run_passive_turn(
     )
     # 文件跟在文本消息之后上传(占位符在前作说明, 文件随后到达)。
     await send_local_files(bot=bot, target=target, file_paths=file_paths, adapter_name=adapter_name, **({"delivery": delivery} if delivery is not None else {}))
+    _schedule_reconcile(result)
     return result
 
 async def _run_reactive_turn(
@@ -1251,7 +1301,8 @@ async def _run_reactive_turn(
             )
             # 本部署补丁(问题5): 散文兜底恒不 @——
             # 信封破了拿不到决策,没有任何 @ 依据,顺带消掉「兜底答错」。
-            await send_text_with_media(
+            await _await_order_gate(result)
+            prose_sent = await send_text_with_media(
                 bot=bot,
                 target=target,
                 text=cleaned_text,
@@ -1266,6 +1317,8 @@ async def _run_reactive_turn(
                 adapter_name=adapter_name,
                 **({"delivery": delivery} if delivery is not None else {}),
             )
+            _finish_history(result, delivery, prose_sent, wrote_history=False)
+            _schedule_reconcile(result)
         else:
             # 破信封且现有语义为静默:销账,监控不得把它当丢失补发。
             _settle(result, "silent", "parse_failed")
@@ -1374,6 +1427,8 @@ async def _run_reactive_turn(
                 _mcp.active_sessions.mark_bot_replied(
                     adapter_name, group_id, now_ms=_now_ms(), media_count=len(media_urls), text=""
                 )
+            _finish_history(result, delivery, media_sent, wrote_history=False)
+            _schedule_reconcile(result)
             return result
         logger.info(
             f"[HERMES reactive] suppress submit_decision reply: it restates the mid-turn push "
@@ -1409,6 +1464,7 @@ async def _run_reactive_turn(
         reply_to=decision.get("reply_to"), reply_qq_message_id=reply_qq_message_id,
         reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
     )
+    await _await_order_gate(result)
     sent = await send_text_with_media(
         bot=bot,
         target=target,
@@ -1638,6 +1694,11 @@ async def _run_reactive_turn(
                     f"[HERMES reactive] anchor released: who={who} count={released} (group={group_id})"
                 )
 
+    _finish_history(
+        result, delivery, sent,
+        wrote_history=bool(sent and _mcp.message_buffer is not None),
+    )
+    _schedule_reconcile(result)
     return result
 
 

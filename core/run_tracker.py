@@ -100,7 +100,11 @@ CREATE TABLE IF NOT EXISTS run_deliveries (
     created_at      REAL NOT NULL,
     completed_at    REAL,
     updated_at      REAL NOT NULL,
-    cancel_reason   TEXT
+    cancel_reason   TEXT,
+    adapter         TEXT,
+    is_private      INTEGER,
+    user_id         TEXT,
+    group_id        TEXT
 );
 CREATE TABLE IF NOT EXISTS delivery_components (
     run_id          TEXT NOT NULL,
@@ -170,6 +174,17 @@ class RunTracker:
         self._conn.execute(_STEER_LEDGER_SCHEMA)
         self._conn.execute(_RECOVERED_REPLY_LEDGER_SCHEMA)
         self._conn.executescript(_DELIVERY_LEDGER_SCHEMA)
+        # 提交 C 补投递目标列(恢复发送需要 adapter/私群/收发双方,active_runs
+        # 行 finish 后仍要能解析 target);旧库逐列补齐,幂等。
+        existing = {
+            r[1] for r in self._conn.execute("PRAGMA table_info(run_deliveries)").fetchall()
+        }
+        for col, ddl in (
+            ("adapter", "TEXT"), ("is_private", "INTEGER"),
+            ("user_id", "TEXT"), ("group_id", "TEXT"),
+        ):
+            if col not in existing:
+                self._conn.execute(f"ALTER TABLE run_deliveries ADD COLUMN {col} {ddl}")
         self._conn.commit()
 
     def upsert(
@@ -539,15 +554,27 @@ class RunTracker:
         if sub is None:
             raise KeyError(f"no bound submission for run_id={run_id!r}")
         now = time.time()
+        # 投递目标从 active_runs 复制(finish 删行后恢复发送仍可解析 target)。
+        target = self._conn.execute(
+            "SELECT adapter, is_private, user_id, group_id FROM active_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        adapter, is_private, user_id, group_id = target if target else (None, None, None, None)
         self._conn.execute(
             "INSERT INTO run_deliveries "
             "(run_id, submission_seq, idempotency_key, scope_key, session_key,"
-            " output, expect_structured, expected_state, created_at, completed_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?,'ready',?,?,?)"
+            " output, expect_structured, expected_state, created_at, completed_at, updated_at,"
+            " adapter, is_private, user_id, group_id)"
+            " VALUES (?,?,?,?,?,?,?,'ready',?,?,?,?,?,?,?)"
             " ON CONFLICT(run_id) DO UPDATE SET"
             " output=excluded.output, expect_structured=excluded.expect_structured,"
-            " expected_state='ready', updated_at=excluded.updated_at",
-            (run_id, sub[0], sub[1], sub[2], sub[3], output, int(expect_structured), now, now, now),
+            " expected_state='ready', updated_at=excluded.updated_at,"
+            " adapter=COALESCE(run_deliveries.adapter, excluded.adapter),"
+            " is_private=COALESCE(run_deliveries.is_private, excluded.is_private),"
+            " user_id=COALESCE(run_deliveries.user_id, excluded.user_id),"
+            " group_id=COALESCE(run_deliveries.group_id, excluded.group_id)",
+            (run_id, sub[0], sub[1], sub[2], sub[3], output, int(expect_structured), now, now, now,
+             adapter, is_private, user_id, group_id),
         )
         self._conn.commit()
 
@@ -556,7 +583,7 @@ class RunTracker:
         r = self._conn.execute(
             "SELECT run_id, submission_seq, idempotency_key, scope_key, session_key,"
             " output, expect_structured, expected_state, plan_json, created_at,"
-            " completed_at, updated_at, cancel_reason"
+            " completed_at, updated_at, cancel_reason, adapter, is_private, user_id, group_id"
             " FROM run_deliveries WHERE run_id=?",
             (run_id,),
         ).fetchone()
@@ -576,6 +603,10 @@ class RunTracker:
             "completed_at": r[10],
             "updated_at": r[11],
             "cancel_reason": r[12],
+            "adapter": r[13],
+            "is_private": bool(r[14]) if r[14] is not None else None,
+            "user_id": r[15],
+            "group_id": r[16],
         }
 
     # --- 出站组件计划、认领与回执(本部署补丁, alive/108 提交 B)。 ---
@@ -614,7 +645,8 @@ class RunTracker:
                 )
 
     def claim_component(
-        self, *, run_id: str, component_id: str, owner: str, lease_sec: float = 30.0
+        self, *, run_id: str, component_id: str, owner: str, lease_sec: float = 30.0,
+        unknown_backoff_sec: float | None = None, unknown_max_attempts: int = 0,
     ) -> str:
         """原子认领一个出站组件,返回 send／sent／busy。
 
@@ -622,23 +654,30 @@ class RunTracker:
         业务免发),调用方直接读既有事实,绝不再调平台;busy=他人有效租约或
         unknown(平台结果不明,不盲补)。failed 是平台调用前的本地失败,允许
         修复后重试。BEGIN IMMEDIATE 保证跨进程只有一个认领者。
+        unknown_backoff_sec 与 unknown_max_attempts 只由 reconcile 传入:
+        结果不明超过退避且认领次数未耗尽时才允许一次有限重试。
         """
         now = time.time()
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             row = self._conn.execute(
-                "SELECT state, claim_owner, claim_until FROM delivery_components"
-                " WHERE run_id=? AND component_id=?",
+                "SELECT state, claim_owner, claim_until, attempt_count, updated_at"
+                " FROM delivery_components WHERE run_id=? AND component_id=?",
                 (run_id, component_id),
             ).fetchone()
             if row is None:
                 raise KeyError(f"no component {component_id!r} for run_id={run_id!r}")
-            state, claim_owner, claim_until = row
+            state, claim_owner, claim_until, attempt_count, updated_at = row
             outcome = "send"
             if state in ("sent", "cancelled", "not_required"):
                 outcome = "sent"
             elif state == "unknown":
-                outcome = "busy"
+                retryable = (
+                    unknown_backoff_sec is not None
+                    and attempt_count < unknown_max_attempts
+                    and now - (updated_at or 0.0) >= unknown_backoff_sec
+                )
+                outcome = "send" if retryable else "busy"
             elif (
                 state == "claimed" and claim_owner != owner
                 and claim_until is not None and claim_until > now
@@ -721,6 +760,52 @@ class RunTracker:
         )
         self._conn.commit()
         return cur.rowcount == 1
+
+    # --- 统一 reconcile 查询与终态(本部署补丁, alive/108 提交 C)。 ---
+
+    def list_components(self, run_id: str) -> list[dict]:
+        """某 run 的全部组件,primary 在前,其余按 component_id 排序(文件有序)。"""
+        rows = self._conn.execute(
+            "SELECT component_id FROM delivery_components WHERE run_id=?"
+            " ORDER BY CASE component_id WHEN 'primary' THEN 0 ELSE 1 END, component_id",
+            (run_id,),
+        ).fetchall()
+        return [self.get_component(run_id=run_id, component_id=r[0]) for r in rows]
+
+    def list_ready_deliveries(self, scope_key: str | None = None) -> list[dict]:
+        """expected 已落账但尚未终态的 deliveries(待投递/待对账),按提交序。"""
+        sql = (
+            "SELECT run_id FROM run_deliveries WHERE expected_state='ready'"
+        )
+        params: tuple = ()
+        if scope_key is not None:
+            sql += " AND scope_key=?"
+            params = (scope_key,)
+        sql += " ORDER BY submission_seq"
+        return [self.get_delivery(r[0]) for r in self._conn.execute(sql, params).fetchall()]
+
+    def list_predecessors(self, *, scope_key: str, submission_seq: int) -> list[dict]:
+        """同 scope、提交序更早且仍未终态的 deliveries(顺序门前序)。"""
+        rows = self._conn.execute(
+            "SELECT run_id FROM run_deliveries"
+            " WHERE scope_key=? AND submission_seq<? AND expected_state='ready'"
+            " ORDER BY submission_seq",
+            (scope_key, submission_seq),
+        ).fetchall()
+        return [self.get_delivery(r[0]) for r in rows]
+
+    def mark_delivery_terminal(self, run_id: str) -> None:
+        """所有必需组件终态后置 terminal;只前进,不回写其他状态。"""
+        self._conn.execute(
+            "UPDATE run_deliveries SET expected_state='terminal', updated_at=?"
+            " WHERE run_id=? AND expected_state='ready'",
+            (time.time(), run_id),
+        )
+        self._conn.commit()
+
+    def mark_component_not_required(self, *, run_id: str, component_id: str) -> None:
+        """组件业务上不再需要(如历史缓冲不可用),按免发终态处理。"""
+        self._mark_component(run_id, component_id, "not_required")
 
     def close(self) -> None:
         self._conn.close()
