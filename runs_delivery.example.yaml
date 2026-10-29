@@ -1,0 +1,18 @@
+# Runs 半接管交付监控。缺省为 observe：只记录事实，不自动补发。
+# 可选值：off / observe / repair。
+mode: observe
+
+# mode=repair 时，仅列出的 scope 真正自动补发；空列表表示不灰度任何会话。
+# 私聊格式：onebotv11:private:<QQ号>
+# 群聊格式：onebotv11:group:<群号>
+repair_scopes: []
+
+# 主发送流程结束后的宽限期，避免正常回执尚未写完就被判缺件。
+grace_sec: 5.0
+
+# 当前 run 发送前等待前序 run 交付的最长时间；超时放行并保留证据。
+order_gate_timeout_sec: 3.0
+
+# unknown 表示平台结果不明，不盲目重发；超过退避后才允许有限次数核实重试。
+unknown_backoff_sec: 60.0
+unknown_max_attempts: 2
