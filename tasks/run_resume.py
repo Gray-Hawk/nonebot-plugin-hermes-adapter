@@ -236,6 +236,21 @@ def _completed_overdue_age(status_body: dict, now_sec: float) -> int | None:
     return age if age > _DELIVERY_CAP_SEC else None
 
 
+def _drop_overdue_status(row: TrackedRun, tracker, status_body: dict) -> bool:
+    """按同一时效口径结算已完成且超龄的 status；未超龄返回 False。"""
+    age = _completed_overdue_age(status_body, _now_ms() / 1000)
+    if age is None:
+        return False
+    logger.warning(
+        f"[HERMES run-resume] 回复已逾送达时效({_DELIVERY_CAP_SEC}s),丢弃 "
+        f"run_id={row.run_id} scope={row.scope_key} age={age}s"
+    )
+    _settle(row, "expired", "delivery_cap")
+    _maybe_spawn_steer_reconcile(row)
+    tracker.finish(row.run_id)
+    return True
+
+
 async def _drop_if_stale_completed(row: TrackedRun, tracker) -> bool:
     """已终态(completed)且逾 _DELIVERY_CAP_SEC 的行直接丢弃删行(B 时效闸)。
 
@@ -251,17 +266,7 @@ async def _drop_if_stale_completed(row: TrackedRun, tracker) -> bool:
             resp = await client.get(f"{tgt.base_url}/v1/runs/{row.run_id}", headers=headers)
         if resp.status_code != 200:
             return False
-        age = _completed_overdue_age(resp.json(), _now_ms() / 1000)
-        if age is None:
-            return False
-        logger.warning(
-            f"[HERMES run-resume] 回复已逾送达时效({_DELIVERY_CAP_SEC}s),丢弃 "
-            f"run_id={row.run_id} scope={row.scope_key} age={age}s"
-        )
-        _settle(row, "expired", "delivery_cap")
-        _maybe_spawn_steer_reconcile(row)
-        tracker.finish(row.run_id)
-        return True
+        return _drop_overdue_status(row, tracker, resp.json())
     except Exception:
         return False
 
@@ -306,6 +311,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
     headers = {"Authorization": f"Bearer {tgt.api_key}"} if tgt.api_key else {}
     parser = RunsEventParser()
     status_body: dict = {}
+    client = None
     streamed = False  # 是否真订阅过事件流(终态 run 跳过订阅,下面的终态闸要区分)
     try:
         async with httpx.AsyncClient(timeout=tgt.timeout) as client:
@@ -317,15 +323,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
             # B 时效闸:已终态回复逾 _DELIVERY_CAP_SEC(自 gateway 报告的
             # 完成时刻起算)未送达 → 直接丢弃删行,不再保留等下次启动。
             # 未终态(仍在跑)的行不查 cap;判定与 helper 共用 _completed_overdue_age。
-            overdue_age = _completed_overdue_age(status_body, _now_ms() / 1000)
-            if overdue_age is not None:
-                logger.warning(
-                    f"[HERMES run-resume] 回复已逾送达时效({_DELIVERY_CAP_SEC}s),丢弃 "
-                    f"run_id={row.run_id} scope={row.scope_key} age={overdue_age}s"
-                )
-                _settle(row, "expired", "delivery_cap")
-                _maybe_spawn_steer_reconcile(row)
-                tracker.finish(row.run_id)
+            if _drop_overdue_status(row, tracker, status_body):
                 return
             if status not in _TERMINAL_STATUSES:
                 # 仍在跑:按 last_seq 续订(帧从 last_seq+1 起,天然不重复)
@@ -354,11 +352,40 @@ async def _resume_row_impl(row: TrackedRun) -> None:
                         if parser.terminal:
                             break
     except Exception as exc:
-        # 网络类失败:保留行,下次 nb 启动再试(run 在 gateway 侧还活着,行零成本)
-        logger.warning(
-            f"[HERMES run-resume] reattach 失败,保留行待下次启动 run_id={row.run_id}: {exc}"
-        )
-        return
+        # 首次 status 为 running 后，run 可能在订阅 events 前刚好完成；此时事件
+        # 入口可已失效。只在这条订阅路径复查一次 status，终态仍归并到下方既有
+        # 交付链，仍 running 或复查失败才保留行。重新拿终态后丢弃部分事件帧，
+        # 以 status 的完整 output 为准，避免残片覆盖最终答复。
+        if streamed:
+            assert client is not None  # streamed 只在成功进入 async with 后置真。
+            try:
+                resp = await client.get(f"{tgt.base_url}/v1/runs/{row.run_id}", headers=headers)
+                if resp.status_code != 200:
+                    raise RuntimeError(f"status 复查 HTTP {resp.status_code}")
+                refreshed = resp.json()
+                refreshed_status = str(refreshed.get("status") or "")
+                if refreshed_status not in _TERMINAL_STATUSES:
+                    raise RuntimeError(f"status 复查仍为 {refreshed_status or 'unknown'}")
+                if _drop_overdue_status(row, tracker, refreshed):
+                    return
+                status_body = refreshed
+                streamed = False
+                parser = RunsEventParser()
+                logger.info(
+                    f"[HERMES run-resume] events 失败后以 status 终态恢复 "
+                    f"run_id={row.run_id} status={refreshed_status}"
+                )
+            except Exception as refresh_exc:
+                logger.warning(
+                    f"[HERMES run-resume] reattach 失败,保留行待下次启动 "
+                    f"run_id={row.run_id}: {exc}; status 复查: {refresh_exc}"
+                )
+                return
+        else:
+            logger.warning(
+                f"[HERMES run-resume] reattach 失败,保留行待下次启动 run_id={row.run_id}: {exc}"
+            )
+            return
 
     # 终态归并:失败/取消/中断不补发(与现网失败静默语义一致)
     if parser.interrupted or parser.error is not None:
