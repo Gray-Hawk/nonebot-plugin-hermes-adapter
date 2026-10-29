@@ -72,7 +72,7 @@ class AstrBotLocalContentError(AstrBotProtocolError):
     """本轮内容在发出任何 HTTP 请求前就被本地契约拒绝。
 
     与传输故障严格区分：上游从未收到本轮内容，调用方不得把它当网络错误重试，
-    也不得推进增量水位或写回复冷却。
+    也不得推进增量水位或写回复时间戳。
     """
 
 

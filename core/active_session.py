@@ -73,8 +73,8 @@ class ActiveSession:
     topic_hint: str | None = None
     last_bot_reply_at: int = 0
     """bot 最近一次在本群发出 reactive 回复的 ms 时间戳。0 = 本窗口期未回复过。
-    用作 handlers 的 post-reply cooldown 判定。续期保留,cooldown 基准跨触发存活;
-    死窗新建才归零,避免跨窗口残留状态把新一轮对话的第一条非显式消息直接 skip 掉。"""
+    用作同 turn 防重与活跃窗实质激活判定。续期保留,基准跨触发存活;
+    死窗新建才归零,避免跨窗口残留状态影响新一轮对话的同 turn 去重。"""
 
     last_bot_reply_media: int = 0
     """上一次回复实际投出去的媒体数。同 turn 去重闸门据此区分「重复答案」与
@@ -274,14 +274,13 @@ class ActiveSessionManager:
         bot 发言同步滑动 TTL(expires_at=max(原值,now+TTL))——
         与 last_strong_activation_at 的 T5 重算同口径;touch() 仍是日常续期入口。
         handlers 在 reactive 模式 send 成功后
-        调用,push_message 也调,供 post-reply cooldown 与同 turn 去重判定。
+        调用,push_message 也调,供同 turn 防重与活跃窗状态判定。
 
         text 用于判断后续 submit_decision 是否在复述刚发出去的话;不传(空串)时同 turn
         去重会放行,宁可多发一条也不吞掉答案。
 
         返回是否真的写进去了。False = session 已经被 should_exit_active 收掉(`end()` 的
-        唯一调用点),本群的 post-reply cooldown
-        与同 turn 去重这一轮都失去依据 —— 调用方应当把它记出来,否则「冷却全程不生效」
+        唯一调用点),同 turn 去重这一轮失去依据 —— 调用方应当把它记出来,否则
         在日志里只表现为 last_bot_reply_at 永远是 0,查不到原因。
         """
         s = self._sessions.get((adapter, group_id))
