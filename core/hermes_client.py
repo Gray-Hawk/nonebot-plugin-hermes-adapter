@@ -985,6 +985,10 @@ class ChatResult:
     """已登记 runs turn 的事件订阅断开,但原 run 仍由恢复链负责。
     这不是传输失败或取消:handler 硬静默并保留台账,由既有 reattach 续订与投递。"""
 
+    run_id: str | None = None
+    """本部署补丁(alive/108):runs 路本轮的 run 身份,供交付台账贯通到出站边界。
+    成功、失败与 detached 结果都尽量携带;completions／AstrBot 等其他接口恒 None。"""
+
     is_context_overflow: bool = False
     """上游上下文溢出,且它那边关掉了自动压缩(compression.enabled: false)。
 
@@ -1170,6 +1174,9 @@ class HermesClient:
         # 复用同一键——网关 lost-acceptance 重放只认同键同指纹,每试一次换键等于
         # 名不副实,还会在提交应答丢失时放大出孤儿 run。
         turn_idem_key = f"turn-{uuid.uuid4().hex}"
+        # alive/108:runs 路本轮 run 身份,经 _out 挂到成功结果上(失败结果在
+        # _chat_via_runs 内直接携带)。列表盒子避免闭包重新绑定外层局部。
+        runs_run_id: list[str | None] = [None]
 
         async def _do_transport() -> tuple[str, str | None, "ChatResult | None", str]:
             """三分支统一出口 (raw_text, rotated, failure, pending_steer)。
@@ -1250,7 +1257,7 @@ class HermesClient:
             if plugin_config.hermes_api_interface == "runs":
                 # 本部署补丁(runs 迁移阶段1): 开关开启时整路
                 # 改走 /v1/runs;下游持久化/溢出/provider 文案检测与 JSON 解析完全复用。
-                return await self._chat_via_runs(
+                raw_r, rotated_r, failure_r, steer_r, run_id_r = await self._chat_via_runs(
                     tgt=tgt, headers=headers, content=content,
                     system_prompt=system_prompt, session_key=session_key,
                     timeout=tgt.timeout, interim_callback=interim_callback,
@@ -1263,6 +1270,8 @@ class HermesClient:
                         mode=mode, expect_structured=expect_structured,
                     ),
                 )
+                runs_run_id[0] = run_id_r
+                return raw_r, rotated_r, failure_r, steer_r
             if interim_callback is not None:
                 # 本部署补丁: SSE 流式读取,旁白段实时回调,
                 # raw_text 只取最终回复段(旁白不进原解析管线)。
@@ -1345,6 +1354,7 @@ class HermesClient:
         def _out(result: ChatResult) -> ChatResult:
             """给本轮所有出口统一挂上有效 session id(轮换才有值)。"""
             result.effective_session_key = rotated
+            result.run_id = runs_run_id[0]
             if runs_pending_steer:
                 result.pending_steer = runs_pending_steer
             # AstrBot 的模型出图统一从这里补进媒体结果：结构化和 passive 两条
@@ -1611,8 +1621,8 @@ class HermesClient:
         overwritten_reply_callback: "OverwrittenReplyCallback | None",
         idempotency_key: str,
         scope: dict[str, Any],
-    ) -> tuple[str, str | None, "ChatResult | None", str]:
-        """runs 通道(本部署补丁:阶段1)。返回 (raw_text, rotated, failure)。
+    ) -> tuple[str, str | None, "ChatResult | None", str, str]:
+        """runs 通道(本部署补丁:阶段1)。返回 (raw_text, rotated, failure, pending_steer, run_id)。
 
         - rotated 恒 None:压缩轮换由上游 _resolve_live_session_id 服务端透明处理,
           插件不再手动 adopt;
@@ -1636,8 +1646,35 @@ class HermesClient:
         submit_headers["Idempotency-Key"] = idempotency_key
         parser = RunsEventParser()
         run_id = ""
-        tracker = None
         registered = False
+        from .. import mcp as _mcp  # 延迟导入防环(mcp 装配在 handlers 之后)
+
+        tracker = _mcp.run_tracker
+        scope_key = make_scope_key(
+            scope["adapter"], scope["is_private"], scope["user_id"], scope["group_id"]
+        )
+        submission_tracked = False
+        if tracker is not None and scope.get("bot_self_id"):
+            # 本部署补丁(alive/108):第一次 POST 前持久化提交意图(原 key＋原请求体),
+            # 网关已接受而 NB 尚未登记就崩溃的窗口,重启后凭此 reclaim 原 run。
+            # 入账失败默认不阻断 legacy 提交,但本轮不得宣称可恢复,记高优先级告警。
+            try:
+                tracker.record_submission(
+                    idempotency_key=idempotency_key,
+                    request_body=body,
+                    target_fingerprint=f"{scope['adapter']}|{tgt.base_url}",
+                    scope_key=scope_key,
+                    session_key=session_key,
+                    mode=scope["mode"],
+                    expect_structured=bool(scope["expect_structured"]),
+                    bot_self_id=scope["bot_self_id"],
+                )
+                submission_tracked = True
+            except Exception:
+                logger.warning(
+                    "[HERMES] untracked_submission:提交意图入账失败,本轮不纳入可恢复交付保证",
+                    exc_info=True,
+                )
         try:
             client = _get_http_client()
             resp = await self._submit_run_with_replay(client, tgt, body, submit_headers, timeout)
@@ -1652,15 +1689,10 @@ class HermesClient:
             # 阶段2a:登记在跑 run(nb 重启后 run_resume 按此行 reattach 续跑)。
             # bot_self_id 缺失(旧调用点未传)时不登记——resume 找不到 bot 投不出去,
             # 登记了也是死行;缺 id 只发生在非 handler 直调的探测场景。
-            from .. import mcp as _mcp  # 延迟导入防环(mcp 装配在 handlers 之后)
-
-            tracker = _mcp.run_tracker
             if tracker is not None and scope.get("bot_self_id"):
-                tracker.upsert(
+                register_fields = dict(
                     run_id=run_id,
-                    scope_key=make_scope_key(
-                        scope["adapter"], scope["is_private"], scope["user_id"], scope["group_id"]
-                    ),
+                    scope_key=scope_key,
                     adapter=scope["adapter"],
                     is_private=scope["is_private"],
                     user_id=scope["user_id"],
@@ -1670,6 +1702,14 @@ class HermesClient:
                     mode=scope["mode"],
                     expect_structured=bool(scope["expect_structured"]),
                 )
+                if submission_tracked:
+                    # alive/108:绑定与登记同事务,失败则不订阅、保留 submission 供 reclaim。
+                    tracker.bind_submission_and_register(
+                        idempotency_key=idempotency_key, **register_fields
+                    )
+                else:
+                    # 未入账(含入账失败告警后)的 legacy 路维持原登记行为。
+                    tracker.upsert(**register_fields)
                 registered = True
             # 订阅略早于执行器注册是上游支持的 race 窗口(events 处理器内置等待)
             async with client.stream(
@@ -1701,7 +1741,7 @@ class HermesClient:
                 # 已登记 run 的所有权不随事件订阅消失。保留 last_seq 与恢复台账，
                 # 当前 turn 由 handler 静默收尾；slot 释放后的既有 retry 会 reattach。
                 logger.warning(f"[HERMES] runs 订阅断开,保留原 run 待恢复 run_id={run_id}: {exc}")
-                return "", None, ChatResult(raw_text="", parse_failed=True, is_run_detached=True), ""
+                return "", None, ChatResult(raw_text="", parse_failed=True, is_run_detached=True, run_id=run_id), "", run_id
             # 未登记 run 没有投递归属,超时/连接/解析异常仍须止损,避免孤儿执行。
             if run_id:
                 await self._stop_run_quiet(tgt.base_url, headers, run_id)
@@ -1725,7 +1765,8 @@ class HermesClient:
                 parse_failed=True,
                 is_transport_error=True,
                 is_interrupted=True,
-            ), ""
+                run_id=run_id,
+            ), "", run_id
         if parser.error is not None:
             # run.failed:error 已脱敏。403 硬标记与 provider 报错同口径(handler 硬静默)
             logger.warning(f"[HERMES] runs turn 失败 (run_id={run_id} error={parser.error[:200]!r})")
@@ -1737,12 +1778,13 @@ class HermesClient:
                 is_transport_error=True,
                 is_forbidden_error=forbidden,
                 is_outage_error=is_provider_outage_text(parser.error),
-            ), ""
+                run_id=run_id,
+            ), "", run_id
         if not parser.terminal:
             if registered:
                 # 干净 EOF 与异常断流同义：没有终态帧就不能猜测 run 已结束。
                 logger.warning(f"[HERMES] runs 事件流未见终态帧即关闭,保留原 run 待恢复 run_id={run_id}")
-                return "", None, ChatResult(raw_text="", parse_failed=True, is_run_detached=True), ""
+                return "", None, ChatResult(raw_text="", parse_failed=True, is_run_detached=True, run_id=run_id), "", run_id
             logger.warning(f"[HERMES] runs 事件流未见终态帧即关闭 (run_id={run_id})")
             if run_id:
                 await self._stop_run_quiet(tgt.base_url, headers, run_id)
@@ -1751,32 +1793,29 @@ class HermesClient:
                 raw_text="⚠️ AI 服务响应中断(事件流提前关闭),请稍后重试",
                 parse_failed=True,
                 is_transport_error=True,
-            ), ""
-        # completed:先回收同 run 被末轮覆盖的前序答复，再删除恢复台账。
-        if (
-            overwritten_reply_callback is not None
-            and parser.output is not None
-            and tracker is not None
-        ):
-            tracked = tracker.get_by_run_id(run_id)
-            if tracked is not None and tracked.expect_structured:
-                try:
-                    from .reply_recovery import recover_run_overwritten_replies
-
-                    overwritten = await recover_run_overwritten_replies(
-                        tracked, parser.output
-                    )
-                    if overwritten:
-                        await overwritten_reply_callback(overwritten)
-                except Exception:
-                    # 前序补投失败不影响末轮原答复与既有恢复生命周期。
-                    logger.warning(
-                        f"[HERMES reply-recovery] 终态回收异常 run_id={run_id}",
-                        exc_info=True,
-                    )
+                run_id=run_id,
+            ), "", run_id
+        # 前序答复回收紧急禁用（alive/105 生产回归）：转录提取未限定本 run
+        # 边界，会把同 session 历史 structured reply 当成被覆盖答复重复补投。
+        # 保留 callback 接口，待按 run 起点截断并补生产形态回归后再启用。
         # 与流式分支同形补内联,rotated=None(轮换上游服务端处理)。
+        # alive/108:终态 output 先落交付台账,才允许 finish 删 active_runs;
+        # 落账失败保留恢复依据并转 detached,当前 handler 不直接发无法监控的 output。
+        if registered and submission_tracked:
+            try:
+                tracker.record_expected_delivery(
+                    run_id=run_id,
+                    output=parser.output or "",
+                    expect_structured=bool(scope["expect_structured"]),
+                )
+            except Exception:
+                logger.warning(
+                    f"[HERMES] 交付台账落账失败,保留原 run 待恢复 run_id={run_id}",
+                    exc_info=True,
+                )
+                return "", None, ChatResult(raw_text="", parse_failed=True, is_run_detached=True, run_id=run_id), "", run_id
         _finish()
-        return inline_local_media_images(parser.output or ""), None, None, parser.pending_steer
+        return inline_local_media_images(parser.output or ""), None, None, parser.pending_steer, run_id
 
     async def health_check(self, target: HermesTarget | None = None) -> bool:
         """探活一个接入点。target=None 探默认接入点。

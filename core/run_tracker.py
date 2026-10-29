@@ -11,8 +11,11 @@ seq<=last_seq 的旁白视为已转发跳过;终态 output 送达后删行,天�
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 import time
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,6 +64,74 @@ CREATE TABLE IF NOT EXISTS recovered_reply_ledger (
 )
 """
 
+# 本部署补丁(alive/108 半接管提交 A):提交意图与交付事实台账。
+# run_submissions 在第一次 POST 前落库,保存原始请求体(zlib 压缩)与同键重放
+# 所需的全部身份;崩溃后用原 key＋原请求体 reclaim 原 run,不换 key 新跑。
+# run_deliveries 以 run_id 为主身份记录终态 output;active_runs 行会被 finish
+# 删除,交付事实独立存这里,正常路与恢复路共用。
+# delivery_components 本批只建表(主消息/文件/历史组件),认领与回执在后续批接。
+_DELIVERY_LEDGER_SCHEMA = """
+CREATE TABLE IF NOT EXISTS run_submissions (
+    submission_seq  INTEGER PRIMARY KEY AUTOINCREMENT,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    request_gzip    BLOB NOT NULL,
+    request_sha256  TEXT NOT NULL,
+    target_fingerprint TEXT NOT NULL,
+    scope_key       TEXT NOT NULL,
+    session_key     TEXT NOT NULL,
+    mode            TEXT NOT NULL,
+    expect_structured INTEGER NOT NULL DEFAULT 0,
+    bot_self_id     TEXT NOT NULL,
+    run_id          TEXT UNIQUE,
+    state           TEXT NOT NULL DEFAULT 'submitted',
+    created_at      REAL NOT NULL,
+    updated_at      REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS run_deliveries (
+    run_id          TEXT PRIMARY KEY,
+    submission_seq  INTEGER UNIQUE,
+    idempotency_key TEXT UNIQUE,
+    scope_key       TEXT NOT NULL,
+    session_key     TEXT NOT NULL,
+    output          TEXT NOT NULL,
+    expect_structured INTEGER NOT NULL DEFAULT 0,
+    expected_state  TEXT NOT NULL DEFAULT 'waiting',
+    plan_json       TEXT,
+    created_at      REAL NOT NULL,
+    completed_at    REAL,
+    updated_at      REAL NOT NULL,
+    cancel_reason   TEXT
+);
+CREATE TABLE IF NOT EXISTS delivery_components (
+    run_id          TEXT NOT NULL,
+    component_id    TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    payload_sha256  TEXT,
+    state           TEXT NOT NULL DEFAULT 'pending',
+    claim_owner     TEXT,
+    claim_until     REAL,
+    attempt_count   INTEGER NOT NULL DEFAULT 0,
+    msg_ids_json    TEXT,
+    last_error      TEXT,
+    created_at      REAL NOT NULL,
+    updated_at      REAL NOT NULL,
+    PRIMARY KEY (run_id, component_id)
+)
+"""
+
+_ACTIVE_RUN_UPSERT_SQL = (
+    "INSERT INTO active_runs "
+    "(run_id, scope_key, adapter, is_private, user_id, group_id, bot_self_id,"
+    " session_key, mode, expect_structured, last_seq, started_at)"
+    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+    " ON CONFLICT(run_id) DO UPDATE SET"
+    " scope_key=excluded.scope_key, adapter=excluded.adapter,"
+    " is_private=excluded.is_private, user_id=excluded.user_id,"
+    " group_id=excluded.group_id, bot_self_id=excluded.bot_self_id,"
+    " session_key=excluded.session_key, mode=excluded.mode,"
+    " expect_structured=excluded.expect_structured"
+)
+
 
 @dataclass
 class TrackedRun:
@@ -98,6 +169,7 @@ class RunTracker:
         self._conn.execute(_SCHEMA)
         self._conn.execute(_STEER_LEDGER_SCHEMA)
         self._conn.execute(_RECOVERED_REPLY_LEDGER_SCHEMA)
+        self._conn.executescript(_DELIVERY_LEDGER_SCHEMA)
         self._conn.commit()
 
     def upsert(
@@ -119,16 +191,7 @@ class RunTracker:
         # 清零(事件流水位丢失,reattach 后旁白从头发一遍)。契约仍是「一 run 一
         # upsert」,此处加固到误复用也不丢水位。
         self._conn.execute(
-            "INSERT INTO active_runs "
-            "(run_id, scope_key, adapter, is_private, user_id, group_id, bot_self_id,"
-            " session_key, mode, expect_structured, last_seq, started_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
-            " ON CONFLICT(run_id) DO UPDATE SET"
-            " scope_key=excluded.scope_key, adapter=excluded.adapter,"
-            " is_private=excluded.is_private, user_id=excluded.user_id,"
-            " group_id=excluded.group_id, bot_self_id=excluded.bot_self_id,"
-            " session_key=excluded.session_key, mode=excluded.mode,"
-            " expect_structured=excluded.expect_structured",
+            _ACTIVE_RUN_UPSERT_SQL,
             (
                 run_id, scope_key, adapter, int(is_private), user_id, group_id,
                 bot_self_id, session_key, mode, int(expect_structured), -1, time.time(),
@@ -346,6 +409,174 @@ class RunTracker:
         )
         self._conn.commit()
         return cur.rowcount
+
+    # --- 半接管提交与交付台账(本部署补丁, alive/108 提交 A)。 ---
+
+    def record_submission(
+        self,
+        *,
+        idempotency_key: str,
+        request_body: dict,
+        target_fingerprint: str,
+        scope_key: str,
+        session_key: str,
+        mode: str,
+        expect_structured: bool,
+        bot_self_id: str,
+    ) -> int:
+        """第一次 POST 前持久化提交意图,返回 submission_seq。
+
+        原始请求体规范化 JSON 后压缩落库——同键重放要求请求指纹一致,重启后
+        不能用新 prompt 重建字段冒充同一提交。同键同体重记入幂等(429 重试与
+        提交段网络重试会复用同 key);同键不同体说明调用方身份串了,失败关闭。
+        request_gzip 可能含图片 data URL,任何日志都不得 dump 该列。
+        """
+        canonical = json.dumps(
+            request_body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        digest = hashlib.sha256(canonical).hexdigest()
+        row = self._conn.execute(
+            "SELECT submission_seq, request_sha256 FROM run_submissions WHERE idempotency_key=?",
+            (idempotency_key,),
+        ).fetchone()
+        if row is not None:
+            if row[1] != digest:
+                raise ValueError("idempotency_key reused with a different request body")
+            return int(row[0])
+        now = time.time()
+        cur = self._conn.execute(
+            "INSERT INTO run_submissions "
+            "(idempotency_key, request_gzip, request_sha256, target_fingerprint,"
+            " scope_key, session_key, mode, expect_structured, bot_self_id,"
+            " state, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,'submitted',?,?)",
+            (
+                idempotency_key, zlib.compress(canonical), digest, target_fingerprint,
+                scope_key, session_key, mode, int(expect_structured), bot_self_id, now, now,
+            ),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def get_submission(self, idempotency_key: str) -> dict | None:
+        """按 key 取提交记录(含解压还原的原始请求体),不存在返回 None。"""
+        r = self._conn.execute(
+            "SELECT submission_seq, idempotency_key, request_gzip, request_sha256,"
+            " target_fingerprint, scope_key, session_key, mode, expect_structured,"
+            " bot_self_id, run_id, state, created_at, updated_at"
+            " FROM run_submissions WHERE idempotency_key=?",
+            (idempotency_key,),
+        ).fetchone()
+        if r is None:
+            return None
+        return {
+            "submission_seq": r[0],
+            "idempotency_key": r[1],
+            "request_body": json.loads(zlib.decompress(r[2]).decode("utf-8")),
+            "request_sha256": r[3],
+            "target_fingerprint": r[4],
+            "scope_key": r[5],
+            "session_key": r[6],
+            "mode": r[7],
+            "expect_structured": bool(r[8]),
+            "bot_self_id": r[9],
+            "run_id": r[10],
+            "state": r[11],
+            "created_at": r[12],
+            "updated_at": r[13],
+        }
+
+    def bind_submission_and_register(
+        self,
+        *,
+        idempotency_key: str,
+        run_id: str,
+        scope_key: str,
+        adapter: str,
+        is_private: bool,
+        user_id: str,
+        group_id: str | None,
+        bot_self_id: str,
+        session_key: str,
+        mode: str,
+        expect_structured: bool,
+    ) -> None:
+        """取得 run_id 后,同一事务完成 submission 绑定＋active_runs 登记。
+
+        两步必须原子:只绑定不登记,重启后 active_runs 恢复链看不到该 run;
+        只登记不绑定,崩溃 reclaim 拿不到 run 身份。无 submission 行时失败关闭,
+        不允许凭空登记一个无法 reclaim 的 run。
+        """
+        with self._conn:
+            cur = self._conn.execute(
+                "UPDATE run_submissions SET run_id=?, state='bound', updated_at=?"
+                " WHERE idempotency_key=?",
+                (run_id, time.time(), idempotency_key),
+            )
+            if cur.rowcount != 1:
+                raise KeyError(f"no submission for idempotency_key={idempotency_key!r}")
+            self._conn.execute(
+                _ACTIVE_RUN_UPSERT_SQL,
+                (
+                    run_id, scope_key, adapter, int(is_private), user_id, group_id,
+                    bot_self_id, session_key, mode, int(expect_structured), -1, time.time(),
+                ),
+            )
+
+    def record_expected_delivery(
+        self, *, run_id: str, output: str, expect_structured: bool
+    ) -> None:
+        """终态 output 落交付台账;必须先于 finish 删 active_runs 调用。
+
+        无绑定 submission 的 run 不在半接管保证范围(未入账即无法 reclaim),
+        失败关闭由调用方转 detached 保留恢复依据,不伪造交付身份。
+        """
+        sub = self._conn.execute(
+            "SELECT submission_seq, idempotency_key, scope_key, session_key"
+            " FROM run_submissions WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        if sub is None:
+            raise KeyError(f"no bound submission for run_id={run_id!r}")
+        now = time.time()
+        self._conn.execute(
+            "INSERT INTO run_deliveries "
+            "(run_id, submission_seq, idempotency_key, scope_key, session_key,"
+            " output, expect_structured, expected_state, created_at, completed_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,'ready',?,?,?)"
+            " ON CONFLICT(run_id) DO UPDATE SET"
+            " output=excluded.output, expect_structured=excluded.expect_structured,"
+            " expected_state='ready', updated_at=excluded.updated_at",
+            (run_id, sub[0], sub[1], sub[2], sub[3], output, int(expect_structured), now, now, now),
+        )
+        self._conn.commit()
+
+    def get_delivery(self, run_id: str) -> dict | None:
+        """按 run_id 取交付台账行,不存在返回 None。"""
+        r = self._conn.execute(
+            "SELECT run_id, submission_seq, idempotency_key, scope_key, session_key,"
+            " output, expect_structured, expected_state, plan_json, created_at,"
+            " completed_at, updated_at, cancel_reason"
+            " FROM run_deliveries WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        if r is None:
+            return None
+        return {
+            "run_id": r[0],
+            "submission_seq": r[1],
+            "idempotency_key": r[2],
+            "scope_key": r[3],
+            "session_key": r[4],
+            "output": r[5],
+            "expect_structured": bool(r[6]),
+            "expected_state": r[7],
+            "plan_json": r[8],
+            "created_at": r[9],
+            "completed_at": r[10],
+            "updated_at": r[11],
+            "cancel_reason": r[12],
+        }
 
     def close(self) -> None:
         self._conn.close()
