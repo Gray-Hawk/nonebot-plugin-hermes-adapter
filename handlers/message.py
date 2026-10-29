@@ -45,6 +45,7 @@ from .message_ingress import (
 from .message_perception import _merge_fragment_payload, _peek_event_db_id
 from ..core.message_buffer import BufferedMessage
 from ..core.message_origin import MessageOrigin
+from ..core.session import session_manager
 
 from .message_turns import _dispatch_chat
 from .message_relay import route_synthesized_input
@@ -126,7 +127,13 @@ def _debounce_arrive(
         )
         _debounce_states[key] = st
         return st, True
-    if st.payload.get("user_id") == payload.get("user_id"):
+    if st.payload.get("delivery_generation") is not None and payload.get("delivery_generation") is not None \
+            and st.payload["delivery_generation"] != payload["delivery_generation"]:
+        # clear 分代：旧批不得吞掉新代消息，新批也不得被迟到的旧碎片反向污染。
+        # 新代到达时整批替换，旧 fragments 不 prepend；旧代随后才到则直接丢弃。
+        if payload["delivery_generation"] > st.payload["delivery_generation"]:
+            st.payload = payload
+    elif st.payload.get("user_id") == payload.get("user_id"):
         _merge_fragment_payload(st.payload, payload)
     elif replaceable:
         # 拆批(alive/103 §14.2):跨人替换只换触发归属与外壳,fragments 序列
@@ -354,10 +361,14 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # 拆批 fragments 序列(alive/103 §14.2):本条完整对象(真实入库 m:id 用
     # peek 读 perception 挂号,不 claim——claim 留给 path 一次性消费)随载荷
     # 暂存;防抖合并按序追加,current 拆批逐行渲染,不查库。
+    delivery_generation = session_manager.get_delivery_generation(
+        adapter_name, target.private, user_id, group_id
+    )
     fragment = BufferedMessage(
         ts=now, adapter=adapter_name, group_id=group_id, user_id=user_id,
         nickname=nickname, content=msg_text, origin=MessageOrigin.human(), image_urls=list(image_urls),
         sticker_urls=list(sticker_urls), reply_to_ts=None, is_bot=False,
+        delivery_generation=delivery_generation,
     )
     fragment.id = _peek_event_db_id(adapter_name, getattr(event, "message_id", None))
     debounce_sec = (
@@ -384,6 +395,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             user_id=user_id,
             nickname=nickname,
             group_id=group_id,
+            delivery_generation=delivery_generation,
             msg_text=msg_text,
             image_urls=image_urls,
             sticker_urls=sticker_urls,
@@ -447,6 +459,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         user_id=user_id,
         nickname=nickname,
         group_id=group_id,
+        delivery_generation=delivery_generation,
         msg_text=msg_text,
         image_urls=image_urls,
         sticker_urls=sticker_urls,

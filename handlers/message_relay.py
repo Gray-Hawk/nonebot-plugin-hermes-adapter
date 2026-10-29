@@ -194,6 +194,7 @@ async def _handle_passive_path(
     event_msg_id: str | int | None = None,
     origin: MessageOrigin,
     rows=None,
+    delivery_generation: int | None = None,
 ):
     """Passive 外壳:inflight 占位 → _run_passive_turn → 合并重燃。
 
@@ -216,6 +217,7 @@ async def _handle_passive_path(
         sticker_urls=list(sticker_urls or []),
         reply_to_ts=None,
         is_bot=False,
+        delivery_generation=delivery_generation,
     )
     # 只有可入库来源才能领 perception 挂号的真 id；来源与事件号各管各的。
     current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id) if origin.allows_store else None
@@ -576,6 +578,7 @@ async def _handle_reactive_path(
     context_limit: int | None = None,
     origin: MessageOrigin,
     rows=None,
+    delivery_generation: int | None = None,
 ):
     """Reactive 外壳:inflight 占位 → 调 _run_reactive_turn → finally 合并重燃。
 
@@ -606,6 +609,7 @@ async def _handle_reactive_path(
         sticker_urls=list(sticker_urls or []),
         reply_to_ts=None,
         is_bot=False,
+        delivery_generation=delivery_generation,
     )
     # 只有可入库来源才能领 perception 挂号的真 id；来源与事件号各管各的。
     current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id) if origin.allows_store else None

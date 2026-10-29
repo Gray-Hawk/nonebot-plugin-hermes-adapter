@@ -131,6 +131,14 @@ def _filter_current_and_steered(
     return rows
 
 
+def _current_delivery_generation(adapter_name, is_private, user_id, group_id):
+    """旧测试/外部包装可替换 session_manager；缺新 getter 时保持无 token 兼容。"""
+    getter = getattr(session_manager, "get_delivery_generation", None)
+    if getter is None:
+        return None
+    return getter(adapter_name, is_private, user_id, group_id)
+
+
 async def _dispatch_chat(
     *,
     bot: Bot,
@@ -155,9 +163,15 @@ async def _dispatch_chat(
     # 载荷携带的媒体寻址序列(alive/103 A4):dispatch 层不消费,但必须签收——
     # _dispatch_chat(**st.payload) 整包展开,缺形参会在入口直接 TypeError。
     fragment_db_ids=None,
+    delivery_generation: int | None = None,
 ):
     """passive/reactive 分叉(原 handle_message 末段,防抖批抽出以便
     防抖到期后与防抖关闭路径共用同一 dispatch)。"""
+    if delivery_generation is None:
+        # 合成/旧调用没有入场章时在 dispatch 补盖；真人消息在 message.py 更早盖章。
+        delivery_generation = _current_delivery_generation(
+            adapter_name, target.private, user_id, group_id
+        )
     # 任务锚+steer(规划书§3):资格内直注在跑 turn——私聊恒资格,
     # 群聊仅委托且发送者在资格集合(在跑 turn 触发者 ∪ 在钉锚全体参与者)。
     # 直注成功即 return;注不进去落回正常 dispatch,零丢失。
@@ -186,6 +200,7 @@ async def _dispatch_chat(
             user_id=user_id,
             nickname=nickname,
             group_id=group_id,
+            delivery_generation=delivery_generation,
             text=msg_text,
             image_urls=image_urls,
             sticker_urls=sticker_urls,
@@ -205,6 +220,7 @@ async def _dispatch_chat(
         user_id=user_id,
         nickname=nickname,
         group_id=group_id,
+        delivery_generation=delivery_generation,
         text=msg_text,
         image_urls=image_urls,
         sticker_urls=sticker_urls,
@@ -363,6 +379,9 @@ async def _chat_with_overflow_recovery(label: str, /, *, reply_bot: Bot, reply_t
 
     session_manager.clear_session(adapter_name, is_private, user_id, group_id)
     chat_kwargs["session_key"] = session_manager.get_session_key(adapter_name, is_private, user_id, group_id)
+    chat_kwargs["delivery_generation"] = _current_delivery_generation(
+        adapter_name, is_private, user_id, group_id
+    )
 
     retried = await _chat_with_persistence_retry(
         label, bot_self_id=str(reply_bot.self_id), **chat_kwargs
@@ -458,6 +477,11 @@ async def _run_passive_turn(
         is_private=is_private,
         user_id=user_id,
         group_id=group_id,
+    )
+    delivery_generation = (
+        current_buffered.delivery_generation
+        if current_buffered is not None and current_buffered.delivery_generation is not None
+        else _current_delivery_generation(adapter_name, is_private, user_id, group_id)
     )
     hermes_target = resolve_target(adapter_name, is_private, group_id)
 
@@ -598,6 +622,7 @@ async def _run_passive_turn(
         text="",
         image_urls=[],
         session_key=session_key,
+        **({"delivery_generation": delivery_generation} if delivery_generation is not None else {}),
         user_id=user_id,
         group_id=group_id,
         adapter_name=adapter_name,
@@ -1081,6 +1106,11 @@ async def _run_reactive_turn(
         user_id=user_id,
         group_id=group_id,
     )
+    delivery_generation = (
+        current_buffered.delivery_generation
+        if current_buffered is not None and current_buffered.delivery_generation is not None
+        else _current_delivery_generation(adapter_name, False, user_id, group_id)
+    )
     hermes_target = resolve_target(adapter_name, False, group_id)
     # 注:user_content_override 已携带 user message 的全部内容(text + 多模态);
     # text/image_urls 在 chat() 中会被忽略(见 hermes_client.chat 文档),此处显式传 ""
@@ -1108,6 +1138,7 @@ async def _run_reactive_turn(
         text="",
         image_urls=[],
         session_key=session_key,
+        **({"delivery_generation": delivery_generation} if delivery_generation is not None else {}),
         user_id=user_id,
         group_id=group_id,
         adapter_name=adapter_name,
