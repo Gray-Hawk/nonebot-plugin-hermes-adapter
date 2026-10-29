@@ -134,6 +134,8 @@ def init_runtime_state() -> None:
     if run_tracker is None:
         # 阶段2a:在跑 run 跟踪,同样是「重启必须还在」的运行时状态,同目录分文件。
         run_tracker = RunTracker(db_path=db_path.parent / "active_runs.db")
+    # alive/108:/clear 与 T1 自动清都经同一入口取消旧代待交付并落出站栅栏。
+    session_manager.bind_run_tracker(run_tracker)
     # 挂起审批持久化(本部署补丁):与上面的运行时状态同目录分文件,装回未过期
     # 条目;/approve 应答路径重启后仍可答(上游审批还在窗口期内等应答)。
     from ..core.approvals import bind_storage as _approvals_bind_storage

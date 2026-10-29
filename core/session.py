@@ -31,6 +31,29 @@ class SessionManager:
         # 增量推送水位:internal_id -> (session_key, 已推最大消息 id)。
         # 内存态即可——nb 重启丢水位的代价只是每群首 turn 全量重推一次,无副作用。
         self._push_watermark: dict[str, tuple[str, int]] = {}
+        # alive/108:clear/T1 换代时给 runs 交付台账落提交序水位。只 duck-type
+        # 调用公开方法,不引入 session → run_tracker 的模块依赖。
+        self._delivery_tracker = None
+
+    def bind_run_tracker(self, tracker) -> None:
+        """绑定交付代际栅栏;mcp 启动装配时调用,未绑定保持旧 clear 行为。"""
+        self._delivery_tracker = tracker
+
+    def _fence_delivery_generation(
+        self, adapter_name: str, is_private: bool, user_id: str, group_id: str | None
+    ) -> None:
+        tracker = self._delivery_tracker
+        if tracker is None:
+            return
+        scope = "private" if is_private else "group"
+        scope_id = user_id if is_private else (group_id or "")
+        scope_key = f"{adapter_name}:{scope}:{scope_id}"
+        try:
+            result = tracker.fence_scope_generation(scope_key)
+            if result["deliveries"] or result["submissions"]:
+                logger.info(f"[SESSION] 旧代交付已取消: scope={scope_key} {result}")
+        except Exception:
+            logger.warning(f"[SESSION] 交付代际栅栏落账失败: scope={scope_key}", exc_info=True)
 
     def bind_store(self, store: SessionKeyStore) -> None:
         """绑定持久化存储并载入已有映射(启动时调一次)。
@@ -180,6 +203,7 @@ class SessionManager:
         new_key = self.get_session_key(adapter_name, is_private, user_id, group_id)
         if cutoff_msg_id is not None:
             self._push_watermark[internal_id] = (new_key, cutoff_msg_id)
+        self._fence_delivery_generation(adapter_name, is_private, user_id, group_id)
         logger.info(f"[SESSION] 会话已重置: {internal_id} (generation={gen})")
 
     # --- 增量推送水位(仅群聊 reactive 使用) ---
@@ -317,6 +341,9 @@ class SessionManager:
         self._generation[internal_id] = gen
         self._cache[internal_id] = f"hermes-{internal_id}-g{gen}"
         self._persist(internal_id)
+        comp = self._parse_internal_id(internal_id)
+        if comp is not None:
+            self._fence_delivery_generation(*comp)
         self._last_activity[internal_id] = time.time()
         logger.info(f"[SESSION] T1 空闲自动重置: {internal_id} (generation={gen})")
 

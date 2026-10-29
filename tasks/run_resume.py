@@ -56,6 +56,13 @@ from ..core.reply_recovery import (
     recover_run_overwritten_replies,
 )
 from ..core.routing import resolve_target
+from ..core.run_delivery_monitor import (
+    prepare_outbound_delivery,
+    reconcile_pending_deliveries,
+    reconcile_run,
+    settle_expected,
+)
+from ..core.run_reclaim import reclaim_pending_submissions
 from ..core.run_tracker import TrackedRun
 
 _RESUME_RETRY_SEC = 15
@@ -129,6 +136,14 @@ def _maybe_spawn_steer_reconcile(row: TrackedRun) -> None:
         logger.warning("[HERMES steer对账] 终态钩子异常(不影响删行)", exc_info=True)
 
 
+def _settle(row: TrackedRun, expected_state: str, reason: str) -> None:
+    """runs 半接管业务销账(alive/108);未入账 run 安全无操作。"""
+    settle_expected(
+        tracker=_mcp.run_tracker, run_id=row.run_id,
+        expected_state=expected_state, reason=reason,
+    )
+
+
 def _build_delivery(output: str, expect_structured: bool) -> tuple[str, str | None] | None:
     """终态 output → ``(reply_text, reply_to)``。纯函数,离线可测。
 
@@ -156,6 +171,11 @@ async def resume_active_runs() -> None:
     tracker = _mcp.run_tracker
     if tracker is None:
         return
+    # alive/108:先认领“已提交但尚未登记 run_id”的崩溃窗口,再统一恢复 active_runs。
+    try:
+        await reclaim_pending_submissions()
+    except Exception:
+        logger.warning("[HERMES run-reclaim] 启动认领异常,继续既有 active_runs 恢复", exc_info=True)
     # 先扫僵尸行(龄期超 TTL 的行——网关早已遗忘那些 run,送不出去了)
     pruned = tracker.prune_zombies(_ZOMBIE_TTL_SEC)
     if pruned:
@@ -175,11 +195,13 @@ async def resume_active_runs() -> None:
     except Exception:
         logger.warning("[HERMES reply-recovery] 启动清理台账失败", exc_info=True)
     rows = tracker.list_running()
-    if not rows:
-        return
-    logger.info(f"[HERMES run-resume] 启动恢复: {len(rows)} 个在跑 run 待 reattach")
-    for row in rows:
-        spawn_bg_task(_resume_row(row))
+    if rows:
+        logger.info(f"[HERMES run-resume] 启动恢复: {len(rows)} 个在跑 run 待 reattach")
+        for row in rows:
+            spawn_bg_task(_resume_row(row))
+    # 提交 C:启动再扫 expected 已落账但未终态的 deliveries(含 active_runs 已
+    # finish 的),与正常终态共用同一对账器;observe 模式只记录不补发。
+    spawn_bg_task(reconcile_pending_deliveries(), name="delivery-reconcile-startup")
 
 
 async def _resume_row(row: TrackedRun) -> None:
@@ -236,6 +258,7 @@ async def _drop_if_stale_completed(row: TrackedRun, tracker) -> bool:
             f"[HERMES run-resume] 回复已逾送达时效({_DELIVERY_CAP_SEC}s),丢弃 "
             f"run_id={row.run_id} scope={row.scope_key} age={age}s"
         )
+        _settle(row, "expired", "delivery_cap")
         _maybe_spawn_steer_reconcile(row)
         tracker.finish(row.run_id)
         return True
@@ -300,6 +323,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
                     f"[HERMES run-resume] 回复已逾送达时效({_DELIVERY_CAP_SEC}s),丢弃 "
                     f"run_id={row.run_id} scope={row.scope_key} age={overdue_age}s"
                 )
+                _settle(row, "expired", "delivery_cap")
                 _maybe_spawn_steer_reconcile(row)
                 tracker.finish(row.run_id)
                 return
@@ -361,6 +385,15 @@ async def _resume_row_impl(row: TrackedRun) -> None:
         logger.warning(f"[HERMES run-resume] 事件流未见终态帧 run_id={row.run_id},保留行待下次启动")
         return
 
+    # expected 必须先于 tracker.finish 落账(alive/108):恢复发送同样要有交付
+    # 事实;写库失败只记告警,不阻断既有恢复发送(legacy 行为不回归)。
+    if tracker is not None:
+        try:
+            tracker.record_expected_delivery(
+                run_id=row.run_id, output=output, expect_structured=row.expect_structured
+            )
+        except Exception as exc:
+            logger.warning(f"[HERMES run-resume] expected 落账失败 run_id={row.run_id}: {exc}")
     # 前序答复回收与正常终态同步紧急禁用（alive/105 生产回归）：
     # 未按 run 边界截断转录前，恢复路径同样可能补投历史答复。
     # 极简送达。reply_to 的 m:id 在发送前按 row 中的会话归属解析，重启后也不
@@ -368,6 +401,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
     delivery = _build_delivery(output, row.expect_structured)
     if delivery is None:
         logger.info(f"[HERMES run-resume] 续跑轮静默(解析失败/决定不回) run_id={row.run_id}")
+        _settle(row, "silent", "parse_failed_or_no_reply")
         _maybe_spawn_steer_reconcile(row)
         tracker.finish(row.run_id)
         return
@@ -375,6 +409,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
     cleaned, media_urls, file_paths = extract_response_media(reply_text)
     if not cleaned and not media_urls and not file_paths:
         logger.info(f"[HERMES run-resume] 续跑轮回复为空 run_id={row.run_id}")
+        _settle(row, "silent", "empty_content")
         _maybe_spawn_steer_reconcile(row)
         tracker.finish(row.run_id)
         return
@@ -386,13 +421,20 @@ async def _resume_row_impl(row: TrackedRun) -> None:
         reply_to=reply_to,
         log_tag="HERMES run-resume",
     )
+    delivery_ctx = prepare_outbound_delivery(
+        tracker=tracker, run_id=row.run_id, cleaned_text=cleaned,
+        media_urls=media_urls, file_paths=file_paths, reply_to=reply_to,
+        reply_qq_message_id=resolved_reply.qq_message_id if resolved_reply else None,
+        reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
+    )
     sent = await send_text_with_media(
         bot=bot, target=entry.target, text=cleaned, media_urls=media_urls,
         reply_qq_message_id=resolved_reply.qq_message_id if resolved_reply else None,
         reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
         adapter_name=row.adapter,
+        **({"delivery": delivery_ctx} if delivery_ctx is not None else {}),
     )
-    await send_local_files(bot=bot, target=entry.target, file_paths=file_paths, adapter_name=row.adapter)
+    await send_local_files(bot=bot, target=entry.target, file_paths=file_paths, adapter_name=row.adapter, **({"delivery": delivery_ctx} if delivery_ctx is not None else {}))
     if sent and _mcp.message_buffer is not None:
         # 补发与正常 turn 一样留下可寻址的 bot 行；平台回执缺失时只把
         # qq_message_id 留 NULL，不把“无 ID”误当发送失败。
@@ -425,6 +467,23 @@ async def _resume_row_impl(row: TrackedRun) -> None:
         f"sent={sent} text_len={len(cleaned)} media={len(media_urls)} files={len(file_paths)}"
         "(turn 生命周期特性:pin/exit/防抖 跳过)"
     )
+    if delivery_ctx is not None:
+        # history 组件:legacy 已写库回执,缺写库路径记免发;之后统一对账兜底。
+        try:
+            if sent and _mcp.message_buffer is not None:
+                tracker.mark_component_sent(
+                    run_id=row.run_id, component_id="history",
+                    msg_ids=list(getattr(sent, "msg_ids", []) or []),
+                )
+            elif sent:
+                tracker.mark_component_not_required(run_id=row.run_id, component_id="history")
+        except Exception as exc:
+            logger.warning(f"[runs-resume] history 回执失败 run={row.run_id}: {exc}")
+        # 恢复路径与正常路由共用同一个对账器;未启用 repair 时只记录事实。
+        try:
+            await reconcile_run(row.run_id, reason="resume")
+        except Exception as exc:
+            logger.warning(f"[runs-resume] reconcile 异常 run={row.run_id}: {exc}")
     _maybe_spawn_steer_reconcile(row)
     tracker.finish(row.run_id)
 

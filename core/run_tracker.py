@@ -11,8 +11,11 @@ seq<=last_seq 的旁白视为已转发跳过;终态 output 送达后删行,天�
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 import time
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,6 +64,83 @@ CREATE TABLE IF NOT EXISTS recovered_reply_ledger (
 )
 """
 
+# 本部署补丁(alive/108 半接管提交 A):提交意图与交付事实台账。
+# run_submissions 在第一次 POST 前落库,保存原始请求体(zlib 压缩)与同键重放
+# 所需的全部身份;崩溃后用原 key＋原请求体 reclaim 原 run,不换 key 新跑。
+# run_deliveries 以 run_id 为主身份记录终态 output;active_runs 行会被 finish
+# 删除,交付事实独立存这里,正常路与恢复路共用。
+# delivery_components 本批只建表(主消息/文件/历史组件),认领与回执在后续批接。
+_DELIVERY_LEDGER_SCHEMA = """
+CREATE TABLE IF NOT EXISTS run_submissions (
+    submission_seq  INTEGER PRIMARY KEY AUTOINCREMENT,
+    idempotency_key TEXT NOT NULL UNIQUE,
+    request_gzip    BLOB NOT NULL,
+    request_sha256  TEXT NOT NULL,
+    target_fingerprint TEXT NOT NULL,
+    scope_key       TEXT NOT NULL,
+    session_key     TEXT NOT NULL,
+    mode            TEXT NOT NULL,
+    expect_structured INTEGER NOT NULL DEFAULT 0,
+    bot_self_id     TEXT NOT NULL,
+    run_id          TEXT UNIQUE,
+    state           TEXT NOT NULL DEFAULT 'submitted',
+    created_at      REAL NOT NULL,
+    updated_at      REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS run_deliveries (
+    run_id          TEXT PRIMARY KEY,
+    submission_seq  INTEGER UNIQUE,
+    idempotency_key TEXT UNIQUE,
+    scope_key       TEXT NOT NULL,
+    session_key     TEXT NOT NULL,
+    output          TEXT NOT NULL,
+    expect_structured INTEGER NOT NULL DEFAULT 0,
+    expected_state  TEXT NOT NULL DEFAULT 'waiting',
+    plan_json       TEXT,
+    created_at      REAL NOT NULL,
+    completed_at    REAL,
+    updated_at      REAL NOT NULL,
+    cancel_reason   TEXT,
+    adapter         TEXT,
+    is_private      INTEGER,
+    user_id         TEXT,
+    group_id        TEXT
+);
+CREATE TABLE IF NOT EXISTS delivery_components (
+    run_id          TEXT NOT NULL,
+    component_id    TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    payload_sha256  TEXT,
+    state           TEXT NOT NULL DEFAULT 'pending',
+    claim_owner     TEXT,
+    claim_until     REAL,
+    attempt_count   INTEGER NOT NULL DEFAULT 0,
+    msg_ids_json    TEXT,
+    last_error      TEXT,
+    created_at      REAL NOT NULL,
+    updated_at      REAL NOT NULL,
+    PRIMARY KEY (run_id, component_id)
+);
+CREATE TABLE IF NOT EXISTS delivery_generation_fences (
+    scope_key       TEXT PRIMARY KEY,
+    fence_seq       INTEGER NOT NULL,
+    updated_at      REAL NOT NULL
+)
+"""
+
+_ACTIVE_RUN_UPSERT_SQL = (
+    "INSERT INTO active_runs "
+    "(run_id, scope_key, adapter, is_private, user_id, group_id, bot_self_id,"
+    " session_key, mode, expect_structured, last_seq, started_at)"
+    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+    " ON CONFLICT(run_id) DO UPDATE SET"
+    " scope_key=excluded.scope_key, adapter=excluded.adapter,"
+    " is_private=excluded.is_private, user_id=excluded.user_id,"
+    " group_id=excluded.group_id, bot_self_id=excluded.bot_self_id,"
+    " session_key=excluded.session_key, mode=excluded.mode,"
+    " expect_structured=excluded.expect_structured"
+)
+
 
 @dataclass
 class TrackedRun:
@@ -98,6 +178,18 @@ class RunTracker:
         self._conn.execute(_SCHEMA)
         self._conn.execute(_STEER_LEDGER_SCHEMA)
         self._conn.execute(_RECOVERED_REPLY_LEDGER_SCHEMA)
+        self._conn.executescript(_DELIVERY_LEDGER_SCHEMA)
+        # 提交 C 补投递目标列(恢复发送需要 adapter/私群/收发双方,active_runs
+        # 行 finish 后仍要能解析 target);旧库逐列补齐,幂等。
+        existing = {
+            r[1] for r in self._conn.execute("PRAGMA table_info(run_deliveries)").fetchall()
+        }
+        for col, ddl in (
+            ("adapter", "TEXT"), ("is_private", "INTEGER"),
+            ("user_id", "TEXT"), ("group_id", "TEXT"),
+        ):
+            if col not in existing:
+                self._conn.execute(f"ALTER TABLE run_deliveries ADD COLUMN {col} {ddl}")
         self._conn.commit()
 
     def upsert(
@@ -119,16 +211,7 @@ class RunTracker:
         # 清零(事件流水位丢失,reattach 后旁白从头发一遍)。契约仍是「一 run 一
         # upsert」,此处加固到误复用也不丢水位。
         self._conn.execute(
-            "INSERT INTO active_runs "
-            "(run_id, scope_key, adapter, is_private, user_id, group_id, bot_self_id,"
-            " session_key, mode, expect_structured, last_seq, started_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
-            " ON CONFLICT(run_id) DO UPDATE SET"
-            " scope_key=excluded.scope_key, adapter=excluded.adapter,"
-            " is_private=excluded.is_private, user_id=excluded.user_id,"
-            " group_id=excluded.group_id, bot_self_id=excluded.bot_self_id,"
-            " session_key=excluded.session_key, mode=excluded.mode,"
-            " expect_structured=excluded.expect_structured",
+            _ACTIVE_RUN_UPSERT_SQL,
             (
                 run_id, scope_key, adapter, int(is_private), user_id, group_id,
                 bot_self_id, session_key, mode, int(expect_structured), -1, time.time(),
@@ -346,6 +429,467 @@ class RunTracker:
         )
         self._conn.commit()
         return cur.rowcount
+
+    # --- 半接管提交与交付台账(本部署补丁, alive/108 提交 A)。 ---
+
+    def record_submission(
+        self,
+        *,
+        idempotency_key: str,
+        request_body: dict,
+        target_fingerprint: str,
+        scope_key: str,
+        session_key: str,
+        mode: str,
+        expect_structured: bool,
+        bot_self_id: str,
+    ) -> int:
+        """第一次 POST 前持久化提交意图,返回 submission_seq。
+
+        原始请求体规范化 JSON 后压缩落库——同键重放要求请求指纹一致,重启后
+        不能用新 prompt 重建字段冒充同一提交。同键同体重记入幂等(429 重试与
+        提交段网络重试会复用同 key);同键不同体说明调用方身份串了,失败关闭。
+        request_gzip 可能含图片 data URL,任何日志都不得 dump 该列。
+        """
+        canonical = json.dumps(
+            request_body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        digest = hashlib.sha256(canonical).hexdigest()
+        row = self._conn.execute(
+            "SELECT submission_seq, request_sha256 FROM run_submissions WHERE idempotency_key=?",
+            (idempotency_key,),
+        ).fetchone()
+        if row is not None:
+            if row[1] != digest:
+                raise ValueError("idempotency_key reused with a different request body")
+            return int(row[0])
+        now = time.time()
+        cur = self._conn.execute(
+            "INSERT INTO run_submissions "
+            "(idempotency_key, request_gzip, request_sha256, target_fingerprint,"
+            " scope_key, session_key, mode, expect_structured, bot_self_id,"
+            " state, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,'submitted',?,?)",
+            (
+                idempotency_key, zlib.compress(canonical), digest, target_fingerprint,
+                scope_key, session_key, mode, int(expect_structured), bot_self_id, now, now,
+            ),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def get_submission(self, idempotency_key: str) -> dict | None:
+        """按 key 取提交记录(含解压还原的原始请求体),不存在返回 None。"""
+        r = self._conn.execute(
+            "SELECT submission_seq, idempotency_key, request_gzip, request_sha256,"
+            " target_fingerprint, scope_key, session_key, mode, expect_structured,"
+            " bot_self_id, run_id, state, created_at, updated_at"
+            " FROM run_submissions WHERE idempotency_key=?",
+            (idempotency_key,),
+        ).fetchone()
+        if r is None:
+            return None
+        return {
+            "submission_seq": r[0],
+            "idempotency_key": r[1],
+            "request_body": json.loads(zlib.decompress(r[2]).decode("utf-8")),
+            "request_sha256": r[3],
+            "target_fingerprint": r[4],
+            "scope_key": r[5],
+            "session_key": r[6],
+            "mode": r[7],
+            "expect_structured": bool(r[8]),
+            "bot_self_id": r[9],
+            "run_id": r[10],
+            "state": r[11],
+            "created_at": r[12],
+            "updated_at": r[13],
+        }
+
+    def list_unbound_submissions(self) -> list[dict]:
+        """启动 reclaim 候选:已持久化、尚未取得 run_id 且未被 clear 取消。"""
+        rows = self._conn.execute(
+            "SELECT idempotency_key FROM run_submissions"
+            " WHERE run_id IS NULL AND state='submitted' ORDER BY submission_seq"
+        ).fetchall()
+        return [self.get_submission(r[0]) for r in rows]
+
+    def mark_submission_state(self, idempotency_key: str, state: str) -> None:
+        """记录 reclaim 结果(needs_manual/cancelled 等),不改原 key 与原请求体。"""
+        self._conn.execute(
+            "UPDATE run_submissions SET state=?, updated_at=? WHERE idempotency_key=?",
+            (state, time.time(), idempotency_key),
+        )
+        self._conn.commit()
+
+    def bind_submission_and_register(
+        self,
+        *,
+        idempotency_key: str,
+        run_id: str,
+        scope_key: str,
+        adapter: str,
+        is_private: bool,
+        user_id: str,
+        group_id: str | None,
+        bot_self_id: str,
+        session_key: str,
+        mode: str,
+        expect_structured: bool,
+    ) -> None:
+        """取得 run_id 后,同一事务完成 submission 绑定＋active_runs 登记。
+
+        两步必须原子:只绑定不登记,重启后 active_runs 恢复链看不到该 run;
+        只登记不绑定,崩溃 reclaim 拿不到 run 身份。无 submission 行时失败关闭,
+        不允许凭空登记一个无法 reclaim 的 run。
+        """
+        with self._conn:
+            cur = self._conn.execute(
+                "UPDATE run_submissions SET run_id=?, state='bound', updated_at=?"
+                " WHERE idempotency_key=?",
+                (run_id, time.time(), idempotency_key),
+            )
+            if cur.rowcount != 1:
+                raise KeyError(f"no submission for idempotency_key={idempotency_key!r}")
+            self._conn.execute(
+                _ACTIVE_RUN_UPSERT_SQL,
+                (
+                    run_id, scope_key, adapter, int(is_private), user_id, group_id,
+                    bot_self_id, session_key, mode, int(expect_structured), -1, time.time(),
+                ),
+            )
+
+    def record_expected_delivery(
+        self, *, run_id: str, output: str, expect_structured: bool
+    ) -> None:
+        """终态 output 落交付台账;必须先于 finish 删 active_runs 调用。
+
+        无绑定 submission 的 run 不在半接管保证范围(未入账即无法 reclaim),
+        失败关闭由调用方转 detached 保留恢复依据,不伪造交付身份。
+        """
+        sub = self._conn.execute(
+            "SELECT submission_seq, idempotency_key, scope_key, session_key"
+            " FROM run_submissions WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        if sub is None:
+            raise KeyError(f"no bound submission for run_id={run_id!r}")
+        now = time.time()
+        # 投递目标从 active_runs 复制(finish 删行后恢复发送仍可解析 target)。
+        target = self._conn.execute(
+            "SELECT adapter, is_private, user_id, group_id FROM active_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        adapter, is_private, user_id, group_id = target if target else (None, None, None, None)
+        self._conn.execute(
+            "INSERT INTO run_deliveries "
+            "(run_id, submission_seq, idempotency_key, scope_key, session_key,"
+            " output, expect_structured, expected_state, created_at, completed_at, updated_at,"
+            " adapter, is_private, user_id, group_id)"
+            " VALUES (?,?,?,?,?,?,?,'ready',?,?,?,?,?,?,?)"
+            " ON CONFLICT(run_id) DO UPDATE SET"
+            " output=excluded.output, expect_structured=excluded.expect_structured,"
+            " expected_state='ready', updated_at=excluded.updated_at,"
+            " adapter=COALESCE(run_deliveries.adapter, excluded.adapter),"
+            " is_private=COALESCE(run_deliveries.is_private, excluded.is_private),"
+            " user_id=COALESCE(run_deliveries.user_id, excluded.user_id),"
+            " group_id=COALESCE(run_deliveries.group_id, excluded.group_id)",
+            (run_id, sub[0], sub[1], sub[2], sub[3], output, int(expect_structured), now, now, now,
+             adapter, is_private, user_id, group_id),
+        )
+        self._conn.commit()
+
+    def fence_scope_generation(self, scope_key: str, *, reason: str = "generation_cleared") -> dict:
+        """clear/T1 换代:以提交序水位取消旧代,并持久化出站栅栏。
+
+        水位取本 scope 已存在的最大 submission_seq;之后的新 run 序号更大,
+        不受旧 fence 影响。相比直接比较 session_key,上游压缩轮换 key 不会被
+        误判成 clear。已 sent 组件与历史事实保留,只取消未发送部分。
+        """
+        now = time.time()
+        with self._conn:
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(submission_seq), 0) FROM run_submissions WHERE scope_key=?",
+                (scope_key,),
+            ).fetchone()
+            previous = self._conn.execute(
+                "SELECT fence_seq FROM delivery_generation_fences WHERE scope_key=?",
+                (scope_key,),
+            ).fetchone()
+            fence_seq = max(int(row[0] or 0), int(previous[0]) if previous else 0)
+            self._conn.execute(
+                "INSERT INTO delivery_generation_fences(scope_key, fence_seq, updated_at)"
+                " VALUES(?,?,?) ON CONFLICT(scope_key) DO UPDATE SET"
+                " fence_seq=excluded.fence_seq, updated_at=excluded.updated_at",
+                (scope_key, fence_seq, now),
+            )
+            old_deliveries = (
+                "SELECT run_id FROM run_deliveries WHERE scope_key=?"
+                " AND submission_seq<=? AND expected_state='ready'"
+            )
+            component_cur = self._conn.execute(
+                "UPDATE delivery_components SET state='cancelled', claim_owner=NULL,"
+                " claim_until=NULL, last_error=?, updated_at=?"
+                " WHERE state IN ('pending','claimed','failed') AND run_id IN (" + old_deliveries + ")",
+                (reason, now, scope_key, fence_seq),
+            )
+            delivery_cur = self._conn.execute(
+                "UPDATE run_deliveries SET expected_state='cancelled', cancel_reason=?, updated_at=?"
+                " WHERE scope_key=? AND submission_seq<=? AND expected_state='ready'",
+                (reason, now, scope_key, fence_seq),
+            )
+            submission_cur = self._conn.execute(
+                "UPDATE run_submissions SET state='cancelled', updated_at=?"
+                " WHERE scope_key=? AND submission_seq<=? AND run_id IS NULL AND state='submitted'",
+                (now, scope_key, fence_seq),
+            )
+        return {
+            "fence_seq": fence_seq,
+            "deliveries": int(delivery_cur.rowcount or 0),
+            "components": int(component_cur.rowcount or 0),
+            "submissions": int(submission_cur.rowcount or 0),
+        }
+
+    def is_delivery_current(self, run_id: str) -> bool:
+        """出站前再核代际:run 的提交序必须高于该 scope 的 clear 水位。"""
+        row = self._conn.execute(
+            "SELECT d.scope_key, d.submission_seq, f.fence_seq"
+            " FROM run_deliveries d LEFT JOIN delivery_generation_fences f"
+            " ON f.scope_key=d.scope_key WHERE d.run_id=?",
+            (run_id,),
+        ).fetchone()
+        if row is None or row[1] is None:
+            return False
+        return row[2] is None or int(row[1]) > int(row[2])
+
+    def get_delivery(self, run_id: str) -> dict | None:
+        """按 run_id 取交付台账行,不存在返回 None。"""
+        r = self._conn.execute(
+            "SELECT run_id, submission_seq, idempotency_key, scope_key, session_key,"
+            " output, expect_structured, expected_state, plan_json, created_at,"
+            " completed_at, updated_at, cancel_reason, adapter, is_private, user_id, group_id"
+            " FROM run_deliveries WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        if r is None:
+            return None
+        return {
+            "run_id": r[0],
+            "submission_seq": r[1],
+            "idempotency_key": r[2],
+            "scope_key": r[3],
+            "session_key": r[4],
+            "output": r[5],
+            "expect_structured": bool(r[6]),
+            "expected_state": r[7],
+            "plan_json": r[8],
+            "created_at": r[9],
+            "completed_at": r[10],
+            "updated_at": r[11],
+            "cancel_reason": r[12],
+            "adapter": r[13],
+            "is_private": bool(r[14]) if r[14] is not None else None,
+            "user_id": r[15],
+            "group_id": r[16],
+        }
+
+    # --- 出站组件计划、认领与回执(本部署补丁, alive/108 提交 B)。 ---
+
+    def upsert_delivery_plan(
+        self, *, run_id: str, plan: dict, components: list[dict]
+    ) -> None:
+        """首次形成的投递计划与组件清单落库。
+
+        计划一旦形成不得因后续配置变化悄悄变形:同 run 重复 upsert 只接受
+        逐字相同的计划;组件用 INSERT OR IGNORE,已 sent 的组件不被重置。
+        """
+        canonical = json.dumps(plan, sort_keys=True, ensure_ascii=False)
+        row = self._conn.execute(
+            "SELECT plan_json FROM run_deliveries WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"no delivery for run_id={run_id!r}")
+        if row[0] is not None and row[0] != canonical:
+            raise ValueError(f"delivery plan changed for run_id={run_id!r}")
+        now = time.time()
+        with self._conn:
+            self._conn.execute(
+                "UPDATE run_deliveries SET plan_json=?, updated_at=? WHERE run_id=?",
+                (canonical, now, run_id),
+            )
+            for comp in components:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO delivery_components "
+                    "(run_id, component_id, kind, payload_sha256, state, created_at, updated_at)"
+                    " VALUES (?,?,?,?,'pending',?,?)",
+                    (
+                        run_id, comp["component_id"], comp["kind"],
+                        comp.get("payload_sha256"), now, now,
+                    ),
+                )
+
+    def claim_component(
+        self, *, run_id: str, component_id: str, owner: str, lease_sec: float = 30.0,
+        unknown_backoff_sec: float | None = None, unknown_max_attempts: int = 0,
+    ) -> str:
+        """原子认领一个出站组件,返回 send／sent／busy。
+
+        send=取得认领可以调平台;sent=已完成(含 cancelled/not_required 的
+        业务免发),调用方直接读既有事实,绝不再调平台;busy=他人有效租约或
+        unknown(平台结果不明,不盲补)。failed 是平台调用前的本地失败,允许
+        修复后重试。BEGIN IMMEDIATE 保证跨进程只有一个认领者。
+        unknown_backoff_sec 与 unknown_max_attempts 只由 reconcile 传入:
+        结果不明超过退避且认领次数未耗尽时才允许一次有限重试。
+        """
+        now = time.time()
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._conn.execute(
+                "SELECT state, claim_owner, claim_until, attempt_count, updated_at"
+                " FROM delivery_components WHERE run_id=? AND component_id=?",
+                (run_id, component_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"no component {component_id!r} for run_id={run_id!r}")
+            state, claim_owner, claim_until, attempt_count, updated_at = row
+            outcome = "send"
+            if state in ("sent", "cancelled", "not_required"):
+                outcome = "sent"
+            elif state == "unknown":
+                retryable = (
+                    unknown_backoff_sec is not None
+                    and attempt_count < unknown_max_attempts
+                    and now - (updated_at or 0.0) >= unknown_backoff_sec
+                )
+                outcome = "send" if retryable else "busy"
+            elif (
+                state == "claimed" and claim_owner != owner
+                and claim_until is not None and claim_until > now
+            ):
+                outcome = "busy"
+            if outcome == "send":
+                self._conn.execute(
+                    "UPDATE delivery_components SET state='claimed', claim_owner=?,"
+                    " claim_until=?, attempt_count=attempt_count+1, updated_at=?"
+                    " WHERE run_id=? AND component_id=?",
+                    (owner, now + max(0.0, lease_sec), now, run_id, component_id),
+                )
+            self._conn.commit()
+            return outcome
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    def get_component(self, *, run_id: str, component_id: str) -> dict | None:
+        """按主键取组件事实(含 msg_ids 解析),不存在返回 None。"""
+        r = self._conn.execute(
+            "SELECT kind, payload_sha256, state, claim_owner, claim_until,"
+            " attempt_count, msg_ids_json, last_error, created_at, updated_at"
+            " FROM delivery_components WHERE run_id=? AND component_id=?",
+            (run_id, component_id),
+        ).fetchone()
+        if r is None:
+            return None
+        return {
+            "run_id": run_id,
+            "component_id": component_id,
+            "kind": r[0],
+            "payload_sha256": r[1],
+            "state": r[2],
+            "claim_owner": r[3],
+            "claim_until": r[4],
+            "attempt_count": r[5],
+            "msg_ids": json.loads(r[6]) if r[6] else [],
+            "last_error": r[7],
+            "created_at": r[8],
+            "updated_at": r[9],
+        }
+
+    def _mark_component(
+        self, run_id: str, component_id: str, state: str, *, msg_ids=None, error=None
+    ) -> None:
+        self._conn.execute(
+            "UPDATE delivery_components SET state=?, msg_ids_json=COALESCE(?, msg_ids_json),"
+            " last_error=?, claim_owner=NULL, claim_until=NULL, updated_at=?"
+            " WHERE run_id=? AND component_id=?",
+            (
+                state,
+                json.dumps(list(msg_ids)) if msg_ids is not None else None,
+                (str(error)[:300] if error is not None else None),
+                time.time(), run_id, component_id,
+            ),
+        )
+        self._conn.commit()
+
+    def mark_component_sent(self, *, run_id: str, component_id: str, msg_ids: list) -> None:
+        """平台成功后立即写回执;发送成功但无 msg_id 同样记 sent(空列表)。"""
+        self._mark_component(run_id, component_id, "sent", msg_ids=msg_ids)
+
+    def mark_component_unknown(self, *, run_id: str, component_id: str, error) -> None:
+        """平台调用已发起但结果不明(异常/超时/崩溃);不得立即盲补。"""
+        self._mark_component(run_id, component_id, "unknown", error=error)
+
+    def mark_component_failed(self, *, run_id: str, component_id: str, error) -> None:
+        """平台调用前的本地失败(白名单/校验),允许修复后重试。"""
+        self._mark_component(run_id, component_id, "failed", error=error)
+
+    def set_expected_state(
+        self, run_id: str, expected_state: str, *, cancel_reason: str | None = None
+    ) -> bool:
+        """业务销账:静默／抑制／取消／超期。无台账行返回 False(不伪造)。"""
+        cur = self._conn.execute(
+            "UPDATE run_deliveries SET expected_state=?, cancel_reason=?, updated_at=?"
+            " WHERE run_id=?",
+            (expected_state, cancel_reason, time.time(), run_id),
+        )
+        self._conn.commit()
+        return cur.rowcount == 1
+
+    # --- 统一 reconcile 查询与终态(本部署补丁, alive/108 提交 C)。 ---
+
+    def list_components(self, run_id: str) -> list[dict]:
+        """某 run 的全部组件,primary 在前,其余按 component_id 排序(文件有序)。"""
+        rows = self._conn.execute(
+            "SELECT component_id FROM delivery_components WHERE run_id=?"
+            " ORDER BY CASE component_id WHEN 'primary' THEN 0 ELSE 1 END, component_id",
+            (run_id,),
+        ).fetchall()
+        return [self.get_component(run_id=run_id, component_id=r[0]) for r in rows]
+
+    def list_ready_deliveries(self, scope_key: str | None = None) -> list[dict]:
+        """expected 已落账但尚未终态的 deliveries(待投递/待对账),按提交序。"""
+        sql = (
+            "SELECT run_id FROM run_deliveries WHERE expected_state='ready'"
+        )
+        params: tuple = ()
+        if scope_key is not None:
+            sql += " AND scope_key=?"
+            params = (scope_key,)
+        sql += " ORDER BY submission_seq"
+        return [self.get_delivery(r[0]) for r in self._conn.execute(sql, params).fetchall()]
+
+    def list_predecessors(self, *, scope_key: str, submission_seq: int) -> list[dict]:
+        """同 scope、提交序更早且仍未终态的 deliveries(顺序门前序)。"""
+        rows = self._conn.execute(
+            "SELECT run_id FROM run_deliveries"
+            " WHERE scope_key=? AND submission_seq<? AND expected_state='ready'"
+            " ORDER BY submission_seq",
+            (scope_key, submission_seq),
+        ).fetchall()
+        return [self.get_delivery(r[0]) for r in rows]
+
+    def mark_delivery_terminal(self, run_id: str) -> None:
+        """所有必需组件终态后置 terminal;只前进,不回写其他状态。"""
+        self._conn.execute(
+            "UPDATE run_deliveries SET expected_state='terminal', updated_at=?"
+            " WHERE run_id=? AND expected_state='ready'",
+            (time.time(), run_id),
+        )
+        self._conn.commit()
+
+    def mark_component_not_required(self, *, run_id: str, component_id: str) -> None:
+        """组件业务上不再需要(如历史缓冲不可用),按免发终态处理。"""
+        self._mark_component(run_id, component_id, "not_required")
 
     def close(self) -> None:
         self._conn.close()
