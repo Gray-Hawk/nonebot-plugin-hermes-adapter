@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS run_submissions (
     expect_structured INTEGER NOT NULL DEFAULT 0,
     bot_self_id     TEXT NOT NULL,
     delivery_generation INTEGER,
+    source_event_id TEXT,
     run_id          TEXT UNIQUE,
     state           TEXT NOT NULL DEFAULT 'submitted',
     created_at      REAL NOT NULL,
@@ -110,7 +111,8 @@ CREATE TABLE IF NOT EXISTS run_deliveries (
     adapter         TEXT,
     is_private      INTEGER,
     user_id         TEXT,
-    group_id        TEXT
+    group_id        TEXT,
+    source_event_id TEXT
 );
 CREATE TABLE IF NOT EXISTS delivery_components (
     run_id          TEXT NOT NULL,
@@ -206,6 +208,19 @@ class RunTracker:
             existing = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             if col not in existing:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER")
+        # 后台汇报事件号只作显式跨层身份；普通消息保持 NULL。
+        for table in ("run_submissions", "run_deliveries"):
+            existing = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            if "source_event_id" not in existing:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN source_event_id TEXT")
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_run_submissions_source_event"
+            " ON run_submissions(source_event_id, submission_seq)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_run_deliveries_source_event"
+            " ON run_deliveries(source_event_id)"
+        )
         self._conn.commit()
 
     def upsert(
@@ -460,6 +475,7 @@ class RunTracker:
         expect_structured: bool,
         bot_self_id: str,
         delivery_generation: int | None = None,
+        source_event_id: str | None = None,
     ) -> int:
         """第一次 POST 前原子核验入场代际并持久化提交意图。
 
@@ -500,12 +516,12 @@ class RunTracker:
                 "INSERT INTO run_submissions "
                 "(idempotency_key, request_gzip, request_sha256, target_fingerprint,"
                 " scope_key, session_key, mode, expect_structured, bot_self_id,"
-                " delivery_generation, state, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,'submitted',?,?)",
+                " delivery_generation, source_event_id, state, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,'submitted',?,?)",
                 (
                     idempotency_key, zlib.compress(canonical), digest, target_fingerprint,
                     scope_key, session_key, mode, int(expect_structured), bot_self_id,
-                    delivery_generation, now, now,
+                    delivery_generation, source_event_id, now, now,
                 ),
             )
             self._conn.commit()
@@ -519,7 +535,8 @@ class RunTracker:
         r = self._conn.execute(
             "SELECT submission_seq, idempotency_key, request_gzip, request_sha256,"
             " target_fingerprint, scope_key, session_key, mode, expect_structured,"
-            " bot_self_id, run_id, state, created_at, updated_at, delivery_generation"
+            " bot_self_id, run_id, state, created_at, updated_at, delivery_generation,"
+            " source_event_id"
             " FROM run_submissions WHERE idempotency_key=?",
             (idempotency_key,),
         ).fetchone()
@@ -541,6 +558,7 @@ class RunTracker:
             "created_at": r[12],
             "updated_at": r[13],
             "delivery_generation": r[14],
+            "source_event_id": r[15],
         }
 
     def list_unbound_submissions(self) -> list[dict]:
@@ -605,7 +623,7 @@ class RunTracker:
         失败关闭由调用方转 detached 保留恢复依据,不伪造交付身份。
         """
         sub = self._conn.execute(
-            "SELECT submission_seq, idempotency_key, scope_key, session_key"
+            "SELECT submission_seq, idempotency_key, scope_key, session_key, source_event_id"
             " FROM run_submissions WHERE run_id=?",
             (run_id,),
         ).fetchone()
@@ -622,17 +640,18 @@ class RunTracker:
             "INSERT INTO run_deliveries "
             "(run_id, submission_seq, idempotency_key, scope_key, session_key,"
             " output, expect_structured, expected_state, created_at, completed_at, updated_at,"
-            " adapter, is_private, user_id, group_id)"
-            " VALUES (?,?,?,?,?,?,?,'ready',?,?,?,?,?,?,?)"
+            " adapter, is_private, user_id, group_id, source_event_id)"
+            " VALUES (?,?,?,?,?,?,?,'ready',?,?,?,?,?,?,?,?)"
             " ON CONFLICT(run_id) DO UPDATE SET"
             " output=excluded.output, expect_structured=excluded.expect_structured,"
             " expected_state='ready', updated_at=excluded.updated_at,"
             " adapter=COALESCE(run_deliveries.adapter, excluded.adapter),"
             " is_private=COALESCE(run_deliveries.is_private, excluded.is_private),"
             " user_id=COALESCE(run_deliveries.user_id, excluded.user_id),"
-            " group_id=COALESCE(run_deliveries.group_id, excluded.group_id)",
+            " group_id=COALESCE(run_deliveries.group_id, excluded.group_id),"
+            " source_event_id=COALESCE(run_deliveries.source_event_id, excluded.source_event_id)",
             (run_id, sub[0], sub[1], sub[2], sub[3], output, int(expect_structured), now, now, now,
-             adapter, is_private, user_id, group_id),
+             adapter, is_private, user_id, group_id, sub[4]),
         )
         self._conn.commit()
 
@@ -716,8 +735,8 @@ class RunTracker:
         r = self._conn.execute(
             "SELECT run_id, submission_seq, idempotency_key, scope_key, session_key,"
             " output, expect_structured, expected_state, plan_json, created_at,"
-            " completed_at, updated_at, cancel_reason, adapter, is_private, user_id, group_id"
-            " FROM run_deliveries WHERE run_id=?",
+            " completed_at, updated_at, cancel_reason, adapter, is_private, user_id, group_id,"
+            " source_event_id FROM run_deliveries WHERE run_id=?",
             (run_id,),
         ).fetchone()
         if r is None:
@@ -740,7 +759,24 @@ class RunTracker:
             "is_private": bool(r[14]) if r[14] is not None else None,
             "user_id": r[15],
             "group_id": r[16],
+            "source_event_id": r[17],
         }
+
+    def get_latest_submission_by_source_event(self, source_event_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT idempotency_key FROM run_submissions WHERE source_event_id=?"
+            " ORDER BY submission_seq DESC LIMIT 1",
+            (source_event_id,),
+        ).fetchone()
+        return self.get_submission(row[0]) if row is not None else None
+
+    def get_latest_delivery_by_source_event(self, source_event_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT run_id FROM run_deliveries WHERE source_event_id=?"
+            " ORDER BY submission_seq DESC LIMIT 1",
+            (source_event_id,),
+        ).fetchone()
+        return self.get_delivery(row[0]) if row is not None else None
 
     # --- 出站组件计划、认领与回执(本部署补丁, alive/108 提交 B)。 ---
 

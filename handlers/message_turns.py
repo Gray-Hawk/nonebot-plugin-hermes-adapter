@@ -27,6 +27,10 @@ from ..core.approvals import admin_user_ids
 from ..core.group_profile import build_group_profile_block
 from ..core import identity
 from ..config import resolve_custom_dir
+from ..core.companion_runtime import (
+    deliver_companion_run_output,
+    prepare_companion_run,
+)
 from ..core.hermes_client import (
     ChatResult,
     extract_response_media,
@@ -478,11 +482,23 @@ async def _run_passive_turn(
         user_id=user_id,
         group_id=group_id,
     )
+    if not await prepare_companion_run(
+        session_id=session_key,
+        bot=bot,
+        target=target,
+        adapter_name=adapter_name,
+        user_id=user_id,
+        group_id=group_id,
+        is_private=is_private,
+    ):
+        logger.warning("[HERMES passive] companion 旧事件未恢复，本轮不启动新 run")
+        return None
     delivery_generation = (
         current_buffered.delivery_generation
         if current_buffered is not None and current_buffered.delivery_generation is not None
         else _current_delivery_generation(adapter_name, is_private, user_id, group_id)
     )
+    source_event_id = current_buffered.source_event_id if current_buffered is not None else None
     hermes_target = resolve_target(adapter_name, is_private, group_id)
 
     # 群聊 + 默认配置(active_session=false)+ perception_enabled:补回 0.1.6
@@ -623,6 +639,7 @@ async def _run_passive_turn(
         image_urls=[],
         session_key=session_key,
         **({"delivery_generation": delivery_generation} if delivery_generation is not None else {}),
+        **({"source_event_id": source_event_id} if source_event_id is not None else {}),
         user_id=user_id,
         group_id=group_id,
         adapter_name=adapter_name,
@@ -712,6 +729,17 @@ async def _run_passive_turn(
             f"[HERMES passive] runs 订阅断开,等待原 run 恢复 "
             f"(group={group_id} is_private={is_private})"
         )
+        return result
+
+    if await deliver_companion_run_output(
+        session_id=session_key,
+        bot=bot,
+        target=target,
+        adapter_name=adapter_name,
+        user_id=user_id,
+        group_id=group_id,
+        is_private=is_private,
+    ):
         return result
 
     # 阶段3b:turn 被主动终止,硬静默(同 reactive 分支注释)。
@@ -1106,11 +1134,23 @@ async def _run_reactive_turn(
         user_id=user_id,
         group_id=group_id,
     )
+    if not await prepare_companion_run(
+        session_id=session_key,
+        bot=bot,
+        target=target,
+        adapter_name=adapter_name,
+        user_id=user_id,
+        group_id=group_id,
+        is_private=False,
+    ):
+        logger.warning(f"[HERMES reactive] companion 旧事件未恢复，本轮不启动新 run (group={group_id})")
+        return None
     delivery_generation = (
         current_buffered.delivery_generation
         if current_buffered is not None and current_buffered.delivery_generation is not None
         else _current_delivery_generation(adapter_name, False, user_id, group_id)
     )
+    source_event_id = current_buffered.source_event_id if current_buffered is not None else None
     hermes_target = resolve_target(adapter_name, False, group_id)
     # 注:user_content_override 已携带 user message 的全部内容(text + 多模态);
     # text/image_urls 在 chat() 中会被忽略(见 hermes_client.chat 文档),此处显式传 ""
@@ -1139,6 +1179,7 @@ async def _run_reactive_turn(
         image_urls=[],
         session_key=session_key,
         **({"delivery_generation": delivery_generation} if delivery_generation is not None else {}),
+        **({"source_event_id": source_event_id} if source_event_id is not None else {}),
         user_id=user_id,
         group_id=group_id,
         adapter_name=adapter_name,
@@ -1226,6 +1267,17 @@ async def _run_reactive_turn(
         # 原 run 已登记且仍在恢复链中；当前轮不发错误兜底或破信封提醒。
         # 上方水位可推进：网关已接纳本轮内容，slot 释放后由 retry 续订原 run。
         logger.info(f"[HERMES reactive] runs 订阅断开,等待原 run 恢复 (group={group_id})")
+        return result
+
+    if await deliver_companion_run_output(
+        session_id=session_key,
+        bot=bot,
+        target=target,
+        adapter_name=adapter_name,
+        user_id=user_id,
+        group_id=group_id,
+        is_private=False,
+    ):
         return result
 
     if result.parse_failed or result.structured is None:

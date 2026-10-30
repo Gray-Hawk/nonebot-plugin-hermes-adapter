@@ -92,6 +92,9 @@ async def handle_clear(bot: Bot, event: Event, matcher: Matcher):
         if cutoff_msg_id is None:
             logger.warning(f"[HERMES] /clear 未取到命令 db id，本轮不设置前文截断 (adapter={adapter_name})")
 
+    old_session_key = session_manager.get_session_key(
+        adapter_name, target.private, user_id, group_id
+    )
     session_manager.clear_session(
         adapter_name=adapter_name,
         is_private=target.private,
@@ -99,6 +102,9 @@ async def handle_clear(bot: Bot, event: Event, matcher: Matcher):
         group_id=group_id,
         cutoff_msg_id=cutoff_msg_id,
     )
+    if _mcp.background_report_outbox is not None:
+        # 仅人工 /clear 终止旧会话汇报；T1 自动换代不经过这里，仍会续投。
+        _mcp.background_report_outbox.cancel_session(old_session_key, now=time.time())
 
     reply = alconna.UniMessage("✅ 会话已重置，开始新的对话。")
     if not target.private:

@@ -12,6 +12,11 @@ from nonebot import get_driver, logger
 
 from ..config import plugin_config
 from ..core.active_session import ActiveSessionManager
+from ..core.background_report_outbox import BackgroundReportOutbox
+from ..core.background_report_runtime import (
+    BackgroundCompletionGateway,
+    build_background_report_consumer,
+)
 from ..core.chat_config import load_chat_config
 from ..core.media_config import load_media_config
 from ..core.misc_config import load_misc_config
@@ -82,6 +87,9 @@ image_cache: ImageCache | None = None
 image_fetcher: ImageFetcher | None = None
 session_key_store: SessionKeyStore | None = None
 run_tracker: RunTracker | None = None
+background_report_outbox: BackgroundReportOutbox | None = None
+background_report_gateway: BackgroundCompletionGateway | None = None
+background_report_consumer = None
 # WindowStore 走延迟导入(在 init_runtime_state 里),这里只留槽位给 shutdown 关连接
 window_store = None
 
@@ -116,6 +124,7 @@ def init_runtime_state() -> None:
     """由 plugin __init__.py 在 startup 钩子里调用,装配全局对象。"""
     global message_buffer, active_sessions, bot_registry, inflight
     global message_store, image_cache, image_fetcher, session_key_store, run_tracker, window_store
+    global background_report_outbox, background_report_gateway, background_report_consumer
 
     # 启动捕获一次(重启生效):存储与媒体缓存的构造参数在装配期定型,不随后续重载变化。
     misc_cfg = load_misc_config()
@@ -134,6 +143,19 @@ def init_runtime_state() -> None:
     if run_tracker is None:
         # 阶段2a:在跑 run 跟踪,同样是「重启必须还在」的运行时状态,同目录分文件。
         run_tracker = RunTracker(db_path=db_path.parent / "active_runs.db")
+    if background_report_outbox is None:
+        background_report_outbox = BackgroundReportOutbox(db_path.parent / "background_reports.db")
+    if background_report_gateway is None:
+        background_report_gateway = BackgroundCompletionGateway(
+            base_url=plugin_config.hermes_api_url,
+            api_key=plugin_config.hermes_api_key,
+        )
+    if background_report_consumer is None:
+        background_report_consumer = build_background_report_consumer(
+            outbox=background_report_outbox,
+            tracker=run_tracker,
+            gateway=background_report_gateway,
+        )
     # alive/108:/clear 与 T1 自动清都经同一入口取消旧代待交付并落出站栅栏。
     session_manager.bind_run_tracker(run_tracker)
     # 挂起审批持久化(本部署补丁):与上面的运行时状态同目录分文件,装回未过期
@@ -195,6 +217,10 @@ async def stop_storage() -> None:
         message_store.close()
     if session_key_store is not None:
         session_key_store.close()
+    if background_report_gateway is not None:
+        await background_report_gateway.close()
+    if background_report_outbox is not None:
+        background_report_outbox.close()
     if run_tracker is not None:
         run_tracker.close()
     if window_store is not None:

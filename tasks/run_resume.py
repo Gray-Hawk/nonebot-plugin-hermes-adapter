@@ -42,6 +42,7 @@ from ..core.hermes_client import (
 from ..core.inflight import make_inflight_key
 from ..core.message_buffer import BufferedMessage
 from ..core.message_origin import MessageOrigin
+from ..core.companion_runtime import deliver_companion_run_output
 from ..core.misc_config import load_misc_config
 from ..core.outbound import (
     get_bot_nickname,
@@ -410,6 +411,20 @@ async def _resume_row_impl(row: TrackedRun) -> None:
     # 把已从 status_body 捞出的 output 拦死:不补发、不删行,行变僵尸每次启动重演。
     if streamed and not parser.terminal:
         logger.warning(f"[HERMES run-resume] 事件流未见终态帧 run_id={row.run_id},保留行待下次启动")
+        return
+
+    if await deliver_companion_run_output(
+        session_id=row.session_key,
+        bot=bot,
+        target=entry.target,
+        adapter_name=row.adapter,
+        user_id=row.user_id,
+        group_id=row.group_id,
+        is_private=row.is_private,
+    ):
+        logger.info(f"[HERMES run-resume] companion 接管终态交付 run_id={row.run_id}")
+        _maybe_spawn_steer_reconcile(row)
+        tracker.finish(row.run_id)
         return
 
     # expected 必须先于 tracker.finish 落账(alive/108):恢复发送同样要有交付

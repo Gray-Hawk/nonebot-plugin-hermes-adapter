@@ -1091,6 +1091,7 @@ class HermesClient:
         approval_callback: "ApprovalCallback | None" = None,
         overwritten_reply_callback: "OverwrittenReplyCallback | None" = None,
         delivery_generation: int | None = None,
+        source_event_id: str | None = None,
     ) -> ChatResult:
         """调用 Hermes,返回 ChatResult。
 
@@ -1270,6 +1271,7 @@ class HermesClient:
                         group_id=group_id, bot_self_id=bot_self_id or "",
                         mode=mode, expect_structured=expect_structured,
                         delivery_generation=delivery_generation,
+                        source_event_id=source_event_id,
                     ),
                 )
                 runs_run_id[0] = run_id_r
@@ -1671,6 +1673,7 @@ class HermesClient:
                     expect_structured=bool(scope["expect_structured"]),
                     bot_self_id=scope["bot_self_id"],
                     delivery_generation=scope.get("delivery_generation"),
+                    source_event_id=scope.get("source_event_id"),
                 )
                 submission_tracked = True
             except StaleGenerationError:

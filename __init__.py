@@ -61,7 +61,7 @@ async def _hermes_m1_startup():
         stop_storage,
     )
     from .tasks import (
-        register_delivery_poll,
+        register_background_report,
         register_expire_active_sessions,
         register_proactive_activation,
         register_session_idle_reset,
@@ -72,6 +72,9 @@ async def _hermes_m1_startup():
     from .core.sticker_library import ensure_sticker_library_template, init_sticker_feature
 
     initialize_runtime_config()
+    from .core.companion_config import load_companion_config
+
+    load_companion_config()
     init_sticker_feature()
     ensure_sticker_library_template()
     init_runtime_state()
@@ -100,12 +103,15 @@ async def _hermes_m1_startup():
     from .core.hermes_client import close_shared_http_client
 
     _driver.on_shutdown(close_shared_http_client)
+    from .core.companion_runtime import close_companion_runtimes
+
+    _driver.on_shutdown(close_companion_runtimes)
     register_expire_active_sessions()
     register_storage_vacuum()
     register_session_idle_reset()
     register_proactive_activation()
     if plugin_config.hermes_api_interface != "astrbot":
-        register_delivery_poll()
+        register_background_report()
     from .core.misc_config import load_misc_config
 
     _misc_cfg = load_misc_config()

@@ -195,6 +195,7 @@ async def _handle_passive_path(
     origin: MessageOrigin,
     rows=None,
     delivery_generation: int | None = None,
+    source_event_id: str | None = None,
 ):
     """Passive 外壳:inflight 占位 → _run_passive_turn → 合并重燃。
 
@@ -218,6 +219,7 @@ async def _handle_passive_path(
         reply_to_ts=None,
         is_bot=False,
         delivery_generation=delivery_generation,
+        source_event_id=source_event_id,
     )
     # 只有可入库来源才能领 perception 挂号的真 id；来源与事件号各管各的。
     current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id) if origin.allows_store else None
@@ -579,6 +581,8 @@ async def _handle_reactive_path(
     origin: MessageOrigin,
     rows=None,
     delivery_generation: int | None = None,
+    source_event_id: str | None = None,
+    commission_override: bool | None = None,
 ):
     """Reactive 外壳:inflight 占位 → 调 _run_reactive_turn → finally 合并重燃。
 
@@ -610,12 +614,13 @@ async def _handle_reactive_path(
         reply_to_ts=None,
         is_bot=False,
         delivery_generation=delivery_generation,
+        source_event_id=source_event_id,
     )
     # 只有可入库来源才能领 perception 挂号的真 id；来源与事件号各管各的。
     current_buffered.id = _claim_event_db_id(adapter_name, event_msg_id) if origin.allows_store else None
     render_rows = list(rows or [current_buffered])
 
-    is_commission = addressed_to_bot and not user_lists.is_known_bot(user_id)
+    is_commission = addressed_to_bot and not user_lists.is_known_bot(user_id) if commission_override is None else commission_override
 
     # 图片门控(窄化)：active window + 非直说 + 纯图/纯表情包无文本。
     # 有在跑 turn → 照常 try_enter 入队合并 followup，消息到场但不点火；无在跑 turn
@@ -1049,7 +1054,8 @@ def _wake_rate_limited(adapter_name: str, scope: str, scope_id: str) -> str | No
 
 
 async def wake_private_turn(
-    *, adapter_name: str, user_id: str, text: str, source: str = _DEFAULT_WAKE_SOURCE
+    *, adapter_name: str, user_id: str, text: str, source: str = _DEFAULT_WAKE_SOURCE,
+    source_event_id: str | None = None,
 ) -> str | None:
     """唤起一条私聊 turn。返回 None = 已点火;返回 str = 拒绝原因(原样回给调用方)。
 
@@ -1078,6 +1084,7 @@ async def wake_private_turn(
             is_private=True,
             now_ms=_now_ms(),
             origin=MessageOrigin.synthetic(MessageSource.WAKE_MANUAL, label=source),
+            source_event_id=source_event_id,
         )
     )
     logger.info(f"[HERMES wake] 私聊唤起已点火: {adapter_name}/{user_id} source={source}")
@@ -1085,7 +1092,8 @@ async def wake_private_turn(
 
 
 async def wake_group_turn(
-    *, adapter_name: str, group_id: str, text: str, source: str = _DEFAULT_WAKE_SOURCE
+    *, adapter_name: str, group_id: str, text: str, source: str = _DEFAULT_WAKE_SOURCE,
+    source_event_id: str | None = None,
 ) -> str | None:
     """唤起一条群聊 ephemeral turn(无窗口依赖)。返回 None = 已点火;str = 拒绝原因。
 
@@ -1113,6 +1121,8 @@ async def wake_group_turn(
             now_ms=_now_ms(),
             ephemeral=True,
             origin=MessageOrigin.synthetic(MessageSource.WAKE_MANUAL, label=source),
+            source_event_id=source_event_id,
+            commission_override=source_event_id is not None,
         )
     )
     logger.info(f"[HERMES wake] 群聊唤起已点火: {adapter_name}/{group_id} source={source}")
