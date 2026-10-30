@@ -6,9 +6,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from dataclasses import replace
-from functools import partial
 
 from nonebot import logger
 from nonebot.adapters import (
@@ -51,6 +51,7 @@ from ..core.log_throttle import throttled_info
 from ..core.run_delivery_monitor import (
     order_gate,
     prepare_outbound_delivery,
+    reconcile_run,
     schedule_reconcile_for_run,
     settle_expected,
 )
@@ -72,7 +73,7 @@ from ..core.outbound import (
     send_text_with_media,
 )
 from ..core.reply_resolution import resolve_reply
-from ..core.reply_recovery import deliver_recovered_replies
+from ..core.reply_recovery import recover_run_overwritten_replies
 from ..core.prompt_builder import (
     build_passive_system_prompt,
     build_passive_user_content,
@@ -419,6 +420,33 @@ def _prepare_delivery(result, *, cleaned_text: str, media_urls, file_paths,
     )
 
 
+def _prepare_silent_delivery(result) -> bool:
+    """静默末轮仍有前序时，先封存空末轮与前序的统一计划。"""
+    tracker, run_id = _delivery_identity(result)
+    if tracker is None or not run_id:
+        return False
+    delivery = tracker.get_delivery(run_id)
+    if not delivery or not json.loads(delivery.get("recovery_json") or "[]"):
+        return False
+    prepared = _prepare_delivery(
+        result, cleaned_text="", media_urls=[], file_paths=[]
+    )
+    if prepared is None:
+        raise RuntimeError(f"silent recovery plan was not sealed run_id={run_id}")
+    return True
+
+
+async def _settle_silent(result, expected_state: str, reason: str) -> None:
+    """所有静默出口共用：前序先对账，随后才允许整 run 销账。"""
+    _, run_id = _delivery_identity(result)
+    if _prepare_silent_delivery(result):
+        await _await_order_gate(result)
+        if not run_id:
+            raise RuntimeError("silent recovery lost run identity")
+        await reconcile_run(run_id, reason="silent")
+    _settle(result, expected_state, reason)
+
+
 async def _await_order_gate(result) -> None:
     """最终答复出站前的短暂顺序门;异常不阻断 legacy 发送。"""
     _, run_id = _delivery_identity(result)
@@ -659,15 +687,7 @@ async def _run_passive_turn(
             )
             if plugin_config.hermes_api_interface == "runs" else None
         ),
-        overwritten_reply_callback=partial(
-            deliver_recovered_replies,
-            bot=bot,
-            target=target,
-            adapter_name=adapter_name,
-            user_id=user_id,
-            group_id=group_id,
-            is_private=is_private,
-        ),
+        overwritten_reply_callback=recover_run_overwritten_replies,
     )
 
     # 阶段2b:runs 路迟到 steer 回收(被动路径)——私聊/passive 直说按委托排队,
@@ -778,7 +798,7 @@ async def _run_passive_turn(
         _record_background_note(_fb_key, result.structured, log_tag="passive")
         if not result.structured.get("should_reply"):
             logger.info(f"[HERMES passive] 私聊自决静默 (user={user_id})")
-            _settle(result, "silent", "should_reply_false")
+            await _settle_silent(result, "silent", "should_reply_false")
             return result
         reply_text = str(result.structured.get("reply_text") or "").strip()
     else:
@@ -798,7 +818,7 @@ async def _run_passive_turn(
         if extracted is not None:
             if extracted == "":
                 logger.info(f"[HERMES passive] LLM 返回 should_reply=false 结构,静默(group={group_id})")
-                _settle(result, "silent", "should_reply_false")
+                await _settle_silent(result, "silent", "should_reply_false")
                 return result
             logger.warning(f"[HERMES passive] 检测到 submit_decision 形 JSON 残留,抠 reply_text 后发送(group={group_id})")
             reply_text = extracted
@@ -821,7 +841,7 @@ async def _run_passive_turn(
     file_paths = list(result.file_paths) + [p for p in extracted_files if p not in result.file_paths]
 
     if not cleaned_text and not media_urls and not file_paths:
-        _settle(result, "silent", "empty_content")
+        await _settle_silent(result, "silent", "empty_content")
         return result
     reply_to = (
         (result.structured or {}).get("reply_to")
@@ -1195,15 +1215,7 @@ async def _run_reactive_turn(
             _make_approval_notify(bot, adapter_name, f"群 {group_id}", is_private=False, group_id=group_id)
             if plugin_config.hermes_api_interface == "runs" else None
         ),
-        overwritten_reply_callback=partial(
-            deliver_recovered_replies,
-            bot=bot,
-            target=target,
-            adapter_name=adapter_name,
-            user_id=user_id,
-            group_id=group_id,
-            is_private=False,
-        ),
+        overwritten_reply_callback=recover_run_overwritten_replies,
     )
 
     # 阶段2b:runs 路 turn 收尾时,上游漏接的迟到 steer 随 completed 上浮——排回
@@ -1404,7 +1416,7 @@ async def _run_reactive_turn(
             _schedule_reconcile(result)
         else:
             # 破信封且现有语义为静默:销账,监控不得把它当丢失补发。
-            _settle(result, "silent", "parse_failed")
+            await _settle_silent(result, "silent", "parse_failed")
         return result
 
     logger.info(
@@ -1454,7 +1466,7 @@ async def _run_reactive_turn(
             f"addressed={addressed_to_bot} answered_mid_turn={mid_turn_push} "
             f"topic_hint={result.structured.get('topic_hint')!r})"
         )
-        _settle(result, "silent", "should_reply_false")
+        await _settle_silent(result, "silent", "should_reply_false")
         return result
 
     reply_text = str(decision.get("reply_text") or "").strip()
@@ -1467,7 +1479,7 @@ async def _run_reactive_turn(
         u for u in extracted_media_urls if u not in result.media_urls
     ]
     if not cleaned_reply_text and not media_urls and not file_paths:
-        _settle(result, "silent", "empty_content")
+        await _settle_silent(result, "silent", "empty_content")
         return result
 
     # B.3: 同 turn 内防重复闸门 — 若 chat() agent loop 期间 last_bot_reply_at

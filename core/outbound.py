@@ -13,6 +13,7 @@ import binascii
 import json
 import os
 import re
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -46,13 +47,23 @@ class DeliveryContext:
     tracker: Any
     run_id: str
     component_id: str = "primary"
-    owner: str = field(default_factory=lambda: f"nb-{os.getpid()}")
+    component_prefix: str = ""
+    owner: str = field(default_factory=lambda: f"nb-{os.getpid()}-{uuid.uuid4().hex}")
+    attempt_token: str = field(default_factory=lambda: uuid.uuid4().hex)
     lease_sec: float = 30.0
     # alive/108:每次真正认领出站前再核 clear 水位;None 保持旧调用零变化。
     generation_guard: Any = None
+    _component_tokens: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def for_component(self, component_id: str) -> "DeliveryContext":
-        return replace(self, component_id=component_id)
+        """派生组件上下文；同一组件在一次尝试链中复用令牌。"""
+        full_id = f"{self.component_prefix}{component_id}"
+        if full_id == self.component_id:
+            return self
+        token = self._component_tokens.setdefault(full_id, uuid.uuid4().hex)
+        derived = replace(self, component_id=full_id, attempt_token=token)
+        object.__setattr__(derived, "_component_tokens", self._component_tokens)
+        return derived
 
 
 class DeliveryClaimBusy(RuntimeError):
@@ -81,6 +92,7 @@ def _delivery_begin(delivery: DeliveryContext | None) -> tuple[str, list]:
     outcome = delivery.tracker.claim_component(
         run_id=delivery.run_id, component_id=delivery.component_id,
         owner=delivery.owner, lease_sec=delivery.lease_sec,
+        attempt_token=delivery.attempt_token,
     )
     existing = []
     if outcome == "sent":
@@ -104,7 +116,8 @@ def _delivery_mark_unknown(delivery: DeliveryContext | None, error) -> None:
         return
     try:
         delivery.tracker.mark_component_unknown(
-            run_id=delivery.run_id, component_id=delivery.component_id, error=error
+            run_id=delivery.run_id, component_id=delivery.component_id, error=error,
+            attempt_token=delivery.attempt_token,
         )
     except Exception as exc:
         # 回执写入失败不改变原异常面;组件保持 claimed,租约过期后由
@@ -481,6 +494,7 @@ async def send_local_files(
                 ctx.tracker.mark_component_failed(
                     run_id=ctx.run_id, component_id=ctx.component_id,
                     error="whitelist rejected or missing",
+                    attempt_token=ctx.attempt_token,
                 )
             logger.warning(f"[OUTBOUND] 本地文件被白名单拒绝或不存在, 跳过: {raw[:120]}")
             continue
@@ -506,7 +520,8 @@ async def send_local_files(
             if ctx is not None:
                 # 文件上传没有 QQ 消息 id;以组件事实作为回执。
                 ctx.tracker.mark_component_sent(
-                    run_id=ctx.run_id, component_id=ctx.component_id, msg_ids=[]
+                    run_id=ctx.run_id, component_id=ctx.component_id, msg_ids=[],
+                    attempt_token=ctx.attempt_token,
                 )
             sent += 1
             logger.debug(f"[OUTBOUND] 文件已上传 target={target} name={path.name} size={path.stat().st_size}")
@@ -586,7 +601,8 @@ async def _send_unimsg(
     msg_ids = _receipt_msg_ids(receipt)
     if delivery is not None:
         delivery.tracker.mark_component_sent(
-            run_id=delivery.run_id, component_id=delivery.component_id, msg_ids=msg_ids
+            run_id=delivery.run_id, component_id=delivery.component_id, msg_ids=msg_ids,
+            attempt_token=delivery.attempt_token,
         )
     if not msg_ids:
         logger.warning(f"[OUTBOUND] 发送成功但回执无 msg_ids(消息 id 无法留痕) target={target}")
@@ -670,7 +686,8 @@ async def send_text_with_media(
         msg_ids = [msg_id] if msg_id else []
         if delivery is not None:
             delivery.tracker.mark_component_sent(
-                run_id=delivery.run_id, component_id=delivery.component_id, msg_ids=msg_ids
+                run_id=delivery.run_id, component_id=delivery.component_id, msg_ids=msg_ids,
+                attempt_token=delivery.attempt_token,
             )
         if not msg_ids:
             logger.warning(f"[OUTBOUND] 本地表情发送成功但无回执 id={sticker_id}")

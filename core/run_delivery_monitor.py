@@ -54,7 +54,8 @@ def prepare_outbound_delivery(
     if tracker is None or not run_id:
         return None
     try:
-        if tracker.get_delivery(run_id) is None:
+        delivery = tracker.get_delivery(run_id)
+        if delivery is None:
             return None
         plan = {
             "cleaned_text": cleaned_text,
@@ -68,6 +69,13 @@ def prepare_outbound_delivery(
                 str(reply_at_user_id) if reply_at_user_id is not None else None
             ),
         }
+        recoveries = json.loads(delivery.get("recovery_json") or "[]")
+        existing_plan = json.loads(delivery["plan_json"]) if delivery.get("plan_json") else {}
+        if recoveries or "recoveries" in existing_plan:
+            # 旧计划没有该键时保持原形状，避免升级后的重入被误判变形。
+            plan["recoveries"] = sorted(
+                recoveries, key=lambda item: int(item["reply_seq"])
+            )
         components = [{
             "component_id": "primary",
             "kind": "primary",
@@ -89,11 +97,39 @@ def prepare_outbound_delivery(
                 "kind": "file",
                 "payload_sha256": _sha256_json(entry),
             })
+        for item in plan.get("recoveries", []):
+            prefix = f"reply:{int(item['reply_seq'])}:"
+            components.extend([{
+                "component_id": f"{prefix}primary",
+                "kind": "primary",
+                "payload_sha256": _sha256_json({
+                    "cleaned_text": item.get("cleaned_text", ""),
+                    "media_urls": item.get("media_urls", []),
+                    "reply_qq_message_id": item.get("reply_qq_message_id"),
+                    "reply_at_user_id": item.get("reply_at_user_id"),
+                }),
+            }, {
+                "component_id": f"{prefix}history",
+                "kind": "history",
+                "payload_sha256": _sha256_json({
+                    "cleaned_text": item.get("cleaned_text", "")
+                }),
+            }])
+            for idx, entry in enumerate(item.get("files", [])):
+                components.append({
+                    "component_id": f"{prefix}file:{idx}",
+                    "kind": "file",
+                    "payload_sha256": _sha256_json(entry),
+                })
         tracker.upsert_delivery_plan(run_id=run_id, plan=plan, components=components)
         return DeliveryContext(
             tracker=tracker, run_id=run_id,
             generation_guard=lambda: tracker.is_delivery_current(run_id),
         )
+    except ValueError:
+        # 已封存计划不得被后续重入改写；继续 legacy 裸发会破坏唯一交付事实。
+        logger.error(f"run={run_id} 已封存投递计划冲突，停止本轮出站")
+        raise
     except Exception as exc:
         logger.warning(f"run={run_id} 投递计划生成失败, 本轮按 legacy 无台账发送: {exc}")
         return None
@@ -118,6 +154,7 @@ def settle_expected(
 import asyncio
 import os
 import time
+import uuid
 
 from nonebot import get_bot
 
@@ -218,132 +255,198 @@ def _component_terminal(c: dict, cfg) -> bool:
     if state in ("sent", "cancelled", "not_required"):
         return True
     if state == "unknown":
+        if _recovery_seq(c["component_id"]) is not None:
+            return True
         return c["attempt_count"] >= cfg.unknown_max_attempts
     if state == "failed":
         return c["attempt_count"] >= 3
     return False
 
 
+def _recovery_seq(component_id: str) -> int | None:
+    parts = component_id.split(":")
+    if len(parts) >= 3 and parts[0] == "reply" and parts[1].isdigit():
+        return int(parts[1])
+    return None
+
+
+def _component_prefix(component_id: str) -> str:
+    seq = _recovery_seq(component_id)
+    return f"reply:{seq}:" if seq is not None else ""
+
+
+def _delivery_entries(plan: dict) -> list[tuple[str, dict, bool]]:
+    """前序答复按数值序排列，末轮始终最后；prefix 同时约束所有组件。"""
+    recoveries = sorted(
+        plan.get("recoveries", []), key=lambda item: int(item["reply_seq"])
+    )
+    entries = [
+        (f"reply:{int(item['reply_seq'])}:", item, True) for item in recoveries
+    ]
+    entries.append(("", plan, False))
+    return entries
+
+
 async def _repair_components(tracker, delivery: dict, cfg, stats: dict) -> None:
-    """repair 模式逐组件补发;只经 outbound 交付上下文,绝不绕过认领。"""
+    """repair 模式逐组件补发；只经 outbound 交付上下文，绝不绕过认领。"""
     run_id = delivery["run_id"]
-    owner = f"reconcile-{os.getpid()}"
+    owner = f"reconcile-{os.getpid()}-{uuid.uuid4().hex}"
     plan = _plan_of(delivery)
     entry, bot = _resolve_entry(delivery)
     if entry is None:
         stats["deferred"] = "bot_not_ready"
         return
     comps = tracker.list_components(run_id)
-    primary = next((c for c in comps if c["component_id"] == "primary"), None)
-    files = [c for c in comps if c["kind"] == "file"]
+    by_id = {c["component_id"]: c for c in comps}
 
-    if primary is not None and not _component_terminal(primary, cfg):
-        if primary["state"] == "unknown":
-            outcome = tracker.claim_component(
-                run_id=run_id, component_id="primary", owner=owner,
-                unknown_backoff_sec=cfg.unknown_backoff_sec,
-                unknown_max_attempts=cfg.unknown_max_attempts,
-            )
-            if outcome != "send":
+    for prefix, item_plan, is_recovery in _delivery_entries(plan):
+        primary_id = f"{prefix}primary"
+        primary = by_id.get(primary_id)
+        if (
+            not is_recovery
+            and not item_plan.get("cleaned_text")
+            and not item_plan.get("media_urls")
+            and not item_plan.get("files")
+        ):
+            # 静默末轮没有任何可见组件；不能把空 primary 发给平台。
+            for component_id in ("primary", "history"):
+                comp = by_id.get(component_id)
+                if comp is not None and comp["state"] == "pending":
+                    tracker.mark_component_not_required(
+                        run_id=run_id, component_id=component_id
+                    )
+            continue
+        if primary is not None and not _component_terminal(primary, cfg):
+            if is_recovery and primary["state"] == "unknown":
+                # 前序回收服从 at-most-once；平台结果不明时不得盲补。
                 stats["unknown"] = stats.get("unknown", 0) + 1
-                primary = None
-        if primary is not None:
-            ctx = DeliveryContext(
-                tracker=tracker, run_id=run_id, component_id="primary", owner=owner,
-                generation_guard=lambda: tracker.is_delivery_current(run_id),
-            )
+            else:
+                ctx = DeliveryContext(
+                    tracker=tracker, run_id=run_id, component_id=primary_id,
+                    component_prefix=prefix, owner=owner,
+                    generation_guard=lambda: tracker.is_delivery_current(run_id),
+                )
+                if primary["state"] == "unknown":
+                    outcome = tracker.claim_component(
+                        run_id=run_id, component_id=primary_id, owner=owner,
+                        unknown_backoff_sec=cfg.unknown_backoff_sec,
+                        unknown_max_attempts=cfg.unknown_max_attempts,
+                        attempt_token=ctx.attempt_token,
+                    )
+                    if outcome != "send":
+                        stats["unknown"] = stats.get("unknown", 0) + 1
+                        primary = None
+                if primary is not None:
+                    try:
+                        await (_send_text or _ob.send_text_with_media)(
+                            bot=bot, target=entry.target,
+                            text=item_plan.get("cleaned_text", ""),
+                            media_urls=item_plan.get("media_urls", []),
+                            reply_qq_message_id=item_plan.get("reply_qq_message_id"),
+                            reply_at_user_id=item_plan.get("reply_at_user_id"),
+                            adapter_name=delivery["adapter"], delivery=ctx,
+                        )
+                    except DeliveryClaimBusy:
+                        stats["busy"] = stats.get("busy", 0) + 1
+                    except Exception as exc:
+                        logger.warning(f"run={run_id} reconcile {primary_id} 补发异常: {exc}")
+                        stats["error"] = stats.get("error", 0) + 1
+
+        unresolved_files = []
+        ctx = DeliveryContext(
+            tracker=tracker, run_id=run_id, component_prefix=prefix, owner=owner,
+            generation_guard=lambda: tracker.is_delivery_current(run_id),
+        )
+        for comp in comps:
+            if comp["kind"] != "file" or _component_prefix(comp["component_id"]) != prefix:
+                continue
+            if _component_terminal(comp, cfg):
+                continue
+            if is_recovery and comp["state"] == "unknown":
+                stats["unknown"] = stats.get("unknown", 0) + 1
+                continue
+            if comp["state"] == "unknown":
+                outcome = tracker.claim_component(
+                    run_id=run_id, component_id=comp["component_id"], owner=owner,
+                    unknown_backoff_sec=cfg.unknown_backoff_sec,
+                    unknown_max_attempts=cfg.unknown_max_attempts,
+                    attempt_token=ctx.for_component(comp["component_id"]).attempt_token,
+                )
+                if outcome != "send":
+                    stats["unknown"] = stats.get("unknown", 0) + 1
+                    continue
+            unresolved_files.append(comp)
+        if unresolved_files:
+            paths = [f["path"] for f in item_plan.get("files", [])]
             try:
-                await (_send_text or _ob.send_text_with_media)(
-                    bot=bot, target=entry.target, text=plan.get("cleaned_text", ""),
-                    media_urls=plan.get("media_urls", []),
-                    reply_qq_message_id=plan.get("reply_qq_message_id"),
-                    reply_at_user_id=plan.get("reply_at_user_id"),
+                await (_send_files or _ob.send_local_files)(
+                    bot=bot, target=entry.target, file_paths=paths,
                     adapter_name=delivery["adapter"], delivery=ctx,
                 )
             except DeliveryClaimBusy:
                 stats["busy"] = stats.get("busy", 0) + 1
             except Exception as exc:
-                logger.warning(f"run={run_id} reconcile primary 补发异常: {exc}")
+                logger.warning(f"run={run_id} reconcile {prefix}文件补发异常: {exc}")
                 stats["error"] = stats.get("error", 0) + 1
-
-    unresolved_files = []
-    for comp in files:
-        if _component_terminal(comp, cfg):
-            continue
-        if comp["state"] == "unknown":
-            outcome = tracker.claim_component(
-                run_id=run_id, component_id=comp["component_id"], owner=owner,
-                unknown_backoff_sec=cfg.unknown_backoff_sec,
-                unknown_max_attempts=cfg.unknown_max_attempts,
-            )
-            if outcome != "send":
-                stats["unknown"] = stats.get("unknown", 0) + 1
-                continue
-        unresolved_files.append(comp)
-    if unresolved_files:
-        paths = [f["path"] for f in plan.get("files", [])]
-        ctx = DeliveryContext(
-            tracker=tracker, run_id=run_id, owner=owner,
-            generation_guard=lambda: tracker.is_delivery_current(run_id),
-        )
-        try:
-            await (_send_files or _ob.send_local_files)(
-                bot=bot, target=entry.target, file_paths=paths,
-                adapter_name=delivery["adapter"], delivery=ctx,
-            )
-        except DeliveryClaimBusy:
-            stats["busy"] = stats.get("busy", 0) + 1
-        except Exception as exc:
-            logger.warning(f"run={run_id} reconcile 文件补发异常: {exc}")
-            stats["error"] = stats.get("error", 0) + 1
 
 
 async def _repair_history(tracker, delivery: dict, stats: dict) -> None:
-    """primary 已 sent 而 history 缺失时只补历史,不重发 primary。"""
+    """逐答复补历史；primary 的 msg_id 只写入同 prefix 的 history。"""
     run_id = delivery["run_id"]
-    primary = tracker.get_component(run_id=run_id, component_id="primary")
-    if primary is None or primary["state"] != "sent":
-        return
     plan = _plan_of(delivery)
     buffer = _runtime().message_buffer
-    for comp in tracker.list_components(run_id):
-        if comp["kind"] != "history" or comp["state"] != "pending":
+    comps = tracker.list_components(run_id)
+    by_id = {c["component_id"]: c for c in comps}
+    entry, bot = _resolve_entry(delivery)
+    nickname = ""
+    if bot is not None:
+        try:
+            nickname = await _ob.get_bot_nickname(bot)
+        except Exception:
+            nickname = ""
+
+    for prefix, item_plan, _is_recovery in _delivery_entries(plan):
+        primary = by_id.get(f"{prefix}primary")
+        if primary is None or primary["state"] != "sent":
             continue
-        if buffer is None:
-            tracker.mark_component_not_required(run_id=run_id, component_id=comp["component_id"])
-            continue
-        msg_ids = list(primary["msg_ids"])
-        content = plan.get("cleaned_text", "")
-        if plan.get("media_urls"):
-            content = f"{content} [图片]".strip()
-        entry, bot = _resolve_entry(delivery)
-        nickname = ""
-        if bot is not None:
-            try:
-                nickname = await _ob.get_bot_nickname(bot)
-            except Exception:
-                nickname = ""
-        buffer.append(
-            BufferedMessage(
-                ts=int(time.time() * 1000),
-                adapter=delivery["adapter"],
-                group_id=None if delivery["is_private"] else delivery["group_id"],
-                user_id=entry.bot_self_id if entry is not None else "",
-                nickname=nickname,
-                content=content,
-                origin=MessageOrigin.bot_output(),
-                image_urls=[],
-                is_bot=True,
-                qq_message_id=msg_ids[0] if msg_ids else None,
-                private_owner_id=delivery["user_id"] if delivery["is_private"] else None,
+        for comp in comps:
+            if (
+                comp["kind"] != "history" or comp["state"] != "pending"
+                or _component_prefix(comp["component_id"]) != prefix
+            ):
+                continue
+            if buffer is None:
+                tracker.mark_component_not_required(
+                    run_id=run_id, component_id=comp["component_id"]
+                )
+                continue
+            msg_ids = list(primary["msg_ids"])
+            content = item_plan.get("cleaned_text", "")
+            if item_plan.get("media_urls"):
+                content = f"{content} [图片]".strip()
+            buffer.append(
+                BufferedMessage(
+                    ts=int(time.time() * 1000),
+                    adapter=delivery["adapter"],
+                    group_id=None if delivery["is_private"] else delivery["group_id"],
+                    user_id=entry.bot_self_id if entry is not None else "",
+                    nickname=nickname,
+                    content=content,
+                    origin=MessageOrigin.bot_output(),
+                    image_urls=[],
+                    is_bot=True,
+                    qq_message_id=msg_ids[0] if msg_ids else None,
+                    private_owner_id=delivery["user_id"] if delivery["is_private"] else None,
+                )
             )
-        )
-        tracker.mark_component_sent(run_id=run_id, component_id=comp["component_id"], msg_ids=msg_ids)
-        stats["history"] = stats.get("history", 0) + 1
+            tracker.mark_component_sent(
+                run_id=run_id, component_id=comp["component_id"], msg_ids=msg_ids
+            )
+            stats["history"] = stats.get("history", 0) + 1
 
 
-async def reconcile_run(run_id: str, *, reason: str = "") -> dict:
-    """唯一对账补发器:正常终态、顺序门与启动恢复共用。"""
+async def _reconcile_run_unlocked(run_id: str, *, reason: str = "") -> dict:
+    """scope 锁内的唯一对账实现；调用方必须已持有同 scope 互斥。"""
     stats: dict = {"run_id": run_id, "reason": reason}
     tracker = _runtime().run_tracker
     if tracker is None:
@@ -397,6 +500,15 @@ async def reconcile_run(run_id: str, *, reason: str = "") -> dict:
         stats["terminal"] = True
     notify_scope(delivery["scope_key"])
     return stats
+
+
+async def reconcile_run(run_id: str, *, reason: str = "") -> dict:
+    """唯一对账补发器；同 scope 的正常路、顺序门与恢复路互斥。"""
+    tracker = _runtime().run_tracker
+    delivery = tracker.get_delivery(run_id) if tracker is not None else None
+    scope_key = delivery["scope_key"] if delivery is not None else f"run:{run_id}"
+    async with _scope_lock(scope_key):
+        return await _reconcile_run_unlocked(run_id, reason=reason)
 
 
 def _maybe_prune_delivery_ledger(tracker) -> None:
@@ -513,7 +625,7 @@ async def order_gate(run_id: str) -> dict:
                 # 前序超过 legacy 宽限仍未终态:只补前序,当前 run 仍由 legacy 主发。
                 waited += 1
                 for predecessor in predecessors:
-                    await reconcile_run(predecessor["run_id"], reason="order_gate")
+                    await _reconcile_run_unlocked(predecessor["run_id"], reason="order_gate")
                 notify_scope(scope_key)
                 predecessors = tracker.list_predecessors(
                     scope_key=scope_key, submission_seq=delivery["submission_seq"] or 0

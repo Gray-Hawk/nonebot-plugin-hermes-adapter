@@ -21,7 +21,7 @@ from nonebot import logger
 
 from ..config import plugin_config
 from ..backends.astrbot import client as astrbot_client
-from .decision_contract import render_en_field_lines
+from .decision_contract import append_reply_context, render_en_field_lines
 from .media_patterns import _MD_IMAGE_PATTERN, _MEDIA_TAG_PATTERN
 from .media_whitelist import inline_local_media_images
 from .message_context import render_message_context_head
@@ -1138,7 +1138,14 @@ class HermesClient:
             )
 
         if expect_structured and structured_tool_name == "submit_decision":
-            system_prompt = system_prompt + _DECISION_HINT
+            runs_identity = plugin_config.hermes_api_interface == "runs"
+            system_prompt = system_prompt + (
+                "\n\n=== STRUCTURED OUTPUT ===\n"
+                "Your reply MUST be a single JSON object with these keys:\n"
+                + render_en_field_lines(runs_identity=runs_identity)
+                + "Output ONLY the JSON object, no preamble, no postscript, no markdown fences.\n"
+                "All string values MUST be single-line; escape line breaks inside strings as \\n (no raw newlines)."
+            )
 
         # 全文留痕(排障开关,默认关):截留在最终成形后、通道分流前,
         # 两模式与 Completions/Runs 两通道抓到的是同一份真实上发字节。
@@ -1176,6 +1183,15 @@ class HermesClient:
         # 复用同一键——网关 lost-acceptance 重放只认同键同指纹,每试一次换键等于
         # 名不副实,还会在提交应答丢失时放大出孤儿 run。
         turn_idem_key = f"turn-{uuid.uuid4().hex}"
+        reply_protocol_version = 0
+        if (
+            plugin_config.hermes_api_interface == "runs"
+            and expect_structured
+            and structured_tool_name == "submit_decision"
+        ):
+            reply_protocol_version = 1
+            content = append_reply_context(content, turn_idem_key)
+            messages[1]["content"] = content
         # alive/108:runs 路本轮 run 身份,经 _out 挂到成功结果上(失败结果在
         # _chat_via_runs 内直接携带)。列表盒子避免闭包重新绑定外层局部。
         runs_run_id: list[str | None] = [None]
@@ -1270,6 +1286,7 @@ class HermesClient:
                         adapter=adapter_name, is_private=is_private, user_id=user_id,
                         group_id=group_id, bot_self_id=bot_self_id or "",
                         mode=mode, expect_structured=expect_structured,
+                        reply_protocol_version=reply_protocol_version,
                         delivery_generation=delivery_generation,
                         source_event_id=source_event_id,
                     ),
@@ -1715,6 +1732,7 @@ class HermesClient:
                     session_key=session_key,
                     mode=scope["mode"],
                     expect_structured=bool(scope["expect_structured"]),
+                    reply_protocol_version=int(scope.get("reply_protocol_version", 0)),
                 )
                 if submission_tracked:
                     # alive/108:绑定与登记同事务,失败则不订阅、保留 submission 供 reclaim。
@@ -1809,9 +1827,7 @@ class HermesClient:
                 is_transport_error=True,
                 run_id=run_id,
             ), "", run_id
-        # 前序答复回收紧急禁用（alive/105 生产回归）：转录提取未限定本 run
-        # 边界，会把同 session 历史 structured reply 当成被覆盖答复重复补投。
-        # 保留 callback 接口，待按 run 起点截断并补生产形态回归后再启用。
+        # 前序只做严格转录取证；统一交付计划负责后续补投，不在 completion 内发送。
         # 与流式分支同形补内联,rotated=None(轮换上游服务端处理)。
         # alive/108:终态 output 先落交付台账,才允许 finish 删 active_runs;
         # 落账失败保留恢复依据并转 detached,当前 handler 不直接发无法监控的 output。
@@ -1828,6 +1844,33 @@ class HermesClient:
                     exc_info=True,
                 )
                 return "", None, ChatResult(raw_text="", parse_failed=True, is_run_detached=True, run_id=run_id), "", run_id
+            protocol_version = int(scope.get("reply_protocol_version", 0))
+            if overwritten_reply_callback is not None and protocol_version >= 1:
+                try:
+                    from .reply_recovery import recovery_plan_entries
+
+                    tracked = tracker.get_by_run_id(run_id)
+                    recovered = await overwritten_reply_callback(
+                        tracked, parser.output or ""
+                    )
+                    recoveries = recovery_plan_entries(
+                        recovered,
+                        adapter=scope["adapter"],
+                        group_id=scope["group_id"],
+                        user_id=scope["user_id"],
+                        is_private=scope["is_private"],
+                    )
+                    tracker.record_recovery_evidence(
+                        run_id=run_id,
+                        recoveries=recoveries,
+                        protocol_version=protocol_version,
+                    )
+                except Exception:
+                    # 回收证据不足只放弃前序，末轮仍沿既有宽容解析与出口发送。
+                    logger.warning(
+                        f"[HERMES reply-recovery] 终态取证失败，放弃前序回收 run_id={run_id}",
+                        exc_info=True,
+                    )
         _finish()
         return inline_local_media_images(parser.output or ""), None, None, parser.pending_steer, run_id
 

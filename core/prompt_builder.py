@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 from nonebot import logger
 
 from .decision_contract import render_cn_field_lines, render_field_name_list
+from ..config import plugin_config
 from .hermes_client import UserContent
 from .message_buffer import (
     BufferedMessage,
@@ -114,7 +115,9 @@ _DECISION_PROTOCOL_BLOCK = (
     "没有 m:id,不可 reply_to 或钉锚;多行 current_message 按各自来源分别理解,"
     "不得把整批归给某一行真人。\n"
     "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
-    + render_cn_field_lines()
+    + render_cn_field_lines(
+        runs_identity=plugin_config.hermes_api_interface == "runs"
+    )
     + "\n"
     "对象归属(先决定这条是不是冲你说的,再走插话原则;命中一条「归你」就停,不再下挪):\n"
     "  - runtime_state 里有 `addressed_to_you: true` → 平台层面已经确认这条是冲你说的\n"
@@ -280,7 +283,11 @@ _PRIVATE_DECISION_PROTOCOL_BLOCK = (
     "有实质内容的消息正常回应;纯表情轰炸、无意义刷屏、或你判断\n"
     "无需回应的场合,可以 should_reply=false 沉默。\n"
     "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
-    + render_cn_field_lines(("should_reply", "reply_text", "reply_to", "not_final"), short=True)
+    + render_cn_field_lines(
+        ("should_reply", "reply_text", "reply_to", "not_final"),
+        short=True,
+        runs_identity=plugin_config.hermes_api_interface == "runs",
+    )
     + "私聊只有对方一个人:不必 @ 任何人,正文里不要写 [CQ:at,...] 标记。\n"
     + "最终输出必须是该 JSON 对象,不要在 JSON 外面再包文字;\n"
     "即使想用角色口吻说话,也必须把那段话放进 reply_text 字段里。\n"
@@ -768,7 +775,9 @@ def build_reactive_user_content(
     # 字段单单一来源:core/decision_contract.py(render_field_name_list;审计确认5)。
     reminder = (
         "\n\n请用 submit_decision JSON 对象回复(字段:"
-        + render_field_name_list()
+        + render_field_name_list(
+            runs_identity=plugin_config.hermes_api_interface == "runs"
+        )
         + "),不要直接说话或扮演动作。"
     )
     # 分级反馈:插件提示便签贴 reminder 尾(近因位置,下轮即见即焚)

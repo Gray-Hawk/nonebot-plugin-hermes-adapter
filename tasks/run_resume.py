@@ -53,8 +53,8 @@ from ..core.outbound import (
 )
 from ..core.reply_resolution import resolve_reply
 from ..core.reply_recovery import (
-    deliver_recovered_replies,
     recover_run_overwritten_replies,
+    recovery_plan_entries,
 )
 from ..core.routing import resolve_target
 from ..core.run_delivery_monitor import (
@@ -91,25 +91,28 @@ def _inflight_key(row: TrackedRun) -> tuple[str, str]:
     return make_inflight_key(row.adapter, row.is_private, row.user_id, row.group_id)
 
 
-async def _recover_overwritten_replies(row: TrackedRun, output: str, bot, target) -> None:
-    """断流恢复与正常终态共用前序答复回收，末轮仍由旧极简出口处理。"""
-    if not row.expect_structured:
+async def _record_overwritten_replies(row: TrackedRun, output: str) -> None:
+    """恢复路径只落严格转录证据,发送仍统一归 108 计划与 reconcile。"""
+    if row.reply_protocol_version < 1 or _mcp.run_tracker is None:
         return
     try:
         recovered = await recover_run_overwritten_replies(row, output)
-        await deliver_recovered_replies(
+        recoveries = recovery_plan_entries(
             recovered,
-            bot=bot,
-            target=target,
-            adapter_name=row.adapter,
-            user_id=row.user_id,
+            adapter=row.adapter,
             group_id=row.group_id,
+            user_id=row.user_id,
             is_private=row.is_private,
         )
+        _mcp.run_tracker.record_recovery_evidence(
+            run_id=row.run_id,
+            recoveries=recoveries,
+            protocol_version=row.reply_protocol_version,
+        )
     except Exception:
-        # 前序补投失败不能拖垮末轮原恢复路径；缺证据时 recover 自身已静默跳过。
+        # 前序证据不足只放弃回收,末轮沿用既有恢复出口;旧协议绝不进入这里。
         logger.warning(
-            f"[HERMES reply-recovery] 断流恢复前序回收异常 run_id={row.run_id}",
+            f"[HERMES reply-recovery] 断流恢复前录取证异常 run_id={row.run_id}",
             exc_info=True,
         )
 
@@ -143,6 +146,22 @@ def _settle(row: TrackedRun, expected_state: str, reason: str) -> None:
         tracker=_mcp.run_tracker, run_id=row.run_id,
         expected_state=expected_state, reason=reason,
     )
+
+
+async def _settle_silent(row: TrackedRun, expected_state: str, reason: str) -> None:
+    """新协议静默恢复也先封存空末轮并对账,再允许 active run 结案。"""
+    if row.reply_protocol_version >= 1:
+        delivery_ctx = prepare_outbound_delivery(
+            tracker=_mcp.run_tracker,
+            run_id=row.run_id,
+            cleaned_text="",
+            media_urls=[],
+            file_paths=[],
+        )
+        if delivery_ctx is None:
+            raise RuntimeError(f"silent resume plan was not sealed run_id={row.run_id}")
+        await reconcile_run(row.run_id, reason="resume-silent")
+    _settle(row, expected_state, reason)
 
 
 def _build_delivery(output: str, expect_structured: bool) -> tuple[str, str | None] | None:
@@ -436,14 +455,14 @@ async def _resume_row_impl(row: TrackedRun) -> None:
             )
         except Exception as exc:
             logger.warning(f"[HERMES run-resume] expected 落账失败 run_id={row.run_id}: {exc}")
-    # 前序答复回收与正常终态同步紧急禁用（alive/105 生产回归）：
-    # 未按 run 边界截断转录前，恢复路径同样可能补投历史答复。
+    # 新协议先落前录取证,prepare_outbound_delivery 会把前序与末轮封进同一计划。
+    await _record_overwritten_replies(row, output)
     # 极简送达。reply_to 的 m:id 在发送前按 row 中的会话归属解析，重启后也不
     # 改用“最近发言者”猜测目标；查不到映射只降级普通正文。
     delivery = _build_delivery(output, row.expect_structured)
     if delivery is None:
         logger.info(f"[HERMES run-resume] 续跑轮静默(解析失败/决定不回) run_id={row.run_id}")
-        _settle(row, "silent", "parse_failed_or_no_reply")
+        await _settle_silent(row, "silent", "parse_failed_or_no_reply")
         _maybe_spawn_steer_reconcile(row)
         tracker.finish(row.run_id)
         return
@@ -451,7 +470,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
     cleaned, media_urls, file_paths = extract_response_media(reply_text)
     if not cleaned and not media_urls and not file_paths:
         logger.info(f"[HERMES run-resume] 续跑轮回复为空 run_id={row.run_id}")
-        _settle(row, "silent", "empty_content")
+        await _settle_silent(row, "silent", "empty_content")
         _maybe_spawn_steer_reconcile(row)
         tracker.finish(row.run_id)
         return
