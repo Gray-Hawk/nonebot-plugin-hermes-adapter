@@ -74,6 +74,7 @@ from ..core.outbound import (
 )
 from ..core.reply_resolution import resolve_reply
 from ..core.reply_recovery import recover_run_overwritten_replies
+from ..core.run_tracker import make_scope_key
 from ..core.prompt_builder import (
     build_passive_system_prompt,
     build_passive_user_content,
@@ -117,6 +118,68 @@ def _observe_silence(path: str, adapter_name: str, group_id: str | None, is_priv
         f"gate.403:{path}:{adapter_name}:{scope}",
         f"[HERMES {path}] 403/暂不可用硬静默观测 (group={group_id} is_private={is_private})",
     )
+
+def _pending_steer_recovery_fragments(
+    pending_steer: str, *,
+    adapter_name: str, is_private: bool, user_id: str, group_id: str | None,
+    now_ms: int,
+) -> list[BufferedMessage] | None:
+    """native 回收的逐行身份还原(rework-1 终审 F3)。
+
+    pending_steer 是上游把本 run 被吞 steer 还回时的拼接文本, speaker 信息
+    已在上游剥壳时全丢——直接回收会把多作者整段归给 run 发起者。steer_ledger
+    逐行存了 scope+m_id+sender+rendered_line:按 scope 拉 pending 候选,
+    steer_text 是 pending_steer 子串的即本批实际被回收行,按台账序构造独立
+    human_replay fragments,各 sender 与顺序原样保留。旧 m:id 只留在台账供
+    媒体引用/对账追溯,不回填成新当前行 id(fragments 全部无号);human_replay
+    的 allows_store=False 保证原行不重复入库。无任何可靠台账(tracker 缺失/
+    查询失败/零命中)返回 None,调用方走原文整段回收 fallback 并记明确日志——
+    不为修作者另造脆弱的模型文本解析侧链。
+    """
+    from ..core.steer_reconcile import strip_steer_presentation
+    tracker = _mcp.run_tracker
+    if tracker is None:
+        return None
+    try:
+        scope_key = make_scope_key(adapter_name, is_private, user_id, group_id)
+        candidates = tracker.pending_steers_by_scope(scope_key)
+        matched = [
+            c for c in candidates
+            if c.get("steer_text") and c["steer_text"] in pending_steer
+        ]
+    except Exception:
+        logger.warning(
+            "[HERMES steer回收] 台账查询失败, native 回收走原文 fallback",
+            exc_info=True,
+        )
+        return None
+    if not matched:
+        return None
+    # 部分命中不等于可靠还原：outer msg 虽持有整段原文，current 却只渲染
+    # fragments；若此时返回部分行，未命中正文会从呈递中消失。剔除匹配账项后，
+    # 除批次约定行/空白外仍有任何正文，就整段走原文 fallback，宁可作者信息
+    # 回退也不丢内容。
+    residual = pending_steer
+    for c in matched:
+        residual = residual.replace(c["steer_text"], "", 1)
+    if strip_steer_presentation(residual).strip():
+        logger.warning(
+            "[HERMES steer回收] 台账只覆盖部分 pending_steer, "
+            "为避免漏呈递改走原文整段 fallback"
+        )
+        return None
+    return [
+        BufferedMessage(
+            ts=now_ms, adapter=adapter_name, group_id=group_id,
+            user_id=str(c["sender_id"]), nickname=str(c["sender_id"]),
+            content=strip_steer_presentation(c["steer_text"]),
+            origin=MessageOrigin.human_replay(),
+            image_urls=[], sticker_urls=[],
+            reply_to_ts=None, is_bot=False,
+        )
+        for c in matched
+    ]
+
 
 def _filter_current_and_steered(
     recent: list[BufferedMessage], *, current_rows, scope: tuple[str, str],
@@ -165,9 +228,6 @@ async def _dispatch_chat(
     # 拆批 fragments 序列(alive/103 §14.2):防抖合并后的有序完整碎片,
     # None=无拆批信息(旧路径单行)。
     fragments=None,
-    # 载荷携带的媒体寻址序列(alive/103 A4):dispatch 层不消费,但必须签收——
-    # _dispatch_chat(**st.payload) 整包展开,缺形参会在入口直接 TypeError。
-    fragment_db_ids=None,
     delivery_generation: int | None = None,
 ):
     """passive/reactive 分叉(原 handle_message 末段,防抖批抽出以便
@@ -192,7 +252,7 @@ async def _dispatch_chat(
             event_msg_id=getattr(event, "message_id", None),
             image_urls=image_urls,
             sticker_urls=sticker_urls,
-            batch_ids=[f.id for f in (fragments or []) if f.id is not None] or None,
+            rows=fragments,
         )
     ):
         return
@@ -697,9 +757,22 @@ async def _run_passive_turn(
     # 上游已还回这批 steer, 对账不得再补, 防双重投递)。run_id 不可得——ChatResult
     # 不携带 run_id, 且 run 终态时 run_tracker 行已由 finish 删除——故按文本子串
     # 核销(recover_by_text): pending_steer 是各条 steer_text 的拼接, 必含其为子串。
+    # 多作者还原(rework-1 终审 F3): pending_steer 剥壳后 sender 全丢, 优先按
+    # steer_ledger(scope+m_id+sender+rendered_line)找回实际回收行, 构造独立
+    # human_replay fragments 传入队列(各 sender 与顺序保留);无可靠台账时
+    # 保留原文整段回收 fallback 并记明确日志。
     if result is not None and result.pending_steer:
         from ..core.steer_reconcile import strip_steer_presentation
         _scope_key = make_inflight_key(adapter_name, is_private, user_id, group_id)
+        _recovered_frags = _pending_steer_recovery_fragments(
+            result.pending_steer, adapter_name=adapter_name, is_private=is_private,
+            user_id=user_id, group_id=group_id, now_ms=_now_ms(),
+        )
+        if _recovered_frags is None:
+            logger.info(
+                f"[HERMES passive] pending_steer 回收无可靠台账,按原文整段回收 "
+                f"(key={_scope_key} len={len(result.pending_steer)})"
+            )
         _mcp.inflight.try_enter(
             _scope_key,
             BufferedMessage(
@@ -713,6 +786,7 @@ async def _run_passive_turn(
             original_msg_id=None,
             now_ms=_now_ms(),
             commission=True,
+            fragments=_recovered_frags,
         )
         logger.info(
             f"[HERMES passive] 回收 pending_steer 进委托队列 "
@@ -1226,8 +1300,19 @@ async def _run_reactive_turn(
     # 上游已还回这批 steer, 对账不得再补, 防双重投递)。run_id 不可得——ChatResult
     # 不携带 run_id, 且 run 终态时 run_tracker 行已由 finish 删除——故按文本子串
     # 核销(recover_by_text): pending_steer 是各条 steer_text 的拼接, 必含其为子串。
+    # 多作者还原(rework-1 终审 F3): 与 passive 路径同规——按 steer_ledger 找回
+    # 实际回收行构造 fragments 传入 PendingEntry;无可靠台账走原文 fallback。
     if result is not None and result.pending_steer:
         from ..core.steer_reconcile import strip_steer_presentation
+        _recovered_frags = _pending_steer_recovery_fragments(
+            result.pending_steer, adapter_name=adapter_name, is_private=False,
+            user_id=user_id, group_id=group_id, now_ms=_now_ms(),
+        )
+        if _recovered_frags is None:
+            logger.info(
+                f"[HERMES reactive] pending_steer 回收无可靠台账,按原文整段回收 "
+                f"(group={group_id} len={len(result.pending_steer)})"
+            )
         _mcp.inflight.add_followup(
             make_inflight_key(adapter_name, False, user_id, group_id),
             PendingEntry(
@@ -1243,6 +1328,8 @@ async def _run_reactive_turn(
                 # 条目自己的值后,这里同步盖出生轮的 ephemeral——冷窗关键词轮里上浮的
                 # steer 仍按无窗跑,不因接力方有窗而切换跑法,避免交接到无窗轮被吞)。
                 ephemeral=ephemeral,
+                # None 由 __post_init__ 播种成 [msg 独立副本](旧行为不变)。
+                fragments=_recovered_frags,  # type: ignore[arg-type]
             ),
         )
         logger.info(

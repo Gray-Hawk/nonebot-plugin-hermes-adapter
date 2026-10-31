@@ -85,6 +85,35 @@ def _keyword_soft_hit(keywords, text: str) -> bool:
     return any(kw and kw in text for kw in keywords)
 
 
+def _build_current_fragment(
+    *, now_ms: int, adapter_name: str, group_id: str | None, user_id: str,
+    nickname: str, msg_text: str,
+    own_image_urls: list[str], sticker_urls: list[str],
+    quote_image_urls: list[str], forward_image_urls: list[str],
+    delivery_generation: int | None, event_msg_id,
+) -> BufferedMessage:
+    """构造本事件的触发 fragment(alive/103 §17.9.3:生产唯一构造点)。
+
+    媒体分型与 perception 入库同源：own／sticker／quote／forward 四个字段
+    分开填，iter_message_media 枚举序(own→sticker→quote→forward)与
+    message_images 表 idx 一致——此前 own＋quote 混塞进 image_urls、
+    quote／forward 缺填，导致 steer 行内寻址与感知入库顺序不一致。
+    dispatch 的聚合 own＋quote image_urls 参数仍由调用方另算供内联帧用，
+    不再冒充行内寻址事实。插件 m:id 用 peek 读 perception 挂号,不 claim。
+    """
+    fragment = BufferedMessage(
+        ts=now_ms, adapter=adapter_name, group_id=group_id, user_id=user_id,
+        nickname=nickname, content=msg_text, origin=MessageOrigin.human(),
+        image_urls=list(own_image_urls), sticker_urls=list(sticker_urls),
+        quote_image_urls=list(quote_image_urls),
+        forward_image_urls=list(forward_image_urls),
+        reply_to_ts=None, is_bot=False,
+        delivery_generation=delivery_generation,
+    )
+    fragment.id = _peek_event_db_id(adapter_name, event_msg_id)
+    return fragment
+
+
 def _is_reply_delayed(user_id: str) -> bool:
     """强制回复延迟名单判定:仅已知 bot(user_lists.yaml 的 known_bots)延迟。
 
@@ -137,14 +166,11 @@ def _debounce_arrive(
         _merge_fragment_payload(st.payload, payload)
     elif replaceable:
         # 拆批(alive/103 §14.2):跨人替换只换触发归属与外壳,fragments 序列
-        # 前置保留旧人碎片——旧人文本不再只靠 buffer 兜底,current 拆批后
-        # 逐行各贴真号、各自发言人。fragment_db_ids 同规前置(A4 同源序列)。
+        # 前置保留旧人碎片——旧人文本不再只靠 buffer 兜底,current/steer 拆批后
+        # 逐行各贴真号、各自发言人。
         prev_frags = list(st.payload.get("fragments") or [])
         if prev_frags:
             payload["fragments"] = prev_frags + list(payload.get("fragments") or [])
-        prev_ids = list(st.payload.get("fragment_db_ids") or [])
-        if prev_ids:
-            payload["fragment_db_ids"] = prev_ids + list(payload.get("fragment_db_ids") or [])
         st.payload = payload
     st.merged += 1
     new_deadline = now_mono + debounce_sec
@@ -358,19 +384,22 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # 显式/隐式一视同仁——委托 @ 的直连豁免已砍除(本部署补丁):双 bot 场景下
     # 豁免让互 @ 零延迟直连、无限制器助燃互聊;砍后防抖窗即限速。跨人替换只换
     # 触发归属,turn 上下文从 buffer 拉,被顶掉的碎片内容不丢。
-    # 拆批 fragments 序列(alive/103 §14.2):本条完整对象(真实入库 m:id 用
-    # peek 读 perception 挂号,不 claim——claim 留给 path 一次性消费)随载荷
-    # 暂存;防抖合并按序追加,current 拆批逐行渲染,不查库。
+    # 拆批 fragments 序列(alive/103 §14.2/§17.9.3):本条完整对象经生产唯一
+    # 构造点产出(真实入库 m:id 用 peek 读 perception 挂号,不 claim——claim 留给
+    # path 一次性消费)随载荷暂存;防抖合并按序追加,steer/current 逐行渲染按号
+    # 寻址,不查库。媒体分型 own/sticker/quote/forward 与 perception 同源。
     delivery_generation = session_manager.get_delivery_generation(
         adapter_name, target.private, user_id, group_id
     )
-    fragment = BufferedMessage(
-        ts=now, adapter=adapter_name, group_id=group_id, user_id=user_id,
-        nickname=nickname, content=msg_text, origin=MessageOrigin.human(), image_urls=list(image_urls),
-        sticker_urls=list(sticker_urls), reply_to_ts=None, is_bot=False,
-        delivery_generation=delivery_generation,
+    event_msg_id = getattr(event, "message_id", None)
+    fragment = _build_current_fragment(
+        now_ms=now, adapter_name=adapter_name, group_id=group_id, user_id=user_id,
+        nickname=nickname, msg_text=msg_text,
+        own_image_urls=list(own_image_urls), sticker_urls=list(sticker_urls),
+        quote_image_urls=list(replied_image_urls),
+        forward_image_urls=list(_forward_image_urls),
+        delivery_generation=delivery_generation, event_msg_id=event_msg_id,
     )
-    fragment.id = _peek_event_db_id(adapter_name, getattr(event, "message_id", None))
     debounce_sec = (
         chat_cfg.reply_debounce_private_sec
         if target.private
@@ -406,7 +435,6 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             ephemeral=keyword_soft_hit and not in_active_window,
             context_limit=chat_cfg.history_message_limit if keyword_soft_hit else None,
             fragments=[fragment],
-            fragment_db_ids=([fragment.id] if fragment.id is not None else []),
         )
         # get-or-create 与状态更新之间无 await,asyncio 单线程下原子。
         loop = asyncio.get_running_loop()

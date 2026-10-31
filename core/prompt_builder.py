@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -30,6 +31,7 @@ from ..config import plugin_config
 from .hermes_client import UserContent
 from .message_buffer import (
     BufferedMessage,
+    iter_message_media,
     media_kind_word,
     media_label,
     render_media_summary,
@@ -711,6 +713,92 @@ def render_current_rows(
             row, name_resolver=name_resolver, with_speaker=not private_single_human,
         ))
     return "\n".join(lines)
+
+
+# --- steer 行渲染(alive/103 §17.9.1/2):与 current 行共用 speaker 装配与媒体
+# 寻址约定，但保留 steer 既有文法 `[id=u user=N] [m:id]: 正文`(m:id 挂在
+# speaker 之后、冒号之前)——steer_reconcile 的转录命中判据是 `[m:id]:`(带冒号),
+# native 回收的剥壳正则也锚这一形态；换成 current 外壳(`[m:id] [id=…]: `)会让
+# 对账命中判据与回收剥壳双双失效。完整媒体寻址(`[图 m:id#idx]`+随条读图提示)
+# 只用于 steer，默认 current 渲染不加这套噪声。
+
+_STEER_MEDIA_HINT = (
+    "(随条媒体未内联,需要看图/表情时用 get_message_images "
+    "按 m:{m_id} 加对应 idx 取)"
+)
+
+
+@dataclass(frozen=True)
+class SteerRowPresentation:
+    """一行 steer 呈递：source_row 是身份来源，rendered_line 是实发整批的连续子串。"""
+
+    source_row: BufferedMessage
+    rendered_line: str
+
+
+@dataclass(frozen=True)
+class SteerPresentation:
+    """steer 发送与逐行台账共用的唯一值对象(alive/103 §17.9.2)。
+
+    rows 保序保存 (source_row, rendered_line)；text 是整批发送文本
+    (各行 rendered_line 以 \\n 连接,不含尾部约定行——约定行由发送原语在
+    最终文本末尾追加一次,不写进单行账项)。
+    """
+
+    rows: tuple[SteerRowPresentation, ...]
+    text: str
+
+
+def _render_steer_message_line(row: BufferedMessage, *, name_resolver=None) -> str:
+    """渲染一条 steer 行；拒绝在 relay 边界转成安全回退(返回 False 落 pending)。
+
+    与 _render_message_line 共用 speaker 装配与 iter_message_media 寻址,
+    区别只在文法(speaker 前挂 m:id 后移)与媒体形态(完整寻址标签+随条提示)。
+    """
+    if row.origin.author_kind is AuthorKind.MIXED:
+        raise ValueError("混合聚合消息必须先展开 fragments 再呈递")
+    if row.origin.author_kind is AuthorKind.BOT:
+        raise ValueError("bot 消息不得作为 steer 输入")
+    if row.origin.author_kind is AuthorKind.SYSTEM:
+        raise ValueError("系统来源行不得作为 steer 输入")
+    tag = _format_speaker_tag(
+        row.nickname, row.user_id,
+        canonical=name_resolver(row.user_id) if name_resolver else None)
+    mid = f" [m:{row.id}]" if row.id is not None else ""
+    body = (row.content or "").strip()
+    line = f"{tag}{mid}: {body}".rstrip()
+    media = iter_message_media(row)
+    if media:
+        if row.id is None:
+            raise ValueError("有媒体但无合法行号,拒绝 steer 行渲染")
+        labels = " ".join(
+            media_label(kind, row.id, idx) for idx, (kind, _u) in enumerate(media)
+        )
+        line = f"{line} {labels}{_STEER_MEDIA_HINT.format(m_id=row.id)}"
+    return line
+
+
+def render_steer_rows(
+    rows: Sequence[BufferedMessage], *, name_resolver=None,
+) -> SteerPresentation:
+    """steer 唯一呈递入口：内容、媒体、台账与去重的同一份身份事实(alive/103 §17)。
+
+    单条只是一元素序列的特例；任一行的来源/媒体寻址不合法则整批响亮拒绝,
+    由 relay 边界转成安全回退,不半贴号、丢媒体或改写原始消息。
+    """
+    if not rows:
+        raise ValueError("steer 行序列不得为空")
+    items = tuple(
+        SteerRowPresentation(
+            source_row=row,
+            rendered_line=_render_steer_message_line(row, name_resolver=name_resolver),
+        )
+        for row in rows
+    )
+    return SteerPresentation(
+        rows=items,
+        text="\n".join(item.rendered_line for item in items),
+    )
 
 
 def build_reactive_user_content(

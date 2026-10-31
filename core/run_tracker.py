@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS steer_ledger (
     scope_key   TEXT NOT NULL,
     session_key TEXT NOT NULL,
     sender_id   TEXT NOT NULL,
-    steer_text  TEXT NOT NULL,          -- 实际注入的完整文本(含发言人标签与约定行)
+    steer_text  TEXT NOT NULL,          -- 实际发送的逐行投影(不含批次约定行)
     accepted_at REAL NOT NULL,
     status      TEXT NOT NULL DEFAULT 'pending'  -- pending/reconciled/recovered/replayed
 )
@@ -364,23 +364,25 @@ class RunTracker:
         self,
         *,
         run_id: str,
-        m_id: str,
         scope_key: str,
         session_key: str,
-        sender_id: str,
-        steer_text: str,
         accepted_at: float,
+        items: list[dict],
     ) -> None:
-        """INSERT 一行 pending 台账(steer 被上游接受后调用)。
+        """INSERT 逐行 pending 台账(alive/103 §17.9.8:整批一次调用,逐行落行)。
 
-        无 m:id 的 steer 不入账(对账无锚点), 由调用方在开关与 m_id 判定后把关。
+        items=[{m_id, sender_id, steer_text}, ...]——发送/台账/去重同一份
+        SteerPresentation 派生,不再有第二条平行 ID 轨。无 m:id 的行不入账
+        (对账无锚点),由调用方在投影时过滤。
         """
-        self._conn.execute(
-            "INSERT INTO steer_ledger "
-            "(run_id, m_id, scope_key, session_key, sender_id, steer_text, accepted_at, status)"
-            " VALUES (?,?,?,?,?,?,?,'pending')",
-            (run_id, m_id, scope_key, session_key, sender_id, steer_text, accepted_at),
-        )
+        for it in items:
+            self._conn.execute(
+                "INSERT INTO steer_ledger "
+                "(run_id, m_id, scope_key, session_key, sender_id, steer_text, accepted_at, status)"
+                " VALUES (?,?,?,?,?,?,?,'pending')",
+                (run_id, str(it["m_id"]), scope_key, session_key,
+                 str(it["sender_id"]), it["steer_text"], accepted_at),
+            )
         self._conn.commit()
 
     def pending_steers(self, run_id: str) -> list[dict]:
@@ -390,6 +392,35 @@ class RunTracker:
             " accepted_at, status FROM steer_ledger WHERE run_id=? AND status='pending'"
             " ORDER BY id",
             (run_id,),
+        ).fetchall()
+        return [
+            {
+                "id": r[0],
+                "run_id": r[1],
+                "m_id": r[2],
+                "scope_key": r[3],
+                "session_key": r[4],
+                "sender_id": r[5],
+                "steer_text": r[6],
+                "accepted_at": r[7],
+                "status": r[8],
+            }
+            for r in rows
+        ]
+
+    def pending_steers_by_scope(self, scope_key: str) -> list[dict]:
+        """按 scope_key 取全部 pending 台账(native 回收归因用,rework-1 F3)。
+
+        native 回收点(run 终态 pending_steer 上浮)拿不到 run_id——ChatResult
+        不携带、tracker 行已被 finish 删除——但 ledger 行带 scope_key;按 scope
+        拉候选,再由调用方判定 steer_text 是否为本次 pending_steer 拼接文本的
+        子串,精确找回这批被回收行的 sender 与逐行正文。返回按台账 id 升序。
+        """
+        rows = self._conn.execute(
+            "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text,"
+            " accepted_at, status FROM steer_ledger WHERE scope_key=? AND status='pending'"
+            " ORDER BY id",
+            (scope_key,),
         ).fetchall()
         return [
             {
