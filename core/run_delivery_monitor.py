@@ -567,8 +567,18 @@ def schedule_reconcile_for_run(run_id: str, *, reason: str = "turn_end") -> None
     delivery = tracker.get_delivery(run_id)
     if delivery is None or delivery["expected_state"] != "ready":
         return
+    cfg = load_runs_delivery_config()
+    elapsed = max(0.0, time.time() - float(delivery["updated_at"]))
+    delay = max(0.0, cfg.grace_sec - elapsed)
+
+    async def reconcile_after_grace() -> None:
+        # 本部署补丁：宽限只推迟对账，不能把可见末轮的缺件永久留在 pending。
+        if delay > 0:
+            await asyncio.sleep(delay)
+        await reconcile_scope(delivery["scope_key"], reason=f"{reason}_after_grace")
+
     spawn_bg_task(
-        reconcile_scope(delivery["scope_key"], reason=reason),
+        reconcile_after_grace(),
         name=f"delivery-reconcile-{run_id[:12]}",
     )
 
