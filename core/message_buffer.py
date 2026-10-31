@@ -68,6 +68,8 @@ class BufferedMessage:
     delivery_generation: int | None = None
     """消息入场时的 SessionManager 交付代际；仅随实时 turn/排队载体传播，不入库。
     clear 后旧代迟提交由 runs 原子门拒绝；None 保留旧调用与合成消息兼容。"""
+    source_event_id: str | None = None
+    """后台完成事件号；仅随汇报轮进入 runs 交付台账，普通消息恒为 None。"""
 
     def __post_init__(self) -> None:
         if not isinstance(self.origin, MessageOrigin):

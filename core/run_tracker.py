@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS active_runs (
     session_key TEXT NOT NULL,
     mode        TEXT NOT NULL,
     expect_structured INTEGER NOT NULL DEFAULT 0,
+    reply_protocol_version INTEGER NOT NULL DEFAULT 0,
     last_seq    INTEGER NOT NULL DEFAULT -1,
     started_at  REAL NOT NULL
 )
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS run_submissions (
     expect_structured INTEGER NOT NULL DEFAULT 0,
     bot_self_id     TEXT NOT NULL,
     delivery_generation INTEGER,
+    source_event_id TEXT,
     run_id          TEXT UNIQUE,
     state           TEXT NOT NULL DEFAULT 'submitted',
     created_at      REAL NOT NULL,
@@ -103,6 +105,8 @@ CREATE TABLE IF NOT EXISTS run_deliveries (
     expect_structured INTEGER NOT NULL DEFAULT 0,
     expected_state  TEXT NOT NULL DEFAULT 'waiting',
     plan_json       TEXT,
+    recovery_json   TEXT,
+    reply_protocol_version INTEGER NOT NULL DEFAULT 0,
     created_at      REAL NOT NULL,
     completed_at    REAL,
     updated_at      REAL NOT NULL,
@@ -110,7 +114,8 @@ CREATE TABLE IF NOT EXISTS run_deliveries (
     adapter         TEXT,
     is_private      INTEGER,
     user_id         TEXT,
-    group_id        TEXT
+    group_id        TEXT,
+    source_event_id TEXT
 );
 CREATE TABLE IF NOT EXISTS delivery_components (
     run_id          TEXT NOT NULL,
@@ -119,6 +124,7 @@ CREATE TABLE IF NOT EXISTS delivery_components (
     payload_sha256  TEXT,
     state           TEXT NOT NULL DEFAULT 'pending',
     claim_owner     TEXT,
+    claim_token     TEXT,
     claim_until     REAL,
     attempt_count   INTEGER NOT NULL DEFAULT 0,
     msg_ids_json    TEXT,
@@ -138,14 +144,15 @@ CREATE TABLE IF NOT EXISTS delivery_generation_fences (
 _ACTIVE_RUN_UPSERT_SQL = (
     "INSERT INTO active_runs "
     "(run_id, scope_key, adapter, is_private, user_id, group_id, bot_self_id,"
-    " session_key, mode, expect_structured, last_seq, started_at)"
-    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+    " session_key, mode, expect_structured, reply_protocol_version, last_seq, started_at)"
+    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
     " ON CONFLICT(run_id) DO UPDATE SET"
     " scope_key=excluded.scope_key, adapter=excluded.adapter,"
     " is_private=excluded.is_private, user_id=excluded.user_id,"
     " group_id=excluded.group_id, bot_self_id=excluded.bot_self_id,"
     " session_key=excluded.session_key, mode=excluded.mode,"
-    " expect_structured=excluded.expect_structured"
+    " expect_structured=excluded.expect_structured,"
+    " reply_protocol_version=excluded.reply_protocol_version"
 )
 
 
@@ -163,6 +170,7 @@ class TrackedRun:
     expect_structured: bool
     last_seq: int
     started_at: float
+    reply_protocol_version: int = 0
 
 
 def make_scope_key(adapter: str, is_private: bool, user_id: str, group_id: str | None) -> str:
@@ -194,9 +202,25 @@ class RunTracker:
         for col, ddl in (
             ("adapter", "TEXT"), ("is_private", "INTEGER"),
             ("user_id", "TEXT"), ("group_id", "TEXT"),
+            ("recovery_json", "TEXT"),
+            ("reply_protocol_version", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if col not in existing:
                 self._conn.execute(f"ALTER TABLE run_deliveries ADD COLUMN {col} {ddl}")
+        active_cols = {
+            r[1] for r in self._conn.execute("PRAGMA table_info(active_runs)")
+        }
+        if "reply_protocol_version" not in active_cols:
+            self._conn.execute(
+                "ALTER TABLE active_runs ADD COLUMN"
+                " reply_protocol_version INTEGER NOT NULL DEFAULT 0"
+            )
+        # 每次平台尝试持有独立令牌；旧行 NULL 仅兼容既有直接台账调用。
+        component_cols = {
+            r[1] for r in self._conn.execute("PRAGMA table_info(delivery_components)")
+        }
+        if "claim_token" not in component_cols:
+            self._conn.execute("ALTER TABLE delivery_components ADD COLUMN claim_token TEXT")
         # 方案2：消息入场代际随 submission 持久化；clear 栅栏同时记录新代。
         # 旧行保持 NULL，继续走 submission_seq 兼容判定。
         for table, col in (
@@ -206,6 +230,19 @@ class RunTracker:
             existing = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             if col not in existing:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} INTEGER")
+        # 后台汇报事件号只作显式跨层身份；普通消息保持 NULL。
+        for table in ("run_submissions", "run_deliveries"):
+            existing = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            if "source_event_id" not in existing:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN source_event_id TEXT")
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_run_submissions_source_event"
+            " ON run_submissions(source_event_id, submission_seq)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_run_deliveries_source_event"
+            " ON run_deliveries(source_event_id)"
+        )
         self._conn.commit()
 
     def upsert(
@@ -221,6 +258,7 @@ class RunTracker:
         session_key: str,
         mode: str,
         expect_structured: bool,
+        reply_protocol_version: int = 0,
     ) -> None:
         # 冲突改 ON CONFLICT DO UPDATE 只刷元数据——旧写法
         # INSERT OR REPLACE 全行重置,同一 run_id 二次登记会把 last_seq/started_at
@@ -230,7 +268,8 @@ class RunTracker:
             _ACTIVE_RUN_UPSERT_SQL,
             (
                 run_id, scope_key, adapter, int(is_private), user_id, group_id,
-                bot_self_id, session_key, mode, int(expect_structured), -1, time.time(),
+                bot_self_id, session_key, mode, int(expect_structured),
+                int(reply_protocol_version), -1, time.time(),
             ),
         )
         self._conn.commit()
@@ -248,14 +287,16 @@ class RunTracker:
     def list_running(self) -> list[TrackedRun]:
         rows = self._conn.execute(
             "SELECT run_id, scope_key, adapter, is_private, user_id, group_id,"
-            " bot_self_id, session_key, mode, expect_structured, last_seq, started_at"
+            " bot_self_id, session_key, mode, expect_structured, reply_protocol_version,"
+            " last_seq, started_at"
             " FROM active_runs ORDER BY started_at"
         ).fetchall()
         return [
             TrackedRun(
                 run_id=r[0], scope_key=r[1], adapter=r[2], is_private=bool(r[3]),
                 user_id=r[4], group_id=r[5], bot_self_id=r[6], session_key=r[7],
-                mode=r[8], expect_structured=bool(r[9]), last_seq=r[10], started_at=r[11],
+                mode=r[8], expect_structured=bool(r[9]), reply_protocol_version=int(r[10] or 0),
+                last_seq=r[11], started_at=r[12],
             )
             for r in rows
         ]
@@ -264,7 +305,8 @@ class RunTracker:
         """按 scope_key 取 live run(steer 注入找目标用);同 scope 多行取最新。"""
         rows = self._conn.execute(
             "SELECT run_id, scope_key, adapter, is_private, user_id, group_id,"
-            " bot_self_id, session_key, mode, expect_structured, last_seq, started_at"
+            " bot_self_id, session_key, mode, expect_structured, reply_protocol_version,"
+            " last_seq, started_at"
             " FROM active_runs WHERE scope_key=? ORDER BY started_at DESC LIMIT 1",
             (scope_key,),
         ).fetchall()
@@ -274,14 +316,16 @@ class RunTracker:
         return TrackedRun(
             run_id=r[0], scope_key=r[1], adapter=r[2], is_private=bool(r[3]),
             user_id=r[4], group_id=r[5], bot_self_id=r[6], session_key=r[7],
-            mode=r[8], expect_structured=bool(r[9]), last_seq=r[10], started_at=r[11],
+            mode=r[8], expect_structured=bool(r[9]), reply_protocol_version=int(r[10] or 0),
+            last_seq=r[11], started_at=r[12],
         )
 
     def get_by_run_id(self, run_id: str) -> TrackedRun | None:
         """按主键取一行(run 终态钩子 finish 删行前取回完整行用)。"""
         rows = self._conn.execute(
             "SELECT run_id, scope_key, adapter, is_private, user_id, group_id,"
-            " bot_self_id, session_key, mode, expect_structured, last_seq, started_at"
+            " bot_self_id, session_key, mode, expect_structured, reply_protocol_version,"
+            " last_seq, started_at"
             " FROM active_runs WHERE run_id=?",
             (run_id,),
         ).fetchall()
@@ -291,7 +335,8 @@ class RunTracker:
         return TrackedRun(
             run_id=r[0], scope_key=r[1], adapter=r[2], is_private=bool(r[3]),
             user_id=r[4], group_id=r[5], bot_self_id=r[6], session_key=r[7],
-            mode=r[8], expect_structured=bool(r[9]), last_seq=r[10], started_at=r[11],
+            mode=r[8], expect_structured=bool(r[9]), reply_protocol_version=int(r[10] or 0),
+            last_seq=r[11], started_at=r[12],
         )
 
     def prune_zombies(self, max_age_sec: float, *, now: float | None = None) -> list[str]:
@@ -460,6 +505,7 @@ class RunTracker:
         expect_structured: bool,
         bot_self_id: str,
         delivery_generation: int | None = None,
+        source_event_id: str | None = None,
     ) -> int:
         """第一次 POST 前原子核验入场代际并持久化提交意图。
 
@@ -500,12 +546,12 @@ class RunTracker:
                 "INSERT INTO run_submissions "
                 "(idempotency_key, request_gzip, request_sha256, target_fingerprint,"
                 " scope_key, session_key, mode, expect_structured, bot_self_id,"
-                " delivery_generation, state, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,'submitted',?,?)",
+                " delivery_generation, source_event_id, state, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,'submitted',?,?)",
                 (
                     idempotency_key, zlib.compress(canonical), digest, target_fingerprint,
                     scope_key, session_key, mode, int(expect_structured), bot_self_id,
-                    delivery_generation, now, now,
+                    delivery_generation, source_event_id, now, now,
                 ),
             )
             self._conn.commit()
@@ -519,7 +565,8 @@ class RunTracker:
         r = self._conn.execute(
             "SELECT submission_seq, idempotency_key, request_gzip, request_sha256,"
             " target_fingerprint, scope_key, session_key, mode, expect_structured,"
-            " bot_self_id, run_id, state, created_at, updated_at, delivery_generation"
+            " bot_self_id, run_id, state, created_at, updated_at, delivery_generation,"
+            " source_event_id"
             " FROM run_submissions WHERE idempotency_key=?",
             (idempotency_key,),
         ).fetchone()
@@ -541,6 +588,7 @@ class RunTracker:
             "created_at": r[12],
             "updated_at": r[13],
             "delivery_generation": r[14],
+            "source_event_id": r[15],
         }
 
     def list_unbound_submissions(self) -> list[dict]:
@@ -573,6 +621,7 @@ class RunTracker:
         session_key: str,
         mode: str,
         expect_structured: bool,
+        reply_protocol_version: int = 0,
     ) -> None:
         """取得 run_id 后,同一事务完成 submission 绑定＋active_runs 登记。
 
@@ -592,7 +641,8 @@ class RunTracker:
                 _ACTIVE_RUN_UPSERT_SQL,
                 (
                     run_id, scope_key, adapter, int(is_private), user_id, group_id,
-                    bot_self_id, session_key, mode, int(expect_structured), -1, time.time(),
+                    bot_self_id, session_key, mode, int(expect_structured),
+                    int(reply_protocol_version), -1, time.time(),
                 ),
             )
 
@@ -605,7 +655,7 @@ class RunTracker:
         失败关闭由调用方转 detached 保留恢复依据,不伪造交付身份。
         """
         sub = self._conn.execute(
-            "SELECT submission_seq, idempotency_key, scope_key, session_key"
+            "SELECT submission_seq, idempotency_key, scope_key, session_key, source_event_id"
             " FROM run_submissions WHERE run_id=?",
             (run_id,),
         ).fetchone()
@@ -614,25 +664,57 @@ class RunTracker:
         now = time.time()
         # 投递目标从 active_runs 复制(finish 删行后恢复发送仍可解析 target)。
         target = self._conn.execute(
-            "SELECT adapter, is_private, user_id, group_id FROM active_runs WHERE run_id=?",
+            "SELECT adapter, is_private, user_id, group_id, reply_protocol_version"
+            " FROM active_runs WHERE run_id=?",
             (run_id,),
         ).fetchone()
-        adapter, is_private, user_id, group_id = target if target else (None, None, None, None)
+        adapter, is_private, user_id, group_id, protocol_version = (
+            target if target else (None, None, None, None, 0)
+        )
         self._conn.execute(
             "INSERT INTO run_deliveries "
             "(run_id, submission_seq, idempotency_key, scope_key, session_key,"
-            " output, expect_structured, expected_state, created_at, completed_at, updated_at,"
-            " adapter, is_private, user_id, group_id)"
-            " VALUES (?,?,?,?,?,?,?,'ready',?,?,?,?,?,?,?)"
+            " output, expect_structured, reply_protocol_version, expected_state, created_at, completed_at, updated_at,"
+            " adapter, is_private, user_id, group_id, source_event_id)"
+            " VALUES (?,?,?,?,?,?,?,?,'ready',?,?,?,?,?,?,?,?)"
             " ON CONFLICT(run_id) DO UPDATE SET"
             " output=excluded.output, expect_structured=excluded.expect_structured,"
-            " expected_state='ready', updated_at=excluded.updated_at,"
+            " reply_protocol_version=excluded.reply_protocol_version,"
+            " updated_at=excluded.updated_at,"
             " adapter=COALESCE(run_deliveries.adapter, excluded.adapter),"
             " is_private=COALESCE(run_deliveries.is_private, excluded.is_private),"
             " user_id=COALESCE(run_deliveries.user_id, excluded.user_id),"
-            " group_id=COALESCE(run_deliveries.group_id, excluded.group_id)",
-            (run_id, sub[0], sub[1], sub[2], sub[3], output, int(expect_structured), now, now, now,
-             adapter, is_private, user_id, group_id),
+            " group_id=COALESCE(run_deliveries.group_id, excluded.group_id),"
+            " source_event_id=COALESCE(run_deliveries.source_event_id, excluded.source_event_id)",
+            (run_id, sub[0], sub[1], sub[2], sub[3], output, int(expect_structured),
+             int(protocol_version or 0), now, now, now,
+             adapter, is_private, user_id, group_id, sub[4]),
+        )
+        self._conn.commit()
+
+    def record_recovery_evidence(
+        self, *, run_id: str, recoveries: list[dict], protocol_version: int
+    ) -> None:
+        """保存纯取证结果；计划封存后只允许相同证据重入。"""
+        seqs = [int(item["reply_seq"]) for item in recoveries]
+        if len(set(seqs)) != len(seqs) or any(seq <= 0 for seq in seqs):
+            raise ValueError("invalid recovery reply_seq")
+        if recoveries and protocol_version < 1:
+            raise ValueError("legacy run must not recover replies")
+        row = self._conn.execute(
+            "SELECT plan_json FROM run_deliveries WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"no delivery for run_id={run_id!r}")
+        if row[0]:
+            sealed = json.loads(row[0]).get("recoveries", [])
+            if sealed != recoveries:
+                raise ValueError(f"recovery evidence changed for run_id={run_id!r}")
+        self._conn.execute(
+            "UPDATE run_deliveries SET recovery_json=?, reply_protocol_version=?,"
+            " updated_at=? WHERE run_id=?",
+            (json.dumps(recoveries, sort_keys=True, ensure_ascii=False),
+             int(protocol_version), time.time(), run_id),
         )
         self._conn.commit()
 
@@ -716,7 +798,8 @@ class RunTracker:
         r = self._conn.execute(
             "SELECT run_id, submission_seq, idempotency_key, scope_key, session_key,"
             " output, expect_structured, expected_state, plan_json, created_at,"
-            " completed_at, updated_at, cancel_reason, adapter, is_private, user_id, group_id"
+            " completed_at, updated_at, cancel_reason, adapter, is_private, user_id, group_id,"
+            " source_event_id, recovery_json, reply_protocol_version"
             " FROM run_deliveries WHERE run_id=?",
             (run_id,),
         ).fetchone()
@@ -740,7 +823,26 @@ class RunTracker:
             "is_private": bool(r[14]) if r[14] is not None else None,
             "user_id": r[15],
             "group_id": r[16],
+            "source_event_id": r[17],
+            "recovery_json": r[18],
+            "reply_protocol_version": r[19],
         }
+
+    def get_latest_submission_by_source_event(self, source_event_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT idempotency_key FROM run_submissions WHERE source_event_id=?"
+            " ORDER BY submission_seq DESC LIMIT 1",
+            (source_event_id,),
+        ).fetchone()
+        return self.get_submission(row[0]) if row is not None else None
+
+    def get_latest_delivery_by_source_event(self, source_event_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT run_id FROM run_deliveries WHERE source_event_id=?"
+            " ORDER BY submission_seq DESC LIMIT 1",
+            (source_event_id,),
+        ).fetchone()
+        return self.get_delivery(row[0]) if row is not None else None
 
     # --- 出站组件计划、认领与回执(本部署补丁, alive/108 提交 B)。 ---
 
@@ -780,6 +882,7 @@ class RunTracker:
     def claim_component(
         self, *, run_id: str, component_id: str, owner: str, lease_sec: float = 30.0,
         unknown_backoff_sec: float | None = None, unknown_max_attempts: int = 0,
+        attempt_token: str | None = None,
     ) -> str:
         """原子认领一个出站组件,返回 send／sent／busy。
 
@@ -794,13 +897,13 @@ class RunTracker:
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             row = self._conn.execute(
-                "SELECT state, claim_owner, claim_until, attempt_count, updated_at"
+                "SELECT state, claim_owner, claim_token, claim_until, attempt_count, updated_at"
                 " FROM delivery_components WHERE run_id=? AND component_id=?",
                 (run_id, component_id),
             ).fetchone()
             if row is None:
                 raise KeyError(f"no component {component_id!r} for run_id={run_id!r}")
-            state, claim_owner, claim_until, attempt_count, updated_at = row
+            state, claim_owner, claim_token, claim_until, attempt_count, updated_at = row
             outcome = "send"
             reentrant = False
             if state in ("sent", "cancelled", "not_required"):
@@ -815,21 +918,21 @@ class RunTracker:
             elif (
                 state == "claimed" and claim_owner == owner
                 and claim_until is not None and claim_until > now
+                and claim_token == attempt_token
             ):
-                # reconcile 已带 unknown 策略认领后，统一出站会持同一 owner 重入；
-                # 有效租约仍归原尝试，不得把一次平台发送重复计成两次。
+                # 只有同一次尝试能重入；同进程另一个 reconcile 即使复用
+                # owner 字符串，不同令牌也只能看到 busy。
                 reentrant = True
             elif (
-                state == "claimed" and claim_owner != owner
-                and claim_until is not None and claim_until > now
+                state == "claimed" and claim_until is not None and claim_until > now
             ):
                 outcome = "busy"
             if outcome == "send" and not reentrant:
                 self._conn.execute(
                     "UPDATE delivery_components SET state='claimed', claim_owner=?,"
-                    " claim_until=?, attempt_count=attempt_count+1, updated_at=?"
+                    " claim_token=?, claim_until=?, attempt_count=attempt_count+1, updated_at=?"
                     " WHERE run_id=? AND component_id=?",
-                    (owner, now + max(0.0, lease_sec), now, run_id, component_id),
+                    (owner, attempt_token, now + max(0.0, lease_sec), now, run_id, component_id),
                 )
             self._conn.commit()
             return outcome
@@ -840,7 +943,7 @@ class RunTracker:
     def get_component(self, *, run_id: str, component_id: str) -> dict | None:
         """按主键取组件事实(含 msg_ids 解析),不存在返回 None。"""
         r = self._conn.execute(
-            "SELECT kind, payload_sha256, state, claim_owner, claim_until,"
+            "SELECT kind, payload_sha256, state, claim_owner, claim_token, claim_until,"
             " attempt_count, msg_ids_json, last_error, created_at, updated_at"
             " FROM delivery_components WHERE run_id=? AND component_id=?",
             (run_id, component_id),
@@ -854,41 +957,67 @@ class RunTracker:
             "payload_sha256": r[1],
             "state": r[2],
             "claim_owner": r[3],
-            "claim_until": r[4],
-            "attempt_count": r[5],
-            "msg_ids": json.loads(r[6]) if r[6] else [],
-            "last_error": r[7],
-            "created_at": r[8],
-            "updated_at": r[9],
+            "claim_token": r[4],
+            "claim_until": r[5],
+            "attempt_count": r[6],
+            "msg_ids": json.loads(r[7]) if r[7] else [],
+            "last_error": r[8],
+            "created_at": r[9],
+            "updated_at": r[10],
         }
 
     def _mark_component(
-        self, run_id: str, component_id: str, state: str, *, msg_ids=None, error=None
-    ) -> None:
-        self._conn.execute(
+        self, run_id: str, component_id: str, state: str, *, msg_ids=None, error=None,
+        attempt_token: str | None = None, allow_pending: bool = False,
+    ) -> bool:
+        sql = (
             "UPDATE delivery_components SET state=?, msg_ids_json=COALESCE(?, msg_ids_json),"
             " last_error=?, claim_owner=NULL, claim_until=NULL, updated_at=?"
-            " WHERE run_id=? AND component_id=?",
-            (
-                state,
-                json.dumps(list(msg_ids)) if msg_ids is not None else None,
-                (str(error)[:300] if error is not None else None),
-                time.time(), run_id, component_id,
-            ),
+            " WHERE run_id=? AND component_id=?"
         )
+        params = [
+            state,
+            json.dumps(list(msg_ids)) if msg_ids is not None else None,
+            (str(error)[:300] if error is not None else None),
+            time.time(), run_id, component_id,
+        ]
+        if attempt_token is not None:
+            if allow_pending:
+                sql += " AND (claim_token=? OR state='pending')"
+            else:
+                sql += " AND claim_token=?"
+            params.append(attempt_token)
+        cur = self._conn.execute(sql, params)
         self._conn.commit()
+        return cur.rowcount == 1
 
-    def mark_component_sent(self, *, run_id: str, component_id: str, msg_ids: list) -> None:
-        """平台成功后立即写回执;发送成功但无 msg_id 同样记 sent(空列表)。"""
-        self._mark_component(run_id, component_id, "sent", msg_ids=msg_ids)
+    def mark_component_sent(
+        self, *, run_id: str, component_id: str, msg_ids: list,
+        attempt_token: str | None = None,
+    ) -> bool:
+        """平台成功后立即写回执；带令牌时过期尝试不能覆盖新事实。"""
+        return self._mark_component(
+            run_id, component_id, "sent", msg_ids=msg_ids, attempt_token=attempt_token
+        )
 
-    def mark_component_unknown(self, *, run_id: str, component_id: str, error) -> None:
+    def mark_component_unknown(
+        self, *, run_id: str, component_id: str, error,
+        attempt_token: str | None = None,
+    ) -> bool:
         """平台调用已发起但结果不明(异常/超时/崩溃);不得立即盲补。"""
-        self._mark_component(run_id, component_id, "unknown", error=error)
+        return self._mark_component(
+            run_id, component_id, "unknown", error=error, attempt_token=attempt_token
+        )
 
-    def mark_component_failed(self, *, run_id: str, component_id: str, error) -> None:
+    def mark_component_failed(
+        self, *, run_id: str, component_id: str, error,
+        attempt_token: str | None = None,
+    ) -> bool:
         """平台调用前的本地失败(白名单/校验),允许修复后重试。"""
-        self._mark_component(run_id, component_id, "failed", error=error)
+        return self._mark_component(
+            run_id, component_id, "failed", error=error, attempt_token=attempt_token,
+            allow_pending=True,
+        )
 
     def set_expected_state(
         self, run_id: str, expected_state: str, *, cancel_reason: str | None = None

@@ -95,7 +95,13 @@ async def reconcile_run_finished(tracked) -> None:
     await _replay_missing(tracked, rows, missing)
 
 
-async def _fetch_transcript(tracked, pending: list[dict] | None = None):
+async def _fetch_transcript(
+    tracked,
+    pending: list[dict] | None = None,
+    *,
+    stop_at_user: bool = True,
+    stop_check=None,
+):
     """分页 GET 会话完整持久转录(latest 序, limit=500/页)。
 
     返回 (rows, complete):rows=按转录 id 去重的累计行(latest 序);
@@ -168,7 +174,9 @@ async def _fetch_transcript(tracked, pending: list[dict] | None = None):
                     any(n in (r.get("content") or "") for r in rows) for n in needles
                 ):
                     return rows, True
-                if any(
+                if stop_check is not None and stop_check(rows):
+                    return rows, True
+                if stop_at_user and any(
                     r.get("role") == "user" and not r.get("display_kind") for r in page
                 ):
                     return rows, True
