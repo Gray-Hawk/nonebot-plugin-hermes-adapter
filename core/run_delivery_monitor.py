@@ -243,6 +243,16 @@ def _resolve_entry(delivery: dict):
     entry = registry.get(delivery["adapter"], scope, scope_id)
     if entry is None:
         return None, None
+    # 同一聊天目标可能先后被多个 bot 的合成路由占用；实际恢复发送必须
+    # 回到原 submission 核验归属，不能拿先连接 bot 的 entry 替其他 bot 补投。
+    tracker = _runtime().run_tracker
+    submission = (
+        tracker.get_submission(delivery["idempotency_key"])
+        if tracker is not None
+        else None
+    )
+    if submission is None or entry.bot_self_id != str(submission["bot_self_id"]):
+        return None, None
     try:
         return entry, get_bot(entry.bot_self_id)
     except (KeyError, ValueError):
