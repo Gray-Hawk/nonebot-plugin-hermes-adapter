@@ -17,6 +17,7 @@ class BotEntry:
     bot_self_id: str
     target: Any  # nonebot_plugin_alconna.Target,只存内存
     last_seen_at: int  # ms;只写不读
+    synthetic: bool = False  # 启动恢复合成路由；真实感知 entry 可覆盖它
 
 
 class BotRegistry:
@@ -31,11 +32,13 @@ class BotRegistry:
         bot_self_id: str,
         target: Any,
         ts: int,
+        synthetic: bool = False,
     ) -> None:
         self._entries[(adapter, scope, scope_id)] = BotEntry(
             bot_self_id=bot_self_id,
             target=target,
             last_seen_at=ts,
+            synthetic=synthetic,
         )
 
     def get(self, adapter: str, scope: ScopeT, scope_id: str) -> BotEntry | None:

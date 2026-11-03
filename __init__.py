@@ -72,9 +72,6 @@ async def _hermes_m1_startup():
     from .core.sticker_library import ensure_sticker_library_template, init_sticker_feature
 
     initialize_runtime_config()
-    from .core.companion_config import load_companion_config
-
-    load_companion_config()
     init_sticker_feature()
     ensure_sticker_library_template()
     init_runtime_state()
@@ -103,9 +100,6 @@ async def _hermes_m1_startup():
     from .core.hermes_client import close_shared_http_client
 
     _driver.on_shutdown(close_shared_http_client)
-    from .core.companion_runtime import close_companion_runtimes
-
-    _driver.on_shutdown(close_companion_runtimes)
     register_expire_active_sessions()
     register_storage_vacuum()
     register_session_idle_reset()
@@ -123,7 +117,12 @@ async def _hermes_m1_startup():
         )
     # nb 重启后续跑在跑 runs turn;completions 路不写 tracker。
     if plugin_config.hermes_api_interface == "runs":
-        from .tasks import resume_active_runs
+        from .tasks import recover_bot_deliveries, resume_active_runs
+
+        @_driver.on_bot_connect
+        async def _hermes_restore_bot_routes(bot):
+            # 每次真实连接都完整恢复：已有路由不跳过对账，active 行也重新唤醒。
+            recover_bot_deliveries(bot)
 
         await resume_active_runs()
 

@@ -29,9 +29,11 @@ from __future__ import annotations
 import asyncio
 
 import httpx
+import nonebot_plugin_alconna as alconna
 from nonebot import get_bot, logger
 
 from .. import mcp as _mcp
+from ..adapter_norm import normalize_adapter_name
 from ..config import plugin_config
 from ..core.bg_tasks import spawn_bg_task
 from ..core.hermes_client import (
@@ -89,6 +91,96 @@ _ZOMBIE_TTL_SEC = 24 * 3600
 
 def _inflight_key(row: TrackedRun) -> tuple[str, str]:
     return make_inflight_key(row.adapter, row.is_private, row.user_id, row.group_id)
+
+
+def restore_bot_routes(bot, *, now_ms: int | None = None) -> int:
+    """Bot 连接后按持久恢复台账补回内存路由，不伪造入站消息。
+
+    active_runs 提供未结案 turn 的目标；ready-only deliveries 覆盖 active 行已删除、
+    仍待对账的回复。bot 归属以 active 行或原 submission 为准，其他 bot 的记录不串用。
+    真实感知 entry 一律保留；其他 bot 留下的合成 entry 可由后连接 bot 接管。
+    本函数只补路由，是否补投仍由恢复链与 delivery_components 的实发回执裁决。
+    """
+    registry = _mcp.bot_registry
+    tracker = _mcp.run_tracker
+    if registry is None or tracker is None:
+        return 0
+    adapter_name = normalize_adapter_name(getattr(bot.adapter, "get_name", lambda: "")())
+    bot_self_id = str(bot.self_id)
+    candidates: list[dict] = [
+        {
+            "adapter": row.adapter,
+            "is_private": row.is_private,
+            "user_id": row.user_id,
+            "group_id": row.group_id,
+        }
+        for row in tracker.list_running()
+        if row.adapter == adapter_name and str(row.bot_self_id) == bot_self_id
+    ]
+    for delivery in tracker.list_ready_deliveries():
+        if (delivery.get("adapter") or "") != adapter_name:
+            continue
+        submission = tracker.get_submission(delivery["idempotency_key"])
+        if submission is None or str(submission["bot_self_id"]) != bot_self_id:
+            continue
+        candidates.append(delivery)
+
+    restored = 0
+    seen: set[tuple[str, str, str]] = set()
+    ts = _now_ms() if now_ms is None else now_ms
+    for row in candidates:
+        scope = "private" if row.get("is_private") else "group"
+        scope_id = str(row.get("user_id") or "") if scope == "private" else str(row.get("group_id") or "")
+        key = (adapter_name, scope, scope_id)
+        if not scope_id or key in seen:
+            continue
+        seen.add(key)
+        existing = registry.get(adapter_name, scope, scope_id)
+        if existing is not None and (
+            not existing.synthetic or existing.bot_self_id == bot_self_id
+        ):
+            continue
+        registry.upsert(
+            adapter=adapter_name,
+            scope=scope,
+            scope_id=scope_id,
+            bot_self_id=bot_self_id,
+            target=alconna.Target(id=scope_id, private=(scope == "private"), adapter=adapter_name),
+            ts=ts,
+            synthetic=True,
+        )
+        restored += 1
+    if restored:
+        logger.info(
+            f"[HERMES run-resume] Bot 连接后恢复送达路由 {restored} 条: "
+            f"adapter={adapter_name} self_id={bot_self_id}"
+        )
+    return restored
+
+
+def recover_bot_deliveries(bot) -> None:
+    """真实 Bot 每次连接后完整恢复送达：路由、active reattach、ready 对账。
+
+    不以“新增路由数”作为后续扫描条件：断线保留的 entry 在重连时仍然有效；
+    已过等待窗口而退出的 active 恢复任务也由同一钩子重新唤醒。`_resume_row`
+    自带 per-run 去重，重复连接不会并行恢复同一 run。
+    """
+    restore_bot_routes(bot)
+    tracker = _mcp.run_tracker
+    if tracker is None:
+        return
+    adapter_name = normalize_adapter_name(getattr(bot.adapter, "get_name", lambda: "")())
+    bot_self_id = str(bot.self_id)
+    for row in tracker.list_running():
+        if row.adapter == adapter_name and str(row.bot_self_id) == bot_self_id:
+            spawn_bg_task(
+                _resume_row(row),
+                name=f"resume-bot-connect-{row.run_id[:12]}",
+            )
+    spawn_bg_task(
+        reconcile_pending_deliveries(),
+        name="delivery-reconcile-bot-connect",
+    )
 
 
 async def _record_overwritten_replies(row: TrackedRun, output: str) -> None:
@@ -316,6 +408,14 @@ async def _resume_row_impl(row: TrackedRun) -> None:
             return
         logger.warning(
             f"[HERMES run-resume] 送达窗口超时,保留行待下次启动 run_id={row.run_id} scope={row.scope_key}"
+        )
+        return
+    # 多 bot 同目标时，entry 可能已被后连接 bot 接管。active 恢复主发、
+    # 旁白和文件都在此返回前统一截住，不能只靠 ready reconcile 的归属门。
+    if entry.bot_self_id != str(row.bot_self_id):
+        logger.warning(
+            f"[HERMES run-resume] 路由 bot 归属不符,保留行待本人连接 "
+            f"run_id={row.run_id} owner={row.bot_self_id} entry={entry.bot_self_id}"
         )
         return
     try:
