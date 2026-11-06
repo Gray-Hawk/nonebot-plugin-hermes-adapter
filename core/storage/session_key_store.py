@@ -27,16 +27,6 @@ _SCHEMA_STATEMENTS = [
         updated_at   REAL    NOT NULL
     )
     """,
-    # 投递轮询水位持久化。原内存态重启即清+首轮播种跳过
-    # 存量——nb 重启期间完成的子代理投递行被盖在水位下永不播报(实测「重启后
-    # 投递轮不到」)。落本库:水位本就按 session_key 记,与映射表同生命周期。
-    """
-    CREATE TABLE IF NOT EXISTS delivery_watermarks (
-        session_key  TEXT    PRIMARY KEY,
-        last_row_id  INTEGER NOT NULL,
-        updated_at   REAL    NOT NULL
-    )
-    """,
     # /delay 暂停状态持久化——原内存态重启即失效,
     # 被暂停会话重启后悄悄恢复 T1 计时。
     """
@@ -112,43 +102,6 @@ class SessionKeyStore:
             )
         except Exception as exc:
             _log_store_failure("持久化 session key", exc, f" ({internal_id})")
-
-    # --- 投递轮询水位持久化 ---
-
-    def load_watermarks(self) -> dict[str, int]:
-        """返回 session_key → 已扫描最大行 id。读失败返回空表(退化为旧播种语义)。"""
-        try:
-            rows = self._conn.execute(
-                "SELECT session_key, last_row_id FROM delivery_watermarks"
-            ).fetchall()
-        except Exception as exc:
-            logger.warning(f"[SESSION] 读取投递水位失败,本次退化为重启播种语义: {exc}")
-            return {}
-        return {r["session_key"]: r["last_row_id"] for r in rows}
-
-    def put_watermark(self, session_key: str, last_row_id: int, *, now: float) -> None:
-        try:
-            self._conn.execute(
-                "INSERT INTO delivery_watermarks (session_key, last_row_id, updated_at) "
-                "VALUES (?, ?, ?) "
-                "ON CONFLICT(session_key) DO UPDATE SET "
-                "last_row_id=excluded.last_row_id, updated_at=excluded.updated_at",
-                (session_key, last_row_id, now),
-            )
-        except Exception as exc:
-            logger.warning(f"[SESSION] 持久化投递水位失败 ({session_key}): {exc}")
-
-    def delete_watermarks(self, session_keys: list[str]) -> None:
-        """清理已换代/消失会话的水位行(与内存侧清扫同步)。"""
-        if not session_keys:
-            return
-        try:
-            self._conn.executemany(
-                "DELETE FROM delivery_watermarks WHERE session_key=?",
-                [(k,) for k in session_keys],
-            )
-        except Exception as exc:
-            logger.warning(f"[SESSION] 清理投递水位失败: {exc}")
 
     # --- /delay 暂停状态持久化 ---
 

@@ -49,7 +49,7 @@ def make_inflight_key(
       - 私聊: (adapter, "private:<user_id>")
     group_id 缺省(None)回落空串;私聊恒用 user_id(group_id 不参与)。
     消费方:InflightRegistry / 防抖键 / 反馈便签 scope / T1 空闲重置 /
-    delivery_poll / run_resume / proactive 点火前复查。字符串孪生形见
+    background_report / run_resume / proactive 点火前复查。字符串孪生形见
     core/run_tracker.make_scope_key(冒号串,另行保留)。
     """
     scope = "private" if is_private else "group"

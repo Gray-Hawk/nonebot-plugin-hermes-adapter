@@ -88,7 +88,6 @@ MUST_NOT_CHANGE = (
     "core/reply_recovery.py",
     "core/steer_reconcile.py",
     "core/companion_runtime.py",
-    "tasks/delivery_poll.py",
     "tasks/proactive_activation.py",
     "mcp/server.py",
     "backends/astrbot/client.py",

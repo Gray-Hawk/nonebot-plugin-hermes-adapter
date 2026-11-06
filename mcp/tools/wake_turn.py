@@ -74,7 +74,7 @@ async def wake_turn_impl(inp: WakeTurnInput, *, scope: CallerScope | None) -> Wa
         if refusal is not None:
             return WakeTurnResult(ok=False, error=refusal, scope=scope_kind, target_id=target_id)
 
-    # 延迟导入:handlers 依赖 mcp 运行时单例,模块级互 import 会成环(delivery_poll 同款)
+    # 延迟导入:handlers 依赖 mcp 运行时单例,模块级互 import 会成环(background_report 同款)
     from ...handlers.message_relay import wake_group_turn, wake_private_turn
 
     if is_private:
