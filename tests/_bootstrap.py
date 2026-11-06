@@ -26,7 +26,10 @@ finally:
 
 import nonebot
 
-nonebot.init()
+try:
+    nonebot.get_driver()
+except ValueError:
+    nonebot.init()
 
 package_name = "nonebot_plugin_hermes_adapter"
 if package_name not in sys.modules:

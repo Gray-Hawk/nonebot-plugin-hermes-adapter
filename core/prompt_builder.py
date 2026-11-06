@@ -27,7 +27,6 @@ from zoneinfo import ZoneInfo
 from nonebot import logger
 
 from .decision_contract import render_cn_field_lines, render_field_name_list
-from ..config import plugin_config
 from .hermes_client import UserContent
 from .message_buffer import (
     BufferedMessage,
@@ -117,9 +116,7 @@ _DECISION_PROTOCOL_BLOCK = (
     "没有 m:id,不可 reply_to 或钉锚;多行 current_message 按各自来源分别理解,"
     "不得把整批归给某一行真人。\n"
     "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
-    + render_cn_field_lines(
-        runs_identity=plugin_config.hermes_api_interface == "runs"
-    )
+    + render_cn_field_lines()
     + "\n"
     "对象归属(先决定这条是不是冲你说的,再走插话原则;命中一条「归你」就停,不再下挪):\n"
     "  - runtime_state 里有 `addressed_to_you: true` → 平台层面已经确认这条是冲你说的\n"
@@ -285,16 +282,165 @@ _PRIVATE_DECISION_PROTOCOL_BLOCK = (
     "有实质内容的消息正常回应;纯表情轰炸、无意义刷屏、或你判断\n"
     "无需回应的场合,可以 should_reply=false 沉默。\n"
     "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
-    + render_cn_field_lines(
-        ("should_reply", "reply_text", "reply_to", "not_final"),
-        short=True,
-        runs_identity=plugin_config.hermes_api_interface == "runs",
-    )
+    + render_cn_field_lines(("should_reply", "reply_text", "reply_to", "not_final"), short=True)
     + "私聊只有对方一个人:不必 @ 任何人,正文里不要写 [CQ:at,...] 标记。\n"
     + "最终输出必须是该 JSON 对象,不要在 JSON 外面再包文字;\n"
     "即使想用角色口吻说话,也必须把那段话放进 reply_text 字段里。\n"
     "</decision_protocol>"
 )
+
+# E1(本部署补丁): completions 终态双单行 JSON。Runs 继续用上面的旧协议块,
+# 由 _json_lines_envelope() 在构建时二选一,旧块保持逐字节不变。
+_JSON_LINES_CONTROL_HELP = (
+    "用双单行 JSON 信封提交决策,每份固定两行:\n"
+    "第 1 行:控制对象(单行紧凑 JSON),字段:\n"
+    "  reply_to — 引用本会话一条消息时填 `m:<id>`,不引用就省略\n"
+    "  topic_hint — 简短话题标记\n"
+    "  not_final — 布尔,缺省 false\n"
+    "  should_exit_active — 布尔,缺省 false\n"
+    "  pin_anchor — 布尔,缺省 false\n"
+    "  release_anchor / answer_anchor / anchor_merge / background_task — 字符串,不需要就省略\n"
+    "第 2 行:正文对象 {\"body\":\"正文\"},只能有 body 一个字符串字段\n"
+    "body 为空即静默;body 非空即原样发送。不要再输出任何旧信封字段。\n"
+)
+
+
+def _build_json_lines_protocol(base: str, *, control_help: str | None = None,
+                               tail: str | None = None) -> str:
+    """把旧协议块的字段段与尾部换成乙信封,其余判断口径原样保留。
+
+    completions 不传参时输出与 E1 定版逐字节一致；Runs 只换控制说明与尾部。
+    """
+    head = "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
+    head_end = "对象归属("
+    tail_start = "最终输出必须是 submit_decision 的 JSON 对象"
+    i0 = base.index(head)
+    i1 = base.index(head_end, i0)
+    j0 = base.index(tail_start)
+    middle = base[i1:j0]
+    middle = (
+        middle.replace("should_reply=false", "body 留空")
+        .replace("should_reply=true", "body 非空")
+        .replace("should_reply", "body 是否为空")
+        .replace("reply_text", "body")
+    )
+    # 顺序：先把 should_reply 换成 body 口径，再替换标题，避免锚不到原文
+    middle = middle.replace(
+        "插话原则(决定 body 是否为空):",
+        "插话原则(决定是否回复;决定回复时 body 必须非空):",
+    )
+    new_tail = tail if tail is not None else (
+        "最终输出必须是两行:控制 JSON 行 + 正文 JSON 行;两行之外不要任何文字。\n"
+        "禁止只输出纯文字、角色动作或表情描述而不带这两行 ——\n"
+        "即使你想用角色口吻说话,也要把那段话放进 body 字符串里。\n"
+        "\n"
+        "格式示范(只看形状):\n"
+        "  例 A — 该回:\n"
+        "    输入末尾: <current_message>[id=u1 user=小光]: 你怎么看这个?</current_message>\n"
+        '    输出: {"topic_hint":"看法交流"}\n'
+        '          {"body":"我觉得这个想法挺有意思的"}\n'
+        "  例 B — 不归你:\n"
+        '    输出: {}\n'
+        '          {"body":""}\n'
+        "  例 C — 引用 + 正文内联 @:\n"
+        '    输出: {"reply_to":"m:57"}\n'
+        '          {"body":"都办完了，[CQ:at,qq=10003] 你那边也同步一下"}\n'
+        "</decision_protocol>"
+    )
+    built = base[:i0] + (control_help or _JSON_LINES_CONTROL_HELP) + middle + new_tail
+    # 允许“不要再输出 should_reply/reply_text”这条禁令本身,但不能残留旧字段用法
+    assert "should_reply=" not in built and "把决策提交为" not in built
+    return built
+
+
+_DECISION_PROTOCOL_BLOCK_COMPLETIONS = _build_json_lines_protocol(_DECISION_PROTOCOL_BLOCK)
+
+_JSON_LINES_PRIVATE_BLOCK = (
+    "<decision_protocol>\n"
+    "你处于私聊对话。是否回复由你自决:\n"
+    "有实质内容的消息正常回应;纯表情轰炸、无意义刷屏、或你判断\n"
+    "无需回应时,让 body 留空即可,不要输出其他静默字段。\n"
+    + _JSON_LINES_CONTROL_HELP
+    + "私聊只有对方一个人:不必 @ 任何人,正文里不要写 [CQ:at,...] 标记。\n"
+    "最终输出必须是两行:控制 JSON 行 + 正文 JSON 行,两行之外不要任何文字。\n"
+    "</decision_protocol>"
+)
+
+
+# E2(本部署补丁): Runs 终态双单行 JSON。只约束 run 的最终答复,允许连续多份;
+# 明确禁止在工具间隙提前写决策,免得把流式多决策(E3)提前引出来。
+# completions 的两块保持 E1 定版字节不变。
+_RUNS_JSON_LINES_CONTROL_HELP = _JSON_LINES_CONTROL_HELP + (
+    "需要连发多条就按顺序接上下一份两行 JSON(份与份之间可以空一行);\n"
+    "只需要一条就只写一份。每份的 body 独立判定:空的这份静默,非空的原样发送。\n"
+)
+
+_RUNS_JSON_LINES_TAIL = (
+    "要发的话必须当下就用一组两行 JSON 表达(控制 JSON 行 + 正文 JSON 行),不要攒到整轮结束;\n"
+    "可以连续多份,工具调用可以夹在任意两份之间——工具调用前后各发一份都正常。\n"
+    "过程旁白用普通文字讲即可(工具间隙不要写成决策 JSON);唯一例外是要对用户说的话:\n"
+    "它必须进 body,并且要立刻输出,否则这一轮就听不到了。\n"
+    "每轮最终输出仍必须有若干份两行 JSON(没有要说的就输出静默份)。\n"
+    "禁止只输出纯文字、角色动作或表情描述而不带这两行 ——\n"
+    "即使你想用角色口吻说话,也要把那段话放进 body 字符串里。\n"
+    "\n"
+    "格式示范(只看形状):\n"
+    "  例 A — 该回(一份):\n"
+    "    输入末尾: <current_message>[id=u1 user=小光]: 你怎么看这个?</current_message>\n"
+    '    输出: {"topic_hint":"看法交流"}\n'
+    '          {"body":"我觉得这个想法挺有意思的"}\n'
+    "  例 B — 不归你:\n"
+    '    输出: {}\n'
+    '          {"body":""}\n'
+    "  例 C — 连发两份(引用 + 补充):\n"
+    '    输出: {"reply_to":"m:57"}\n'
+    '          {"body":"都办完了，[CQ:at,qq=10003] 你那边也同步一下"}\n'
+    "          {}\n"
+    '          {"body":"补充一句:文件放在群文件里了"}\n'
+    "  例 D — 工具前先说一句、工具后再说结果(两份之间是工具调用):\n"
+    '    先说: {"body":"我先去核对一下"}\n'
+    "    (调用工具;这段过程旁白可以用普通文字)\n"
+    '    再说: {"body":"核对完了，数量和你说的一致"}\n'
+    "</decision_protocol>"
+)
+
+
+_DECISION_PROTOCOL_BLOCK_RUNS = _build_json_lines_protocol(
+    _DECISION_PROTOCOL_BLOCK,
+    control_help=_RUNS_JSON_LINES_CONTROL_HELP,
+    tail=_RUNS_JSON_LINES_TAIL,
+)
+
+_JSON_LINES_PRIVATE_BLOCK_RUNS = (
+    "<decision_protocol>\n"
+    "你处于私聊对话。是否回复由你自决:\n"
+    "有实质内容的消息正常回应;纯表情轰炸、无意义刷屏、或你判断\n"
+    "无需回应时,让 body 留空即可,不要输出其他静默字段。\n"
+    + _RUNS_JSON_LINES_CONTROL_HELP
+    + "私聊只有对方一个人:不必 @ 任何人,正文里不要写 [CQ:at,...] 标记。\n"
+    "要发的话必须当下就用两行 JSON 表达(控制行 + 正文行),不要攒到整轮结束;\n"
+    "工具调用可以夹在任意两份之间;过程旁白用普通文字(工具间隙不要写成决策 JSON)。\n"
+    "每轮最终输出仍必须有若干份两行 JSON(没有要说的就输出静默份)。\n"
+    "</decision_protocol>"
+)
+
+
+def _json_lines_mode() -> str:
+    """current 接口的终态信封形态:completions 恰好一份 / runs 可多份 / 其余旧协议。"""
+    from ..config import plugin_config
+
+    interface = getattr(plugin_config, "hermes_api_interface", "")
+    if interface == "completions":
+        return "completions"
+    if interface == "runs":
+        return "runs"
+    return "legacy"
+
+
+def _json_lines_envelope() -> bool:
+    """双单行 JSON 信封(completions 单份／runs 多份);astrbot 保持旧协议。"""
+    return _json_lines_mode() != "legacy"
+
 
 # 表情包/收藏表情的口径：进 vision 只为情绪与语气，不把梗图本身当分析对象。
 _STICKER_MOOD_NOTE = (
@@ -389,9 +535,16 @@ def build_reactive_system_prompt(
     私聊用简化版(两层,无群层面);功能关闭时不注入。路径根动态跟随 hermes_custom_dir。
     本部署补丁:会话上下文(adapter/group_id/self)挪入系统提示,吃缓存。
     """
-    parts = [_DECISION_PROTOCOL_BLOCK, _FILE_TOOL_GUIDANCE]
+    protocol_block = {
+        "completions": _DECISION_PROTOCOL_BLOCK_COMPLETIONS,
+        "runs": _DECISION_PROTOCOL_BLOCK_RUNS,
+    }.get(_json_lines_mode(), _DECISION_PROTOCOL_BLOCK)
+    parts = [protocol_block, _FILE_TOOL_GUIDANCE]
     if sticker_feature_enabled():
-        parts.append(_STICKER_TOOL_GUIDANCE)
+        parts.append(
+            _STICKER_TOOL_GUIDANCE.replace("reply_text", "body")
+            if _json_lines_envelope() else _STICKER_TOOL_GUIDANCE
+        )
 
     # 会话上下文:稳定信息放路由提示附近,吃缓存
     if adapter and self_id:
@@ -612,10 +765,16 @@ def build_passive_system_prompt(
         adapter=adapter, is_private=is_private, user_id=user_id, group_id=group_id
     )
     if private_decision:
-        head += "\n\n" + _PRIVATE_DECISION_PROTOCOL_BLOCK
+        head += "\n\n" + {
+            "completions": _JSON_LINES_PRIVATE_BLOCK,
+            "runs": _JSON_LINES_PRIVATE_BLOCK_RUNS,
+        }.get(_json_lines_mode(), _PRIVATE_DECISION_PROTOCOL_BLOCK)
     head += "\n\n" + _FILE_TOOL_GUIDANCE
     if sticker_feature_enabled():
-        head += "\n\n" + _STICKER_TOOL_GUIDANCE
+        head += "\n\n" + (
+            _STICKER_TOOL_GUIDANCE.replace("reply_text", "body")
+            if _json_lines_envelope() else _STICKER_TOOL_GUIDANCE
+        )
     # 群记忆外挂(定稿):群档案块拼在最末,字节稳定 per 群。
     # 本部署补丁:群档案功能启用时注入记忆写入路由提示。群聊用完整版(三层),
     # 私聊用简化版(两层,无群层面);功能关闭时不注入。路径根动态跟随 hermes_custom_dir。
@@ -715,12 +874,12 @@ def render_current_rows(
     return "\n".join(lines)
 
 
-# --- steer 行渲染(alive/103 §17.9.1/2):与 current 行共用 speaker 装配与媒体
-# 寻址约定，但保留 steer 既有文法 `[id=u user=N] [m:id]: 正文`(m:id 挂在
-# speaker 之后、冒号之前)——steer_reconcile 的转录命中判据是 `[m:id]:`(带冒号),
-# native 回收的剥壳正则也锚这一形态；换成 current 外壳(`[m:id] [id=…]: `)会让
-# 对账命中判据与回收剥壳双双失效。完整媒体寻址(`[图 m:id#idx]`+随条读图提示)
-# 只用于 steer，默认 current 渲染不加这套噪声。
+# --- steer 行渲染(P-07):与 current 行共用同一套 speaker 装配与媒体寻址,
+# 但保留 steer 既有文法 `[id=u user=N] [m:id]: 正文`(m:id 挂在 speaker 之后、
+# 冒号之前)。steer_reconcile 的转录命中判据就是 `[m:id]:`(带冒号),native 回收
+# 的剥壳正则也锚这一形态;换成 current 外壳(`[m:id] [id=…]: `)会让对账命中与
+# 回收剥壳同时失效。完整媒体寻址(`[图 m:id#idx]` + 随条读图提示)只用于 steer,
+# current 行不加这套噪声。
 
 _STEER_MEDIA_HINT = (
     "(随条媒体未内联,需要看图/表情时用 get_message_images "
@@ -730,7 +889,7 @@ _STEER_MEDIA_HINT = (
 
 @dataclass(frozen=True)
 class SteerRowPresentation:
-    """一行 steer 呈递：source_row 是身份来源，rendered_line 是实发整批的连续子串。"""
+    """一行 steer 呈递:source_row 是身份来源,rendered_line 是实发整批的连续子串。"""
 
     source_row: BufferedMessage
     rendered_line: str
@@ -738,11 +897,11 @@ class SteerRowPresentation:
 
 @dataclass(frozen=True)
 class SteerPresentation:
-    """steer 发送与逐行台账共用的唯一值对象(alive/103 §17.9.2)。
+    """steer 发送、逐行台账与呈现去重共用的唯一值对象。
 
-    rows 保序保存 (source_row, rendered_line)；text 是整批发送文本
-    (各行 rendered_line 以 \\n 连接,不含尾部约定行——约定行由发送原语在
-    最终文本末尾追加一次,不写进单行账项)。
+    rows 保序保存 (source_row, rendered_line);text 是整批发送文本(各行
+    rendered_line 以换行连接,不含尾部约定行——约定行由发送原语在最终文本末尾
+    追加一次,不写进单行账项,否则逐行台账与批次约定行会互相污染)。
     """
 
     rows: tuple[SteerRowPresentation, ...]
@@ -750,10 +909,12 @@ class SteerPresentation:
 
 
 def _render_steer_message_line(row: BufferedMessage, *, name_resolver=None) -> str:
-    """渲染一条 steer 行；拒绝在 relay 边界转成安全回退(返回 False 落 pending)。
+    """渲染一条 steer 行;不合法时抛 ValueError,由 relay 边界转成安全回退。
 
     与 _render_message_line 共用 speaker 装配与 iter_message_media 寻址,
-    区别只在文法(speaker 前挂 m:id 后移)与媒体形态(完整寻址标签+随条提示)。
+    区别只在文法(m:id 在 speaker 之后)与媒体形态(完整寻址标签 + 随条提示)。
+    每行只贴自己的 m:id 与自己那份媒体清单的 idx——媒体错贴别行正是本项要治的
+    缺陷,所以这里不做任何跨行的号/标签复用。
     """
     if row.origin.author_kind is AuthorKind.MIXED:
         raise ValueError("混合聚合消息必须先展开 fragments 再呈递")
@@ -781,10 +942,11 @@ def _render_steer_message_line(row: BufferedMessage, *, name_resolver=None) -> s
 def render_steer_rows(
     rows: Sequence[BufferedMessage], *, name_resolver=None,
 ) -> SteerPresentation:
-    """steer 唯一呈递入口：内容、媒体、台账与去重的同一份身份事实(alive/103 §17)。
+    """steer 唯一呈递入口:正文、媒体寻址、台账与去重同一份身份事实。
 
-    单条只是一元素序列的特例；任一行的来源/媒体寻址不合法则整批响亮拒绝,
-    由 relay 边界转成安全回退,不半贴号、丢媒体或改写原始消息。
+    单条只是一元素序列的特例。任一行来源不合法(系统/混合/bot)或有媒体却没有
+    可寻址行号,整批 ValueError——由 relay 边界失败关闭,不半贴号、不丢媒体、
+    不改写原始消息。
     """
     if not rows:
         raise ValueError("steer 行序列不得为空")
@@ -861,13 +1023,20 @@ def build_reactive_user_content(
     # 最末,LLM 近因效应让它最难忘 —— 这一行不能改成 byte-stable system 的一部分,
     # 必须紧贴 current_message,才能在每个 turn 都重新"撞"一次模型。
     # 字段单单一来源:core/decision_contract.py(render_field_name_list;审计确认5)。
-    reminder = (
-        "\n\n请用 submit_decision JSON 对象回复(字段:"
-        + render_field_name_list(
-            runs_identity=plugin_config.hermes_api_interface == "runs"
+    mode = _json_lines_mode()
+    if mode == "completions":
+        reminder = "\n\n请用双单行 JSON 信封回复:控制 JSON 行 + {\"body\":\"正文\"} 行,不要直接说话或扮演动作。"
+    elif mode == "runs":
+        reminder = (
+            "\n\n请用双单行 JSON 信封回复最终答复:控制 JSON 行 + {\"body\":\"正文\"} 行"
+            "(可连续多份),工具间隙不要输出决策,不要直接说话或扮演动作。"
         )
-        + "),不要直接说话或扮演动作。"
-    )
+    else:
+        reminder = (
+            "\n\n请用 submit_decision JSON 对象回复(字段:"
+            + render_field_name_list()
+            + "),不要直接说话或扮演动作。"
+        )
     # 分级反馈:插件提示便签贴 reminder 尾(近因位置,下轮即见即焚)
     if plugin_note:
         reminder += f"\n(插件小提示:{plugin_note})"

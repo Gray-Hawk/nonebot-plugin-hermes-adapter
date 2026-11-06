@@ -1,6 +1,8 @@
 """(adapter, scope, scope_id) → (Bot, Target) 的内存路由表。
 
-Target 永远不序列化:重启即清,首次 perception 事件重新填表。
+Target 永远不序列化:重启即清。首次 perception 事件重新填表;
+重启恢复期由 Bot 连接钩子按交付台账补一份 synthetic 路由(见
+``tasks.run_resume.restore_bot_routes``),真实感知 entry 一到就覆盖它。
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ class BotEntry:
     bot_self_id: str
     target: Any  # nonebot_plugin_alconna.Target,只存内存
     last_seen_at: int  # ms;只写不读
-    synthetic: bool = False  # 启动恢复合成路由；真实感知 entry 可覆盖它
+    synthetic: bool = False  # 重启恢复补的路由;真实感知 entry 可覆盖它
 
 
 class BotRegistry:

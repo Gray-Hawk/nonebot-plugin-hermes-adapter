@@ -27,6 +27,7 @@ from nonebot import get_bot, logger
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ...core.decision_contract import parse_reply_to
+from ...config import plugin_config
 from ...core.message_buffer import BufferedMessage
 from ...core.message_origin import MessageOrigin
 from ...core.outbound import (
@@ -153,8 +154,34 @@ async def push_message_impl(
         return PushMessageResult(ok=False, error="text and image_urls both empty")
 
     is_private = inp.user_id is not None
+    # E3:Runs 轮内禁止 push 补正文（轮外主动通知不受影响）。目标 scope 有在跑
+    # run 时硬拒并把模型引回 submit_decision；completions 通道完全不变。
+    if plugin_config.hermes_api_interface == "runs":
+        from ... import mcp as _mcp
+
+        tracker = getattr(_mcp, "run_tracker", None)
+        if tracker is not None and tracker.has_active_run_for_target(
+            adapter=inp.adapter, is_private=is_private,
+            group_id=None if is_private else inp.group_id,
+            user_id=inp.user_id,
+        ):
+            logger.info(
+                f"[MCP push_message] runs turn in progress, reject in-turn push "
+                f"adapter={inp.adapter} private={is_private} target={inp.user_id or inp.group_id}"
+            )
+            return PushMessageResult(
+                ok=False,
+                error=(
+                    "this target has a runs turn in progress; in-turn text must go "
+                    "through submit_decision body (double-line JSON), not push_message"
+                ),
+                note=(
+                    "Put the reply text in the body line of your next decision; "
+                    "push_message is only for out-of-turn proactive notices."
+                ),
+            )
     # 互斥校验(schema model_validator + validate_push_context 双层保证)确保
-    # 私侧 user_id / 群侧 group_id 恰好一个非 None,这里收窄成 str。
+    # 私侧 user_id / 群侧 group_id 恰好一个非 None，这里收窄成 str。
     target_id: str = inp.user_id or inp.group_id or ""
     gid: str = "" if is_private else (inp.group_id or "")
 

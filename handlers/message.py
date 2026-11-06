@@ -86,20 +86,21 @@ def _keyword_soft_hit(keywords, text: str) -> bool:
 
 
 def _build_current_fragment(
-    *, now_ms: int, adapter_name: str, group_id: str | None, user_id: str,
+    *,
+    now_ms: int, adapter_name: str, group_id: str | None, user_id: str,
     nickname: str, msg_text: str,
     own_image_urls: list[str], sticker_urls: list[str],
     quote_image_urls: list[str], forward_image_urls: list[str],
     delivery_generation: int | None, event_msg_id,
 ) -> BufferedMessage:
-    """构造本事件的触发 fragment(alive/103 §17.9.3:生产唯一构造点)。
+    """构造本事件的触发 fragment(P-08:生产唯一构造点)。
 
-    媒体分型与 perception 入库同源：own／sticker／quote／forward 四个字段
-    分开填，iter_message_media 枚举序(own→sticker→quote→forward)与
-    message_images 表 idx 一致——此前 own＋quote 混塞进 image_urls、
-    quote／forward 缺填，导致 steer 行内寻址与感知入库顺序不一致。
-    dispatch 的聚合 own＋quote image_urls 参数仍由调用方另算供内联帧用，
-    不再冒充行内寻址事实。插件 m:id 用 peek 读 perception 挂号,不 claim。
+    媒体分型与 perception 入库同源:own／sticker／quote／forward 四个字段分开填,
+    iter_message_media 枚举序(own→sticker→quote→forward)与 message_images 表
+    的 idx 一致——此前 own＋引用图混塞进 image_urls、quote／forward 缺填,同一张
+    引用图在感知入库里是 quote 项、在 steer 行渲染里却挤进 image 项,导致
+    `m:id#idx` 错位。dispatch 的聚合 own＋quote image_urls 参数仍由调用方另算供
+    内联帧用,不再冒充行内寻址事实。插件 m:id 用 peek 读 perception 挂号,不 claim。
     """
     fragment = BufferedMessage(
         ts=now_ms, adapter=adapter_name, group_id=group_id, user_id=user_id,
@@ -165,9 +166,9 @@ def _debounce_arrive(
     elif st.payload.get("user_id") == payload.get("user_id"):
         _merge_fragment_payload(st.payload, payload)
     elif replaceable:
-        # 拆批(alive/103 §14.2):跨人替换只换触发归属与外壳,fragments 序列
-        # 前置保留旧人碎片——旧人文本不再只靠 buffer 兜底,current/steer 拆批后
-        # 逐行各贴真号、各自发言人。
+        # 拆批:跨人替换只换触发归属与外壳,fragments 序列前置保留旧人碎片——
+        # 旧人文本不再只靠 buffer 兜底,current/steer 拆批后逐行各贴真号、各自
+        # 发言人。fragments 是唯一身份轨(旧的平行碎片 ID 轨已删)。
         prev_frags = list(st.payload.get("fragments") or [])
         if prev_frags:
             payload["fragments"] = prev_frags + list(payload.get("fragments") or [])
@@ -384,21 +385,21 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # 显式/隐式一视同仁——委托 @ 的直连豁免已砍除(本部署补丁):双 bot 场景下
     # 豁免让互 @ 零延迟直连、无限制器助燃互聊;砍后防抖窗即限速。跨人替换只换
     # 触发归属,turn 上下文从 buffer 拉,被顶掉的碎片内容不丢。
-    # 拆批 fragments 序列(alive/103 §14.2/§17.9.3):本条完整对象经生产唯一
-    # 构造点产出(真实入库 m:id 用 peek 读 perception 挂号,不 claim——claim 留给
-    # path 一次性消费)随载荷暂存;防抖合并按序追加,steer/current 逐行渲染按号
-    # 寻址,不查库。媒体分型 own/sticker/quote/forward 与 perception 同源。
+    # 拆批 fragments 序列(P-08):本条完整对象经生产唯一构造点产出(真实入库
+    # m:id 用 peek 读 perception 挂号,不 claim——claim 留给 path 一次性消费)
+    # 随载荷暂存;防抖合并按序追加,steer/current 逐行渲染按号寻址,不查库。
+    # 媒体分型 own/sticker/quote/forward 与 perception 入库同源。
     delivery_generation = session_manager.get_delivery_generation(
         adapter_name, target.private, user_id, group_id
     )
-    event_msg_id = getattr(event, "message_id", None)
     fragment = _build_current_fragment(
         now_ms=now, adapter_name=adapter_name, group_id=group_id, user_id=user_id,
         nickname=nickname, msg_text=msg_text,
         own_image_urls=list(own_image_urls), sticker_urls=list(sticker_urls),
         quote_image_urls=list(replied_image_urls),
-        forward_image_urls=list(_forward_image_urls),
-        delivery_generation=delivery_generation, event_msg_id=event_msg_id,
+        forward_image_urls=list(_forward_image_urls or []),
+        delivery_generation=delivery_generation,
+        event_msg_id=getattr(event, "message_id", None),
     )
     debounce_sec = (
         chat_cfg.reply_debounce_private_sec

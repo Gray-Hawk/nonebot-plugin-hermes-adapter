@@ -1,0 +1,332 @@
+{
+ "label": "b5_k3.1pro_json_notools",
+ "run_id": "run_56af32dd2e15483a87d446870c49425b",
+ "requested_model": "k3.1-pro",
+ "requested_provider": "kimi-coding",
+ "submit_response": {
+  "run_id": "run_56af32dd2e15483a87d446870c49425b",
+  "status": "started",
+  "replayed": false
+ },
+ "status": {
+  "object": "hermes.run",
+  "model": "k3.1-pro",
+  "runtime": {
+   "provider": "",
+   "model": "",
+   "route_source": "raw_request",
+   "requested": {
+    "provider": "kimi-coding",
+    "model": "k3.1-pro"
+   }
+  },
+  "created_at": 1793857801.4549794,
+  "pending_controls": [],
+  "run_id": "run_56af32dd2e15483a87d446870c49425b",
+  "status": "completed",
+  "session_id": "run_56af32dd2e15483a87d446870c49425b",
+  "admission_id": "5a02b567a9ad47f5bd15c7baf666068a",
+  "execution_generation": 1,
+  "output": "{\"reply_to\":\"m:7\"}\n{\"body\":\"第一份正文\"}\n{}\n{\"body\":\"第二份第一行\\n第二份第二行\"}",
+  "usage": {
+   "input_tokens": 13269,
+   "output_tokens": 733,
+   "total_tokens": 14002
+  }
+ },
+ "events": [
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0282803,
+   "delta": "{\"",
+   "seq": 0
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.028609,
+   "delta": "reply",
+   "seq": 1
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0289404,
+   "delta": "_to",
+   "seq": 2
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0292747,
+   "delta": "\":\"",
+   "seq": 3
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.02953,
+   "delta": "m",
+   "seq": 4
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0297365,
+   "delta": ":",
+   "seq": 5
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0298977,
+   "delta": "7",
+   "seq": 6
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0300694,
+   "delta": "\"}\n",
+   "seq": 7
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.030231,
+   "delta": "{\"",
+   "seq": 8
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0303926,
+   "delta": "body",
+   "seq": 9
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0305536,
+   "delta": "\":\"",
+   "seq": 10
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.030765,
+   "delta": "第一份",
+   "seq": 11
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0309691,
+   "delta": "正文",
+   "seq": 12
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.031148,
+   "delta": "\"}\n",
+   "seq": 13
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0313244,
+   "delta": "{}\n",
+   "seq": 14
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.031499,
+   "delta": "{\"",
+   "seq": 15
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0316753,
+   "delta": "body",
+   "seq": 16
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0318491,
+   "delta": "\":\"",
+   "seq": 17
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0320497,
+   "delta": "第二",
+   "seq": 18
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0322275,
+   "delta": "份",
+   "seq": 19
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0324316,
+   "delta": "第一",
+   "seq": 20
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0326855,
+   "delta": "行",
+   "seq": 21
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.03285,
+   "delta": "\\n",
+   "seq": 22
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0331666,
+   "delta": "第二",
+   "seq": 23
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0334473,
+   "delta": "份",
+   "seq": 24
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0336123,
+   "delta": "第二",
+   "seq": 25
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0337882,
+   "delta": "行",
+   "seq": 26
+  },
+  {
+   "event": "message.delta",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.033991,
+   "delta": "\"}",
+   "seq": 27
+  },
+  {
+   "event": "run.completed",
+   "run_id": "run_56af32dd2e15483a87d446870c49425b",
+   "timestamp": 1793857825.0960758,
+   "output": "{\"reply_to\":\"m:7\"}\n{\"body\":\"第一份正文\"}\n{}\n{\"body\":\"第二份第一行\\n第二份第二行\"}",
+   "usage": {
+    "input_tokens": 13269,
+    "output_tokens": 733,
+    "total_tokens": 14002
+   },
+   "runtime": {
+    "provider": "",
+    "model": "",
+    "route_source": "raw_request",
+    "requested": {
+     "provider": "kimi-coding",
+     "model": "k3.1-pro"
+    }
+   },
+   "completed": true,
+   "partial": false,
+   "interrupted": false,
+   "seq": 28
+  }
+ ],
+ "summary": {
+  "counts": {
+   "message.delta": 28,
+   "message.interim": 0
+  },
+  "envelope_in_delta": false,
+  "envelope_in_interim": false,
+  "delta_chars": 64,
+  "interim_chars": 0,
+  "event_types": [
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "message.delta",
+   "run.completed"
+  ],
+  "seqs": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15,
+   16,
+   17,
+   18,
+   19,
+   20,
+   21,
+   22,
+   23,
+   24,
+   25,
+   26,
+   27,
+   28
+  ],
+  "already_streamed": []
+ }
+}

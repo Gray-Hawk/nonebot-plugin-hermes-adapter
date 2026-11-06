@@ -4,7 +4,7 @@ NoneBot Plugin Hermes
 通过 Hermes Agent API Server 实现多平台 AI 聊天机器人。
 """
 
-from nonebot import get_driver, logger, require
+from nonebot import get_bots, get_driver, logger, require
 from nonebot.plugin import PluginMetadata, inherit_supported_adapters
 
 # 确保依赖的插件已加载
@@ -72,6 +72,9 @@ async def _hermes_m1_startup():
     from .core.sticker_library import ensure_sticker_library_template, init_sticker_feature
 
     initialize_runtime_config()
+    from .core.companion_config import load_companion_config
+
+    load_companion_config()
     init_sticker_feature()
     ensure_sticker_library_template()
     init_runtime_state()
@@ -100,6 +103,9 @@ async def _hermes_m1_startup():
     from .core.hermes_client import close_shared_http_client
 
     _driver.on_shutdown(close_shared_http_client)
+    from .core.companion_runtime import close_companion_runtimes
+
+    _driver.on_shutdown(close_companion_runtimes)
     register_expire_active_sessions()
     register_storage_vacuum()
     register_session_idle_reset()
@@ -121,10 +127,29 @@ async def _hermes_m1_startup():
 
         @_driver.on_bot_connect
         async def _hermes_restore_bot_routes(bot):
-            # 每次真实连接都完整恢复：已有路由不跳过对账，active 行也重新唤醒。
-            recover_bot_deliveries(bot)
+            # P-10:BotRegistry 重启即清。真实 bot 连上即按既有 active／ready
+            # 台账补回内存路由,并唤醒 reattach 与 ready 对账;不伪造入站消息。
+            # 每次连接都完整恢复(已有路由也重唤醒),_resume_row 与组件认领自带去重。
+            try:
+                recover_bot_deliveries(bot)
+            except Exception:
+                # 恢复失败只影响补投时效,绝不能让 bot 连接钩子带崩连接本身。
+                logger.warning(
+                    "[HERMES run-resume] Bot 连接后恢复送达异常(连接不受影响)",
+                    exc_info=True,
+                )
 
         await resume_active_runs()
+        # 启动阶段就已经在线的 bot 不会回放 connect 钩子(钩子集合是类级、注册
+        # 晚于那次连接),这里用同一函数补一次;无 bot 时为空循环。
+        for _connected in list(get_bots().values()):
+            try:
+                recover_bot_deliveries(_connected)
+            except Exception:
+                logger.warning(
+                    "[HERMES run-resume] 启动补恢复送达异常(不影响启动)",
+                    exc_info=True,
+                )
 
     # 投递轮询间隔过小只会白增本地请求与日志噪音,任务完成汇报的时效收益可忽略
     if 0 < _misc_cfg.delivery_poll_interval_sec < 10:

@@ -144,42 +144,6 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
 )
 
 
-RUNS_DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
-    DecisionFieldSpec(
-        name="reply_context",
-        required=True,
-        en_note="string, runs required",
-        en_desc="copy the current runs_reply_context value verbatim; never reuse an older value",
-        cn_note="string, runs required",
-        cn_desc="逐字回带当前 runs_reply_context 的值,禁止沿用历史值",
-        cn_desc_short="逐字回带当前 runs_reply_context",
-    ),
-    DecisionFieldSpec(
-        name="reply_seq",
-        required=True,
-        en_note="integer, runs required",
-        en_desc="start at 1 and increment for every final decision in this run, including silent decisions",
-        cn_note="integer, runs required",
-        cn_desc="本 run 每份最终决策从 1 起递增,静默决策也占号",
-        cn_desc_short="本 run 决策序号,从 1 递增,静默也占号",
-    ),
-)
-
-
-def append_reply_context(content: Any, reply_context: str) -> Any:
-    """把本轮权威身份附到 user 内容；多模态列表复制后追加，不改调用方对象。"""
-    marker = (
-        "\n\n[runs_reply_context]\n"
-        f"reply_context={reply_context}；本 run 各份最终决策逐字回带此值，"
-        "reply_seq 从 1 递增，静默决策也占号"
-    )
-    if isinstance(content, str):
-        return content + marker
-    if isinstance(content, list):
-        return [*content, {"type": "text", "text": marker.lstrip()}]
-    raise TypeError("unsupported user content type")
-
-
 # 引用槽(reply_to)唯一合法形态:`m:<正整数>`,号 = 消息库自增主键,与
 # recent_messages / current_message 行首的 m 号同源。QQ 的 message_id 与 Hermes
 # 转录行 id 只作内部映射,不接受。
@@ -224,41 +188,25 @@ def _render_line(
     return line
 
 
-def render_en_field_lines(*, runs_identity: bool = False) -> str:
+def render_en_field_lines() -> str:
     """英文字段行(_DECISION_HINT 用),每行 `\n` 收尾。"""
-    fields = DECISION_FIELDS + (RUNS_DECISION_FIELDS if runs_identity else ())
-    return "".join(_render_line(f, lang="en") + "\n" for f in fields)
+    return "".join(_render_line(f, lang="en") + "\n" for f in DECISION_FIELDS)
 
 
-def _select(
-    names: tuple[str, ...] | None,
-    fields: tuple[DecisionFieldSpec, ...],
-) -> tuple[DecisionFieldSpec, ...]:
+def _select(names: tuple[str, ...] | None) -> tuple[DecisionFieldSpec, ...]:
     if names is None:
-        return fields
+        return DECISION_FIELDS
     wanted = set(names)
-    selected = tuple(
-        f for f in fields
-        if f.name in wanted and f not in RUNS_DECISION_FIELDS
-    )
-    return selected + tuple(f for f in fields if f in RUNS_DECISION_FIELDS)
+    return tuple(f for f in DECISION_FIELDS if f.name in wanted)
 
 
 def render_cn_field_lines(
-    names: tuple[str, ...] | None = None,
-    *,
-    short: bool = False,
-    runs_identity: bool = False,
+    names: tuple[str, ...] | None = None, *, short: bool = False
 ) -> str:
     """中文字段行(主协议块 names=None;私聊版 names 子集 + short=True),每行 `\n` 收尾。"""
-    fields = DECISION_FIELDS + (RUNS_DECISION_FIELDS if runs_identity else ())
-    return "".join(
-        _render_line(f, lang="cn", short=short) + "\n"
-        for f in _select(names, fields)
-    )
+    return "".join(_render_line(f, lang="cn", short=short) + "\n" for f in _select(names))
 
 
-def render_field_name_list(*, runs_identity: bool = False) -> str:
+def render_field_name_list() -> str:
     """`a / b / c` 形态的字段名清单(近因 reminder 用)。"""
-    fields = DECISION_FIELDS + (RUNS_DECISION_FIELDS if runs_identity else ())
-    return " / ".join(f.name for f in fields)
+    return " / ".join(f.name for f in DECISION_FIELDS)
