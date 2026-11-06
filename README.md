@@ -1,7 +1,6 @@
 # nonebot-plugin-hermes-adapter
 
-基于 [nonebot-plugin-hermes](https://github.com/gsskk/nonebot-plugin-hermes) 的 NoneBot 插件，
-将 NoneBot2 桥接到 Hermes Agent 的 API Server
+NoneBot 插件，将 NoneBot2 桥接到 Hermes Agent 的 API Server
 
 - 分发名：`nonebot-plugin-hermes-adapter`
 - 模块名：`nonebot_plugin_hermes_adapter`
