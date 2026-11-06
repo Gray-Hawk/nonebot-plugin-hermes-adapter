@@ -1,6 +1,8 @@
 <div align="center">
     <a href="https://v2.nonebot.dev/store">
     <img src="https://raw.githubusercontent.com/Gray-Hawk/nonebot-plugin-hermes-adapter/4d4fc0c5d7c840b4ff5f55caf498455729af26b5/NoneBotPlugin.svg" width="310" alt="logo"></a>
+    </a>
+</div>
 
 # nonebot-plugin-hermes-adapter
 
