@@ -28,7 +28,7 @@ class MiscConfig:
     prompt_dump_enabled: bool = False
     approval_expiry_sec: int = 300
     prompt_timezone: str = ""
-    delivery_poll_interval_sec: int = 30  # 重启生效；旧通道后续专项移除
+    delivery_poll_interval_sec: int = 30  # 重启生效；后台完成汇报轮询间隔(键名沿用旧名)
     bot_name: str = ""  # 重启生效，命令 matcher 注册期定型
     storage_db_path: str = ""  # 重启生效
     storage_message_retention_days: int = 30
