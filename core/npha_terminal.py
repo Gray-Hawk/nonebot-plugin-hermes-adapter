@@ -34,10 +34,9 @@ from typing import Any
 
 MAX_BODY_CHARS = 4000
 
-# 新协议控制字段：should_reply / reply_text / reply_context / reply_seq 全部退出。
+# 新协议控制字段：should_reply / reply_text / reply_context / reply_seq / topic_hint 全部退出。
 CONTROL_STR_FIELDS = (
     "reply_to",
-    "topic_hint",
     "release_anchor",
     "answer_anchor",
     "anchor_merge",

@@ -346,9 +346,6 @@ _SALVAGE_SHOULD_REPLY_RE = _salvage_bool_re("should_reply")
 _SALVAGE_REPLY_TEXT_RE = re.compile(
     r"[\"']reply_text[\"']\s*:\s*(?P<q>[\"'])(?P<v>(?:\\.|(?!(?P=q)).)*)(?P=q)?", re.DOTALL
 )
-_SALVAGE_TOPIC_HINT_RE = re.compile(
-    r"[\"']topic_hint[\"']\s*:\s*(?P<q>[\"'])(?P<v>(?:\\.|(?!(?P=q)).)*)(?P=q)?", re.DOTALL
-)
 _SALVAGE_EXIT_ACTIVE_RE = _salvage_bool_re("should_exit_active")
 # not_final 入救补——布尔抠错概率低,丢失则
 # 回执发出但续跑轮没来=任务烂尾;其余字段(锚家族/reply_to)抠错代价大于丢失,
@@ -381,8 +378,8 @@ def _salvage_truncated_reply_text(text: str) -> dict[str, Any] | None:
     except Exception:
         val = raw_val
     # 典型破法:reply_text 以 `![image](…)` 结尾时模型漏掉闭合 `"`,于是 reply_text
-    # 正则一路吃到 `,"topic_hint"` 前的那个引号,尾部就多带一个逗号。那是信封的残渣,
-    # 不是内容,发到群里只是一个突兀的逗号。
+    # 正则一路吃到下一个 `,"<字段>"` 前的那个引号,尾部就多带一个逗号。那是信封的
+    # 残渣,不是内容,发到群里只是一个突兀的逗号。
     val = val.rstrip().removesuffix(",").rstrip()
 
     m_flag = _SALVAGE_SHOULD_REPLY_RE.search(text)
@@ -390,10 +387,7 @@ def _salvage_truncated_reply_text(text: str) -> dict[str, Any] | None:
     out: dict[str, Any] = {"should_reply": should_reply, "reply_text": val, "_salvaged": True}
 
     # 另外两个字段也按正则捞回来:它们在原文里通常是完好的,丢掉的话每个带图 turn
-    # 都会连带丢掉话题跟踪与退场判断 —— 而带图 turn 恰恰是最常触发救补的那些。
-    m_topic = _SALVAGE_TOPIC_HINT_RE.search(text)
-    if m_topic:
-        out["topic_hint"] = m_topic.group("v")
+    # 都会连带丢掉退场判断 —— 而带图 turn 恰恰是最常触发救补的那些。
     m_exit = _SALVAGE_EXIT_ACTIVE_RE.search(text)
     if m_exit:
         out["should_exit_active"] = m_exit.group(1).lower() == "true"
@@ -453,7 +447,7 @@ def _load_json_candidate(candidate: str) -> Any:
 # 做的,所以一条带图回复的 JSON 是 MB 级,而里面真正的 JSON 结构只有几百字节。
 # 先把 payload 换成短 token 再解析:候选串回到 KB 级,解析器阶梯(含 json5)全程可用,
 # 不必再靠尺寸阈值放弃 —— 之前跳过 json5 会让带图回复退到正则救补,连带丢掉
-# topic_hint / should_exit_active(救补只认 should_reply + reply_text)。
+# should_exit_active / not_final 等控制字段。
 # 阈值 256:短 data URL 本来就不影响解析,只处理真正撑爆候选串的那些。
 from .media_payload import _detach_data_urls, _reattach_data_urls
 
@@ -1129,7 +1123,8 @@ class HermesClient:
 
         - mode='passive': 普通文本回复(不强制结构化)
         - mode='reactive' + expect_structured=True + structured_tool_name='submit_decision':
-          system prompt 追加 STRUCTURED OUTPUT 段,期望模型回复纯 JSON;解析失败 parse_failed=True
+          旧接口(非 completions/runs)在 system prompt 追加 STRUCTURED OUTPUT 段,
+          期望模型回复纯 JSON;解析失败 parse_failed=True
         - system_prompt: 由 prompt_builder 注入;None 走默认 Message Context 拼装。
           **注意**:外部传入 system_prompt 时,Platform/User/Group 上下文须由调用方
           自行包含,本方法不会再额外补。

@@ -62,7 +62,6 @@ def _stub_everything(calls, result):
         "_chat_with_overflow_recovery": AsyncMock(return_value=result),
         "_fire_followup_turn": MagicMock(side_effect=lambda **kw: calls["followup"].append(kw)),
         "_settle": MagicMock(side_effect=lambda res, outcome, reason: calls["settle"].append((outcome, reason))),
-        "_record_background_note": MagicMock(),
         "_delivery_identity": MagicMock(return_value=(MagicMock(), None)),
         "_schedule_reconcile": MagicMock(),
         "_finish_history": MagicMock(),
@@ -130,7 +129,7 @@ class PassiveTurnEnvelopeTests(unittest.IsolatedAsyncioTestCase):
             ),
             "ActiveSession": MagicMock(return_value=SimpleNamespace(
                 generation=1, last_bot_reply_at=None, session_id="sess",
-                triggered_by="u1", topic_hint="", participants=set(),
+                triggered_by="u1", participants=set(),
                 should_exit_active=False, interim_echo_enabled=False,
             )),
             "_mcp": MagicMock(

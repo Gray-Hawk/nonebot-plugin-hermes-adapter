@@ -356,9 +356,8 @@ def build_status_lines(now_ms: int) -> list[str]:
                 continue
             active_count += 1
             ttl_left = max(0, (s.expires_at - now_ms) // 1000)
-            topic = f" topic={s.topic_hint}" if s.topic_hint else ""
             held = " in-flight" if _mcp.active_sessions.lease_count(s.adapter, s.group_id) else ""
-            active_details.append(f"  - {s.adapter}/{s.group_id} by {s.triggered_by} ttl={ttl_left}s{held}{topic}")
+            active_details.append(f"  - {s.adapter}/{s.group_id} by {s.triggered_by} ttl={ttl_left}s{held}")
 
     # MessageBuffer:按 scope 统计消息数(数据在 SQLite 里,不是内存桶)
     buf_lines: list[str] = []

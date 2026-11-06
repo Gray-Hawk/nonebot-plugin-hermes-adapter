@@ -26,8 +26,8 @@ from ..core.user_lists import load_user_lists
 
 _DEPARTURE_CONFIRM_PROMPT = (
     "(系统核对:你上一条回复里出现了“稍后/回头再汇报”类措辞。"
-    "如果有后台任务在跑、完成时系统会叫醒你——填 background_task 登记任务便签后 "
-    "should_reply=false,或不登记直接静默,都可以;如果刚才是说漏了、并没有任务在跑,"
+    "如果有后台任务在跑、完成时系统会叫醒你——填 background_task 记一句任务摘要后 "
+    "should_reply=false,或不填直接静默,都可以;如果刚才是说漏了、并没有任务在跑,"
     "请用 reply_text 向对方补充说明)"
 )
 
@@ -89,14 +89,6 @@ def _feedback_scope_key(adapter_name: str, is_private: bool, user_id: str, group
     return make_inflight_key(adapter_name, is_private, user_id, group_id)
 
 
-def _record_background_note(key: tuple[str, str], decision: dict, *, log_tag: str) -> None:
-    """模型在 submit_decision 里填了 background_task → 登记离场任务便签(静默也登记)。"""
-    note = decision.get("background_task")
-    if isinstance(note, str) and note.strip():
-        task_notes.set_task_note(key, note.strip()[:200])
-        logger.info(f"[HERMES {log_tag}] 离场任务便签已登记: {note.strip()[:60]}")
-
-
 async def _fire_departure_confirm(
     *,
     key: tuple[str, str],
@@ -145,7 +137,7 @@ async def _post_send_feedback(
     - note → 写下轮暗示便签(按规则冷却去重),不当轮打断;
     - confirm → 按规则冷却追加离场确认轮;
     - relay(类①)→ 回复照发后再追加「继续执行轮」;not_final=true 同效(§3.4:
-      同轮同填时 not_final 优先续跑,background_task 便签照登记);
+      同轮同填时 not_final 优先续跑);
     - bounce(类②)→ 不在这里处理:它是发送**前**的拦截(_maybe_intercept_bounce),
       能走到本函数说明该回复已放行。
     suppress_recursion=True 表示当前输入含系统指令，不再让本轮措辞触发后续轮；

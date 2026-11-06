@@ -541,12 +541,11 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
             "ActiveSession": MagicMock(return_value=SimpleNamespace(
                 generation=1, last_bot_reply_at=0, session_id="sess",
                 last_bot_reply_text="", last_bot_reply_media=0,
-                triggered_by="u1", topic_hint="", participants=set(),
+                triggered_by="u1", participants=set(),
                 should_exit_active=False, interim_echo_enabled=False,
             )),
             "_chat_with_overflow_recovery": AsyncMock(return_value=result),
             "_settle": MagicMock(),
-            "_record_background_note": MagicMock(),
             "_delivery_identity": MagicMock(
                 side_effect=lambda res: (tracker, getattr(res, "run_id", None))
             ),
