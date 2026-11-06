@@ -582,13 +582,33 @@ async def _resume_row_impl(row: TrackedRun) -> None:
 
     # expected 必须先于 tracker.finish 落账(alive/108):恢复发送同样要有交付
     # 事实;写库失败只记告警,不阻断既有恢复发送(legacy 行为不回归)。
+    # P-16:恢复链是 failed／stream_after_partial 的唯一合法重臂入口,显式 rearm;
+    # 业务终态(silent／suppressed／cancelled／expired)即使走到这里也不回臂。
+    accepted = True
     if tracker is not None:
         try:
-            tracker.record_expected_delivery(
-                run_id=row.run_id, output=output, expect_structured=row.expect_structured
+            accepted = tracker.record_expected_delivery(
+                run_id=row.run_id, output=output, expect_structured=row.expect_structured,
+                rearm=True,
             )
         except Exception as exc:
             logger.warning(f"[HERMES run-resume] expected 落账失败 run_id={row.run_id}: {exc}")
+    if not accepted:
+        # P-16:业务终态拒绝落账(不回臂 ready)必须贯穿恢复出站——交付台账已由
+        # 正常终态链销账,恢复不得再读 pending 计划补发正文/文件;重复终态因此
+        # 零新增发送。这里只清 active_runs 僵尸行,不写交付台账任何字段。
+        state = None
+        try:
+            delivery = tracker.get_delivery(row.run_id) if tracker is not None else None
+            state = delivery.get("expected_state") if delivery else None
+        except Exception:
+            pass
+        logger.warning(
+            f"[HERMES run-resume] 交付已处业务终态,恢复零发送 run_id={row.run_id} "
+            f"state={state!r}"
+        )
+        tracker.finish(row.run_id)
+        return
     # 前序答复回收与正常终态同步紧急禁用（alive/105 生产回归）：
     # 未按 run 边界截断转录前，恢复路径同样可能补投历史答复。
     # 极简送达。reply_to 的 m:id 在发送前按 row 中的会话归属解析，重启后也不

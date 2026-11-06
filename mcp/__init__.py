@@ -90,6 +90,8 @@ run_tracker: RunTracker | None = None
 background_report_outbox: BackgroundReportOutbox | None = None
 background_report_gateway: BackgroundCompletionGateway | None = None
 background_report_consumer = None
+# Kanban 终态事件源（本部署补丁）：与子代理共用同一张持久信箱与唤醒闸。
+kanban_report_source = None
 # WindowStore 走延迟导入(在 init_runtime_state 里),这里只留槽位给 shutdown 关连接
 window_store = None
 
@@ -120,11 +122,31 @@ def _default_image_cache_dir() -> Path:
     return store.get_plugin_cache_dir() / "images"
 
 
+def _kanban_db_path() -> Path | None:
+    """看板库位置:HERMES_KANBAN_DB 优先,否则按 Hermes 默认位置探测。
+
+    只看「可读的既有库」:文件不存在就不启用看板事件源,不在插件侧创建空板。
+    """
+    import os
+
+    raw = os.environ.get("HERMES_KANBAN_DB") or ""
+    candidates = [Path(raw).expanduser()] if raw else [Path.home() / ".hermes" / "kanban.db"]
+    for path in candidates:
+        try:
+            if path.is_file() and os.access(path, os.R_OK):
+                return path
+        except OSError:
+            continue
+    logger.info("[HERMES] 未发现可读看板库,Kanban 事件源不启用")
+    return None
+
+
 def init_runtime_state() -> None:
     """由 plugin __init__.py 在 startup 钩子里调用,装配全局对象。"""
     global message_buffer, active_sessions, bot_registry, inflight
     global message_store, image_cache, image_fetcher, session_key_store, run_tracker, window_store
     global background_report_outbox, background_report_gateway, background_report_consumer
+    global kanban_report_source
 
     # 启动捕获一次(重启生效):存储与媒体缓存的构造参数在装配期定型,不随后续重载变化。
     misc_cfg = load_misc_config()
@@ -150,6 +172,12 @@ def init_runtime_state() -> None:
             base_url=plugin_config.hermes_api_url,
             api_key=plugin_config.hermes_api_key,
         )
+    if kanban_report_source is None:
+        board_path = _kanban_db_path()
+        if board_path is not None:
+            from ..core.kanban_report_source import KanbanReportSource
+
+            kanban_report_source = KanbanReportSource(board_path)
     if background_report_consumer is None:
         background_report_consumer = build_background_report_consumer(
             outbox=background_report_outbox,

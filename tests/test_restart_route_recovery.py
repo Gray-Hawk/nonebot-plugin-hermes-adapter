@@ -80,7 +80,12 @@ class _GatewayHandler(BaseHTTPRequestHandler):
         return
 
 
-class RestartRouteRecoveryTests(unittest.IsolatedAsyncioTestCase):
+class RestartRouteHarness(unittest.IsolatedAsyncioTestCase):
+    """P-10 恢复链测试夹具:真实 SQLite／registry／loopback gateway／出站链。
+
+    单独成类(不带用例)供 ``RestartRouteRecoveryTests`` 与本目录其它恢复链回归
+    共用,避免继承时把用例重复计入。
+    """
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -213,6 +218,10 @@ class RestartRouteRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     def _component(self, run_id: str, component_id: str = "primary:0") -> dict:
         return self.tracker.get_component(run_id=run_id, component_id=component_id)
+
+
+class RestartRouteRecoveryTests(RestartRouteHarness):
+    """P-10 回归：重启后 Bot 连接即恢复送达路由，唤醒 reattach 与 ready 对账。"""
 
     async def test_without_bot_connect_reconcile_defers_and_sends_nothing(self) -> None:
         """负对照（修复前现场）：空 registry 时启动对账 deferred，回复一直发不出去。"""

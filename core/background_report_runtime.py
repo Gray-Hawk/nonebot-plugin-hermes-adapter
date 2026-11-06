@@ -8,6 +8,14 @@ from typing import Any, Iterable
 import httpx
 
 from .background_report_consumer import BackgroundReportConsumer
+from .background_report_outbox import SOURCE_KANBAN
+
+# 唤醒来源标签（内部身份，不伪装真人）：进 MessageOrigin.synthetic 的 label。
+_SOURCE_LABELS = {
+    SOURCE_KANBAN: "Kanban通知",
+}
+_DEFAULT_SOURCE_LABEL = "后台任务完成"
+
 
 
 def resolve_background_route(
@@ -103,17 +111,19 @@ async def _resolve_route(origin_session_id: str) -> dict | None:
     return resolve_background_route(origin_session_id, session_manager.known_sessions())
 
 
-async def _wake(route: dict, text: str, source_event_id: str) -> str | None:
+async def _wake(route: dict, text: str, source_event_id: str, source_kind: str = "subagent") -> str | None:
+    """按来源用内部身份（sys/内部通知）点燃正常会话 turn，产出真 run 与 QQ 实发。"""
     from ..handlers.message_relay import wake_group_turn, wake_private_turn
 
+    label = _SOURCE_LABELS.get(source_kind, _DEFAULT_SOURCE_LABEL)
     if route["is_private"]:
         return await wake_private_turn(
             adapter_name=route["adapter_name"], user_id=route["user_id"],
-            text=text, source="后台任务完成", source_event_id=source_event_id,
+            text=text, source=label, source_event_id=source_event_id,
         )
     return await wake_group_turn(
         adapter_name=route["adapter_name"], group_id=route["group_id"],
-        text=text, source="后台任务完成", source_event_id=source_event_id,
+        text=text, source=label, source_event_id=source_event_id,
     )
 
 

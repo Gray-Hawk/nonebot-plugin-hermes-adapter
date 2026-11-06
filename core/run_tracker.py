@@ -18,6 +18,9 @@ import time
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
+
+from nonebot import logger
 
 
 class StaleGenerationError(RuntimeError):
@@ -143,6 +146,10 @@ CREATE TABLE IF NOT EXISTS delivery_components (
     last_error      TEXT,
     created_at      REAL NOT NULL,
     updated_at      REAL NOT NULL,
+    -- P-04:每次平台尝试一个令牌(最后一次认领的尝试)。终态回写必须带上它,
+    -- 租约过期被接管后旧尝试的迟到回写命中 0 行。NULL = 该行还没被任何
+    -- 尝试认领过(本地结算路径),升级前的历史行也是 NULL。
+    claim_token     TEXT,
     PRIMARY KEY (run_id, component_id)
 );
 CREATE TABLE IF NOT EXISTS delivery_generation_fences (
@@ -198,6 +205,20 @@ class SteerBatchClaim:
     in_flight: tuple[dict, ...] = ()
 
 
+@dataclass(frozen=True)
+class ComponentClaim:
+    """一次出站组件认领的结果(P-04 尝试令牌的唯一来源)。
+
+    outcome 与旧 `claim_component` 返回的字符串同义:send=取得认领可以调平台,
+    sent=已完成(含业务免发),busy=他人有效租约或结果不明。token 只在真正取得
+    认领时非空:同调用内的可重入认领(同 owner 有效租约)复用同一令牌,所以
+    「一次平台尝试」只对应一个令牌;租约过期被别的尝试接管后令牌随之更换。
+    """
+
+    outcome: str
+    token: str | None = None
+
+
 def make_scope_key(adapter: str, is_private: bool, user_id: str, group_id: str | None) -> str:
     """与 inflight registry 键同形,resume 时并发检查/送达定位直接可用。"""
     scope = "private" if is_private else "group"
@@ -227,6 +248,27 @@ def _is_plan_prefix_growth(old_json: str, new_json: str) -> bool:
     if not isinstance(old_units, list) or not isinstance(new_units, list):
         return False
     return len(new_units) >= len(old_units) and new_units[: len(old_units)] == old_units
+
+
+# P-16:终态落账(record_expected_delivery)的状态迁移白名单。
+#
+# 同一个 run 再落一次终态是正常链上可能出现的重入(销账后到 finish 前异常、
+# 恢复链重入),但那只是「把同一个事实再写一遍」,不能把交付重新交给对账器:
+# 业务销账(silent／suppressed／cancelled／expired)与已结算的 terminal 保持
+# 原值,pending 组件不得因此复活成待补发。
+#
+# 例外是有意的两条合法迁移:E3 流式首份建的是 streaming 行,run.completed 的
+# 落账必须把它提升为 ready;恢复链对 failed／stream_after_partial 需要重新排队,
+# 这条**必须显式 rearm**——缺省不成立,避免又一次终态落账顺手复活重试态。
+_REARM_ALWAYS = frozenset({"waiting", "streaming", "ready"})
+_REARM_EXPLICIT = frozenset({"failed"})
+
+
+def _rearm_allowed(current_state: str, rearm: bool) -> bool:
+    """本次终态落账是否允许把交付置为 ready。"""
+    if current_state in _REARM_ALWAYS:
+        return True
+    return rearm and current_state in _REARM_EXPLICIT
 
 
 class RunTracker:
@@ -276,6 +318,13 @@ class RunTracker:
             existing = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             if "source_event_id" not in existing:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN source_event_id TEXT")
+        # P-04:尝试令牌列。旧库逐列补齐(幂等);历史行保持 NULL,由「本地结算」
+        # 语义继续放行,不会被围栏误伤。
+        existing = {
+            r[1] for r in self._conn.execute("PRAGMA table_info(delivery_components)")
+        }
+        if "claim_token" not in existing:
+            self._conn.execute("ALTER TABLE delivery_components ADD COLUMN claim_token TEXT")
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_run_submissions_source_event"
             " ON run_submissions(source_event_id, submission_seq)"
@@ -909,12 +958,19 @@ class RunTracker:
             )
 
     def record_expected_delivery(
-        self, *, run_id: str, output: str, expect_structured: bool
-    ) -> None:
+        self, *, run_id: str, output: str, expect_structured: bool, rearm: bool = False
+    ) -> bool:
         """终态 output 落交付台账;必须先于 finish 删 active_runs 调用。
 
         无绑定 submission 的 run 不在半接管保证范围(未入账即无法 reclaim),
         失败关闭由调用方转 detached 保留恢复依据,不伪造交付身份。
+
+        P-16:重复落账只按 `_rearm_allowed` 的白名单迁移状态。业务终态与已
+        terminal 的交付保持原值、零写入——它不会因为「同一个 run 又落了一次
+        终态」把 pending 组件重新交给对账器补发;完全重复的终态因此是幂等的。
+        rearm=True 只给恢复链用:把 failed／stream_after_partial 重新排进待投递。
+
+        返回本次是否把交付置为 ready(被状态白名单挡住时为 False)。
         """
         sub = self._conn.execute(
             "SELECT submission_seq, idempotency_key, scope_key, session_key, source_event_id"
@@ -930,24 +986,46 @@ class RunTracker:
             (run_id,),
         ).fetchone()
         adapter, is_private, user_id, group_id = target if target else (None, None, None, None)
-        self._conn.execute(
-            "INSERT INTO run_deliveries "
-            "(run_id, submission_seq, idempotency_key, scope_key, session_key,"
-            " output, expect_structured, expected_state, created_at, completed_at, updated_at,"
-            " adapter, is_private, user_id, group_id, source_event_id)"
-            " VALUES (?,?,?,?,?,?,?,'ready',?,?,?,?,?,?,?,?)"
-            " ON CONFLICT(run_id) DO UPDATE SET"
-            " output=excluded.output, expect_structured=excluded.expect_structured,"
-            " expected_state='ready', updated_at=excluded.updated_at,"
-            " adapter=COALESCE(run_deliveries.adapter, excluded.adapter),"
-            " is_private=COALESCE(run_deliveries.is_private, excluded.is_private),"
-            " user_id=COALESCE(run_deliveries.user_id, excluded.user_id),"
-            " group_id=COALESCE(run_deliveries.group_id, excluded.group_id),"
-            " source_event_id=COALESCE(run_deliveries.source_event_id, excluded.source_event_id)",
-            (run_id, sub[0], sub[1], sub[2], sub[3], output, int(expect_structured), now, now, now,
-             adapter, is_private, user_id, group_id, sub[4]),
-        )
-        self._conn.commit()
+        # 读状态、判白名单、写终态在一个 IMMEDIATE 事务里完成:销账/换代是别的
+        # 连接写进来的,先读后写中间不能留空窗,否则白名单会被交错写穿。
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._conn.execute(
+                "SELECT expected_state FROM run_deliveries WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if row is not None and not _rearm_allowed(str(row[0]), rearm):
+                self._conn.commit()
+                logger.info(
+                    f"[runs-delivery] 重复终态落账保持原状态 run={run_id} "
+                    f"state={row[0]!r}(不改写 ready,不激活补发)"
+                )
+                return False
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO run_deliveries "
+                    "(run_id, submission_seq, idempotency_key, scope_key, session_key,"
+                    " output, expect_structured, expected_state, created_at, completed_at, updated_at,"
+                    " adapter, is_private, user_id, group_id, source_event_id)"
+                    " VALUES (?,?,?,?,?,?,?,'ready',?,?,?,?,?,?,?,?)",
+                    (run_id, sub[0], sub[1], sub[2], sub[3], output, int(expect_structured),
+                     now, now, now, adapter, is_private, user_id, group_id, sub[4]),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE run_deliveries SET output=?, expect_structured=?,"
+                    " expected_state='ready', updated_at=?,"
+                    " adapter=COALESCE(adapter, ?), is_private=COALESCE(is_private, ?),"
+                    " user_id=COALESCE(user_id, ?), group_id=COALESCE(group_id, ?),"
+                    " source_event_id=COALESCE(source_event_id, ?)"
+                    " WHERE run_id=?",
+                    (output, int(expect_structured), now, adapter, is_private, user_id,
+                     group_id, sub[4], run_id),
+                )
+            self._conn.commit()
+            return True
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def fence_scope_generation(
         self, scope_key: str, *, reason: str = "generation_cleared",
@@ -1145,11 +1223,11 @@ class RunTracker:
         )
         self._conn.commit()
 
-    def claim_component(
+    def claim_component_attempt(
         self, *, run_id: str, component_id: str, owner: str, lease_sec: float = 30.0,
         unknown_backoff_sec: float | None = None, unknown_max_attempts: int = 0,
-    ) -> str:
-        """原子认领一个出站组件,返回 send／sent／busy。
+    ) -> ComponentClaim:
+        """原子认领一个出站组件,返回结论与本次尝试令牌。
 
         send=取得认领可以调平台;sent=已完成(含 cancelled/not_required 的
         业务免发),调用方直接读既有事实,绝不再调平台;busy=他人有效租约或
@@ -1157,18 +1235,22 @@ class RunTracker:
         修复后重试。BEGIN IMMEDIATE 保证跨进程只有一个认领者。
         unknown_backoff_sec 与 unknown_max_attempts 只由 reconcile 传入:
         结果不明超过退避且认领次数未耗尽时才允许一次有限重试。
+
+        P-04:每次真正取得的认领生成一个新令牌并落库;同调用内的可重入认领
+        (同 owner 且租约仍有效)返回**同一令牌**——一次平台尝试只对应一个
+        令牌,终态回写必须带上它,租约过期被接管后旧令牌自然失效。
         """
         now = time.time()
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             row = self._conn.execute(
-                "SELECT state, claim_owner, claim_until, attempt_count, updated_at"
+                "SELECT state, claim_owner, claim_until, attempt_count, updated_at, claim_token"
                 " FROM delivery_components WHERE run_id=? AND component_id=?",
                 (run_id, component_id),
             ).fetchone()
             if row is None:
                 raise KeyError(f"no component {component_id!r} for run_id={run_id!r}")
-            state, claim_owner, claim_until, attempt_count, updated_at = row
+            state, claim_owner, claim_until, attempt_count, updated_at, claim_token = row
             outcome = "send"
             reentrant = False
             if state in ("sent", "cancelled", "not_required"):
@@ -1192,24 +1274,41 @@ class RunTracker:
                 and claim_until is not None and claim_until > now
             ):
                 outcome = "busy"
-            if outcome == "send" and not reentrant:
-                self._conn.execute(
-                    "UPDATE delivery_components SET state='claimed', claim_owner=?,"
-                    " claim_until=?, attempt_count=attempt_count+1, updated_at=?"
-                    " WHERE run_id=? AND component_id=?",
-                    (owner, now + max(0.0, lease_sec), now, run_id, component_id),
-                )
+            token: str | None = None
+            if outcome == "send":
+                if reentrant:
+                    token = claim_token
+                else:
+                    token = uuid4().hex
+                    self._conn.execute(
+                        "UPDATE delivery_components SET state='claimed', claim_owner=?,"
+                        " claim_until=?, claim_token=?, attempt_count=attempt_count+1,"
+                        " updated_at=?"
+                        " WHERE run_id=? AND component_id=?",
+                        (owner, now + max(0.0, lease_sec), token, now, run_id, component_id),
+                    )
             self._conn.commit()
-            return outcome
+            return ComponentClaim(outcome=outcome, token=token)
         except Exception:
             self._conn.rollback()
             raise
+
+    def claim_component(
+        self, *, run_id: str, component_id: str, owner: str, lease_sec: float = 30.0,
+        unknown_backoff_sec: float | None = None, unknown_max_attempts: int = 0,
+    ) -> str:
+        """兼容入口:只返回 send／sent／busy;要拿尝试令牌用 claim_component_attempt。"""
+        return self.claim_component_attempt(
+            run_id=run_id, component_id=component_id, owner=owner, lease_sec=lease_sec,
+            unknown_backoff_sec=unknown_backoff_sec,
+            unknown_max_attempts=unknown_max_attempts,
+        ).outcome
 
     def get_component(self, *, run_id: str, component_id: str) -> dict | None:
         """按主键取组件事实(含 msg_ids 解析),不存在返回 None。"""
         r = self._conn.execute(
             "SELECT kind, payload_sha256, state, claim_owner, claim_until,"
-            " attempt_count, msg_ids_json, last_error, created_at, updated_at"
+            " attempt_count, msg_ids_json, last_error, created_at, updated_at, claim_token"
             " FROM delivery_components WHERE run_id=? AND component_id=?",
             (run_id, component_id),
         ).fetchone()
@@ -1228,35 +1327,68 @@ class RunTracker:
             "last_error": r[7],
             "created_at": r[8],
             "updated_at": r[9],
+            "claim_token": r[10],
         }
 
     def _mark_component(
-        self, run_id: str, component_id: str, state: str, *, msg_ids=None, error=None
-    ) -> None:
-        self._conn.execute(
+        self, run_id: str, component_id: str, state: str, *, msg_ids=None, error=None,
+        token: str | None = None,
+    ) -> bool:
+        """写组件终态事实,返回是否真的落库。
+
+        P-04:token 非空时按「当前尝试令牌」围栏——只有仍持有该令牌的尝试能写
+        终态。旧尝试在租约过期被接管后迟到回写时令牌已被换掉,UPDATE 命中 0 行,
+        新尝试的 state／msg_ids／attempt 原样保留(只记一条告警)。
+        token 为空是本地结算路径(history 缓冲、业务免发、平台调用前的本地校验
+        失败):没有平台尝试可归属,语义与围栏前一致。唯一例外是本地失败
+        (`failed`):它只能把「尚未结算」的组件记为可重试,绝不允许把已
+        sent／cancelled／not_required 的既有事实改回 failed——那是平台调用前
+        的本地校验,不该覆盖平台已经给出的结果。
+        """
+        now = time.time()
+        params: list = [
+            state,
+            json.dumps(list(msg_ids)) if msg_ids is not None else None,
+            (str(error)[:300] if error is not None else None),
+            now, run_id, component_id,
+        ]
+        sql = (
             "UPDATE delivery_components SET state=?, msg_ids_json=COALESCE(?, msg_ids_json),"
             " last_error=?, claim_owner=NULL, claim_until=NULL, updated_at=?"
-            " WHERE run_id=? AND component_id=?",
-            (
-                state,
-                json.dumps(list(msg_ids)) if msg_ids is not None else None,
-                (str(error)[:300] if error is not None else None),
-                time.time(), run_id, component_id,
-            ),
+            " WHERE run_id=? AND component_id=?"
         )
+        if token is not None:
+            sql += " AND claim_token=?"
+            params.append(token)
+        elif state == "failed":
+            sql += " AND state NOT IN ('sent','cancelled','not_required')"
+        cur = self._conn.execute(sql, params)
+        applied = cur.rowcount == 1
         self._conn.commit()
+        if not applied:
+            logger.warning(
+                f"[runs-delivery] 组件终态回写未生效(令牌不是当前尝试或组件已结算) "
+                f"run={run_id} component={component_id} state={state} token={token!r}"
+            )
+        return applied
 
-    def mark_component_sent(self, *, run_id: str, component_id: str, msg_ids: list) -> None:
+    def mark_component_sent(
+        self, *, run_id: str, component_id: str, msg_ids: list, token: str | None = None
+    ) -> bool:
         """平台成功后立即写回执;发送成功但无 msg_id 同样记 sent(空列表)。"""
-        self._mark_component(run_id, component_id, "sent", msg_ids=msg_ids)
+        return self._mark_component(run_id, component_id, "sent", msg_ids=msg_ids, token=token)
 
-    def mark_component_unknown(self, *, run_id: str, component_id: str, error) -> None:
+    def mark_component_unknown(
+        self, *, run_id: str, component_id: str, error, token: str | None = None
+    ) -> bool:
         """平台调用已发起但结果不明(异常/超时/崩溃);不得立即盲补。"""
-        self._mark_component(run_id, component_id, "unknown", error=error)
+        return self._mark_component(run_id, component_id, "unknown", error=error, token=token)
 
-    def mark_component_failed(self, *, run_id: str, component_id: str, error) -> None:
+    def mark_component_failed(
+        self, *, run_id: str, component_id: str, error, token: str | None = None
+    ) -> bool:
         """平台调用前的本地失败(白名单/校验),允许修复后重试。"""
-        self._mark_component(run_id, component_id, "failed", error=error)
+        return self._mark_component(run_id, component_id, "failed", error=error, token=token)
 
     def set_expected_state(
         self, run_id: str, expected_state: str, *, cancel_reason: str | None = None
