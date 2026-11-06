@@ -27,6 +27,7 @@ cap 影响)。reattach 过程自身的网络失败同样保留行(runs 在 gatew
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import httpx
 import nonebot_plugin_alconna as alconna
@@ -38,7 +39,6 @@ from ..config import plugin_config
 from ..core.bg_tasks import spawn_bg_task
 from ..core.hermes_client import (
     RunsEventParser,
-    _try_parse_first_json_block,
     extract_response_media,
 )
 from ..core.inflight import make_inflight_key
@@ -47,6 +47,7 @@ from ..core.message_origin import MessageOrigin
 from ..core.companion_runtime import deliver_companion_run_output
 from ..core.misc_config import load_misc_config
 from ..core.outbound import (
+    DeliveryContext,
     get_bot_nickname,
     send_local_files,
     send_result_history,
@@ -55,15 +56,20 @@ from ..core.outbound import (
 )
 from ..core.reply_resolution import resolve_reply
 from ..core.reply_recovery import (
+    deliver_recovered_replies,
     recover_run_overwritten_replies,
-    recovery_plan_entries,
 )
 from ..core.routing import resolve_target
 from ..core.run_delivery_monitor import (
-    prepare_outbound_delivery,
     reconcile_pending_deliveries,
     reconcile_run,
     settle_expected,
+)
+from ..core.runs_terminal import (
+    TerminalPlanError,
+    append_terminal_batch,
+    fold_plan_units,
+    prepare_terminal_batch,
 )
 from ..core.run_reclaim import reclaim_pending_submissions
 from ..core.run_tracker import TrackedRun
@@ -93,59 +99,76 @@ def _inflight_key(row: TrackedRun) -> tuple[str, str]:
     return make_inflight_key(row.adapter, row.is_private, row.user_id, row.group_id)
 
 
-def restore_bot_routes(bot, *, now_ms: int | None = None) -> int:
-    """Bot 连接后按持久恢复台账补回内存路由，不伪造入站消息。
+def _bot_adapter_name(bot: Any) -> str:
+    """Bot 实例 → 归一化 adapter 名(与本插件路由键同一来源)。"""
+    get_name = getattr(getattr(bot, "adapter", None), "get_name", None)
+    raw = str(get_name() or "") if callable(get_name) else ""
+    return normalize_adapter_name(raw)
 
-    active_runs 提供未结案 turn 的目标；ready-only deliveries 覆盖 active 行已删除、
-    仍待对账的回复。bot 归属以 active 行或原 submission 为准，其他 bot 的记录不串用。
-    真实感知 entry 一律保留；其他 bot 留下的合成 entry 可由后连接 bot 接管。
-    本函数只补路由，是否补投仍由恢复链与 delivery_components 的实发回执裁决。
+
+def _scope_of(adapter: str, is_private: bool, user_id: Any, group_id: Any):
+    """台账行 → (adapter, scope, scope_id);缺目标标识返回 None。"""
+    scope = "private" if is_private else "group"
+    scope_id = str(user_id or "") if is_private else str(group_id or "")
+    return (adapter, scope, scope_id) if scope_id else None
+
+
+def restore_bot_routes(bot, *, now_ms: int | None = None) -> int:
+    """Bot 连接后按既有交付台账补回内存送达路由,不伪造入站消息。
+
+    路由来源只有两处持久事实:未结案的 active_runs(恢复 reattach 需要 target)
+    与 expected_state='ready' 的 deliveries(启动对账需要 target)。Target 由
+    scope_id 现场合成(与 notices/wake 的兜底构造同一形状),只存内存,不落库。
+
+    写入的 entry 标记 ``synthetic=True``:真实感知事件到达时
+    ``BotRegistry.upsert`` 会用真实 Target 覆盖它(真实感知优先)。本进程的
+    bot 连接钩子只会为当前连接 bot 的 adapter 补路由——多 bot 同目标属 P-11
+    多实例场景,明确不做。
+
+    只补路由;"要不要补投"仍由恢复链与组件认领的实发回执裁决。
     """
     registry = _mcp.bot_registry
     tracker = _mcp.run_tracker
     if registry is None or tracker is None:
         return 0
-    adapter_name = normalize_adapter_name(getattr(bot.adapter, "get_name", lambda: "")())
-    bot_self_id = str(bot.self_id)
-    candidates: list[dict] = [
-        {
-            "adapter": row.adapter,
-            "is_private": row.is_private,
-            "user_id": row.user_id,
-            "group_id": row.group_id,
-        }
-        for row in tracker.list_running()
-        if row.adapter == adapter_name and str(row.bot_self_id) == bot_self_id
-    ]
+    adapter_name = _bot_adapter_name(bot)
+    bot_self_id = str(getattr(bot, "self_id", "") or "")
+    if not bot_self_id:
+        return 0
+    keys: dict[tuple[str, str, str], None] = {}
+    for row in tracker.list_running():
+        if row.adapter == adapter_name:
+            key = _scope_of(row.adapter, row.is_private, row.user_id, row.group_id)
+            if key is not None:
+                keys[key] = None
     for delivery in tracker.list_ready_deliveries():
         if (delivery.get("adapter") or "") != adapter_name:
             continue
-        submission = tracker.get_submission(delivery["idempotency_key"])
-        if submission is None or str(submission["bot_self_id"]) != bot_self_id:
-            continue
-        candidates.append(delivery)
+        key = _scope_of(
+            adapter_name,
+            bool(delivery.get("is_private")),
+            delivery.get("user_id"),
+            delivery.get("group_id"),
+        )
+        if key is not None:
+            keys[key] = None
 
-    restored = 0
-    seen: set[tuple[str, str, str]] = set()
     ts = _now_ms() if now_ms is None else now_ms
-    for row in candidates:
-        scope = "private" if row.get("is_private") else "group"
-        scope_id = str(row.get("user_id") or "") if scope == "private" else str(row.get("group_id") or "")
-        key = (adapter_name, scope, scope_id)
-        if not scope_id or key in seen:
-            continue
-        seen.add(key)
-        existing = registry.get(adapter_name, scope, scope_id)
+    restored = 0
+    for adapter, scope, scope_id in keys:
+        existing = registry.get(adapter, scope, scope_id)  # type: ignore[arg-type]
         if existing is not None and (
             not existing.synthetic or existing.bot_self_id == bot_self_id
         ):
             continue
         registry.upsert(
-            adapter=adapter_name,
-            scope=scope,
+            adapter=adapter,
+            scope=scope,  # type: ignore[arg-type]
             scope_id=scope_id,
             bot_self_id=bot_self_id,
-            target=alconna.Target(id=scope_id, private=(scope == "private"), adapter=adapter_name),
+            target=alconna.Target(
+                id=scope_id, private=(scope == "private"), adapter=adapter
+            ),
             ts=ts,
             synthetic=True,
         )
@@ -159,52 +182,50 @@ def restore_bot_routes(bot, *, now_ms: int | None = None) -> int:
 
 
 def recover_bot_deliveries(bot) -> None:
-    """真实 Bot 每次连接后完整恢复送达：路由、active reattach、ready 对账。
+    """真实 Bot 每次连接后完整恢复送达:补路由 → 唤醒 active reattach → ready 对账。
 
-    不以“新增路由数”作为后续扫描条件：断线保留的 entry 在重连时仍然有效；
-    已过等待窗口而退出的 active 恢复任务也由同一钩子重新唤醒。`_resume_row`
-    自带 per-run 去重，重复连接不会并行恢复同一 run。
+    不以"新增路由数"作为后续扫描条件:断线保留的 entry 在重连时仍然有效,
+    已过等待窗口退出的 active 恢复任务也由同一钩子重新唤醒。``_resume_row``
+    自带 per-run 去重,重复连接不会并行恢复同一条 run;ready 对账走既有
+    ``reconcile_pending_deliveries`` 与组件认领,已 sent 的件不重发。
     """
     restore_bot_routes(bot)
     tracker = _mcp.run_tracker
     if tracker is None:
         return
-    adapter_name = normalize_adapter_name(getattr(bot.adapter, "get_name", lambda: "")())
-    bot_self_id = str(bot.self_id)
+    adapter_name = _bot_adapter_name(bot)
     for row in tracker.list_running():
-        if row.adapter == adapter_name and str(row.bot_self_id) == bot_self_id:
-            spawn_bg_task(
-                _resume_row(row),
-                name=f"resume-bot-connect-{row.run_id[:12]}",
-            )
+        if row.adapter != adapter_name:
+            continue
+        spawn_bg_task(
+            _resume_row(row),
+            name=f"resume-bot-connect-{row.run_id[:12]}",
+        )
     spawn_bg_task(
         reconcile_pending_deliveries(),
         name="delivery-reconcile-bot-connect",
     )
 
 
-async def _record_overwritten_replies(row: TrackedRun, output: str) -> None:
-    """恢复路径只落严格转录证据,发送仍统一归 108 计划与 reconcile。"""
-    if row.reply_protocol_version < 1 or _mcp.run_tracker is None:
+async def _recover_overwritten_replies(row: TrackedRun, output: str, bot, target) -> None:
+    """断流恢复与正常终态共用前序答复回收，末轮仍由旧极简出口处理。"""
+    if not row.expect_structured:
         return
     try:
         recovered = await recover_run_overwritten_replies(row, output)
-        recoveries = recovery_plan_entries(
+        await deliver_recovered_replies(
             recovered,
-            adapter=row.adapter,
-            group_id=row.group_id,
+            bot=bot,
+            target=target,
+            adapter_name=row.adapter,
             user_id=row.user_id,
+            group_id=row.group_id,
             is_private=row.is_private,
         )
-        _mcp.run_tracker.record_recovery_evidence(
-            run_id=row.run_id,
-            recoveries=recoveries,
-            protocol_version=row.reply_protocol_version,
-        )
     except Exception:
-        # 前序证据不足只放弃回收,末轮沿用既有恢复出口;旧协议绝不进入这里。
+        # 前序补投失败不能拖垮末轮原恢复路径；缺证据时 recover 自身已静默跳过。
         logger.warning(
-            f"[HERMES reply-recovery] 断流恢复前录取证异常 run_id={row.run_id}",
+            f"[HERMES reply-recovery] 断流恢复前序回收异常 run_id={row.run_id}",
             exc_info=True,
         )
 
@@ -240,42 +261,63 @@ def _settle(row: TrackedRun, expected_state: str, reason: str) -> None:
     )
 
 
-async def _settle_silent(row: TrackedRun, expected_state: str, reason: str) -> None:
-    """新协议静默恢复也先封存空末轮并对账,再允许 active run 结案。"""
-    if row.reply_protocol_version >= 1:
-        delivery_ctx = prepare_outbound_delivery(
-            tracker=_mcp.run_tracker,
-            run_id=row.run_id,
-            cleaned_text="",
-            media_urls=[],
-            file_paths=[],
-        )
-        if delivery_ctx is None:
-            raise RuntimeError(f"silent resume plan was not sealed run_id={row.run_id}")
-        await reconcile_run(row.run_id, reason="resume-silent")
-    _settle(row, expected_state, reason)
+def _build_units(output: str, expect_structured: bool) -> list[dict] | None:
+    """终态 output → 有序 unit 列表（恢复链适配器，纯函数，离线可测）。
 
-
-def _build_delivery(output: str, expect_structured: bool) -> tuple[str, str | None] | None:
-    """终态 output → ``(reply_text, reply_to)``。纯函数,离线可测。
-
-    结构化模式在 JSON 解析失败或 should_reply=false 时静默。reply_to 在这里只
-    透传，实际 m:id 形态和会话归属由统一解析器在发送前校验；旧文首 @ 字段不再
-    参与投递，内联 @ 始终留在正文中交给统一出站处理。
+    Runs 终态允许连续多份两行决策(E2)，与正常链／对账链共用
+    ``core.runs_terminal.units_from_output`` 的同一个解码器、同一份份过滤与空字段
+    口径：同一 output 必须得到逐字相同的 plan_json，恢复才能被 30 号 upsert 接受。
+    返回 None 表示解析失败／无正文（整批静默），[] 表示结构有效但所有份都无内容。
     """
-    if not expect_structured:
-        return (output, None) if output.strip() else None
-    decision = _try_parse_first_json_block(output)
-    if not isinstance(decision, dict):
-        return None
-    if not decision.get("should_reply"):
-        return None
-    reply_text = str(decision.get("reply_text") or "").strip()
-    if not reply_text:
-        return None
-    reply_to_raw = decision.get("reply_to")
-    reply_to = str(reply_to_raw) if reply_to_raw is not None else None
-    return reply_text, reply_to
+    from ..core.runs_terminal import units_from_output
+
+    return units_from_output(output, expect_structured)
+
+
+def _pending_plan_indexes(tracker, run_id: str) -> list[int]:
+    """既有持久计划里仍允许补发的份序号（sent/cancelled/not_required 不复活）。
+
+    R3：流式份可能在 append_stream_unit 落账之后、实际发送之前进程中断，
+    此时 run 后续以静默份结束。终态没有新增正文**不等于**既有 pending 计划为空，
+    恢复链必须先看这份计划，而不是直接 silent 销账删行。
+
+    R4：一份正文的发送是 primary → file:* → history 的组件序列，绝不能只看
+    primary。正文 ack 后、文件上传/历史落盘前的中断窗口里，primary 已 sent 而
+    file/history 仍 pending；此时若整份当完成销账，文件与历史会永久退出对账扫描。
+    因此按**整份组件**判断：任一组件不在终态集合即算 pending，交给既有补发/
+    对账路径完成（已 sent 的 primary 不重发）。
+    """
+    from ..core.runs_terminal import delivery_plan_units
+
+    if tracker is None or not run_id:
+        return []
+    delivery = tracker.get_delivery(run_id)
+    units = delivery_plan_units(delivery) if delivery else None
+    if not units:
+        return []
+    states = {
+        c["component_id"]: c["state"] for c in tracker.list_components(run_id)
+    }
+    terminal = {"sent", "cancelled", "not_required"}
+    pending: list[int] = []
+    for index, unit in enumerate(units):
+        primary_state = states.get(f"primary:{index}")
+        if primary_state in ("cancelled", "not_required"):
+            # 业务免发/被取消的份整份不复活，不因残留组件重新进入补发。
+            continue
+        if primary_state != "sent":
+            # 正文未成功（pending/failed/缺组件）：整份仍可补发。
+            pending.append(index)
+            continue
+        # 正文已 sent：只把仍 pending 的 file/history 交给既有对账路径。
+        component_ids = [f"history:{index}"]
+        component_ids.extend(
+            f"file:{index}:{file_index}"
+            for file_index in range(len(unit.get("files") or ()))
+        )
+        if any(states.get(component_id) not in terminal for component_id in component_ids):
+            pending.append(index)
+    return pending
 
 
 async def resume_active_runs() -> None:
@@ -408,14 +450,6 @@ async def _resume_row_impl(row: TrackedRun) -> None:
             return
         logger.warning(
             f"[HERMES run-resume] 送达窗口超时,保留行待下次启动 run_id={row.run_id} scope={row.scope_key}"
-        )
-        return
-    # 多 bot 同目标时，entry 可能已被后连接 bot 接管。active 恢复主发、
-    # 旁白和文件都在此返回前统一截住，不能只靠 ready reconcile 的归属门。
-    if entry.bot_self_id != str(row.bot_self_id):
-        logger.warning(
-            f"[HERMES run-resume] 路由 bot 归属不符,保留行待本人连接 "
-            f"run_id={row.run_id} owner={row.bot_self_id} entry={entry.bot_self_id}"
         )
         return
     try:
@@ -555,96 +589,163 @@ async def _resume_row_impl(row: TrackedRun) -> None:
             )
         except Exception as exc:
             logger.warning(f"[HERMES run-resume] expected 落账失败 run_id={row.run_id}: {exc}")
-    # 新协议先落前录取证,prepare_outbound_delivery 会把前序与末轮封进同一计划。
-    await _record_overwritten_replies(row, output)
+    # 前序答复回收与正常终态同步紧急禁用（alive/105 生产回归）：
+    # 未按 run 边界截断转录前，恢复路径同样可能补投历史答复。
     # 极简送达。reply_to 的 m:id 在发送前按 row 中的会话归属解析，重启后也不
     # 改用“最近发言者”猜测目标；查不到映射只降级普通正文。
-    delivery = _build_delivery(output, row.expect_structured)
-    if delivery is None:
-        logger.info(f"[HERMES run-resume] 续跑轮静默(解析失败/决定不回) run_id={row.run_id}")
-        await _settle_silent(row, "silent", "parse_failed_or_no_reply")
-        _maybe_spawn_steer_reconcile(row)
-        tracker.finish(row.run_id)
-        return
-    reply_text, reply_to = delivery
-    cleaned, media_urls, file_paths = extract_response_media(reply_text)
-    if not cleaned and not media_urls and not file_paths:
-        logger.info(f"[HERMES run-resume] 续跑轮回复为空 run_id={row.run_id}")
-        await _settle_silent(row, "silent", "empty_content")
-        _maybe_spawn_steer_reconcile(row)
-        tracker.finish(row.run_id)
-        return
-    resolved_reply = resolve_reply(
-        _mcp.message_buffer,
-        adapter=row.adapter,
-        group_id=None if row.is_private else row.group_id,
-        owner_user_id=row.user_id if row.is_private else None,
-        reply_to=reply_to,
-        log_tag="HERMES run-resume",
-    )
-    delivery_ctx = prepare_outbound_delivery(
-        tracker=tracker, run_id=row.run_id, cleaned_text=cleaned,
-        media_urls=media_urls, file_paths=file_paths, reply_to=reply_to,
-        reply_qq_message_id=resolved_reply.qq_message_id if resolved_reply else None,
-        reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
-    )
-    sent = await send_text_with_media(
-        bot=bot, target=entry.target, text=cleaned, media_urls=media_urls,
-        reply_qq_message_id=resolved_reply.qq_message_id if resolved_reply else None,
-        reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
-        adapter_name=row.adapter,
-        **({"delivery": delivery_ctx} if delivery_ctx is not None else {}),
-    )
-    await send_local_files(bot=bot, target=entry.target, file_paths=file_paths, adapter_name=row.adapter, **({"delivery": delivery_ctx} if delivery_ctx is not None else {}))
-    if sent and _mcp.message_buffer is not None:
-        # 补发与正常 turn 一样留下可寻址的 bot 行；平台回执缺失时只把
-        # qq_message_id 留 NULL，不把“无 ID”误当发送失败。
-        buffered_content = send_result_history(sent, cleaned)
-        if media_urls:
-            buffered_content = f"{buffered_content} [图片]".strip()
-        _mcp.message_buffer.append(
-            BufferedMessage(
-                ts=_now_ms(),
-                adapter=row.adapter,
-                group_id=None if row.is_private else row.group_id,
-                user_id=row.bot_self_id,
-                nickname=await get_bot_nickname(bot),
-                content=buffered_content,
-                origin=MessageOrigin.bot_output(),
-                image_urls=[],
-                is_bot=True,
-                qq_message_id=getattr(sent, "primary_qq_message_id", None),
-                private_owner_id=row.user_id if row.is_private else None,
-            )
+    units = _build_units(output, row.expect_structured)
+    # E3/R3: 终态没有新增正文（静默份/解析失败）不等于既有持久计划为空。
+    # 流式份可能已 append_stream_unit 落账、但在实际发送前中断；这里先看计划里
+    # 还有没有允许补发的 pending 份，有就按既有计划补发，绝不提前 silent 销账删行。
+    pending_existing = _pending_plan_indexes(tracker, row.run_id)
+    if not units:
+        if not pending_existing:
+            if units is None:
+                logger.info(f"[HERMES run-resume] 续跑轮静默(解析失败/决定不回) run_id={row.run_id}")
+                _settle(row, "silent", "parse_failed_or_no_reply")
+            else:
+                logger.info(f"[HERMES run-resume] 续跑轮回复为空 run_id={row.run_id}")
+                _settle(row, "silent", "empty_content")
+            _maybe_spawn_steer_reconcile(row)
+            tracker.finish(row.run_id)
+            return
+        logger.info(
+            f"[HERMES run-resume] 终态无新增正文,按既有持久计划补发 pending 份 "
+            f"run_id={row.run_id} pending={pending_existing}"
         )
-    if sent and not row.is_private and row.group_id and _mcp.active_sessions is not None:
-        if _mcp.active_sessions.get_if_trigger_alive(row.adapter, row.group_id, _now_ms()) is not None:
-            _mcp.active_sessions.mark_bot_replied(
-                row.adapter, row.group_id, now_ms=_now_ms(),
-                media_count=len(media_urls) + len(file_paths) + send_result_sticker_count(sent), text=cleaned,
+    else:
+        # 先整批落计划再发送：登记失败显式失败、零发送，绝不回落 legacy 无台账发送。
+        # 组件命名与正常终态链一致(primary:i／history:i／file:i:j)，已 sent 的份不重发。
+        # E3: 断流前已即时发送的份在计划里是前缀；终态份若只是计划后缀 → 折掉，
+        # 只补未发送/失败重试份。计划仍只允许尾部追加，不改写旧份。
+        append_units, existing_units = fold_plan_units(
+            tracker=tracker, run_id=row.run_id, units=units
+        )
+        try:
+            if existing_units:
+                append_terminal_batch(
+                    tracker=tracker, run_id=row.run_id, units=append_units
+                )
+            else:
+                prepare_terminal_batch(tracker=tracker, run_id=row.run_id, units=units)
+        except TerminalPlanError as exc:
+            logger.error(
+                f"[HERMES run-resume] 终态计划落库失败,本轮零发送 run_id={row.run_id}: {exc}"
             )
-    logger.info(
-        f"[HERMES run-resume] 续跑送达完成 run_id={row.run_id} scope={row.scope_key} "
-        f"sent={sent} text_len={len(cleaned)} media={len(media_urls)} files={len(file_paths)}"
-        "(turn 生命周期特性:pin/exit/防抖 跳过)"
-    )
-    if delivery_ctx is not None:
-        # history 组件:legacy 已写库回执,缺写库路径记免发;之后统一对账兜底。
+            return
+    from ..core.runs_terminal import delivery_plan_units
+
+    assert tracker is not None
+    delivery = tracker.get_delivery(row.run_id)
+    plan_units = (delivery_plan_units(delivery) if delivery else None) or []
+    comp_states = {
+        c["component_id"]: c["state"] for c in tracker.list_components(row.run_id)
+    }
+    contexts = [
+        DeliveryContext(
+            tracker=tracker, run_id=row.run_id, component_id=f"primary:{index}",
+            generation_guard=lambda run_id=row.run_id: tracker.is_delivery_current(run_id),
+        )
+        for index in range(len(plan_units))
+    ]
+    for index, plan_unit in enumerate(plan_units):
+        primary_state = comp_states.get(f"primary:{index}")
+        if primary_state in ("sent", "cancelled", "not_required"):
+            # 已即时发送/已免发：恢复不得重发正文。R4：正文已 ack 不代表整份完成，
+            # file/history 可能仍 pending（正文回写 sent 后、文件上传前中断）；这类
+            # 未完成组件交给收尾的 reconcile 组件补发，绝不在这里当整份完成跳过。
+            leftover = [
+                component_id
+                for component_id in (
+                    [f"history:{index}"]
+                    + [
+                        f"file:{index}:{file_index}"
+                        for file_index in range(len(plan_unit.get("files") or ()))
+                    ]
+                )
+                if comp_states.get(component_id) not in ("sent", "cancelled", "not_required")
+            ]
+            if leftover:
+                logger.info(
+                    f"[HERMES run-resume] 正文已发,剩余组件交对账补发 "
+                    f"run_id={row.run_id} part={index} pending={leftover}"
+                )
+            continue  # 已即时发送/已免发：恢复不得重发
+        cleaned = plan_unit.get("cleaned_text") or ""
+        media_urls = list(plan_unit.get("media_urls") or [])
+        file_paths = [
+            f.get("path") for f in plan_unit.get("files") or [] if f.get("path")
+        ]
+        reply_to = plan_unit.get("reply_to") or ""
+        resolved_reply = resolve_reply(
+            _mcp.message_buffer,
+            adapter=row.adapter,
+            group_id=None if row.is_private else row.group_id,
+            owner_user_id=row.user_id if row.is_private else None,
+            reply_to=reply_to,
+            log_tag="HERMES run-resume",
+        )
+        ctx = contexts[index]
+        sent = await send_text_with_media(
+            bot=bot, target=entry.target, text=cleaned, media_urls=media_urls,
+            reply_qq_message_id=resolved_reply.qq_message_id if resolved_reply else None,
+            reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
+            adapter_name=row.adapter, delivery=ctx,
+        )
+        await send_local_files(
+            bot=bot, target=entry.target, file_paths=file_paths, adapter_name=row.adapter,
+            component_prefix=f"{index}:", delivery=ctx,
+        )
+        if sent and _mcp.message_buffer is not None:
+            # 补发与正常 turn 一样留下可寻址的 bot 行；平台回执缺失时只把
+            # qq_message_id 留 NULL，不把“无 ID”误当发送失败。
+            buffered_content = send_result_history(sent, cleaned)
+            if media_urls:
+                buffered_content = f"{buffered_content} [图片]".strip()
+            _mcp.message_buffer.append(
+                BufferedMessage(
+                    ts=_now_ms(),
+                    adapter=row.adapter,
+                    group_id=None if row.is_private else row.group_id,
+                    user_id=row.bot_self_id,
+                    nickname=await get_bot_nickname(bot),
+                    content=buffered_content,
+                    origin=MessageOrigin.bot_output(),
+                    image_urls=[],
+                    is_bot=True,
+                    qq_message_id=getattr(sent, "primary_qq_message_id", None),
+                    private_owner_id=row.user_id if row.is_private else None,
+                )
+            )
+        if sent and not row.is_private and row.group_id and _mcp.active_sessions is not None:
+            if _mcp.active_sessions.get_if_trigger_alive(row.adapter, row.group_id, _now_ms()) is not None:
+                _mcp.active_sessions.mark_bot_replied(
+                    row.adapter, row.group_id, now_ms=_now_ms(),
+                    media_count=len(media_urls) + len(file_paths) + send_result_sticker_count(sent),
+                    text=cleaned,
+                )
+        logger.info(
+            f"[HERMES run-resume] 续跑送达完成 run_id={row.run_id} scope={row.scope_key} "
+            f"part={index}/{len(plan_units)} sent={sent} text_len={len(cleaned)} "
+            f"media={len(media_urls)} files={len(file_paths)}"
+            "(turn 生命周期特性:pin/exit/防抖 跳过)"
+        )
         try:
             if sent and _mcp.message_buffer is not None:
                 tracker.mark_component_sent(
-                    run_id=row.run_id, component_id="history",
+                    run_id=row.run_id, component_id=f"history:{index}",
                     msg_ids=list(getattr(sent, "msg_ids", []) or []),
                 )
             elif sent:
-                tracker.mark_component_not_required(run_id=row.run_id, component_id="history")
+                tracker.mark_component_not_required(
+                    run_id=row.run_id, component_id=f"history:{index}"
+                )
         except Exception as exc:
             logger.warning(f"[runs-resume] history 回执失败 run={row.run_id}: {exc}")
-        # 恢复路径与正常路由共用同一个对账器;未启用 repair 时只记录事实。
-        try:
-            await reconcile_run(row.run_id, reason="resume")
-        except Exception as exc:
-            logger.warning(f"[runs-resume] reconcile 异常 run={row.run_id}: {exc}")
+    try:
+        await reconcile_run(row.run_id, reason="resume")
+    except Exception as exc:
+        logger.warning(f"[runs-resume] reconcile 异常 run={row.run_id}: {exc}")
     _maybe_spawn_steer_reconcile(row)
     tracker.finish(row.run_id)
 

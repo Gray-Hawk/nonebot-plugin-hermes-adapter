@@ -44,6 +44,19 @@ class StickerFeatureSwitchTests(unittest.TestCase):
         self.assertFalse(sticker_library.sticker_feature_enabled())
 
     def test_prompt_guidance_follows_switch_and_allows_sticker_only_reply(self) -> None:
+        # 本用例锁 E2 runs 终态口径文案(body 字段);completions 的 body 文案在
+        # tests/test_completions_regression.py 里单独断言。
+        from nonebot_plugin_hermes_adapter.config import plugin_config
+
+        old_iface = plugin_config.hermes_api_interface
+        object.__setattr__(plugin_config, "hermes_api_interface", "runs")
+        try:
+            self._run_sticker_guidance_case()
+        finally:
+            object.__setattr__(plugin_config, "hermes_api_interface", old_iface)
+
+    def _run_sticker_guidance_case(self) -> None:
+        runs_guidance = prompt_builder._STICKER_TOOL_GUIDANCE.replace("reply_text", "body")
         for enabled in (True, False):
             sticker_library._STICKER_FEATURE_ENABLED = enabled
             reactive = prompt_builder.build_reactive_system_prompt(
@@ -55,10 +68,10 @@ class StickerFeatureSwitchTests(unittest.TestCase):
             )
             for prompt in (reactive, passive):
                 if enabled:
-                    self.assertIn(prompt_builder._STICKER_TOOL_GUIDANCE, prompt)
+                    self.assertIn(runs_guidance, prompt)
                     self.assertIn("可只回一个表情，不附文字", prompt)
                 else:
-                    self.assertNotIn(prompt_builder._STICKER_TOOL_GUIDANCE, prompt)
+                    self.assertNotIn(runs_guidance, prompt)
                     self.assertNotIn("search_sticker_library", prompt)
                     self.assertNotIn("表情=ID", prompt)
 

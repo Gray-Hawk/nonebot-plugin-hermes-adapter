@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import time
+from dataclasses import dataclass
 
 import nonebot_plugin_alconna as alconna
 from nonebot import get_bot, get_bots, logger
@@ -30,9 +31,10 @@ from ..core.message_buffer import (
     BufferedMessage,
     iter_message_media,
 )
-from ..core.run_tracker import make_scope_key
+from ..core.run_tracker import TrackedRun, make_scope_key
 from ..core.bg_tasks import spawn_bg_task
 from ..core.prompt_builder import (
+    SteerRowPresentation,
     render_steer_rows,
 )
 from ..core.routing import resolve_target
@@ -66,15 +68,19 @@ _chain_touched: dict[tuple[tuple[str, str], str], float] = {}
 _QUEUE_AGGREGATE_WINDOW_SEC = 4.0
 
 # 本部署补丁: steer 注入文本尾部挂的一次性约定行(运行时文本)——模型侧协议:
-# 本条为对话中途插入的消息; 若模型之后想回应它, 约定调用 push_message 工具
-# 发送回应(推送通道已泛化私聊), 其余内容照常。回应不占用正文、不挂任何标记段。
-# 挂接条件 = steer_reply_push_active()(推送开关开且旁白关,注入时现读):
-# 旁白开启时约定行不挂(流式全推送生效,模型写在旁白位的回应自然透出,
+# 本条为对话中途插入的消息; 若之后要回应它, 就在当下那份决策里给, 即把回应
+# 写进两行 JSON 的 body 行。回应不占用正文、不挂任何标记段。
+# 挂接条件 = steer_reply_push_active()(runs 接口且旁白关, 注入时现读):
+# 这正是 runs 轮内 push_message 被闸门硬拒的场合, 约定行不能再把模型引向
+# push_message(D-9), 否则模型每次照做都会拿到一次被拒的工具调用。
+# completions 不挂本行(该函数对 completions 恒 False), 原 push 语义不变;
+# 旁白开启时也不挂(流式全推送生效, 模型写在旁白位的回应自然透出,
 # 不留协议噪音)。
-# 全角字符按转义写法,防写入管道把全角字面量规范化回半角。
+# 全角字符按转义写法, 防写入管道把全角字面量规范化回半角。
 _STEER_REPLY_CONVENTION_LINE = (
     "\uff08系统提示\uff1a本条为对话中途插入的消息\u3002若你之后回应它\uff0c"
-    "请调用 push_message 工具发送回应\uff0c其余内容照常\u3002\uff09"
+    "请当下就用一组两行 JSON\uff08控制 JSON 行 + 正文 JSON 行\uff09"
+    "把回应写进 body\uff0c其余内容照常\u3002\uff09"
 )
 
 
@@ -313,43 +319,97 @@ def _steer_eligible_ids(
         )
     return ids
 
+@dataclass(frozen=True)
+class SteerInjection:
+    """一次 steer 注入的结算事实(发送、台账、followup 结算共用同一份)。
+
+    ok:            注入成功(含「整批原始行本 run 已入账,本轮不再重复呈现」)。
+    accepted_m_ids: 本 run 台账已确认的原始行号(本批发出的 + 本批前已入账的重复行)。
+    sent_rows:     本批真正发出去的行对象(无号行没有台账锚点,只能按对象身份结算)。
+    in_flight_m_ids: 本批跳过、但仍在别的重叠入口手里发送的行号:本批不得替那个
+                   入口结算它们——它失败时这些行还要留槽走接力。
+    late_accepted_run / late_accepted_m_ids:
+                    HTTP 200 晚到(本批在途时 run 已收尾)的已接受行:终态钩子按
+                    「未确认认领」跳过了它们, 由调用方交给同一条对账路径善后。
+    """
+
+    ok: bool
+    accepted_m_ids: tuple[str, ...] = ()
+    sent_rows: tuple[BufferedMessage, ...] = ()
+    in_flight_m_ids: tuple[str, ...] = ()
+    late_accepted_run: TrackedRun | None = None
+    late_accepted_m_ids: tuple[str, ...] = ()
+
+
+def _start_late_accept_reconcile(tracked: TrackedRun) -> None:
+    """晚到 200 的唯一善后:交给既有终态对账路径,不在这里另造补投。
+
+    run 已经 finish, 终态钩子按「在途认领不算已接受」跳过了这批行;现在确认已
+    被上游接受,内容是否真的进了模型上下文只能由转录核验回答——与终态钩子走
+    同一个 reconcile_run_finished(认领会保证两个触发点只补投一次)。
+    """
+    try:
+        from ..core.steer_reconcile import reconcile_run_finished
+
+        spawn_bg_task(
+            reconcile_run_finished(tracked),
+            name=f"steer-reconcile-late-{tracked.run_id[:12]}",
+        )
+    except Exception:
+        logger.warning(
+            f"[HERMES steer] 晚到确认后启动对账失败(账项留待终态/启动清理) "
+            f"run_id={tracked.run_id}",
+            exc_info=True,
+        )
+
+
 async def _steer_text_into_live_run(
     adapter_name: str, is_private: bool, user_id: str, group_id: str | None, *,
     presentation,
-) -> bool:
-    """把 steer 整批(presentation, alive/103 §17.9.2)注入本 scope 在跑的 run。
+) -> SteerInjection:
+    """把 steer 整批(presentation)注入本 scope 在跑的 run。
 
-    无 live run / 已收尾(409) / 网络异常 → False(调用方落回正常排队,零丢失)。
+    无 live run / 已收尾(409) / 网络异常 → ok=False(调用方落回正常排队,零丢失)。
     scope 感知版发送原语(规划书§3.2/3.3);直注与群聊 followup 槽共用。
-    发送文本=presentation.text＋末尾一次约定行(若开关开);逐行台账与呈现去重
-    只吃 presentation.rows——发送、台账、seen 是同一份身份事实,无第二条轨。
+    发送文本 = presentation.text + 末尾一次约定行(若开关开);逐行台账与呈现
+    去重只吃 presentation.rows——发送、台账、seen 是同一份身份事实,没有第二条轨。
+
+    P-07 跨入口幂等:台账(run_id, m_id)是本 run「这一原始行已经呈现过」的唯一
+    身份来源。发送前先按行认领(claim_steer,status='sending'),HTTP 接受后转
+    pending、失败撤销。重叠入口(A 的 HTTP 未回,B 又并进同一 followup)看到在途
+    认领就不再重发同一原始行;整批都已入账时本轮不发送、直接按「已呈现」成功返回。
+    被吞内容仍由台账 pending 行在终态 pending_steer 回收里补投,不靠重发兜底。
     """
     tracker = _mcp.run_tracker
     if tracker is None:
-        return False
+        return SteerInjection(False)
     live = tracker.get_by_scope(make_scope_key(adapter_name, is_private, user_id, group_id))
     if live is None:
-        return False
-    # 台账/seen 在 HTTP 前从同一份 presentation 投影：同号同值保序合并；
-    # 同号异 sender/正文是身份事实矛盾，整批回退，绝不先发送无法可靠对账的文本。
+        return SteerInjection(False)
+    # 同一批内同号同值只呈递一次(发送正文也只保留首次出现的那一行);同号异
+    # sender/正文是身份事实矛盾,整批回退,绝不先发送一份无法可靠对账的文本。
+    ordered: list[tuple[str | None, SteerRowPresentation]] = []
     items: list[dict] = []
-    seen_mids: list = []
     by_mid: dict[str, dict] = {}
     for item in presentation.rows:
         mid = item.source_row.id
         if mid is None:
+            # 无号行没有对账锚点,也永不参与跨批去重:每批按原样呈递。
+            ordered.append((None, item))
             continue
         key = str(mid)
         existing = by_mid.get(key)
         if existing is not None:
-            if (existing["sender_id"] != str(item.source_row.user_id)
-                    or existing["steer_text"] != item.rendered_line):
+            if (
+                existing["sender_id"] != str(item.source_row.user_id)
+                or existing["steer_text"] != item.rendered_line
+            ):
                 logger.warning(
                     f"[HERMES steer] 同号身份/正文冲突,发送前整批回退 m:id={key} "
                     f"(run_id={live.run_id} 既有 sender={existing['sender_id']} "
                     f"冲突 sender={item.source_row.user_id})"
                 )
-                return False
+                return SteerInjection(False)
             continue
         entry = {
             "m_id": key,
@@ -358,55 +418,132 @@ async def _steer_text_into_live_run(
         }
         by_mid[key] = entry
         items.append(entry)
-        seen_mids.append(mid)
-    text = presentation.text
+        ordered.append((key, item))
+    try:
+        claim = tracker.claim_steer(
+            run_id=live.run_id, scope_key=live.scope_key,
+            session_key=live.session_key, accepted_at=time.time(), items=items,
+        )
+    except Exception:
+        logger.warning(
+            f"[HERMES steer] 台账认领失败,本批不发无法对账的文本 run_id={live.run_id}",
+            exc_info=True,
+        )
+        return SteerInjection(False)
+    if claim is None:
+        logger.warning(
+            f"[HERMES steer] 台账里同号发送人矛盾,整批回退 run_id={live.run_id}"
+        )
+        return SteerInjection(False)
+    claimed_ids = tuple(c["m_id"] for c in claim.claimed)
+    accepted_ids = claimed_ids + tuple(c["m_id"] for c in claim.accepted)
+    in_flight_ids = tuple(c["m_id"] for c in claim.in_flight)
+    claimed_keys = set(claimed_ids)
+    # 无号行没有台账锚点,每批都按原样发送;有号行只发本批认领到的那些。
+    send_rows = [item for key, item in ordered if key is None or key in claimed_keys]
+    if not send_rows:
+        # 整批原始行本 run 已入账(普通重复触发)或正被别的重叠入口发送:不再
+        # 重复呈递。已入账行仍是终态回收锚点,真被吞的内容由 pending_steer 补投。
+        logger.info(
+            f"[HERMES steer] 本批原始行均已入账,跳过重复呈递 (run_id={live.run_id} "
+            f"rows={len(accepted_ids)} in_flight={len(in_flight_ids)})"
+        )
+        return SteerInjection(
+            True, accepted_m_ids=accepted_ids, in_flight_m_ids=in_flight_ids
+        )
+    text = "\n".join(item.rendered_line for item in send_rows)
     if steer_reply_push_active():
         text = _with_steer_reply_convention(text)
-    ok = await hermes_client.steer_run(
-        tgt=resolve_target(adapter_name, is_private, group_id), run_id=live.run_id, text=text
-    )
-    if ok:
-        logger.info(
-            f"[HERMES steer] 直注在跑 turn (scope={'private' if is_private else 'group'}:"
-            f"{user_id if is_private else group_id} run_id={live.run_id} len={len(text)})"
+    try:
+        ok = await hermes_client.steer_run(
+            tgt=resolve_target(adapter_name, is_private, group_id),
+            run_id=live.run_id, text=text,
         )
-        # 本部署补丁(alive/75 根因、alive/84 方案):steer 被上游接受即按发送前
-        # 已去重/校验的 presentation 投影逐行记 pending 台账。无号行不入账；
-        # 记台账失败只 WARN, 不影响主流程。
-        if items:
-            try:
-                tracker.record_steer(
-                    run_id=live.run_id, scope_key=live.scope_key,
-                    session_key=live.session_key, accepted_at=time.time(),
-                    items=items,
-                )
-            except Exception:
-                logger.warning(
-                    f"[HERMES steer] 记台账失败(不影响 steer 主流程) run_id={live.run_id}"
-                )
-        # 呈现去重(alive/103 §14.3):本批已随 steer 给模型看过,recent 不再重复呈现。
-        scope = make_inflight_key(adapter_name, is_private, user_id, group_id)
-        for mid in seen_mids:
-            _steer_seen_mark(scope, mid)
-    return ok
+    except BaseException:
+        # 任务被取消/中断(steer_run 自身把网络异常都归 False):在途认领必须撤销,
+        # 否则这批行在本进程内会一直被当成「在途」而永不重发(只有重启才归位)。
+        try:
+            tracker.release_steer(live.run_id, list(claimed_ids))
+        except Exception:
+            logger.warning(
+                f"[HERMES steer] 中断后撤销在途认领失败 run_id={live.run_id}",
+                exc_info=True,
+            )
+        raise
+    if not ok:
+        # 上游没接受:撤销在途认领,这些行回到「未呈现」,由接力路重投(零丢失)。
+        try:
+            tracker.release_steer(live.run_id, list(claimed_ids))
+        except Exception:
+            logger.warning(
+                f"[HERMES steer] 撤销在途认领失败 run_id={live.run_id}", exc_info=True
+            )
+        return SteerInjection(False)
+    logger.info(
+        f"[HERMES steer] 直注在跑 turn (scope={'private' if is_private else 'group'}:"
+        f"{user_id if is_private else group_id} run_id={live.run_id} len={len(text)} "
+        f"rows={len(claimed_ids)})"
+    )
+    # 本部署补丁(弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75 根因、alive/84 方案):
+    # steer 被上游接受(HTTP 200 且 accepted=True)即把发送前已去重/校验的逐行
+    # 投影从在途认领转正式 pending 台账(对账按 `[m:id]:` 搜转录)。无号行不入账;
+    # 记台账失败只 WARN,不影响主流程。
+    confirmed_ids: tuple[str, ...] = ()
+    try:
+        confirmed_ids = tracker.confirm_steer(live.run_id, list(claimed_ids))
+    except Exception:
+        logger.warning(
+            f"[HERMES steer] 台账确认失败(不影响 steer 主流程) run_id={live.run_id}"
+        )
+    # 第 2 轮评审 R3:HTTP 200 晚到——run 已在本批在途时收尾, 终态钩子按「未确认
+    # 认领不是已接受」没把这批行交给对账。确认成功后必须把它交给同一条对账路径,
+    # 否则「上游已收下但可能被吞」的内容会静默留在账上。confirm 与这次存活检查
+    # 之间没有 await(终态钩子的 spawn+finish 也是同步段), 所以只可能整体先后:
+    # 要么钩子已把 pending 行交出去, 要么这里看到 run 行已被 finish 删除。
+    late_accepted_run: TrackedRun | None = None
+    late_accepted_ids: tuple[str, ...] = ()
+    if confirmed_ids:
+        try:
+            if tracker.get_by_run_id(live.run_id) is None:
+                late_accepted_run = live
+                late_accepted_ids = confirmed_ids
+        except Exception:
+            logger.warning(
+                f"[HERMES steer] 确认后 run 存活检查失败, 按仍未收尾处理 "
+                f"run_id={live.run_id}",
+                exc_info=True,
+            )
+    # 呈现去重(§14.3):本批已随 steer 给模型看过,recent 不再重复呈现。
+    scope = make_inflight_key(adapter_name, is_private, user_id, group_id)
+    for item in send_rows:
+        if item.source_row.id is not None:
+            _steer_seen_mark(scope, item.source_row.id)
+    return SteerInjection(
+        True,
+        accepted_m_ids=accepted_ids,
+        sent_rows=tuple(item.source_row for item in send_rows),
+        in_flight_m_ids=in_flight_ids,
+        late_accepted_run=late_accepted_run,
+        late_accepted_m_ids=late_accepted_ids,
+    )
 
 
 def _stable_unique(urls: list[str]) -> list[str]:
-    """保序去重(alive/103 §17.9.6):防抖等合法路径会合并掉重复 URL,
-    媒体校验必须投影到同一空间再比,否则合法合批被误杀。"""
+    """保序去重:防抖等合法路径会合并掉重复 URL,媒体校验必须投影到同一空间再比。"""
     seen: set[str] = set()
     out: list[str] = []
-    for u in urls:
-        if u not in seen:
-            seen.add(u)
-            out.append(u)
+    for url in urls:
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
     return out
 
 
 def _is_subsequence(observed: list[str], aggregate: list[str]) -> bool:
     """observed 是否为 aggregate 的子序列(同序、可缺不可多)。"""
     it = iter(aggregate)
-    return all(any(u == a for a in it) for u in observed)
+    return all(any(url == item for item in it) for url in observed)
+
 
 # --- steer 呈现去重(alive/103 §14.3):实现迁 core/steer_seen.py(turn 渲染侧
 # 也要过滤,relay→turn 单向依赖防循环 import);此处 re-export 保持既有调用面。
@@ -431,8 +568,8 @@ async def _maybe_steer_direct(
     event_msg_id: str | int | None = None,
     image_urls: list[str] | None = None,
     sticker_urls: list[str] | None = None,
-    # 拆批(alive/103 §17.9.1):触发载荷 fragments 序列——steer 逐行身份/媒体/
-    # 台账/去重的唯一事实源。None=旧调用点,按聚合参数规范化构造单条。
+    # 拆批(P-07):触发载荷 fragments 序列——steer 逐行身份/媒体/台账/去重的
+    # 唯一事实源。None=无拆批信息的调用点,按聚合参数规范化构造单条。
     rows=None,
 ) -> bool:
     """资格内 steer 直注(规划书§3.2/3.3)。True=已注入,调用方不再 dispatch。
@@ -441,13 +578,12 @@ async def _maybe_steer_direct(
     群聊:仅委托(explicit=addressed)且发送者 ∈ 资格集合才直试;闲聊不直注,
     维持走 reactive 队尾的 followup 槽 steer(_try_steer_followup,现状)。
 
-    多行合批(alive/103 §17.9):行装配与 current 共用 render_steer_rows——
-    每行 rendered_line 是实发整批的连续子串,媒体寻址 [图 m:id#idx] 只贴
-    该行自己的 m:id,从根上消灭 S1 真机缺陷(媒体错贴前一条 m:id)。
-    媒体整批校验走稳定去重投影的子序列(alive/103 §17.9.6):合法去重(同 URL
-    连发/同人追加)与跨人替换(旧 fragments 保留)放行,真正缺件/顺序矛盾失败
-    关闭(落回正常 dispatch 走内联帧),不注断链引用。任一行来源闸不通过或
-    渲染拒绝(ValueError)整批返回 False——半贴号/丢媒体/改写原始消息都不如
+    多行合批(P-07):行装配与 current 行共用同一套 speaker/媒体约定
+    (render_steer_rows)——每行 rendered_line 是实发整批的连续子串,媒体寻址
+    `[图 m:id#idx]` 只贴该行自己的 m:id,从根上消灭「媒体错贴前一条 m:id」。
+    媒体整批校验走稳定去重投影的子序列:合法去重与跨人替换放行,真正缺件/顺序
+    矛盾失败关闭(落回正常 dispatch 走内联帧),不注断链引用。任一行来源闸不通过
+    或渲染拒绝(ValueError)整批返回 False——半贴号/丢媒体/改写原始消息都不如
     安全回退。平台 event.message_id 只作 perception 桥的查找键(peek 不 claim),
     绝不进模型可见文本。
     """
@@ -467,20 +603,17 @@ async def _maybe_steer_direct(
             image_urls=list(image_urls or []), sticker_urls=list(sticker_urls or []),
             reply_to_ts=None, is_bot=False,
         )
-        # steer 挂载只认插件 m:id(alive/103 三套编号边界):平台 event.message_id
-        # 仅作查找键;取不到维持无号形态,绝不拿平台 ID 顶替。
+        # steer 挂载只认插件 m:id:取不到维持无号形态,绝不拿平台 ID 顶替。
         fragment.id = _peek_event_db_id(adapter_name, event_msg_id)
         steer_rows = [fragment]
     if not steer_rows:
         return False
-    # 聚合载荷是 rows 的外壳视图,可能少观测(跨人替换:旧 fragments 保留、
-    # 外壳换成新触发)也可能稳定去重(同人连发)。校验方向:聚合(去重后、保序)
-    # 必须是行观测投影(去重后、保序)的子序列——外壳说的每件事行都交代得到,
-    # 顺序一致;行多说的部分(旧碎片)放行。真正缺件/顺序矛盾失败关闭(alive/103
-    # §17.9.6)。
+    # 聚合载荷是 rows 的外壳视图:可能少观测(跨人替换保留旧碎片),也可能稳定
+    # 去重(同人连发)。校验方向:聚合(去重、保序)必须是行观测投影(去重、保序)
+    # 的子序列——外壳说的每件事行都交代得到且同序,行多说的部分放行。
     observed_images = _stable_unique([
         url for row in steer_rows for kind, url in iter_message_media(row)
-        if kind in ("image", "quote")  # 聚合 image_urls=own+quote,与入库分型对齐
+        if kind in ("image", "quote")  # 聚合 image_urls = own + 引用图,与入库分型对齐
     ])
     observed_stickers = _stable_unique([
         url for row in steer_rows for kind, url in iter_message_media(row)
@@ -495,9 +628,15 @@ async def _maybe_steer_direct(
     except ValueError:
         # 任一行来源闸(SYSTEM/MIXED/BOT)或媒体寻址不合法 → 整批安全回退。
         return False
-    return await _steer_text_into_live_run(
+    outcome = await _steer_text_into_live_run(
         adapter_name, target.private, user_id, group_id, presentation=presentation
     )
+    if outcome.late_accepted_run is not None:
+        # run 已收尾的晚到接受:直注入口没有槽可留,内容交给对账核验/补投一次。
+        _start_late_accept_reconcile(outcome.late_accepted_run)
+    # 直注入口只关心「这一触发是否已呈现」:整批原始行本 run 已入账(重复触发)
+    # 或已由重叠入口发出的,同样算已呈现,不再 dispatch 一遍。
+    return outcome.ok
 
 async def _try_steer_followup(
     key: tuple[str, str],
@@ -508,18 +647,17 @@ async def _try_steer_followup(
     """阶段2b:把 followup 槽里的跟帖 steer 注入在跑的 run,成功=True(不再排队)。
 
     只接纯文本跟帖:带图的走不了 steer(文本通道),留在槽里走 pending。
-    表情包自 入队即剥(队列不承载),下方 sticker_urls 检查是
-    防御性保留,正常路径不会再命中。注入前对每行做独立副本投影(rework-1 F1/F2):
-    按正文子行剥 [表情包] 占位、去空白、剔冒号空壳后重连,保留有效子行及原行
-    作者/m:id;媒体检查先于空壳丢弃——投影行任一仍带 own/quote/forward 媒体
-    即整批留 pending,剥完无有效文本的纯表情空壳才不注入、留槽走接力。
+    表情包自入队即剥(队列不承载),下方媒体门是真正的判据。注入前对每行做
+    独立副本投影:按正文子行剥 [表情包] 占位、去空白、剔冒号空壳后重连,保留
+    有效子行及原行作者/m:id;媒体检查(own/quote/forward)先于空壳丢弃——投影行
+    任一仍带媒体即整批留 pending。剥完无有效文本的纯表情空壳才不注入、留槽接力。
     run 已收尾(409)/无 live run/网络异常 → 留在槽里走 pending,语义与旧路完全一致。
 
     改 peek/settle——条目在 steer 全程不离槽,
     期间 turn 收尾由 pop_next_pending 捡走接力,不再存在「离槽-恢复」的静默吞消息路径。
-    注入文本是 await 前的快照:期间若有新跟帖并入(合并发生在同一个 entry 上),
-    结算时内容对不上就不摘——并入内容留在槽里走 pending 接力(注入过的前缀会重复
-    一次,但零丢失;丢失与重复的代价不对称,选重复)。
+    注入文本是 await 前的冻结呈递:期间若有新跟帖并入(合并发生在同一个 entry 上),
+    结算时按行对象身份把已呈现的 fragment 从槽里摘掉,并入的新行原样留槽走 pending
+    接力——既不会把已 steer 过的前缀再呈递一遍,也不会连新并入的内容一起摘掉。
     """
     # 常备探针:入口与各早退口
     # 全部 INFO 级留痕——现网 INFO 级别下原 DEBUG 分支不可见,无法区分
@@ -538,12 +676,6 @@ async def _try_steer_followup(
     if not entry.msg.origin.allows_steer:
         logger.info(f"[HERMES steer探针] 早退: 来源不允许 steer (group={group_id})")
         return False
-    if entry.msg.image_urls or entry.msg.sticker_urls:
-        logger.info(
-            f"[HERMES steer探针] 早退: 条目带媒体 (group={group_id} "
-            f"imgs={len(entry.msg.image_urls)} stickers={len(entry.msg.sticker_urls)})"
-        )
-        return False
     live = tracker.get_by_scope(make_scope_key(adapter_name, False, user_id, group_id))
     if live is None:
         logger.info(
@@ -551,24 +683,19 @@ async def _try_steer_followup(
             f"scope={make_scope_key(adapter_name, False, user_id, group_id)})"
         )
         return False
-    content_snapshot = entry.msg.content
-    # 冻结发送集(alive/103 §17.9.4):await 前独立投影 followup fragments;
-    # 发送/台账/seen 只吃这份冻结 presentation。结算时同时比较 fragments
-    # 对象身份与 content——任何新 fragment 并入、或槽被 pop/替换,都不得摘槽。
-    frozen = list(entry.fragments or [])
-    fragment_identity_snapshot = tuple(id(row) for row in frozen)
-    render_rows = frozen or [entry.msg]
-    # 逐行独立副本投影(rework-1 终审 F1/F2,替代旧的整行 endswith(":") 过滤):
-    #  F1: 冒号空壳/表情占位的清理落到正文子行级——「有效指令\n作者:」这类多行
-    #      内容不再因整行以冒号收尾被整段误删;每行先在独立副本内按子行剥
-    #      [表情包] 占位、去空白、剔冒号空壳(仅尾部冒号、无正文的子行),
-    #      有效子行重连后仍归原 row 的作者与 m:id。
-    #  F2: 媒体检查先于空壳丢弃——表情剥离后的投影行只要还剩 own/quote/forward
-    #      任一媒体,整批留 pending(steer 文本通道注不了断链引用)。空正文图片行
-    #      不再先被内容过滤整行丢掉而让媒体检查永远看不到它——否则剩余文本行
-    #      steer 成功即摘整槽,图被静默吞掉。
+    # 冻结发送集(P-18):await 前独立投影 followup fragments,发送/台账/去重只吃
+    # 这份冻结呈递。注意冻结的只是「这次要发哪几行」,槽里的 fragments 是同一个
+    # 列表:发送成功后按对象身份把已呈现的行从槽里摘掉,只留未呈现部分。
+    frozen = list(getattr(entry, "fragments", None) or []) or [entry.msg]
+    # 逐行独立副本投影:
+    #  - 剥 [表情包] 占位与冒号空壳落在正文子行级,「有效指令\n作者:」这类多行内容
+    #    不再因整行以冒号收尾被整段误删;有效子行重连后仍归原 row 的作者与 m:id。
+    #  - 媒体检查先于空壳丢弃(P-19):投影行只要还剩 own/quote/forward 任一媒体,
+    #    整批留 pending(steer 文本通道注不了断链引用)。空正文图片行不再先被内容
+    #    过滤整行丢掉而让媒体门永远看不到它——否则剩余文本行 steer 成功即摘整槽,
+    #    图被静默吞掉。
     projected: list[BufferedMessage] = []
-    for row in render_rows:
+    for row in frozen:
         prow = copy.copy(row)
         if prow.sticker_urls or "[表情包]" in (prow.content or ""):
             prow.sticker_urls = []
@@ -602,26 +729,95 @@ async def _try_steer_followup(
             f"[HERMES steer探针] 早退: 行来源闸/渲染拒绝 (group={group_id})"
         )
         return False
-    ok = await _steer_text_into_live_run(
+    outcome = await _steer_text_into_live_run(
         adapter_name, False, user_id, group_id, presentation=presentation
     )
-    if not ok:
+    if not outcome.ok:
         logger.info(
             f"[HERMES steer探针] 早退: steer_run 返回 False (group={group_id} run_id={live.run_id})"
         )
         return False
-    # 结算冻结:发送过的冻结集随成功路径记账/去重完毕;槽是否摘下只看
-    # 「槽仍是这个槽且 fragments 仍是那批对象且正文没变」。必须比较对象身份，
-    # 不能用 dataclass 值相等——同内容的新 fragment 也代表 await 期间有新并入。
-    if (
-        _mcp.inflight.peek_followup(key) is entry
-        and tuple(id(row) for row in entry.fragments) == fragment_identity_snapshot
-        and entry.msg.content == content_snapshot
-    ):
-        _mcp.inflight.settle_followup(key, entry)
+    # 槽是否仍归本次调用结算:await 期间 run 收尾可由 pop_next_pending 把条目取走
+    # 走接力。晚到接受(200)的善后必须看这个事实,否则同一原始行会被接力轮和
+    # 对账各呈递一次。
+    slot_still_ours = _mcp.inflight is not None and _mcp.inflight.peek_followup(key) is entry
+    # 结算冻结集(P-07/P-18):本批真正发出的行,以及本 run 台账已确认的原始行,
+    # 按对象身份/行号从槽里摘掉。槽只保留尚未呈现的 fragment——await 期间并入的
+    # 新行、以及别的重叠入口正在发送的行(那个入口成功时由它摘、失败时留槽接力)。
+    # 这样接力轮不会把已经 steer 过的前缀再呈递一遍,合批内容也不会被整槽摘掉;
+    # 槽被清空且仍是同一条目时才摘槽。
+    # 发送用的是独立投影副本,身份要映射回冻结的原对象(无号行只能靠对象身份,
+    # 不能靠 m:id)——正是 P-18 的对象身份语义。
+    origin_of = {id(prow): row for row, prow in zip(frozen, projected)}
+    accepted_ids = set(outcome.accepted_m_ids)
+    sent_objects = {id(origin_of.get(id(r), r)) for r in outcome.sent_rows}
+    # native 已归还的行不算「本批已呈现」(第 3 轮评审 R4):ACK 晚到只说明上游
+    # 收过这段文本;pending_steer 上浮证明模型没看到,内容仍欠一次呈递,必须留在
+    # 槽里走接力。否则「回收副本被原行吸收(不重复追加)」后,这次晚到 200 会把
+    # 唯一一份原行也摘掉——修重复变成静默丢内容。
+    owed_ids: set[str] = set()
+    candidate_ids = sorted(
+        {str(row.id) for row in outcome.sent_rows if row.id is not None} | accepted_ids
+    )
+    if candidate_ids:
+        try:
+            owed_ids = {
+                m_id
+                for m_id, status in tracker.steer_statuses(
+                    live.run_id, candidate_ids
+                ).items()
+                if status == "recovered"
+            }
+        except Exception:
+            logger.warning(
+                f"[HERMES steer] 台账状态读取失败,按本批已呈递结算 "
+                f"(run_id={live.run_id})",
+                exc_info=True,
+            )
+    remaining = [
+        row
+        for row in entry.fragments
+        if (row.id is not None and str(row.id) in owed_ids)
+        or (
+            id(row) not in sent_objects
+            and not (row.id is not None and str(row.id) in accepted_ids)
+        )
+    ]
+    # 用新列表赋值而非原地改:条目若在 await 期间已被 pop_next_pending 取走接力,
+    # 接力轮手里的旧列表就是它当时的完整快照,不被这里改到一半。
+    entry.fragments = remaining
+    if not remaining:
+        if _mcp.inflight.peek_followup(key) is entry:
+            _mcp.inflight.settle_followup(key, entry)
     else:
-        # await 期间并入了新 fragment(或被接力取走):留槽走 pending,不摘。
-        logger.debug(f"[HERMES reactive] steer 期间 followup 有并入,留槽接力 (group={group_id})")
+        # await 期间并入了新 fragment,或仍有别的入口在途的行:留槽走 pending,
+        # 只把已呈现的部分摘掉。
+        logger.debug(
+            f"[HERMES reactive] steer 期间 followup 有并入/在途,留槽接力 "
+            f"(group={group_id} kept={len(remaining)} "
+            f"in_flight={len(outcome.in_flight_m_ids)})"
+        )
+    if outcome.late_accepted_run is not None:
+        if slot_still_ours:
+            # 晚到 200:run 已收尾,终态钩子没对账过这批行;槽里这一行刚被当作
+            # 「已呈现」摘掉,内容只能由同一个对账路径核验/补投一次。
+            _start_late_accept_reconcile(outcome.late_accepted_run)
+        else:
+            # await 期间条目已被 pop_next_pending 取走接力:接力轮手里的快照会
+            # 原样呈递这一行,再对账补投就是第二次。内容已在接力路上,只把刚确认
+            # 的账项按「已由接力回收」核销,不让它留在 pending 里被将来的对账/
+            # native 回收再次认领。
+            try:
+                tracker.mark_steers(
+                    outcome.late_accepted_run.run_id,
+                    list(outcome.late_accepted_m_ids), "recovered",
+                )
+            except Exception:
+                logger.warning(
+                    f"[HERMES steer] 晚到确认账项核销失败(不影响接力呈递) "
+                    f"run_id={outcome.late_accepted_run.run_id}",
+                    exc_info=True,
+                )
     logger.info(
         f"[HERMES reactive] 跟帖已 steer 注入在跑 turn (group={group_id} "
         f"user={entry.msg.user_id} run_id={live.run_id} len={len(presentation.text)})"
@@ -899,9 +1095,13 @@ async def _refire(
     refire_now_ms = _now_ms()
     refire_rows = list(current_rows or [trigger_msg])
     refire_text = "\n".join(row.content for row in refire_rows if row.content)
+    # 内联收集口径与触发入口一致(own + 引用图;分型入库后引用图不再并进
+    # image_urls,接力若只读 image_urls 会静默少内联引用图)。
     refire_images = []
     for row in refire_rows:
-        refire_images.extend(u for u in row.image_urls if u not in refire_images)
+        for url in (*row.image_urls, *row.quote_image_urls):
+            if url not in refire_images:
+                refire_images.append(url)
 
     # 接力不再有 post-reply 冷却闸:排队条目在到达时已过入口资格与防抖,
     # 该不该再答应由接力轮的 submit_decision 自决,而不是被时间窗越权替模型决定。

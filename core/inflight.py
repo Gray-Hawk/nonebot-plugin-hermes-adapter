@@ -15,6 +15,7 @@ in-flight 时新消息不占并发,只排队;当前一发完成后按顺序接�
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
@@ -106,6 +107,122 @@ def _merge_fragments(
     也不做去重或同人相邻折叠——逐段时序与来路原样保留。
     """
     return [*old_frags, *new_frags]
+
+
+def _merge_recovered_batch(
+    slot_fragments: Sequence[BufferedMessage],
+    entry_fragments: Sequence[BufferedMessage],
+    known_m_ids: Sequence[str | None],
+) -> tuple[list[BufferedMessage], list[str], list[BufferedMessage]]:
+    """把 native 同批归还行按 pending 原文顺序并进槽内 fragments。
+
+    同批行只有一部分还留在槽里时(前面的行已被 ACK 结算摘走、尾行仍在途),
+    「槽内先、缺行后补」的追加会把 payload=A/B 排成 B/A(第 4 轮评审 R5)。
+    pending 原文就是这批行真实的相对顺序,所以这里以 payload 顺序为准:槽里已有
+    的行沿用**槽内原 fragment 对象**(保住真实 m:id/媒体/身份),缺的行用回收副本
+    补在批内相邻位置;不属于这批的排队行不吞、不变身份,也尽量不动位置——
+    槽内已有的批内行本来就按原文顺序排列时,只做「插入缺行」,其余行原地不动;
+    只有当槽内批内行彼此已经乱序时,才把这批行收拢到第一行原位置重建顺序。
+    只按 m_id 认行,不看正文——不同原始行的相同正文各自保留。
+
+    返回 `(ordered, absorbed_ids, kept)`:
+      ordered      —— 合并后的槽内 fragments;
+      absorbed_ids —— 槽里已有、因此没有追加回收副本的行号(payload 序);
+      kept         —— 回收 entry 里真正新增的 fragment(批级正文载体只用这些)。
+    完全没有可认原行(无台账身份)时返回槽原序列 + 空 absorbed,调用方走追加。
+    """
+    batch_ids = [None if m_id is None else str(m_id) for m_id in known_m_ids]
+    wanted = {m_id for m_id in batch_ids if m_id is not None}
+    if not wanted:
+        return list(slot_fragments), [], list(entry_fragments)
+    slot_at: dict[str, int] = {}
+    for index, row in enumerate(slot_fragments):
+        if row.id is None:
+            continue
+        m_id = str(row.id)
+        if m_id in wanted and m_id not in slot_at:
+            slot_at[m_id] = index
+    if not slot_at:
+        return list(slot_fragments), [], list(entry_fragments)
+
+    # 按 payload 顺序过一遍:命中槽内原行 → 记槽位;缺行 → 记回收副本。
+    # 同一原始行在原文里出现两次时仍只呈递槽里那一份。
+    absorbed_ids: list[str] = []
+    kept: list[BufferedMessage] = []
+    slot_pos_row: list[int] = []          # >=0 = 该行在槽内的位置;-1 = 缺行
+    frag_row: list[BufferedMessage | None] = []
+    seen: set[str] = set()
+    for m_id, fragment in zip(batch_ids, entry_fragments):
+        if m_id is not None and m_id in slot_at:
+            absorbed_ids.append(m_id)
+            if m_id in seen:
+                continue
+            seen.add(m_id)
+            slot_pos_row.append(slot_at[m_id])
+            frag_row.append(None)
+        else:
+            kept.append(fragment)
+            slot_pos_row.append(-1)
+            frag_row.append(fragment)
+    if not absorbed_ids:
+        return list(slot_fragments), [], list(entry_fragments)
+
+    present_positions = [pos for pos in slot_pos_row if pos >= 0]
+    if all(
+        left <= right for left, right in zip(present_positions, present_positions[1:])
+    ):
+        # 槽内批内行本就有序:只把缺行插到批内相邻位置,其余行原地不动。
+        ordered = list(slot_fragments)
+        total = len(slot_pos_row)
+        inserts: list[tuple[int, list[BufferedMessage]]] = []
+        cursor = 0
+        while cursor < total:
+            if slot_pos_row[cursor] >= 0:
+                cursor += 1
+                continue
+            run: list[BufferedMessage] = []
+            end = cursor
+            while end < total and slot_pos_row[end] < 0:
+                missing = frag_row[end]
+                if missing is not None:
+                    run.append(missing)
+                end += 1
+            next_present = next(
+                (slot_pos_row[k] for k in range(end, total) if slot_pos_row[k] >= 0),
+                None,
+            )
+            prev_present = next(
+                (slot_pos_row[k] for k in range(cursor - 1, -1, -1) if slot_pos_row[k] >= 0),
+                None,
+            )
+            if next_present is not None:
+                at = next_present
+            elif prev_present is not None:
+                at = prev_present + 1
+            else:  # pragma: no cover - absorbed_ids 非空时必有相邻原行
+                at = len(ordered)
+            inserts.append((at, run))
+            cursor = end
+        for at, run in sorted(inserts, key=lambda item: item[0], reverse=True):
+            ordered[at:at] = run
+        return ordered, absorbed_ids, kept
+
+    # 槽内批内行彼此乱序(理论上只在原文与槽序冲突时出现):以第一行原位置为锚,
+    # 整批按原文顺序重建,批外行仍按原相对顺序留在锚前/锚后。
+    anchor = min(present_positions)
+    block: list[BufferedMessage] = []
+    for pos, fragment in zip(slot_pos_row, frag_row):
+        block.append(slot_fragments[pos] if pos >= 0 else fragment)  # type: ignore[arg-type]
+    ordered = [
+        *slot_fragments[:anchor],
+        *block,
+        *(
+            row
+            for index, row in enumerate(slot_fragments)
+            if index > anchor and index not in set(present_positions)
+        ),
+    ]
+    return ordered, absorbed_ids, kept
 
 
 @dataclass
@@ -259,6 +376,75 @@ class InflightRegistry:
         merged_fragments = _merge_fragments(slot.followup.fragments, entry.fragments)
         _merge_pending_message(slot.followup.msg, entry.msg)
         slot.followup.fragments = merged_fragments
+
+    def add_recovered_followup(
+        self,
+        key: tuple[str, str],
+        entry: PendingEntry,
+        *,
+        known_m_ids: Sequence[str | None] | None,
+    ) -> tuple[str, ...]:
+        """native 归还已知原始行 × 仍在槽的原行:同一原行只留一份呈递。
+
+        `pending_steer` 上浮 = 这批 steer 被上游吞掉、没送到模型,内容仍欠模型
+        一次呈递。回收行本身是无号 `human_replay` 副本(见
+        `_pending_steer_recovery_fragments`):如果原行还在 followup 槽里没被 pop,
+        它下一轮本来就会呈递——再追加一份回收副本就是同一原行两次(第 3 轮评审
+        R4)。这里按 `m_id` 认原行(不看正文:不同原始行的相同正文各自保留):槽里
+        已在的行不再追加回收副本(槽里的原行带真实 m:id/媒体,身份更完整),不在槽
+        里的回收行照旧追加,真正被吞的内容不丢。
+
+        `known_m_ids` 与 `entry.fragments` 等长,None=无台账身份(原文 fallback,
+        无法认行,按旧行为追加)。返回被槽内原行吸收的行号,供日志说明。
+
+        同批行的**相对顺序**按 `pending` 原文(见 `_merge_recovered_batch`):部分
+        行已被 ACK 摘走、尾行仍在槽时,缺行补回原位置而不是追加到槽尾,否则下一轮
+        会把 A/B 呈递成 B/A(第 4 轮评审 R5)。
+
+        晚到 HTTP200 不得再把这行从槽里摘走:结算侧(`_try_steer_followup`)按
+        台账状态区分「已接受并已呈现」与「已被 native 归还、仍欠一次呈递」。
+        """
+        absorbed: tuple[str, ...] = ()
+        slot = self._slots.get(key)
+        if (
+            slot is not None
+            and slot.followup is not None
+            and known_m_ids is not None
+            and len(known_m_ids) == len(entry.fragments)
+            # 换代不混批:新代整槽替换由 add_followup 处理,这里吸收会连旧代
+            # followup 一起丢——只在同代会并的槽上做去重。
+            and not _different_delivery_generation(slot.followup.msg, entry.msg)
+        ):
+            ordered, absorbed_ids, kept = _merge_recovered_batch(
+                slot.followup.fragments, entry.fragments, known_m_ids,
+            )
+            if absorbed_ids:
+                absorbed = tuple(absorbed_ids)
+                if not kept:
+                    # 整批行都还在槽:只按 pending 原文校正相对顺序,不追加副本。
+                    if list(ordered) != list(slot.followup.fragments):
+                        slot.followup.fragments = ordered
+                        logger.info(
+                            f"[HERMES steer回收] 原行仍在接力槽,按 pending 原文"
+                            f"校正同批顺序 (key={key} absorbed={list(absorbed)})"
+                        )
+                    else:
+                        logger.info(
+                            f"[HERMES steer回收] 原行仍在接力槽,不追加回收副本 "
+                            f"(key={key} absorbed={list(absorbed)})"
+                        )
+                    return absorbed
+                # 只把真正新增的行并进批级正文载体,避免重复文本进 slot.msg;
+                # fragments 用按原文顺序排好的合并序列(缺行补在原位置)。
+                text = "\n".join(f.content for f in kept if (f.content or "").strip())
+                new_msg = replace(entry.msg, content=text or entry.msg.content)
+                if new_msg.sticker_urls:
+                    new_msg = _strip_stickers_for_queue(new_msg)
+                _merge_pending_message(slot.followup.msg, new_msg)
+                slot.followup.fragments = ordered
+                return absorbed
+        self.add_followup(key, entry)
+        return absorbed
 
     def try_enter(
         self,

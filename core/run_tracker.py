@@ -36,7 +36,6 @@ CREATE TABLE IF NOT EXISTS active_runs (
     session_key TEXT NOT NULL,
     mode        TEXT NOT NULL,
     expect_structured INTEGER NOT NULL DEFAULT 0,
-    reply_protocol_version INTEGER NOT NULL DEFAULT 0,
     last_seq    INTEGER NOT NULL DEFAULT -1,
     started_at  REAL NOT NULL
 )
@@ -46,6 +45,11 @@ CREATE TABLE IF NOT EXISTS active_runs (
 # steer 对账台账。每条被上游 steer 接口接受(HTTP 200 且 accepted=True)的注入记
 # 一行 pending;run 终态后按 m_id 拉转录精确搜, 搜不到即被静默丢弃, 批 2 补投成新
 # run。无 m:id 的 steer 不入账(对账无锚点)。CREATE TABLE IF NOT EXISTS 幂等。
+#
+# P-07 起本表同时是「同一原始行只入账一次」的唯一身份来源:发送前先按
+# (run_id, m_id) 认领(status='sending'),HTTP 接受后确认成 pending,失败则撤行;
+# 重叠入口看到在途认领即不重复发送。sending 只是进程内在途标记, 进程重启后没有
+# 在途请求, __init__ 会把滞留的 sending 归位 pending(见下方 UPDATE)。
 _STEER_LEDGER_SCHEMA = """
 CREATE TABLE IF NOT EXISTS steer_ledger (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,9 +60,20 @@ CREATE TABLE IF NOT EXISTS steer_ledger (
     sender_id   TEXT NOT NULL,
     steer_text  TEXT NOT NULL,          -- 实际发送的逐行投影(不含批次约定行)
     accepted_at REAL NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'pending'  -- pending/reconciled/recovered/replayed
+    status      TEXT NOT NULL DEFAULT 'pending'  -- sending/pending/reconciling/reconciled/recovered/replayed
 )
 """
+
+# 终态对账**认领**的候选状态只能是被上游接受的账项。sending 是发送前的去重认领,
+# 上游还没确认:把它当 accepted-but-swallowed 会抢在 HTTP 回应之前补投, 409/失败
+# 后原 followup 又照常留槽 → 同一原始行呈递两次(第 2 轮评审 R3)。
+# 晚到的 200 由发送方确认后交给同一条对账路径(见 message_relay), 不靠预判。
+_STEER_ACCEPTED_STATUSES = "'pending'"
+# native 归还(pending_steer 原文上浮)是**正向证据**:文本确实在上游手里, 在途
+# 认领的身份也可以据此还原;核销同理。与终态对账的「缺件推断」不是一回事。
+# reconciling 是对账消费者自己的在途认领(见 claim_steers_for_reconcile):终态钩子
+# 与晚到确认可以各触发一次对账, 只有原子认领到行的那一次负责补投。
+_STEER_LIVE_STATUSES = "'pending','sending','reconciling'"
 
 
 _RECOVERED_REPLY_LEDGER_SCHEMA = """
@@ -105,8 +120,6 @@ CREATE TABLE IF NOT EXISTS run_deliveries (
     expect_structured INTEGER NOT NULL DEFAULT 0,
     expected_state  TEXT NOT NULL DEFAULT 'waiting',
     plan_json       TEXT,
-    recovery_json   TEXT,
-    reply_protocol_version INTEGER NOT NULL DEFAULT 0,
     created_at      REAL NOT NULL,
     completed_at    REAL,
     updated_at      REAL NOT NULL,
@@ -124,7 +137,6 @@ CREATE TABLE IF NOT EXISTS delivery_components (
     payload_sha256  TEXT,
     state           TEXT NOT NULL DEFAULT 'pending',
     claim_owner     TEXT,
-    claim_token     TEXT,
     claim_until     REAL,
     attempt_count   INTEGER NOT NULL DEFAULT 0,
     msg_ids_json    TEXT,
@@ -144,15 +156,14 @@ CREATE TABLE IF NOT EXISTS delivery_generation_fences (
 _ACTIVE_RUN_UPSERT_SQL = (
     "INSERT INTO active_runs "
     "(run_id, scope_key, adapter, is_private, user_id, group_id, bot_self_id,"
-    " session_key, mode, expect_structured, reply_protocol_version, last_seq, started_at)"
-    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    " session_key, mode, expect_structured, last_seq, started_at)"
+    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
     " ON CONFLICT(run_id) DO UPDATE SET"
     " scope_key=excluded.scope_key, adapter=excluded.adapter,"
     " is_private=excluded.is_private, user_id=excluded.user_id,"
     " group_id=excluded.group_id, bot_self_id=excluded.bot_self_id,"
     " session_key=excluded.session_key, mode=excluded.mode,"
-    " expect_structured=excluded.expect_structured,"
-    " reply_protocol_version=excluded.reply_protocol_version"
+    " expect_structured=excluded.expect_structured"
 )
 
 
@@ -170,7 +181,21 @@ class TrackedRun:
     expect_structured: bool
     last_seq: int
     started_at: float
-    reply_protocol_version: int = 0
+
+
+@dataclass(frozen=True)
+class SteerBatchClaim:
+    """一批 steer 行在本 run 台账上的认领结果(P-07 幂等去重的唯一身份来源)。
+
+    claimed:   本批新认领的行(status='sending',尚未被上游接受;发送失败要撤);
+    accepted:  本 run 早前已入账的行(重复触发/重复前缀:本批不再发送);
+    in_flight: 本 run 内已被别的重叠入口认领、仍在发送中的行(本批既不重发,
+               也不得替那个入口结算掉——它失败时这些行还要走接力)。
+    """
+
+    claimed: tuple[dict, ...] = ()
+    accepted: tuple[dict, ...] = ()
+    in_flight: tuple[dict, ...] = ()
 
 
 def make_scope_key(adapter: str, is_private: bool, user_id: str, group_id: str | None) -> str:
@@ -178,6 +203,30 @@ def make_scope_key(adapter: str, is_private: bool, user_id: str, group_id: str |
     scope = "private" if is_private else "group"
     scope_id = user_id if is_private else (group_id or "")
     return f"{adapter}:{scope}:{scope_id}"
+
+
+def _is_plan_prefix_growth(old_json: str, new_json: str) -> bool:
+    """新计划是否只是旧计划的尾部追加（旧 units 逐字不变，其余字段不变）。
+
+    E3 流式即时决策每到达一份就追加一份；30 号「计划一旦形成不得变形」的语义
+    保留为「旧份不得改写/重排」。任何前缀不等、字段变化都判否。
+    """
+    try:
+        old = json.loads(old_json)
+        new = json.loads(new_json)
+    except ValueError:
+        return False
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return False
+    if {k: v for k, v in old.items() if k != "units"} != {
+        k: v for k, v in new.items() if k != "units"
+    }:
+        return False
+    old_units = old.get("units")
+    new_units = new.get("units")
+    if not isinstance(old_units, list) or not isinstance(new_units, list):
+        return False
+    return len(new_units) >= len(old_units) and new_units[: len(old_units)] == old_units
 
 
 class RunTracker:
@@ -194,6 +243,14 @@ class RunTracker:
         self._conn.execute(_STEER_LEDGER_SCHEMA)
         self._conn.execute(_RECOVERED_REPLY_LEDGER_SCHEMA)
         self._conn.executescript(_DELIVERY_LEDGER_SCHEMA)
+        # 在途认领是进程内瞬态(见 _STEER_LEDGER_SCHEMA 注记):进程重启后没有任何
+        # steer HTTP／对账请求在途,滞留的 sending／reconciling 必须归位 pending,
+        # 否则这批行既不算已入账也不会被终态对账/回收看见——正是台账要防的静默丢弃。
+        # 幂等 UPDATE,零行时零开销。
+        self._conn.execute(
+            "UPDATE steer_ledger SET status='pending'"
+            " WHERE status IN ('sending','reconciling')"
+        )
         # 提交 C 补投递目标列(恢复发送需要 adapter/私群/收发双方,active_runs
         # 行 finish 后仍要能解析 target);旧库逐列补齐,幂等。
         existing = {
@@ -202,25 +259,9 @@ class RunTracker:
         for col, ddl in (
             ("adapter", "TEXT"), ("is_private", "INTEGER"),
             ("user_id", "TEXT"), ("group_id", "TEXT"),
-            ("recovery_json", "TEXT"),
-            ("reply_protocol_version", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if col not in existing:
                 self._conn.execute(f"ALTER TABLE run_deliveries ADD COLUMN {col} {ddl}")
-        active_cols = {
-            r[1] for r in self._conn.execute("PRAGMA table_info(active_runs)")
-        }
-        if "reply_protocol_version" not in active_cols:
-            self._conn.execute(
-                "ALTER TABLE active_runs ADD COLUMN"
-                " reply_protocol_version INTEGER NOT NULL DEFAULT 0"
-            )
-        # 每次平台尝试持有独立令牌；旧行 NULL 仅兼容既有直接台账调用。
-        component_cols = {
-            r[1] for r in self._conn.execute("PRAGMA table_info(delivery_components)")
-        }
-        if "claim_token" not in component_cols:
-            self._conn.execute("ALTER TABLE delivery_components ADD COLUMN claim_token TEXT")
         # 方案2：消息入场代际随 submission 持久化；clear 栅栏同时记录新代。
         # 旧行保持 NULL，继续走 submission_seq 兼容判定。
         for table, col in (
@@ -258,7 +299,6 @@ class RunTracker:
         session_key: str,
         mode: str,
         expect_structured: bool,
-        reply_protocol_version: int = 0,
     ) -> None:
         # 冲突改 ON CONFLICT DO UPDATE 只刷元数据——旧写法
         # INSERT OR REPLACE 全行重置,同一 run_id 二次登记会把 last_seq/started_at
@@ -268,8 +308,7 @@ class RunTracker:
             _ACTIVE_RUN_UPSERT_SQL,
             (
                 run_id, scope_key, adapter, int(is_private), user_id, group_id,
-                bot_self_id, session_key, mode, int(expect_structured),
-                int(reply_protocol_version), -1, time.time(),
+                bot_self_id, session_key, mode, int(expect_structured), -1, time.time(),
             ),
         )
         self._conn.commit()
@@ -287,16 +326,14 @@ class RunTracker:
     def list_running(self) -> list[TrackedRun]:
         rows = self._conn.execute(
             "SELECT run_id, scope_key, adapter, is_private, user_id, group_id,"
-            " bot_self_id, session_key, mode, expect_structured, reply_protocol_version,"
-            " last_seq, started_at"
+            " bot_self_id, session_key, mode, expect_structured, last_seq, started_at"
             " FROM active_runs ORDER BY started_at"
         ).fetchall()
         return [
             TrackedRun(
                 run_id=r[0], scope_key=r[1], adapter=r[2], is_private=bool(r[3]),
                 user_id=r[4], group_id=r[5], bot_self_id=r[6], session_key=r[7],
-                mode=r[8], expect_structured=bool(r[9]), reply_protocol_version=int(r[10] or 0),
-                last_seq=r[11], started_at=r[12],
+                mode=r[8], expect_structured=bool(r[9]), last_seq=r[10], started_at=r[11],
             )
             for r in rows
         ]
@@ -305,8 +342,7 @@ class RunTracker:
         """按 scope_key 取 live run(steer 注入找目标用);同 scope 多行取最新。"""
         rows = self._conn.execute(
             "SELECT run_id, scope_key, adapter, is_private, user_id, group_id,"
-            " bot_self_id, session_key, mode, expect_structured, reply_protocol_version,"
-            " last_seq, started_at"
+            " bot_self_id, session_key, mode, expect_structured, last_seq, started_at"
             " FROM active_runs WHERE scope_key=? ORDER BY started_at DESC LIMIT 1",
             (scope_key,),
         ).fetchall()
@@ -316,16 +352,37 @@ class RunTracker:
         return TrackedRun(
             run_id=r[0], scope_key=r[1], adapter=r[2], is_private=bool(r[3]),
             user_id=r[4], group_id=r[5], bot_self_id=r[6], session_key=r[7],
-            mode=r[8], expect_structured=bool(r[9]), reply_protocol_version=int(r[10] or 0),
-            last_seq=r[11], started_at=r[12],
+            mode=r[8], expect_structured=bool(r[9]), last_seq=r[10], started_at=r[11],
         )
+
+    def has_active_run_for_target(
+        self, *, adapter: str, is_private: bool, group_id: str | None = None,
+        user_id: str | None = None,
+    ) -> bool:
+        """目标 scope 是否有在跑 run（E3：Runs 轮内 push 硬拒的权限闸门）。
+
+        群侧按 adapter+group_id、私侧按 adapter+user_id 判；只看 active_runs
+        （run 终态即删行），不引入新的身份映射或窗口。
+        """
+        if is_private:
+            row = self._conn.execute(
+                "SELECT 1 FROM active_runs WHERE adapter=? AND is_private=1"
+                " AND user_id=? LIMIT 1",
+                (adapter, str(user_id or "")),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT 1 FROM active_runs WHERE adapter=? AND is_private=0"
+                " AND group_id=? LIMIT 1",
+                (adapter, str(group_id or "")),
+            ).fetchone()
+        return row is not None
 
     def get_by_run_id(self, run_id: str) -> TrackedRun | None:
         """按主键取一行(run 终态钩子 finish 删行前取回完整行用)。"""
         rows = self._conn.execute(
             "SELECT run_id, scope_key, adapter, is_private, user_id, group_id,"
-            " bot_self_id, session_key, mode, expect_structured, reply_protocol_version,"
-            " last_seq, started_at"
+            " bot_self_id, session_key, mode, expect_structured, last_seq, started_at"
             " FROM active_runs WHERE run_id=?",
             (run_id,),
         ).fetchall()
@@ -335,8 +392,7 @@ class RunTracker:
         return TrackedRun(
             run_id=r[0], scope_key=r[1], adapter=r[2], is_private=bool(r[3]),
             user_id=r[4], group_id=r[5], bot_self_id=r[6], session_key=r[7],
-            mode=r[8], expect_structured=bool(r[9]), reply_protocol_version=int(r[10] or 0),
-            last_seq=r[11], started_at=r[12],
+            mode=r[8], expect_structured=bool(r[9]), last_seq=r[10], started_at=r[11],
         )
 
     def prune_zombies(self, max_age_sec: float, *, now: float | None = None) -> list[str]:
@@ -369,27 +425,137 @@ class RunTracker:
         accepted_at: float,
         items: list[dict],
     ) -> None:
-        """INSERT 逐行 pending 台账(alive/103 §17.9.8:整批一次调用,逐行落行)。
+        """逐行入账(等价「已认领且已被上游接受」),同一 run 内 m_id 幂等。
 
-        items=[{m_id, sender_id, steer_text}, ...]——发送/台账/去重同一份
-        SteerPresentation 派生,不再有第二条平行 ID 轨。无 m:id 的行不入账
-        (对账无锚点),由调用方在投影时过滤。
+        items=[{m_id, sender_id, steer_text}, ...]。发送/台账/去重同一份
+        SteerPresentation 派生,不再有第二条平行 ID 轨。无 m:id 的行由调用方在
+        投影时过滤(对账无锚点),这里只落给到的行。
+
+        生产路径走 claim_steer/confirm_steer(发送前认领,重叠入口才看得到在途);
+        本方法保留给「已知接受、无在途发窗口」的调用场景,重复 m_id 只落一次。
         """
         for it in items:
             self._conn.execute(
                 "INSERT INTO steer_ledger "
                 "(run_id, m_id, scope_key, session_key, sender_id, steer_text, accepted_at, status)"
-                " VALUES (?,?,?,?,?,?,?,'pending')",
-                (run_id, str(it["m_id"]), scope_key, session_key,
-                 str(it["sender_id"]), it["steer_text"], accepted_at),
+                " SELECT ?,?,?,?,?,?,?,'pending'"
+                " WHERE NOT EXISTS (SELECT 1 FROM steer_ledger WHERE run_id=? AND m_id=?)",
+                (
+                    run_id, str(it["m_id"]), scope_key, session_key,
+                    str(it["sender_id"]), it["steer_text"], accepted_at,
+                    run_id, str(it["m_id"]),
+                ),
             )
         self._conn.commit()
 
+    def claim_steer(
+        self,
+        *,
+        run_id: str,
+        scope_key: str,
+        session_key: str,
+        accepted_at: float,
+        items: list[dict],
+    ) -> SteerBatchClaim | None:
+        """发送前按 (run_id, m_id) 认领本批原始行,返回真正要发的部分。
+
+        「同一原始行只入账一次」由这里保证:同一 run 内已在账(无论已接受还是
+        正在别的入口发送)的 m_id 绝不第二次插入,本批也不再发送它。这样重叠入口
+        (A 的 HTTP 未回,B 再入同一 followup)不会各发一遍同一原始行,也不会在台账
+        里留下重复账项让 native 回收凭空多还原一行。
+
+        身份矛盾(同 m_id 不同 sender)返回 None:台账与本次呈递各说一套发送人,
+        调用方整批失败关闭——绝不发一份无法可靠对账的文本。同 m_id 同 sender 但
+        文本不同(同一行经不同投影路径重渲染)视为已呈现:同一行的正文会随投影
+        变化(如跟帖路径剥表情包占位),它不构成新的呈现。
+
+        认领行以 status='sending' 落库:发送失败由 release_steer 撤销,成功后
+        confirm_steer 转 pending。中间没有任何 await,单事件循环内即原子。
+        """
+        rows = self._conn.execute(
+            "SELECT m_id, sender_id, status FROM steer_ledger WHERE run_id=?",
+            (run_id,),
+        ).fetchall()
+        existing = {r[0]: (r[1], r[2]) for r in rows}
+        claimed: list[dict] = []
+        accepted: list[dict] = []
+        in_flight: list[dict] = []
+        for it in items:
+            mid = str(it["m_id"])
+            prev = existing.get(mid)
+            if prev is not None:
+                if prev[0] != str(it["sender_id"]):
+                    return None
+                (in_flight if prev[1] == "sending" else accepted).append(it)
+                continue
+            self._conn.execute(
+                "INSERT INTO steer_ledger "
+                "(run_id, m_id, scope_key, session_key, sender_id, steer_text, accepted_at, status)"
+                " VALUES (?,?,?,?,?,?,?,'sending')",
+                (
+                    run_id, mid, scope_key, session_key,
+                    str(it["sender_id"]), it["steer_text"], accepted_at,
+                ),
+            )
+            existing[mid] = (str(it["sender_id"]), "sending")
+            claimed.append(it)
+        self._conn.commit()
+        return SteerBatchClaim(
+            claimed=tuple(claimed),
+            accepted=tuple(accepted),
+            in_flight=tuple(in_flight),
+        )
+
+    def confirm_steer(self, run_id: str, m_ids: list[str]) -> tuple[str, ...]:
+        """上游已接受本批认领:在途认领转 pending(终态对账/回收的正式账项)。
+
+        返回真正从 sending 转成 pending 的行号。空元组 = 这批认领已经被别的
+        路径结算(released/recovered/replayed),调用方不得把它当成「刚被接受」
+        再走一遍补投;非空且 run 已收尾 = 晚到的 200, 内容需要交给对账路径。
+        """
+        if not m_ids:
+            return ()
+        placeholders = ", ".join("?" for _ in m_ids)
+        rows = self._conn.execute(
+            f"SELECT m_id FROM steer_ledger"
+            f" WHERE run_id=? AND status='sending' AND m_id IN ({placeholders})",
+            (run_id, *[str(m) for m in m_ids]),
+        ).fetchall()
+        confirmed = tuple(str(r[0]) for r in rows)
+        if not confirmed:
+            return ()
+        self._conn.execute(
+            f"UPDATE steer_ledger SET status='pending'"
+            f" WHERE run_id=? AND status='sending' AND m_id IN ({placeholders})",
+            (run_id, *[str(m) for m in m_ids]),
+        )
+        self._conn.commit()
+        return confirmed
+
+    def release_steer(self, run_id: str, m_ids: list[str]) -> None:
+        """上游没接受本批(HTTP 失败/409/异常):撤掉在途认领,行留给接力路重投。"""
+        if not m_ids:
+            return
+        placeholders = ", ".join("?" for _ in m_ids)
+        self._conn.execute(
+            f"DELETE FROM steer_ledger"
+            f" WHERE run_id=? AND status='sending' AND m_id IN ({placeholders})",
+            (run_id, *[str(m) for m in m_ids]),
+        )
+        self._conn.commit()
+
     def pending_steers(self, run_id: str) -> list[dict]:
-        """取该 run 全部 pending 台账条目(终态对账用), dict 含全部列。"""
+        """取该 run 全部 live 台账行(终态预检/巡检用), dict 含全部列。
+
+        live = pending(已接受)/sending(发送在途)/reconciling(对账在途)。终态钩子
+        只拿它做「要不要起对账」的零开销预检;真正的候选由 claim_steers_for_reconcile
+        原子认领, 只认已接受的 pending——在途认领不是「已接受但被吞」, 不得据此
+        补投(第 2 轮评审 R3)。
+        """
         rows = self._conn.execute(
             "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text,"
-            " accepted_at, status FROM steer_ledger WHERE run_id=? AND status='pending'"
+            f" accepted_at, status FROM steer_ledger WHERE run_id=?"
+            f" AND status IN ({_STEER_LIVE_STATUSES})"
             " ORDER BY id",
             (run_id,),
         ).fetchall()
@@ -408,17 +574,65 @@ class RunTracker:
             for r in rows
         ]
 
-    def pending_steers_by_scope(self, scope_key: str) -> list[dict]:
-        """按 scope_key 取全部 pending 台账(native 回收归因用,rework-1 F3)。
+    def claim_steers_for_reconcile(self, run_id: str) -> list[dict]:
+        """原子认领本 run 的已接受账项给终态对账(单消费者), 返回认领到的行。
 
-        native 回收点(run 终态 pending_steer 上浮)拿不到 run_id——ChatResult
-        不携带、tracker 行已被 finish 删除——但 ledger 行带 scope_key;按 scope
-        拉候选,再由调用方判定 steer_text 是否为本次 pending_steer 拼接文本的
-        子串,精确找回这批被回收行的 sender 与逐行正文。返回按台账 id 升序。
+        pending → reconciling 一条语句完成认领:终态钩子与「晚到确认」可能各触发
+        一次对账, 只有先认领到行的那次负责转录核验/补投, 另一次看到空集直接返回
+        ——两个触发点不会把同一行补投两次。认领是进程内瞬态, __init__ 会把重启后
+        滞留的 reconciling 归位 pending。
+
+        SELECT 与 UPDATE 之间没有 await, 单事件循环内即原子。
         """
         rows = self._conn.execute(
             "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text,"
-            " accepted_at, status FROM steer_ledger WHERE scope_key=? AND status='pending'"
+            " accepted_at, status FROM steer_ledger WHERE run_id=?"
+            f" AND status IN ({_STEER_ACCEPTED_STATUSES})"
+            " ORDER BY id",
+            (run_id,),
+        ).fetchall()
+        if not rows:
+            return []
+        ids = [int(r[0]) for r in rows]
+        placeholders = ",".join("?" for _ in ids)
+        self._conn.execute(
+            f"UPDATE steer_ledger SET status='reconciling' WHERE id IN ({placeholders})"
+            " AND status='pending'",
+            ids,
+        )
+        self._conn.commit()
+        claimed = [
+            {
+                "id": r[0],
+                "run_id": r[1],
+                "m_id": r[2],
+                "scope_key": r[3],
+                "session_key": r[4],
+                "sender_id": r[5],
+                "steer_text": r[6],
+                "accepted_at": r[7],
+                "status": "reconciling",
+            }
+            for r in rows
+        ]
+        return claimed
+
+    def pending_steers_by_scope(self, scope_key: str) -> list[dict]:
+        """按 scope_key 取全部 live 台账(native 回收逐行归因用)。
+
+        live = pending(已接受)/sending(在途认领)/reconciling(对账在途)。这里与
+        终态对账不同:sending 出现在 pending_steer 原文里是上游确实收下这条的
+        **正向证据**, 据此还原身份不会补投; 缺件推断只属于终态对账。
+
+        native 回收点(run 终态 pending_steer 上浮)拿不到 run_id——ChatResult
+        不携带、tracker 行已被 finish 删除——但台账行带 scope_key:按 scope 拉
+        候选,再由调用方按 pending 原文的实际位置/次数匹配(台账只提供身份,
+        不提供顺序),精确找回这批被回收行的 sender 与逐行正文。返回按台账 id 升序。
+        """
+        rows = self._conn.execute(
+            "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text,"
+            f" accepted_at, status FROM steer_ledger WHERE scope_key=?"
+            f" AND status IN ({_STEER_LIVE_STATUSES})"
             " ORDER BY id",
             (scope_key,),
         ).fetchall()
@@ -436,6 +650,24 @@ class RunTracker:
             }
             for r in rows
         ]
+
+    def steer_statuses(self, run_id: str, m_ids: list[str]) -> dict[str, str]:
+        """读指定行当前台账状态(含非 live 终态),供「晚到确认是否仍欠呈递」判定。
+
+        `_try_steer_followup` 用它把「本批已接受并已呈现」与「已被 native 归还」
+        分开:后者台账为 recovered——上游 pending_steer 上浮证明模型没看到,晚到的
+        HTTP200 不能把这行从接力槽里摘掉,否则真正被吞的内容会静默丢失。
+        不存在的行不出现在结果里。
+        """
+        if not m_ids:
+            return {}
+        placeholders = ",".join("?" for _ in m_ids)
+        rows = self._conn.execute(
+            f"SELECT m_id, status FROM steer_ledger"
+            f" WHERE run_id=? AND m_id IN ({placeholders})",
+            (run_id, *[str(m) for m in m_ids]),
+        ).fetchall()
+        return {str(r[0]): str(r[1]) for r in rows}
 
     def mark_steers(self, run_id: str, m_ids: list[str], status: str) -> None:
         """按 run_id+m_id 批量置状态(reconciled/recovered/replayed 核销用)。"""
@@ -456,7 +688,8 @@ class RunTracker:
         (pending_steer 是拼接文本)。
         """
         cur = self._conn.execute(
-            "UPDATE steer_ledger SET status='recovered' WHERE run_id=? AND status='pending'",
+            f"UPDATE steer_ledger SET status='recovered' WHERE run_id=?"
+            f" AND status IN ({_STEER_LIVE_STATUSES})",
             (run_id,),
         )
         self._conn.commit()
@@ -472,7 +705,7 @@ class RunTracker:
         """
         cur = self._conn.execute(
             "UPDATE steer_ledger SET status='recovered'"
-            " WHERE status='pending' AND ? LIKE '%'||steer_text||'%'",
+            f" WHERE status IN ({_STEER_LIVE_STATUSES}) AND ? LIKE '%'||steer_text||'%'",
             (recovered_text,),
         )
         self._conn.commit()
@@ -652,7 +885,6 @@ class RunTracker:
         session_key: str,
         mode: str,
         expect_structured: bool,
-        reply_protocol_version: int = 0,
     ) -> None:
         """取得 run_id 后,同一事务完成 submission 绑定＋active_runs 登记。
 
@@ -672,8 +904,7 @@ class RunTracker:
                 _ACTIVE_RUN_UPSERT_SQL,
                 (
                     run_id, scope_key, adapter, int(is_private), user_id, group_id,
-                    bot_self_id, session_key, mode, int(expect_structured),
-                    int(reply_protocol_version), -1, time.time(),
+                    bot_self_id, session_key, mode, int(expect_structured), -1, time.time(),
                 ),
             )
 
@@ -695,57 +926,26 @@ class RunTracker:
         now = time.time()
         # 投递目标从 active_runs 复制(finish 删行后恢复发送仍可解析 target)。
         target = self._conn.execute(
-            "SELECT adapter, is_private, user_id, group_id, reply_protocol_version"
-            " FROM active_runs WHERE run_id=?",
+            "SELECT adapter, is_private, user_id, group_id FROM active_runs WHERE run_id=?",
             (run_id,),
         ).fetchone()
-        adapter, is_private, user_id, group_id, protocol_version = (
-            target if target else (None, None, None, None, 0)
-        )
+        adapter, is_private, user_id, group_id = target if target else (None, None, None, None)
         self._conn.execute(
             "INSERT INTO run_deliveries "
             "(run_id, submission_seq, idempotency_key, scope_key, session_key,"
-            " output, expect_structured, reply_protocol_version, expected_state, created_at, completed_at, updated_at,"
+            " output, expect_structured, expected_state, created_at, completed_at, updated_at,"
             " adapter, is_private, user_id, group_id, source_event_id)"
-            " VALUES (?,?,?,?,?,?,?,?,'ready',?,?,?,?,?,?,?,?)"
+            " VALUES (?,?,?,?,?,?,?,'ready',?,?,?,?,?,?,?,?)"
             " ON CONFLICT(run_id) DO UPDATE SET"
             " output=excluded.output, expect_structured=excluded.expect_structured,"
-            " reply_protocol_version=excluded.reply_protocol_version,"
-            " updated_at=excluded.updated_at,"
+            " expected_state='ready', updated_at=excluded.updated_at,"
             " adapter=COALESCE(run_deliveries.adapter, excluded.adapter),"
             " is_private=COALESCE(run_deliveries.is_private, excluded.is_private),"
             " user_id=COALESCE(run_deliveries.user_id, excluded.user_id),"
             " group_id=COALESCE(run_deliveries.group_id, excluded.group_id),"
             " source_event_id=COALESCE(run_deliveries.source_event_id, excluded.source_event_id)",
-            (run_id, sub[0], sub[1], sub[2], sub[3], output, int(expect_structured),
-             int(protocol_version or 0), now, now, now,
+            (run_id, sub[0], sub[1], sub[2], sub[3], output, int(expect_structured), now, now, now,
              adapter, is_private, user_id, group_id, sub[4]),
-        )
-        self._conn.commit()
-
-    def record_recovery_evidence(
-        self, *, run_id: str, recoveries: list[dict], protocol_version: int
-    ) -> None:
-        """保存纯取证结果；计划封存后只允许相同证据重入。"""
-        seqs = [int(item["reply_seq"]) for item in recoveries]
-        if len(set(seqs)) != len(seqs) or any(seq <= 0 for seq in seqs):
-            raise ValueError("invalid recovery reply_seq")
-        if recoveries and protocol_version < 1:
-            raise ValueError("legacy run must not recover replies")
-        row = self._conn.execute(
-            "SELECT plan_json FROM run_deliveries WHERE run_id=?", (run_id,)
-        ).fetchone()
-        if row is None:
-            raise KeyError(f"no delivery for run_id={run_id!r}")
-        if row[0]:
-            sealed = json.loads(row[0]).get("recoveries", [])
-            if sealed != recoveries:
-                raise ValueError(f"recovery evidence changed for run_id={run_id!r}")
-        self._conn.execute(
-            "UPDATE run_deliveries SET recovery_json=?, reply_protocol_version=?,"
-            " updated_at=? WHERE run_id=?",
-            (json.dumps(recoveries, sort_keys=True, ensure_ascii=False),
-             int(protocol_version), time.time(), run_id),
         )
         self._conn.commit()
 
@@ -830,8 +1030,7 @@ class RunTracker:
             "SELECT run_id, submission_seq, idempotency_key, scope_key, session_key,"
             " output, expect_structured, expected_state, plan_json, created_at,"
             " completed_at, updated_at, cancel_reason, adapter, is_private, user_id, group_id,"
-            " source_event_id, recovery_json, reply_protocol_version"
-            " FROM run_deliveries WHERE run_id=?",
+            " source_event_id FROM run_deliveries WHERE run_id=?",
             (run_id,),
         ).fetchone()
         if r is None:
@@ -855,8 +1054,6 @@ class RunTracker:
             "user_id": r[15],
             "group_id": r[16],
             "source_event_id": r[17],
-            "recovery_json": r[18],
-            "reply_protocol_version": r[19],
         }
 
     def get_latest_submission_by_source_event(self, source_event_id: str) -> dict | None:
@@ -878,12 +1075,17 @@ class RunTracker:
     # --- 出站组件计划、认领与回执(本部署补丁, alive/108 提交 B)。 ---
 
     def upsert_delivery_plan(
-        self, *, run_id: str, plan: dict, components: list[dict]
+        self, *, run_id: str, plan: dict, components: list[dict],
+        allow_prefix_growth: bool = False,
     ) -> None:
         """首次形成的投递计划与组件清单落库。
 
         计划一旦形成不得因后续配置变化悄悄变形:同 run 重复 upsert 只接受
         逐字相同的计划;组件用 INSERT OR IGNORE,已 sent 的组件不被重置。
+
+        allow_prefix_growth 只给 E3 流式即时决策用：允许新计划在**尾部追加**份，
+        旧份必须逐字不变（旧 decisions 不被重排、改写），已 sent 组件不重置。
+        任何非追加变化仍按原约束拒绝。
         """
         canonical = json.dumps(plan, sort_keys=True, ensure_ascii=False)
         row = self._conn.execute(
@@ -892,7 +1094,8 @@ class RunTracker:
         if row is None:
             raise KeyError(f"no delivery for run_id={run_id!r}")
         if row[0] is not None and row[0] != canonical:
-            raise ValueError(f"delivery plan changed for run_id={run_id!r}")
+            if not allow_prefix_growth or not _is_plan_prefix_growth(row[0], canonical):
+                raise ValueError(f"delivery plan changed for run_id={run_id!r}")
         now = time.time()
         with self._conn:
             self._conn.execute(
@@ -910,10 +1113,41 @@ class RunTracker:
                     ),
                 )
 
+    def open_stream_delivery(self, run_id: str) -> None:
+        """E3 流式即时决策：首份发送前建台账行，状态 streaming。
+
+        `streaming` 不在 `list_ready_deliveries` 的扫描集合里——run 还在跑时
+        对账器不得把半批计划当漏件补发。run.completed 的 record_expected_delivery
+        会把它提升为 ready；失败/取消/中断由既有 settle 路径落终态。
+        """
+        sub = self._conn.execute(
+            "SELECT submission_seq, idempotency_key, scope_key, session_key, source_event_id"
+            " FROM run_submissions WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        if sub is None:
+            raise KeyError(f"no bound submission for run_id={run_id!r}")
+        target = self._conn.execute(
+            "SELECT adapter, is_private, user_id, group_id FROM active_runs WHERE run_id=?",
+            (run_id,),
+        ).fetchone()
+        adapter, is_private, user_id, group_id = target if target else (None, None, None, None)
+        now = time.time()
+        self._conn.execute(
+            "INSERT INTO run_deliveries "
+            "(run_id, submission_seq, idempotency_key, scope_key, session_key,"
+            " output, expect_structured, expected_state, created_at, completed_at, updated_at,"
+            " adapter, is_private, user_id, group_id, source_event_id)"
+            " VALUES (?,?,?,?,?,'',1,'streaming',?,NULL,?,?,?,?,?,?)"
+            " ON CONFLICT(run_id) DO NOTHING",
+            (run_id, sub[0], sub[1], sub[2], sub[3], now, now,
+             adapter, is_private, user_id, group_id, sub[4]),
+        )
+        self._conn.commit()
+
     def claim_component(
         self, *, run_id: str, component_id: str, owner: str, lease_sec: float = 30.0,
         unknown_backoff_sec: float | None = None, unknown_max_attempts: int = 0,
-        attempt_token: str | None = None,
     ) -> str:
         """原子认领一个出站组件,返回 send／sent／busy。
 
@@ -928,13 +1162,13 @@ class RunTracker:
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             row = self._conn.execute(
-                "SELECT state, claim_owner, claim_token, claim_until, attempt_count, updated_at"
+                "SELECT state, claim_owner, claim_until, attempt_count, updated_at"
                 " FROM delivery_components WHERE run_id=? AND component_id=?",
                 (run_id, component_id),
             ).fetchone()
             if row is None:
                 raise KeyError(f"no component {component_id!r} for run_id={run_id!r}")
-            state, claim_owner, claim_token, claim_until, attempt_count, updated_at = row
+            state, claim_owner, claim_until, attempt_count, updated_at = row
             outcome = "send"
             reentrant = False
             if state in ("sent", "cancelled", "not_required"):
@@ -949,21 +1183,21 @@ class RunTracker:
             elif (
                 state == "claimed" and claim_owner == owner
                 and claim_until is not None and claim_until > now
-                and claim_token == attempt_token
             ):
-                # 只有同一次尝试能重入；同进程另一个 reconcile 即使复用
-                # owner 字符串，不同令牌也只能看到 busy。
+                # reconcile 已带 unknown 策略认领后，统一出站会持同一 owner 重入；
+                # 有效租约仍归原尝试，不得把一次平台发送重复计成两次。
                 reentrant = True
             elif (
-                state == "claimed" and claim_until is not None and claim_until > now
+                state == "claimed" and claim_owner != owner
+                and claim_until is not None and claim_until > now
             ):
                 outcome = "busy"
             if outcome == "send" and not reentrant:
                 self._conn.execute(
                     "UPDATE delivery_components SET state='claimed', claim_owner=?,"
-                    " claim_token=?, claim_until=?, attempt_count=attempt_count+1, updated_at=?"
+                    " claim_until=?, attempt_count=attempt_count+1, updated_at=?"
                     " WHERE run_id=? AND component_id=?",
-                    (owner, attempt_token, now + max(0.0, lease_sec), now, run_id, component_id),
+                    (owner, now + max(0.0, lease_sec), now, run_id, component_id),
                 )
             self._conn.commit()
             return outcome
@@ -974,7 +1208,7 @@ class RunTracker:
     def get_component(self, *, run_id: str, component_id: str) -> dict | None:
         """按主键取组件事实(含 msg_ids 解析),不存在返回 None。"""
         r = self._conn.execute(
-            "SELECT kind, payload_sha256, state, claim_owner, claim_token, claim_until,"
+            "SELECT kind, payload_sha256, state, claim_owner, claim_until,"
             " attempt_count, msg_ids_json, last_error, created_at, updated_at"
             " FROM delivery_components WHERE run_id=? AND component_id=?",
             (run_id, component_id),
@@ -988,67 +1222,41 @@ class RunTracker:
             "payload_sha256": r[1],
             "state": r[2],
             "claim_owner": r[3],
-            "claim_token": r[4],
-            "claim_until": r[5],
-            "attempt_count": r[6],
-            "msg_ids": json.loads(r[7]) if r[7] else [],
-            "last_error": r[8],
-            "created_at": r[9],
-            "updated_at": r[10],
+            "claim_until": r[4],
+            "attempt_count": r[5],
+            "msg_ids": json.loads(r[6]) if r[6] else [],
+            "last_error": r[7],
+            "created_at": r[8],
+            "updated_at": r[9],
         }
 
     def _mark_component(
-        self, run_id: str, component_id: str, state: str, *, msg_ids=None, error=None,
-        attempt_token: str | None = None, allow_pending: bool = False,
-    ) -> bool:
-        sql = (
+        self, run_id: str, component_id: str, state: str, *, msg_ids=None, error=None
+    ) -> None:
+        self._conn.execute(
             "UPDATE delivery_components SET state=?, msg_ids_json=COALESCE(?, msg_ids_json),"
             " last_error=?, claim_owner=NULL, claim_until=NULL, updated_at=?"
-            " WHERE run_id=? AND component_id=?"
+            " WHERE run_id=? AND component_id=?",
+            (
+                state,
+                json.dumps(list(msg_ids)) if msg_ids is not None else None,
+                (str(error)[:300] if error is not None else None),
+                time.time(), run_id, component_id,
+            ),
         )
-        params = [
-            state,
-            json.dumps(list(msg_ids)) if msg_ids is not None else None,
-            (str(error)[:300] if error is not None else None),
-            time.time(), run_id, component_id,
-        ]
-        if attempt_token is not None:
-            if allow_pending:
-                sql += " AND (claim_token=? OR state='pending')"
-            else:
-                sql += " AND claim_token=?"
-            params.append(attempt_token)
-        cur = self._conn.execute(sql, params)
         self._conn.commit()
-        return cur.rowcount == 1
 
-    def mark_component_sent(
-        self, *, run_id: str, component_id: str, msg_ids: list,
-        attempt_token: str | None = None,
-    ) -> bool:
-        """平台成功后立即写回执；带令牌时过期尝试不能覆盖新事实。"""
-        return self._mark_component(
-            run_id, component_id, "sent", msg_ids=msg_ids, attempt_token=attempt_token
-        )
+    def mark_component_sent(self, *, run_id: str, component_id: str, msg_ids: list) -> None:
+        """平台成功后立即写回执;发送成功但无 msg_id 同样记 sent(空列表)。"""
+        self._mark_component(run_id, component_id, "sent", msg_ids=msg_ids)
 
-    def mark_component_unknown(
-        self, *, run_id: str, component_id: str, error,
-        attempt_token: str | None = None,
-    ) -> bool:
+    def mark_component_unknown(self, *, run_id: str, component_id: str, error) -> None:
         """平台调用已发起但结果不明(异常/超时/崩溃);不得立即盲补。"""
-        return self._mark_component(
-            run_id, component_id, "unknown", error=error, attempt_token=attempt_token
-        )
+        self._mark_component(run_id, component_id, "unknown", error=error)
 
-    def mark_component_failed(
-        self, *, run_id: str, component_id: str, error,
-        attempt_token: str | None = None,
-    ) -> bool:
+    def mark_component_failed(self, *, run_id: str, component_id: str, error) -> None:
         """平台调用前的本地失败(白名单/校验),允许修复后重试。"""
-        return self._mark_component(
-            run_id, component_id, "failed", error=error, attempt_token=attempt_token,
-            allow_pending=True,
-        )
+        self._mark_component(run_id, component_id, "failed", error=error)
 
     def set_expected_state(
         self, run_id: str, expected_state: str, *, cancel_reason: str | None = None

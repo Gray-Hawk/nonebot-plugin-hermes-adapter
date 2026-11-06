@@ -227,9 +227,9 @@ def _merge_fragment_payload(old: dict, new: dict) -> None:
     explicit/addressed 取并集(任一碎片被点名,合并触发即被点名);
     ephemeral 两者皆真才真;now_ms 取最新(触发时序以最后一条为准);
     event 保留首条——dispatch 不再用。
-    有序 fragments 序列(alive/103 §14.2/§17.5 C)是唯一身份轨:每条碎片的
-    完整 BufferedMessage 按序追加、不替换不取末条——steer/current 逐行呈递、
-    媒体寻址与钉锚来源都从这份序列派生;旧的平行碎片 ID 轨已删。
+    有序 fragments 序列是唯一身份轨:每条碎片的完整 BufferedMessage 按序追加、
+    不替换不取末条——steer/current 逐行呈递、媒体寻址与钉锚来源都从这份序列
+    派生;旧的平行碎片 ID 轨已删(P-08),不再维护第二套碎片身份。
     """
 
     new_text = (new.get("msg_text") or "").strip()
@@ -242,8 +242,8 @@ def _merge_fragment_payload(old: dict, new: dict) -> None:
             merged = list(old.get(field) or [])
             merged.extend(u for u in incoming if u not in merged)
             old[field] = merged
-    # 拆批 fragments 序列(alive/103 §14.2):每条碎片的完整 BufferedMessage
-    # 按序暂存,current 渲染拆回真实消息序列逐行贴真号,不查库。
+    # 拆批 fragments 序列:每条碎片的完整 BufferedMessage 按序暂存,current/steer
+    # 渲染拆回真实消息序列逐行贴真号,不查库。
     incoming_frags = list(new.get("fragments") or [])
     if incoming_frags:
         old_frags = list(old.get("fragments") or [])
