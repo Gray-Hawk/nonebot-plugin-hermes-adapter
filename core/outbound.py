@@ -59,10 +59,14 @@ class DeliveryClaimBusy(RuntimeError):
     """组件被他人认领或处于 unknown;调用方不得继续调平台。"""
 
 
-def _delivery_begin(delivery: DeliveryContext | None) -> tuple[str, list]:
-    """认领组件;sent 时同时返回既有 msg_ids(可能为空列表)。"""
+def _delivery_begin(delivery: DeliveryContext | None) -> tuple[str, list, str | None]:
+    """认领组件;返回 (结论, 既有 msg_ids, 本次尝试令牌)。
+
+    sent 时同时返回既有 msg_ids(可能为空列表);令牌只在真正取得认领时非空,
+    调用方必须把它带给本次尝试的终态回写(P-04)。
+    """
     if delivery is None:
-        return "send", []
+        return "send", [], None
     if delivery.generation_guard is not None:
         try:
             current = bool(delivery.generation_guard())
@@ -78,17 +82,18 @@ def _delivery_begin(delivery: DeliveryContext | None) -> tuple[str, list]:
             except Exception:
                 logger.warning(f"[OUTBOUND] 旧代销账失败 run={delivery.run_id}", exc_info=True)
             raise DeliveryClaimBusy(f"stale generation: run={delivery.run_id}")
-    outcome = delivery.tracker.claim_component(
+    claim = delivery.tracker.claim_component_attempt(
         run_id=delivery.run_id, component_id=delivery.component_id,
         owner=delivery.owner, lease_sec=delivery.lease_sec,
     )
+    outcome, token = claim.outcome, claim.token
     existing = []
     if outcome == "sent":
         comp = delivery.tracker.get_component(
             run_id=delivery.run_id, component_id=delivery.component_id
         )
         existing = list((comp or {}).get("msg_ids") or [])
-    return outcome, existing
+    return outcome, existing, token
 
 
 def _delivery_raise_if_busy(outcome: str, delivery: DeliveryContext) -> None:
@@ -99,12 +104,15 @@ def _delivery_raise_if_busy(outcome: str, delivery: DeliveryContext) -> None:
         )
 
 
-def _delivery_mark_unknown(delivery: DeliveryContext | None, error) -> None:
+def _delivery_mark_unknown(
+    delivery: DeliveryContext | None, error, token: str | None = None
+) -> None:
     if delivery is None:
         return
     try:
         delivery.tracker.mark_component_unknown(
-            run_id=delivery.run_id, component_id=delivery.component_id, error=error
+            run_id=delivery.run_id, component_id=delivery.component_id, error=error,
+            token=token,
         )
     except Exception as exc:
         # 回执写入失败不改变原异常面;组件保持 claimed,租约过期后由
@@ -491,7 +499,7 @@ async def send_local_files(
             logger.warning(f"[OUTBOUND] 本地文件被白名单拒绝或不存在, 跳过: {raw[:120]}")
             continue
         try:
-            outcome, _existing = _delivery_begin(ctx)
+            outcome, _existing, token = _delivery_begin(ctx)
             if outcome == "sent":
                 sent += 1
                 continue
@@ -512,12 +520,12 @@ async def send_local_files(
             if ctx is not None:
                 # 文件上传没有 QQ 消息 id;以组件事实作为回执。
                 ctx.tracker.mark_component_sent(
-                    run_id=ctx.run_id, component_id=ctx.component_id, msg_ids=[]
+                    run_id=ctx.run_id, component_id=ctx.component_id, msg_ids=[], token=token,
                 )
             sent += 1
             logger.debug(f"[OUTBOUND] 文件已上传 target={target} name={path.name} size={path.stat().st_size}")
         except Exception as exc:
-            _delivery_mark_unknown(ctx, exc)
+            _delivery_mark_unknown(ctx, exc, token)
             logger.warning(f"[OUTBOUND] 文件上传失败 {path.name}: {exc}")
     return sent
 
@@ -579,7 +587,7 @@ async def _send_unimsg(
     回执,绝不再调平台;平台异常记 unknown 后沿原异常面上抛;回执写库失败
     向外传播,调用方不得把本轮当成已完成(DeliveryUnknown 语义)。
     """
-    outcome, existing = _delivery_begin(delivery)
+    outcome, existing, token = _delivery_begin(delivery)
     if outcome == "sent":
         return existing
     if delivery is not None:
@@ -587,12 +595,13 @@ async def _send_unimsg(
     try:
         receipt = await msg.send(target=target, bot=bot)
     except Exception as exc:
-        _delivery_mark_unknown(delivery, exc)
+        _delivery_mark_unknown(delivery, exc, token)
         raise
     msg_ids = _receipt_msg_ids(receipt)
     if delivery is not None:
         delivery.tracker.mark_component_sent(
-            run_id=delivery.run_id, component_id=delivery.component_id, msg_ids=msg_ids
+            run_id=delivery.run_id, component_id=delivery.component_id, msg_ids=msg_ids,
+            token=token,
         )
     if not msg_ids:
         logger.warning(f"[OUTBOUND] 发送成功但回执无 msg_ids(消息 id 无法留痕) target={target}")
@@ -647,7 +656,7 @@ async def send_text_with_media(
             },
         }
         try:
-            outcome, existing = _delivery_begin(delivery)
+            outcome, existing, token = _delivery_begin(delivery)
             if outcome == "sent":
                 return SendResult(ok=True, msg_ids=existing, sticker_id=sticker_id)
             if delivery is not None:
@@ -669,14 +678,15 @@ async def send_text_with_media(
                     "send_group_msg", group_id=int(target.id), message=[image]
                 )
         except Exception as exc:
-            _delivery_mark_unknown(delivery, exc)
+            _delivery_mark_unknown(delivery, exc, token)
             logger.warning(f"[OUTBOUND] 本地表情平台发送失败 id={sticker_id}: {exc}")
             return SendResult(ok=False, msg_ids=[])
         msg_id = _extract_msg_id(response)
         msg_ids = [msg_id] if msg_id else []
         if delivery is not None:
             delivery.tracker.mark_component_sent(
-                run_id=delivery.run_id, component_id=delivery.component_id, msg_ids=msg_ids
+                run_id=delivery.run_id, component_id=delivery.component_id, msg_ids=msg_ids,
+                token=token,
             )
         if not msg_ids:
             logger.warning(f"[OUTBOUND] 本地表情发送成功但无回执 id={sticker_id}")

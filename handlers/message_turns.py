@@ -411,7 +411,10 @@ def _handle_envelope_rejection(
             "上一轮信封不合法：决策字段不全或出现多行／多份。"
             "请重新按一行决策 JSON + 一行 body 输出，不要全角括号、不要额外转义。"
         )
-    task_notes.push_plugin_note(fb_key, "envelope_rejected", note, cooldown_sec=3600.0)
+    # Runs 只让即时重交携带协议提示；同一次失败再写 envelope_rejected 便签，
+    # 会与重交 prompt 在下一轮叠加成多份互相重复的系统提示。
+    if not runs_rules:
+        task_notes.push_plugin_note(fb_key, "envelope_rejected", note, cooldown_sec=3600.0)
     try:
         _fire_followup_turn(
             key=fb_key, tag=f"bounce:envelope-{reason}",
@@ -1380,7 +1383,8 @@ async def _run_passive_turn(
         # 切回 passive 后仍可能吐 JSON。检测并抠 reply_text;不命中则用原 raw_text。
         # 闭环提醒:决策轮信封缺失(模型写了散文忘包 JSON,
         # 区别于 transport 错误)→ 留便签下轮提醒,不靠人介入纠偏。
-        if use_private_decision and result.parse_failed and not result.is_transport_error:
+        if (use_private_decision and result.parse_failed and not result.is_transport_error
+                and not getattr(result, "parse_failed_reason", "")):
             task_notes.push_plugin_note(
                 _fb_key, "envelope_missing",
                 ("系统提示:你上一轮的最终回复没有包双单行 JSON 信封(走了散文兜底)。"
@@ -2017,7 +2021,7 @@ async def _run_reactive_turn(
         # 闭环提醒:决策轮信封缺失(模型写散文忘包 JSON;
         # 403/outage/interrupted/transport 均已提前分流,到这里是模型自己的形状问题)
         # → 留便签下轮提醒,不靠人介入纠偏。
-        if result.parse_failed and not result.is_transport_error:
+        if result.parse_failed and not result.is_transport_error and not getattr(result, "parse_failed_reason", ""):
             task_notes.push_plugin_note(
                 _feedback_scope_key(adapter_name, False, user_id, group_id),
                 "envelope_missing",

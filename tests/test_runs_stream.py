@@ -447,6 +447,7 @@ class _ClientChain:
         self.run_id = run_id
         self.lines = lines
         self.streams: list[str] = []
+        self.payloads: list[dict] = []
 
     class _Resp:
         def __init__(self, status: int, payload: dict | None = None, lines=None) -> None:
@@ -476,6 +477,7 @@ class _ClientChain:
             return False
 
     async def post(self, url, json=None, headers=None, timeout=None):
+        self.payloads.append(json or {})
         return self._Resp(202, {"run_id": self.run_id, "status": "started", "replayed": False})
 
     def stream(self, method, url, **kwargs):
@@ -505,6 +507,38 @@ def real_chat(tracker, events: list[dict], run_id: str = "run-e2-h"):
 
 
 class ClientChainTests(unittest.IsolatedAsyncioTestCase):
+    async def test_runs_does_not_append_legacy_structured_output_hint(self) -> None:
+        from nonebot_plugin_hermes_adapter.core import hermes_client as hc
+        from nonebot_plugin_hermes_adapter import mcp as mcp_module
+
+        fake = _ClientChain("run-prompt", sse_lines([
+            {"event": "run.completed", "output": '{"body":"ok"}', "seq": 0},
+        ]))
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        tracker = RunTracker(Path(tmp.name) / "t.db")
+        self.addCleanup(tracker.close)
+        previous = plugin_config.hermes_api_interface
+        object.__setattr__(plugin_config, "hermes_api_interface", "runs")
+        try:
+            with patch.object(hc, "_get_http_client", return_value=fake), \
+                    patch.object(mcp_module, "run_tracker", tracker):
+                await hc.hermes_client.chat(
+                    text="hi", session_key="s", user_id="u1", group_id=None,
+                    adapter_name="onebotv11", is_private=True, mode="passive",
+                    expect_structured=True, structured_tool_name="submit_decision",
+                    system_prompt="SYS", bot_self_id="999",
+                    target=SimpleNamespace(
+                        base_url="http://127.0.0.1:1", api_key="", timeout=5, label="t",
+                    ),
+                )
+        finally:
+            object.__setattr__(plugin_config, "hermes_api_interface", previous)
+        instructions = fake.payloads[0]["instructions"]
+        self.assertEqual(instructions, "SYS")
+        self.assertNotIn("STRUCTURED OUTPUT", instructions)
+        self.assertNotIn("should_reply", instructions)
+
     async def test_chat_wires_immediate_callback_and_streamed_result(self) -> None:
         from nonebot_plugin_hermes_adapter.core import hermes_client as hc
         from nonebot_plugin_hermes_adapter import mcp as mcp_module

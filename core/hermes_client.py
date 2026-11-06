@@ -1169,12 +1169,12 @@ class HermesClient:
                 group_id=group_id,
             )
 
-        # E1:completions 的提示词已由 prompt_builder 给出双单行 JSON 协议,
-        # 不能再追加旧的 single-JSON-object hint(Runs 保持原样)。
+        # completions／runs 的提示词已由 prompt_builder 给出双单行 JSON 协议，
+        # 不能再追加旧的 single-JSON-object hint；旧接口才保留原尾段。
         if (
             expect_structured
             and structured_tool_name == "submit_decision"
-            and plugin_config.hermes_api_interface != "completions"
+            and plugin_config.hermes_api_interface not in {"completions", "runs"}
         ):
             system_prompt = system_prompt + _DECISION_HINT
 
