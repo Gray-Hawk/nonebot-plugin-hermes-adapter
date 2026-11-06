@@ -22,8 +22,9 @@ allows you to send messages back via the `push_message` tool.
 
 - **reactive** (M1): A user @-mentioned you in a group. For the next 5 minutes you can
   freely insert messages into that group via either:
-  1. Returning a `submit_decision` tool call in your normal chat completion response (the
-     plugin will send it for you). **This is the preferred path** — it preserves the agent loop.
+  1. Returning a two-line decision envelope in your normal chat completion response
+     (a control JSON line followed by a body JSON line). The plugin sends the body for
+     you. **This is the preferred path** — it preserves the agent loop.
   2. Calling `push_message` directly. Use only for **delayed** replies that don't fit the
      request/response shape (e.g., "let me think… [later] here's my answer").
 
@@ -36,14 +37,14 @@ Send one message into a group. Constraints:
   `m:123`; never pass a NapCat/OneBot message id. Invalid or unavailable mappings degrade
   to an ordinary unquoted message and are logged. A resolved group Reply automatically
   adds `At(quoted sender) + one space` after the Reply segment; private replies do not.
-- Insert `[CQ:at,qq=数字]` directly in `text` or decision `reply_text` for ordered
+- Insert `[CQ:at,qq=数字]` directly in `text` or decision `body` for ordered
   mentions. Multiple markers and arbitrary positions are supported. Other CQ codes and
   `@all` are not enabled.
 - `image_urls` accepts **only** `http(s)://` and `data:` URLs. A path on this host
   (`/root/.hermes/cache/images/…`) is not reachable from the bot process and is
   **not** delivered — the result reports it in `skipped_images` with a `warning`,
   and the text is still sent. Do not retry the same path: to send a locally
-  generated image, return a `submit_decision` whose `reply_text` carries a
+  generated image, return a decision envelope whose `body` carries a
   `MEDIA:<absolute path>` tag instead (see "Sending images" below).
 - The (adapter, group_id) must currently be in an **active reactive session**. If not,
   returns `ok=false` with `error="no active reactive session"`. Do not retry — the user
@@ -76,9 +77,8 @@ is ambiguous, do not call it.
 
 ### `list_active_sessions(adapter?)`
 
-List all groups currently in active reactive state. Returns sessions with `expires_at`,
-`triggered_by`, and `topic_hint`. Use to decide whether a delayed `push_message` is still
-welcome.
+List all groups currently in active reactive state. Returns sessions with `expires_at`
+and `triggered_by`. Use to decide whether a delayed `push_message` is still welcome.
 
 ### `get_recent_messages(adapter, group_id, limit?, before_ts?)`
 
@@ -127,29 +127,27 @@ multiple frames (up to the configured fetch frame cap) with per-frame markers.
 
 ## Output contract (reactive)
 
-In reactive mode, your reply MUST be a single `submit_decision` tool call:
+In reactive mode, your final reply MUST be a two-line JSON envelope:
 
 ```
-{
-  "should_reply": true | false,
-  "reply_text": "string, required when should_reply=true; leave empty for silent",
-  "topic_hint": "short label, optional",
-  "should_exit_active": false,  // see exit threshold below
-  "reply_to": "m:123",     // optional; group Reply auto-mentions the quoted sender, private Reply does not
-  "pin_anchor": true,     // optional; commission judgement turns only — pin this task into <pinned_tasks>
-  "release_anchor": "all",  // optional; commissioner user_id or "all", see task anchors below
-  "answer_anchor": "12345", // optional; commissioner user_id or "all" — this reply answered that pinned task
-  "anchor_merge": "12345",  // optional; starter user_id of the pinned task this message belongs to (merge, don't pin new)
-  "background_task": "调研 XX", // optional; note for work you just dispatched to background —
-                                // on completion the system wakes you and echoes this note
-  "not_final": false      // optional; true when this reply is NOT your final result but a task
-                          // acknowledgement — the plugin resends it as-is and immediately fires a
-                          // continue turn so you can actually do the work. Only when a task is
-                          // still pending; omit for chit-chat and wrapped-up turns
-}
+{"reply_to": "m:123"}                  // control line — only the fields you need; {} is valid
+{"body": "reply text"}                 // body line — exactly one string field
 ```
 
-Mentions live inside `reply_text`: write `[CQ:at,qq=12345]` exactly where each strong
+The control line may carry `reply_to`, `not_final`, `should_exit_active`, `pin_anchor`,
+`release_anchor`, `answer_anchor`, `anchor_merge`, `background_task`. Omitted fields take
+their defaults; unknown fields are ignored.
+
+The body line is always `{"body":"..."}`. A non-empty body is sent to the chat as-is; an
+empty body means silence. On Runs you may emit several envelopes back-to-back (a blank
+line between them is allowed).
+
+`not_final: true` means this reply is NOT your final result but a task acknowledgement —
+the plugin resends it as-is and immediately fires a continue turn so you can actually do
+the work. Use it only when a concrete task is still pending; omit it for chit-chat and
+wrapped-up turns.
+
+Mentions live inside `body`: write `[CQ:at,qq=12345]` exactly where each strong
 notification belongs. Multiple people and arbitrary positions are supported; the plugin
 preserves segment order and does not prepend or infer mentions. Omit markers for ordinary
 replies, and do not use other CQ codes or `@all`.
@@ -180,12 +178,12 @@ handle them inline; if one is a brand-new independent commission, acknowledge it
 your reply or ask them to re-send later — steered messages never create anchors.
 
 Blacklist: when runtime_state has `sender_blacklisted: true`, the current
-sender is on the soft blacklist — default `should_reply=false` even if they @ you.
+sender is on the soft blacklist — default to an empty body even if they @ you.
 Exception: an active anchor or a recent human message explicitly commissioned
 interaction with that account (e.g. "你去跟它说 X"); resume normal conversation for
 the commission's lifetime only.
 
-When `should_reply=false`, the plugin sends nothing — that is the **correct** behavior for
+An empty body sends nothing — that is the **correct** behavior for
 "this conversation isn't about me, I'll stay quiet." Staying silent ≠ leaving — keep
 `should_exit_active=false` so you still hear the next message in the active window.
 
@@ -229,11 +227,11 @@ ever see them. Set the bar **high**:
 When the user asks you to do something (look up data, search, fetch info):
 
 - **Try first.** If your tools can actually attempt it, run them and put the real result
-  into `reply_text`.
+  into the body line.
 - **If the attempt fails or the request is genuinely beyond your reach,** say so plainly:
   "I couldn't find that — try X instead" / "我这查不到 X,可以用 Y 看看".
 - **Do not** say "let me check" / "稍等" / "I'll look it up" / "我去看看" without making
-  a real attempt. In reactive mode, once `reply_text` is sent the turn ends — these
+  a real attempt. In reactive mode, once the body is sent the turn ends — these
   phrases dangle a promise you cannot keep, and the user gets nothing.
 - Act first, talk after. If you can't, say so directly and stop.
 
@@ -242,7 +240,7 @@ When the user asks you to do something (look up data, search, fetch info):
 To put an image in the chat, write a `MEDIA:<absolute path>` tag **inside** the field the
 plugin actually delivers:
 
-- reactive mode → inside `reply_text` of your `submit_decision` object.
+- reactive mode → inside the body line of your decision envelope.
 - `push_message` → pass an http(s) URL in `image_urls` (the `text` field's MEDIA tag is
   NOT processed there).
 
@@ -261,7 +259,7 @@ message. Constraints:
 - **Never hand-write a `data:` / base64 URL yourself**, and never put the `MEDIA:` tag
   outside the JSON envelope — content outside the envelope is dropped, not sent.
 - If a reply is cut off mid-image the user gets a `[图片传输不完整]` placeholder. Keep
-  `reply_text` short when it carries an image; the image itself costs you no output tokens,
+  the body short when it carries an image; the image itself costs you no output tokens,
   but a long reply around it raises the odds of truncation.
 
 ## Historical media recall
@@ -329,8 +327,8 @@ are transcript snapshots of a "merged forward" message the user shared:
 
 ## What NOT to do
 
-- Don't call `push_message` for normal request/response replies — return `submit_decision`
-  instead. The plugin handles the send for you.
+- Don't call `push_message` for normal request/response replies — return a decision
+  envelope instead. The plugin handles the send for you.
 - Don't call `push_message` to "ping" or "say hi" to inactive groups. The reactive guard
   will return 422 and your message will be discarded.
 - Don't try to set user profiles / facts via this skill. M1 has no user profile support.

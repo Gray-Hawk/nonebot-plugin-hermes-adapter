@@ -833,7 +833,7 @@ def _make_runs_live_decisions(
 
     返回 (deliver, state)：
     - deliver(decision, run_id)：一份完整决策到达即落台账追加、按 E2 同一套
-      bounce／媒体／文件／history／buffer 语义发送，不执行 topic/收窗/锚等
+      bounce／媒体／文件／history／buffer 语义发送，不执行收窗/锚等
       轮级控制（终态按持久决策顺序统一执行）。
     - state：sent_any／suppressed_any／last_reply_at，供终态链判定同 turn 去重与收口。
 
@@ -1292,7 +1292,6 @@ async def _run_passive_turn(
     # 本部署补丁: 私聊决策信封解析成功时按信封走——
     # should_reply=false 即静默(私聊不再硬必回)。解析失败回 raw_text:私聊是显式
     # 对话,静默更像故障;并保留既有防御性抠取(模型可能吐了破信封)。
-    # 分级反馈:background_task 便签登记(静默轮也登记)。
     _fb_key = _feedback_scope_key(adapter_name, is_private, user_id, group_id)
     passive_batch_units = None
     streamed_unit_count = 0
@@ -1316,11 +1315,10 @@ async def _run_passive_turn(
                 if isinstance(item, dict)
             ]
         # R5:连续多份终态里每份的控制都要按顺序消费；空 body 只免发送，不吞控制。
-        # 私聊 passive 原本适用的控制只有 background_task 便签与自愈提示，
+        # 私聊 passive 原本适用的控制只有自愈提示，
         # 不在这里新增群窗／锚语义；completions 单份行为与顺序不变。
         # E3: 已即时发送的份同样按到达顺序走控制，只是不再重复发送。
         for _passive_control in passive_decisions:
-            _record_background_note(_fb_key, _passive_control, log_tag="passive")
             _push_self_heal_note(_fb_key, _passive_control)
         passive_deliverable = [
             item for item in passive_decisions
@@ -1601,7 +1599,7 @@ async def _run_reactive_turn(
             )
             return None
         # 隐式激活临时 turn:造一个不注册进管理器的 session 实例。下游读操作
-        # (triggered_by / topic_hint / last_bot_reply_at)天然兼容;写操作
+        # (triggered_by / last_bot_reply_at)天然兼容;写操作
         # (touch / mark_bot_replied / end_if_current_generation)按 key 查管理器,全是安全 no-op。
         session = ActiveSession(
             adapter=adapter_name,
@@ -1752,7 +1750,6 @@ async def _run_reactive_turn(
         addressed_to_bot=addressed_to_bot,
         triggered_by=session.triggered_by,
         triggered_by_nickname=None,
-        topic_hint=session.topic_hint,
         recent_messages=recent,
         rows=render_rows,
         current_origin=current_buffered.origin if current_buffered is not None else None,
@@ -2132,11 +2129,10 @@ async def _run_reactive_turn(
         f"direct={is_direct} should_reply={result.structured.get('should_reply')} "
         f"should_exit_active={result.structured.get('should_exit_active')} "
         f"reply_text_len={len(str(result.structured.get('reply_text') or result.structured.get('body') or ''))} "
-        f"topic_hint={result.structured.get('topic_hint')!r} "
         f"salvaged={result.structured.get('_salvaged', False)}"
     )
     # 解析成功时也留一份 raw 预览:decision 摘要看不出模型到底吐了什么形状
-    # (是完整 submit_decision,还是只有 {"should_reply": false} 这种退化输出),
+    # (是完整信封,还是只有 {"body": ""} 这种静默份,或旧单对象 {"should_reply": false} 退化输出),
     # 而「该回却静默」的排查恰恰全靠这个区分。DEBUG 级,正常运行不刷日志。
     raw_preview = preview_raw(result.raw_text or "")
     logger.debug(f"[HERMES reactive] decision raw (len={len(result.raw_text or '')}): {raw_preview!r}")
@@ -2170,7 +2166,7 @@ async def _run_reactive_turn(
         batch_mode = terminal_decisions is not None
     if not decisions:
         decisions = [{}]
-    # R1:控制副作用与正文发送分离——所有有效决策都先做 background/topic/收窗，
+    # R1:控制副作用与正文发送分离——所有有效决策都先做锚/收窗等轮级控制，
     # 空 body 只跳过发送；不得因过滤空份把本来在发送判断前执行的控制一起丢掉。
     unit_of: dict[int, dict] = {}
     batch_contexts = None
@@ -2428,12 +2424,8 @@ async def _run_reactive_turn(
     send_index = 0
     live_sent = False
     for decision in decisions:
-        # 分级反馈:离场任务便签登记(静默轮也登记)
         _fb_key = _feedback_scope_key(adapter_name, False, user_id, group_id)
-        _record_background_note(_fb_key, decision, log_tag="reactive")
         _push_self_heal_note(_fb_key, decision)
-        if decision.get("topic_hint"):
-            _mcp.active_sessions.update_topic(adapter_name, group_id, str(decision["topic_hint"]))
         # release_anchor 处理移在 answer_anchor 之后(alive/103):同轮 answer+release
         # 必须先让合法 answer 标记生效再松锚,否则锚被提前 release 后 answer 校验
         # 落空,模型反收「非法值」便签。见 turn 尾部。
@@ -2455,8 +2447,7 @@ async def _run_reactive_turn(
                     logger.info(
                         f"[HERMES reactive] silent: LLM decided should_reply=false "
                         f"(group={group_id} user={user_id} direct={is_direct} "
-                        f"addressed={addressed_to_bot} answered_mid_turn={mid_turn_push} "
-                        f"topic_hint={decision.get('topic_hint')!r})"
+                        f"addressed={addressed_to_bot} answered_mid_turn={mid_turn_push})"
                     )
                 continue
             unit_index = send_index
@@ -2494,8 +2485,7 @@ async def _run_reactive_turn(
                 logger.info(
                     f"[HERMES reactive] silent: LLM decided should_reply=false "
                     f"(group={group_id} user={user_id} direct={is_direct} "
-                    f"addressed={addressed_to_bot} answered_mid_turn={mid_turn_push} "
-                    f"topic_hint={decision.get('topic_hint')!r})"
+                    f"addressed={addressed_to_bot} answered_mid_turn={mid_turn_push})"
                 )
                 continue
             unit_index = 0
@@ -2688,7 +2678,6 @@ from .message_feedback import (
     _fire_followup_turn,
     _maybe_intercept_bounce,
     _post_send_feedback,
-    _record_background_note,
 )
 from .message_relay import (
     _handle_passive_path,

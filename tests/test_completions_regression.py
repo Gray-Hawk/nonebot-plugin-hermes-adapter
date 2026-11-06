@@ -303,6 +303,7 @@ class CompletionsGateAndPromptTests(unittest.TestCase):
         self.assertNotIn("submit_decision", prompt)
         self.assertNotIn("should_reply", prompt)
         self.assertNotIn("reply_text", prompt)
+        self.assertNotIn("topic_hint", prompt)
         runs_prompt = self._as_interface("runs", lambda: self.pb.build_reactive_system_prompt())
         # E2:runs 终态也走双单行 JSON(可多份,只约束最终答复)
         self.assertIn("双单行 JSON", runs_prompt)
@@ -310,6 +311,9 @@ class CompletionsGateAndPromptTests(unittest.TestCase):
         self.assertIn("工具间隙", runs_prompt)
         self.assertNotIn("submit_decision", runs_prompt)
         self.assertNotIn("should_reply", runs_prompt)
+        self.assertNotIn("topic_hint", runs_prompt)
+        legacy_prompt = self._as_interface("astrbot", lambda: self.pb.build_reactive_system_prompt())
+        self.assertNotIn("topic_hint", legacy_prompt)
 
     def test_sticker_guidance_follows_interface(self) -> None:
         from nonebot_plugin_hermes_adapter.core import sticker_library

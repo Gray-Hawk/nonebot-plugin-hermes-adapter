@@ -195,7 +195,8 @@ class StreamScanTests(unittest.TestCase):
         decisions, _ = scan_stream_decisions(unit({"topic_hint": "收尾"}, "") + "\n")
         self.assertEqual(len(decisions), 1)
         self.assertTrue(decisions[0].silent)
-        self.assertEqual(decisions[0].control["topic_hint"], "收尾")
+        # topic_hint 已退出控制字段；旧会话残留按未知键忽略。
+        self.assertNotIn("topic_hint", decisions[0].control)
 
     def test_same_body_twice_is_two_units(self) -> None:
         decisions, _ = scan_stream_decisions(unit({}, "同一句") + "\n" + unit({}, "同一句") + "\n")
@@ -731,7 +732,7 @@ class ReactiveLiveChainTests(_e2._ReactiveHarness):
 
     async def test_silent_empty_body_control_kept_and_next_unit_sent(self) -> None:
         events = [
-            {"event": "message.delta", "delta": '{"topic_hint":"收尾"}', "seq": 0},
+            {"event": "message.delta", "delta": '{"should_exit_active":true,"topic_hint":"收尾"}', "seq": 0},
             {"event": "message.delta", "delta": '\n{"body":""}', "seq": 1},
             {"event": "tool.started", "tool": "todo_list", "seq": 2},
             {"event": "tool.completed", "tool": "todo_list", "seq": 3},
@@ -741,7 +742,8 @@ class ReactiveLiveChainTests(_e2._ReactiveHarness):
             events, output='{}\n{"body":"正式答复"}'
         )
         self.assertEqual([c["text"] for c in calls["send"]], ["正式答复"])
-        self.assertEqual(calls["control"]["update_topic"], 1)
+        self.assertEqual(calls["control"]["end_window"], 1)
+        self.assertNotIn("update_topic", calls["control"])
         self.assertEqual(calls["settle"], [])
 
     async def test_terminal_only_unit_appended_and_sent(self) -> None:
@@ -1380,8 +1382,6 @@ class ReactiveControlParityTests(_e2._ReactiveHarness):
                 return real_end(session, generation)
 
             manager.end_if_current_generation = MagicMock(side_effect=_end_if_current)
-        if not isinstance(manager.update_topic, MagicMock):
-            manager.update_topic = MagicMock(wraps=manager.update_topic)
         now = int(_time.time() * 1000)
         events = ([{"event": "message.delta", "delta": output, "seq": 0}] if live else []) + [
             {"event": "run.completed", "output": output, "seq": 1}

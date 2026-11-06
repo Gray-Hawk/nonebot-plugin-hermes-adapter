@@ -3,7 +3,7 @@
 缓存友好的分层约定:
 - system 只放跨 turn 字节稳定的内容(decision_protocol / Message Context 头),
   让前缀缓存能延伸到 system 之后的会话历史。
-- per-turn 变化的字段(runtime_state.triggered_by / topic_hint、<recent_messages>
+- per-turn 变化的字段(runtime_state.triggered_by、<recent_messages>
   会话上下文)全部放进 user content。
 
 reactive 模式:
@@ -103,8 +103,8 @@ def _format_speaker_tag(nickname: str | None, user_id: str,
     return f"[id={user_id} user={nick}{suffix}]"
 
 
-# 字段名与 hermes_client._DECISION_HINT 和 ActiveSessionManager.update_topic 对齐,
-# 模型一次响应里只看到一个字段名 `topic_hint`,避免歧义。
+# 字段名与 hermes_client._DECISION_HINT 共用 core/decision_contract.py 的单一字段表,
+# 中英文渲染只改形态,不各写一份清单。
 # `submit_decision` 是契约标识符:不真发 tools(Hermes 不透传),
 # 但保留这个名字让模型识别"决策上下文",并与 Task 8B 的 structured_tool_name 入参对齐。
 #
@@ -260,7 +260,7 @@ _DECISION_PROTOCOL_BLOCK = (
     "格式示范(只看 JSON 形状;reply_text 风格按你自己的角色设定走):\n"
     "  例 A — 该回:\n"
     "    输入末尾: <current_message>[id=u1 user=小光]: 你怎么看这个?</current_message>\n"
-    '    输出: {"should_reply": true, "reply_text": "我觉得这个想法挺有意思的", "topic_hint": "看法交流"}\n'
+    '    输出: {"should_reply": true, "reply_text": "我觉得这个想法挺有意思的"}\n'
     "  例 B — 不归你:\n"
     "    输入末尾: <current_message>[id=u1 user=小光]: @阿强 帮我看下</current_message>\n"
     '    输出: {"should_reply": false}\n'
@@ -289,13 +289,12 @@ _PRIVATE_DECISION_PROTOCOL_BLOCK = (
     "</decision_protocol>"
 )
 
-# E1(本部署补丁): completions 终态双单行 JSON。Runs 继续用上面的旧协议块,
-# 由 _json_lines_envelope() 在构建时二选一,旧块保持逐字节不变。
+# E1(本部署补丁): completions 终态双单行 JSON;runs 另用 E2 多份块,
+# astrbot(legacy) 保持旧协议块。由 _json_lines_envelope() 在构建时按接口选择。
 _JSON_LINES_CONTROL_HELP = (
     "用双单行 JSON 信封提交决策,每份固定两行:\n"
     "第 1 行:控制对象(单行紧凑 JSON),字段:\n"
     "  reply_to — 引用本会话一条消息时填 `m:<id>`,不引用就省略\n"
-    "  topic_hint — 简短话题标记\n"
     "  not_final — 布尔,缺省 false\n"
     "  should_exit_active — 布尔,缺省 false\n"
     "  pin_anchor — 布尔,缺省 false\n"
@@ -337,7 +336,7 @@ def _build_json_lines_protocol(base: str, *, control_help: str | None = None,
         "格式示范(只看形状):\n"
         "  例 A — 该回:\n"
         "    输入末尾: <current_message>[id=u1 user=小光]: 你怎么看这个?</current_message>\n"
-        '    输出: {"topic_hint":"看法交流"}\n'
+        '    输出: {}\n'
         '          {"body":"我觉得这个想法挺有意思的"}\n'
         "  例 B — 不归你:\n"
         '    输出: {}\n'
@@ -387,7 +386,7 @@ _RUNS_JSON_LINES_TAIL = (
     "格式示范(只看形状):\n"
     "  例 A — 该回(一份):\n"
     "    输入末尾: <current_message>[id=u1 user=小光]: 你怎么看这个?</current_message>\n"
-    '    输出: {"topic_hint":"看法交流"}\n'
+    '    输出: {}\n'
     '          {"body":"我觉得这个想法挺有意思的"}\n'
     "  例 B — 不归你:\n"
     '    输出: {}\n'
@@ -524,7 +523,7 @@ def build_reactive_system_prompt(
 ) -> str:
     """reactive 路径的 system prompt:decision_protocol + 会话上下文 + 路由提示 + 群档案。
 
-    runtime_state(triggered_by / topic_hint 等 per-turn 变化字段)已搬到 user content
+    runtime_state(triggered_by 等 per-turn 变化字段)已搬到 user content
     顶端(见 build_reactive_user_content),system 在 turn 间字节稳定,有利于 LLM
     前缀缓存延伸到后续的会话历史段。
 
@@ -573,7 +572,6 @@ def _render_runtime_state(
     addressed_to_bot: bool,
     triggered_by: str,
     triggered_by_nickname: str | None,
-    topic_hint: str | None,
     sender_blacklisted: bool = False,
 ) -> str:
     """渲染 <runtime_state> 块:只保留每轮变化的字段。
@@ -596,8 +594,6 @@ def _render_runtime_state(
     if sender_blacklisted:
         lines.append("sender_blacklisted: true")
     lines.append(f"triggered_by: {triggered_by}{nick}")
-    if topic_hint:
-        lines.append(f"topic_hint: {topic_hint}")
     # 时间提示器压块尾:块头字段保持字节稳定。
     lines.append(f"current_time: {_current_time_str()}")
     lines.append("</runtime_state>")
@@ -968,7 +964,6 @@ def build_reactive_user_content(
     addressed_to_bot: bool,
     triggered_by: str,
     triggered_by_nickname: str | None,
-    topic_hint: str | None,
     recent_messages: Sequence[BufferedMessage],
     rows: Sequence[BufferedMessage],
     current_image_urls: Sequence[Any],
@@ -982,7 +977,7 @@ def build_reactive_user_content(
 ) -> UserContent:
     """reactive user content: <runtime_state> + [pinned_tasks] + <recent_messages> + <current_message>。
 
-    runtime_state 只保留 per-turn 变化字段(triggered_by/topic_hint/addressed_to_bot等);
+    runtime_state 只保留 per-turn 变化字段(triggered_by/addressed_to_bot等);
     会话级稳定信息(adapter/group_id/self)已挪到系统提示(见 _render_session_context)。
     pinned_anchors:在钉的委托锚,非空时渲染独立 <pinned_tasks> 块,
     不参与 recent_messages 的裁剪。
@@ -1004,7 +999,6 @@ def build_reactive_user_content(
         addressed_to_bot=addressed_to_bot,
         triggered_by=triggered_by,
         triggered_by_nickname=triggered_by_nickname,
-        topic_hint=topic_hint,
         sender_blacklisted=sender_blacklisted,
     )
     history_block = _render_recent_messages_block(

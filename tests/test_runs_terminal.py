@@ -21,6 +21,7 @@ from nonebot_plugin_hermes_adapter.core.npha_terminal import (  # noqa: E402
     decode_terminal,
     decode_terminal_batch,
     structured_batch_from_terminal,
+    structured_from_terminal,
 )
 from nonebot_plugin_hermes_adapter.core.runs_terminal import (  # noqa: E402
     TerminalPlanError,
@@ -56,7 +57,8 @@ class BatchDecodeTests(unittest.TestCase):
         decisions = decode_terminal_batch(text)
         self.assertEqual([d.body for d in decisions], ["第一条", "第二条", "第三条"])
         self.assertEqual(decisions[0].control["reply_to"], "m:1")
-        self.assertEqual(decisions[2].control["topic_hint"], "t")
+        # 旧字段 topic_hint 已退出控制表；残留按未知键忽略。
+        self.assertNotIn("topic_hint", decisions[2].control)
 
     def test_blank_line_between_units_allowed(self) -> None:
         text = unit({}, "A") + "\n\n" + unit({}, "B") + "\n"
@@ -326,7 +328,7 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
             "ActiveSession": MagicMock(return_value=SimpleNamespace(
                 generation=1, last_bot_reply_at=0, session_id="sess",
                 last_bot_reply_text="", last_bot_reply_media=0,
-                triggered_by="u1", topic_hint="", participants=set(),
+                triggered_by="u1", participants=set(),
                 should_exit_active=False, interim_echo_enabled=False,
             )),
             "_chat_with_overflow_recovery": (
@@ -335,7 +337,6 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
             "_settle": MagicMock(
                 side_effect=lambda res, outcome, reason: calls["settle"].append((outcome, reason))
             ),
-            "_record_background_note": MagicMock(),
             "_delivery_identity": MagicMock(
                 side_effect=lambda res: (tracker, getattr(res, "run_id", None))
             ),
@@ -378,8 +379,6 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
         sessions = patches["_mcp"].active_sessions
         calls["control"] = {
             "end_window": sessions.end_if_current_generation.call_count,
-            "update_topic": sessions.update_topic.call_count,
-            "background_note": patches["_record_background_note"].call_count,
         }
         return calls
 
@@ -515,8 +514,7 @@ class _PassiveHarness(unittest.IsolatedAsyncioTestCase):
                    real_files: bool = False, bounce=None, chat=None):
         from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
 
-        calls = {"send": [], "settle": [], "history": [], "files": [],
-                 "background": [], "heal": []}
+        calls = {"send": [], "settle": [], "history": [], "files": [], "heal": []}
         cfg = MagicMock()
         cfg.group_profile_enabled = False
         cfg.sticker_vision_enabled = False
@@ -572,11 +570,6 @@ class _PassiveHarness(unittest.IsolatedAsyncioTestCase):
             ),
             "_settle": MagicMock(
                 side_effect=lambda res, outcome, reason: calls["settle"].append((outcome, reason))
-            ),
-            "_record_background_note": MagicMock(
-                side_effect=lambda key, decision, **kw: calls["background"].append(
-                    decision.get("background_task")
-                )
             ),
             "_push_self_heal_note": MagicMock(
                 side_effect=lambda key, decision: calls["heal"].append(
@@ -639,9 +632,9 @@ class PassiveBatchDeliveryTests(_PassiveHarness):
 
 
 class PassiveMultiControlTests(_PassiveHarness):
-    """R5：私聊 passive 连续多份终态必须按份顺序消费既有控制，空 body 只免发送。"""
+    """R5：私聊 passive 连续多份终态必须按份顺序消费仍存在的控制，空 body 只免发送。"""
 
-    async def test_second_unit_background_task_reaches_control(self) -> None:
+    async def test_second_unit_background_task_kept_in_control(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
         output = batch(({}, "先回应"), ({"background_task": "第二份异步任务"}, "任务已登记"))
@@ -650,11 +643,11 @@ class PassiveMultiControlTests(_PassiveHarness):
         result.terminal_decisions = decisions
         result.run_id = "run-e2-p"
         calls = await self._run(result, tracker=self._tracker())
+        self.assertEqual(decisions[1]["background_task"], "第二份异步任务")
         self.assertEqual([c["text"] for c in calls["send"]], ["先回应", "任务已登记"])
-        self.assertEqual(calls["background"], ["", "第二份异步任务"])
         self.assertEqual(calls["heal"], [None, None])
 
-    async def test_silent_second_unit_keeps_background_task(self) -> None:
+    async def test_silent_second_unit_keeps_background_task_control(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
         output = batch(({}, "先回应"), ({"background_task": "静默份任务"}, ""))
@@ -663,11 +656,11 @@ class PassiveMultiControlTests(_PassiveHarness):
         result.terminal_decisions = decisions
         result.run_id = "run-e2-p"
         calls = await self._run(result, tracker=self._tracker())
+        self.assertEqual(decisions[1]["background_task"], "静默份任务")
         self.assertEqual([c["text"] for c in calls["send"]], ["先回应"])
-        self.assertEqual(calls["background"], ["", "静默份任务"])
         self.assertEqual(calls["settle"], [])
 
-    async def test_all_silent_batch_keeps_background_task(self) -> None:
+    async def test_all_silent_batch_decodes_background_task_control(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
         output = unit({"background_task": "全静默任务"}, "")
@@ -676,8 +669,8 @@ class PassiveMultiControlTests(_PassiveHarness):
         result.terminal_decisions = decisions
         result.run_id = "run-e2-p"
         calls = await self._run(result, tracker=self._tracker())
+        self.assertEqual(decisions[0]["background_task"], "全静默任务")
         self.assertEqual(calls["send"], [])
-        self.assertEqual(calls["background"], ["全静默任务"])
         self.assertEqual(calls["settle"], [("silent", "should_reply_false")])
 
     async def test_every_unit_self_heal_hint_consumed_in_order(self) -> None:
@@ -694,18 +687,16 @@ class PassiveMultiControlTests(_PassiveHarness):
         self.assertEqual([c["text"] for c in calls["send"]], ["一", "二"])
         self.assertEqual(calls["heal"], ["第一份提示", "第二份提示"])
 
-    async def test_single_completions_control_unchanged(self) -> None:
+    async def test_single_completions_decodes_background_task_control(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
-        result = ChatResult(
-            raw_text='{"background_task":"单份任务"}\n{"body":"单份正文"}',
-            structured={"body": "单份正文", "should_reply": True,
-                        "background_task": "单份任务"},
-        )
+        output = '{"background_task":"单份任务"}\n{"body":"单份正文"}'
+        decision = structured_from_terminal(decode_terminal(output))
+        result = ChatResult(raw_text=output, structured=decision)
         result.run_id = "run-e2-p"
         calls = await self._run(result, tracker=self._tracker())
+        self.assertEqual(decision["background_task"], "单份任务")
         self.assertEqual([c["text"] for c in calls["send"]], ["单份正文"])
-        self.assertEqual(calls["background"], ["单份任务"])
 
 
 class NakedMediaRunsTests(_ReactiveHarness):
@@ -806,7 +797,7 @@ def _resume_build_units():
 
 
 class SilentControlSideEffectTests(_ReactiveHarness):
-    """R1：过滤空 body 只能跳过发送，不得丢掉原有 background／topic／收窗控制。"""
+    """R1：过滤空 body 只能跳过发送，不得丢掉仍存在的收窗控制。"""
 
     def _silent_decision(self):
         return {
@@ -827,10 +818,9 @@ class SilentControlSideEffectTests(_ReactiveHarness):
         result.run_id = "run-e2-h"
         calls = await self._run(result, tracker=self._tracker())
         self.assertEqual(calls["send"], [])
-        self.assertEqual(
-            calls["control"],
-            {"end_window": 1, "update_topic": 1, "background_note": 1},
-        )
+        self.assertEqual(calls["control"], {"end_window": 1})
+        self.assertNotIn("update_topic", calls["control"])
+        self.assertNotIn("background_note", calls["control"])
         self.assertEqual(calls["settle"], [("silent", "should_reply_false")])
 
     async def test_runs_silent_unit_keeps_controls(self) -> None:
@@ -842,10 +832,9 @@ class SilentControlSideEffectTests(_ReactiveHarness):
         result.run_id = "run-e2-h"
         calls = await self._run(result, tracker=self._tracker())
         self.assertEqual(calls["send"], [])
-        self.assertEqual(
-            calls["control"],
-            {"end_window": 1, "update_topic": 1, "background_note": 1},
-        )
+        self.assertEqual(calls["control"], {"end_window": 1})
+        self.assertNotIn("update_topic", calls["control"])
+        self.assertNotIn("background_note", calls["control"])
         self.assertEqual(calls["settle"], [("silent", "should_reply_false")])
 
     async def test_mixed_batch_runs_controls_and_skips_only_send(self) -> None:
@@ -862,10 +851,9 @@ class SilentControlSideEffectTests(_ReactiveHarness):
         # 空份不占发送序号：唯一发出的份仍是 primary:0
         self.assertEqual([c["component"] for c in calls["send"]], ["primary:0"])
         self.assertEqual(calls["settle"], [])
-        self.assertEqual(
-            calls["control"],
-            {"end_window": 1, "update_topic": 1, "background_note": 2},
-        )
+        self.assertEqual(calls["control"], {"end_window": 1})
+        self.assertNotIn("update_topic", calls["control"])
+        self.assertNotIn("background_note", calls["control"])
         plan = json.loads(tracker.get_delivery("run-e2-h")["plan_json"])
         self.assertEqual([u["cleaned_text"] for u in plan["units"]], ["第二份"])
 

@@ -335,11 +335,11 @@ ACCEPTANCE_CASES = {
     "legacy_component_names": "test_completions_file_and_history_use_legacy_names",
     "group_passive_legacy_file": "test_group_passive_file_claim_uses_legacy_component",
     # 第二轮评审 R5-R6 反例转成的正式行为断言
-    "passive_second_control": "test_second_unit_background_task_reaches_control",
-    "passive_silent_second_control": "test_silent_second_unit_keeps_background_task",
-    "passive_all_silent_control": "test_all_silent_batch_keeps_background_task",
+    "passive_second_control": "test_second_unit_background_task_kept_in_control",
+    "passive_silent_second_control": "test_silent_second_unit_keeps_background_task_control",
+    "passive_all_silent_control": "test_all_silent_batch_decodes_background_task_control",
     "passive_self_heal_order": "test_every_unit_self_heal_hint_consumed_in_order",
-    "passive_single_control": "test_single_completions_control_unchanged",
+    "passive_single_control": "test_single_completions_decodes_background_task_control",
     "runs_naked_inline_image": "test_runs_naked_image_survives_chat_and_handler",
     "plain_naked_overflow": "test_plain_overlong_naked_text_still_rejected",
     # E3 验收：真实 delta 分段、即时多份、折叠、steer、重连恢复

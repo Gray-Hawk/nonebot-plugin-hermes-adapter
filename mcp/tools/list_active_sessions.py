@@ -20,7 +20,6 @@ class ActiveSessionView(BaseModel):
     started_at: int = Field(..., description="Unix timestamp (ms)")
     last_active_at: int = Field(..., description="Unix timestamp (ms)")
     expires_at: int = Field(..., description="Unix timestamp (ms);call returns only未过期 session")
-    topic_hint: str | None = None
 
 
 class ListActiveSessionsResult(BaseModel):
@@ -57,11 +56,10 @@ async def list_active_sessions_impl(
             started_at=r.started_at,
             last_active_at=r.last_active_at,
             expires_at=r.expires_at,
-            topic_hint=r.topic_hint,
         )
         for r in rows
         # 这是发现工具,越权目标**过滤**掉而不是报错:调用方只该看见自己名下的群,
-        # 别群的 triggered_by / topic_hint 本身就是不该外流的信息。
+        # 别群的 triggered_by 本身就是不该外流的信息。
         # scope=None(认不出调用方)过滤掉一切。
         # 本部署补丁: 租约改 key 级,判活换管理器口径(TTL+租约)
         if active_sessions.is_alive_with_lease(r.adapter, r.group_id, now_ms) and scope is not None and scope.allows(r.adapter, r.group_id)

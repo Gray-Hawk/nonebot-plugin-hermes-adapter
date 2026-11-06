@@ -70,7 +70,6 @@ class ActiveSession:
     started_at: int  # ms
     last_active_at: int  # ms
     expires_at: int  # ms
-    topic_hint: str | None = None
     last_bot_reply_at: int = 0
     """bot 最近一次在本群发出 reactive 回复的 ms 时间戳。0 = 本窗口期未回复过。
     用作同 turn 防重与活跃窗实质激活判定。续期保留,基准跨触发存活;
@@ -195,7 +194,6 @@ class ActiveSessionManager:
         group_id: str,
         user_id: str,
         now_ms: int,
-        topic_hint: str | None = None,
     ) -> ActiveSession:
         key = (adapter, group_id)
         old = self._sessions.get(key)
@@ -204,7 +202,6 @@ class ActiveSessionManager:
             # 会重算 last_strong_activation_at,T5 随之解开)。锚双槽与
             # last_bot_reply_* 天然保留在同实例上,无需搬运。
             old.triggered_by = user_id
-            old.topic_hint = topic_hint  # 直接赋值,None 即清空,与新建语义一致
             old.last_active_at = now_ms
             old.expires_at = now_ms + self._ttl_ms
             old.last_strong_activation_at = now_ms
@@ -219,7 +216,6 @@ class ActiveSessionManager:
             started_at=now_ms,
             last_active_at=now_ms,
             expires_at=now_ms + self._ttl_ms,
-            topic_hint=topic_hint,
             last_strong_activation_at=now_ms,
         )
         self._sessions[key] = s
@@ -529,17 +525,6 @@ class ActiveSessionManager:
         floor = now_ms + min(self._ttl_ms, _TURN_END_GRACE_MS)
         s.expires_at = max(s.expires_at, floor)
         self._persist(s)
-
-    def update_topic(self, adapter: str, group_id: str, topic_hint: str | None) -> None:
-        """更新或清空 topic_hint。
-
-        传 None 即清空(允许 Hermes 在话题漂移检测后主动收尾 topic)。
-        若 (adapter, group_id) 不存在则 no-op。
-        """
-        s = self._sessions.get((adapter, group_id))
-        if s is not None:
-            s.topic_hint = topic_hint
-            self._persist(s)
 
     def end(self, adapter: str, group_id: str) -> None:
         """按 key 无条件收窗。turn 内表达"这轮谈完了"请用 `end_if_current_generation`。"""
