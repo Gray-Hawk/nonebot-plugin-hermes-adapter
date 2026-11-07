@@ -75,7 +75,6 @@ class _DebounceState:
 
 
 _debounce_states: dict[tuple[str, str], _DebounceState] = {}
-_GROUP_FIRST_WINDOW_SEC = 6.0  # 群聊首轮固定窗；同人不重置，其他真人插队立即到期
 
 
 def _keyword_soft_hit(keywords, text: str) -> bool:
@@ -434,24 +433,20 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         delivery_generation=delivery_generation,
         event_msg_id=getattr(event, "message_id", None),
     )
-    debounce_sec = (
-        chat_cfg.reply_debounce_private_sec
-        if target.private
-        else _GROUP_FIRST_WINDOW_SEC
-    )
-    max_wait_sec = chat_cfg.reply_debounce_max_wait_sec if target.private else 0.0
+    debounce_sec = chat_cfg.reply_debounce_sec
+    # 普通防抖仅一个时长，顺延上限从首条起算恒为三倍；群聊仍保持首窗不顺延。
+    max_wait_sec = debounce_sec * 3
     sender_is_bot = _is_reply_delayed(user_id)
     # 本部署补丁: 强制延迟名单(仅 known_bots)——名单内用户的触发防抖窗提升到
     # reply_delay_for_bot_sec(防抖关闭也强制开窗,bot 交互限速器),
-    # 顺延硬上限同步抬到不低于窗长,否则长窗会被默认 max_wait 钳回去。
+    # 专用 bot 延迟独立于普通 ×3 上限：保留旧语义，必要时抬高硬上限。
     if chat_cfg.reply_delay_for_bot_sec > 0 and sender_is_bot:
         debounce_sec = max(debounce_sec, chat_cfg.reply_delay_for_bot_sec)
         # max_wait 的 0=不限语义优先:仅原本有上限时才抬升,0 严格保持不限
         if max_wait_sec > 0:
             max_wait_sec = max(max_wait_sec, chat_cfg.reply_delay_for_bot_sec)
-    # 群聊首轮固定 6 秒，不再读取 reply_debounce_group_sec／共用 max_wait；
-    # 仅保留已知 bot 首条专用延迟作为例外。群聊即使旧配置写 0 也走固定窗。
-    if group_id or debounce_sec > 0:
+    # 0 关闭群/私聊普通防抖；已知 bot 专用延迟仍可独立开窗。
+    if debounce_sec > 0:
         keyword_context = keyword_soft_hit or (
             in_debounce_window and not is_direct and not in_active_window
         )

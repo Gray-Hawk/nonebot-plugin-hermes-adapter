@@ -18,12 +18,11 @@ from .config_templates import CHAT_CONFIG_TEMPLATE
 
 @dataclass(frozen=True)
 class ChatConfig:
+    reply_debounce_sec: float = 6.0
     private_trigger: str = "all"
-    reply_debounce_private_sec: float = 2.5
     group_trigger: str = "keyword"
     keywords: set[str] = field(default_factory=lambda: {"/ai"})
     anchor_max_age_sec: int = 150
-    reply_debounce_group_sec: float = 3.5  # 旧配置兼容字段；群聊首轮已固定 6 秒，不读取
     reply_delay_for_bot_sec: float = 0.0
     long_reply_forward: bool = True
     rate_limit_emoji_id: int = 96
@@ -31,7 +30,6 @@ class ChatConfig:
     active_session_ttl_sec: int = 300  # 重启生效
     history_message_limit: int = 10
     ignore_prefix: set[str] = field(default_factory=lambda: {"."})
-    reply_debounce_max_wait_sec: float = 8.0  # 仅私聊；群聊首轮固定 6 秒
     session_idle_reset_sec: int = 0
     proactive_interval_sec: int = 0
     proactive_jitter_sec: int = 0
@@ -45,12 +43,11 @@ class ChatConfig:
 
 def parse_chat_config(doc: dict) -> ChatConfig:
     return ChatConfig(
+        reply_debounce_sec=float_field(doc, "reply_debounce_sec", 6.0),
         private_trigger=choice_field(doc, "private_trigger", "all", ("all", "allowlist")),
-        reply_debounce_private_sec=float_field(doc, "reply_debounce_private_sec", 2.5),
         group_trigger=choice_field(doc, "group_trigger", "keyword", ("keyword", "at")),
         keywords=str_set_field(doc, "keywords", {"/ai"}),
         anchor_max_age_sec=int_field(doc, "anchor_max_age_sec", 150, min_v=1),
-        reply_debounce_group_sec=float_field(doc, "reply_debounce_group_sec", 3.5),
         reply_delay_for_bot_sec=float_field(doc, "reply_delay_for_bot_sec", 0.0),
         long_reply_forward=bool_field(doc, "long_reply_forward", True),
         rate_limit_emoji_id=int_field(doc, "rate_limit_emoji_id", 96),
@@ -58,7 +55,6 @@ def parse_chat_config(doc: dict) -> ChatConfig:
         active_session_ttl_sec=int_field(doc, "active_session_ttl_sec", 300, min_v=1),
         history_message_limit=int_field(doc, "history_message_limit", 10, min_v=1),
         ignore_prefix=str_set_field(doc, "ignore_prefix", {"."}),
-        reply_debounce_max_wait_sec=float_field(doc, "reply_debounce_max_wait_sec", 8.0),
         session_idle_reset_sec=int_field(doc, "session_idle_reset_sec", 0),
         proactive_interval_sec=int_field(doc, "proactive_interval_sec", 0),
         proactive_jitter_sec=int_field(doc, "proactive_jitter_sec", 0),

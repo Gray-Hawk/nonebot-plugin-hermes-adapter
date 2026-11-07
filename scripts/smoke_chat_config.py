@@ -1,11 +1,11 @@
-"""chat_config 24 键迁移 smoke 测试。
+"""chat_config 21 键迁移 smoke 测试。
 
 跑法（shim 挂 work 副本，中立目录执行）：
     ln -s <work 副本路径> <shim>/nonebot_plugin_hermes_adapter
     cd <中立目录> && PYTHONPATH=<shim> python <work>/scripts/smoke_chat_config.py
 
-覆盖（chat_config 24 键消费端的离线验收）：
-  1. ChatConfig 24 键形态 + 三链历史统一（perception_buffer / keyword_soft_context /
+覆盖（chat_config 21 键消费端的离线验收）：
+  1. ChatConfig 21 键形态 + 三链历史统一（perception_buffer / keyword_soft_context /
      proactive_max_messages 三键撤并，只剩 history_message_limit）。
   2. 改名（reply_delay_for_bot_sec / active_session_timeout_sec）与解析映射。
   3. 手动重载机制：commit 新快照后 load_chat_config() 立即反映（T1/proactive 的
@@ -61,11 +61,12 @@ def src_has_no(relpath: str, token: str) -> bool:
     return token not in (SRC / relpath).read_text(encoding="utf-8")
 
 
-# --- 1. ChatConfig 24 键形态 + 三链历史统一 + 改名 ---
+# --- 1. ChatConfig 21 键形态 + 三链历史统一 + 改名 ---
 from dataclasses import fields as _fields  # noqa: E402
 
 names = {f.name for f in _fields(ChatConfig)}
-check("ChatConfig 共 24 键", len(names) == 24, f"实际 {len(names)} 键")
+check("ChatConfig 共 21 键", len(names) == 21, f"实际 {len(names)} 键")
+check("统一防抖仅一个键", {n for n in names if n.startswith("reply_debounce")} == {"reply_debounce_sec"})
 check("三链统一: history_message_limit 存在", "history_message_limit" in names)
 check("三链统一: perception_buffer 已撤", "perception_buffer" not in names)
 check("三链统一: keyword_soft_context 已撤", "keyword_soft_context" not in names)
@@ -78,12 +79,14 @@ check("改名: active_session_t5_sec 已撤", "active_session_t5_sec" not in nam
 c = ChatConfig()
 check("默认 history_message_limit=10", c.history_message_limit == 10)
 check("默认 reply_delay_for_bot_sec=0.0", c.reply_delay_for_bot_sec == 0.0)
+check("默认 reply_debounce_sec=6.0", c.reply_debounce_sec == 6.0)
 check("默认 active_session_timeout_sec=0", c.active_session_timeout_sec == 0)
 
 p = parse_chat_config(
     {
         "history_message_limit": 7,
         "reply_delay_for_bot_sec": 1.5,
+        "reply_debounce_sec": 4.0,
         "active_session_timeout_sec": 120,
         "session_idle_reset_sec": 42,
         "proactive_interval_sec": 99,
@@ -91,6 +94,7 @@ p = parse_chat_config(
 )
 check("parse: history_message_limit 生效", p.history_message_limit == 7)
 check("parse: reply_delay_for_bot_sec 生效", p.reply_delay_for_bot_sec == 1.5)
+check("parse: reply_debounce_sec 生效", p.reply_debounce_sec == 4.0)
 check("parse: active_session_timeout_sec 生效", p.active_session_timeout_sec == 120)
 
 # --- 2. 手动重载机制（T1/proactive 固定 tick 现读同一缓存） ---
