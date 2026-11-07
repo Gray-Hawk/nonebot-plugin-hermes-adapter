@@ -1386,7 +1386,8 @@ async def _run_passive_turn(
             task_notes.push_plugin_note(
                 _fb_key, "envelope_missing",
                 ("系统提示:你上一轮的最终回复没有包双单行 JSON 信封(走了散文兜底)。"
-                 "最终答复必须是控制 JSON 行 + {\"body\":\"正文\"} 行;过程想法走旁白即可。"
+                 "受理回执、进度、结果和最终答复都必须是控制 JSON 行 + {\"body\":\"正文\"} 行；"
+                 "正文放在 body，不能用普通旁白或最终文本代替。"
                  if _json_lines_interface() else
                  "系统提示:你上一轮的最终回复没有包 submit_decision JSON 信封(走了散文兜底)。"
                  "最终答复必须输出单个 JSON 对象,正文放进 reply_text 字段;过程想法走旁白即可。"),
@@ -2023,7 +2024,8 @@ async def _run_reactive_turn(
                 _feedback_scope_key(adapter_name, False, user_id, group_id),
                 "envelope_missing",
                 ("系统提示:你上一轮的最终回复没有包双单行 JSON 信封(走了散文兜底)。"
-                 "最终答复必须是控制 JSON 行 + {\"body\":\"正文\"} 行;过程想法走旁白即可。"
+                 "受理回执、进度、结果和最终答复都必须是控制 JSON 行 + {\"body\":\"正文\"} 行；"
+                 "正文放在 body，不能用普通旁白或最终文本代替。"
                  if _json_lines_interface() else
                  "系统提示:你上一轮的最终回复没有包 submit_decision JSON 信封(走了散文兜底)。"
                  "最终答复必须输出单个 JSON 对象,正文放进 reply_text 字段;过程想法走旁白即可。"),
