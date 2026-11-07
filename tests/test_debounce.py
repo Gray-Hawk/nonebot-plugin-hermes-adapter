@@ -70,9 +70,9 @@ class GroupDebounceTests(unittest.TestCase):
     def test_generated_config_has_no_group_debounce_knob(self) -> None:
         self.assertNotIn("reply_debounce_group_sec", load_yaml(CHAT_CONFIG_TEMPLATE))
 
-    def test_old_group_setting_is_migrated_as_fixed_behavior(self) -> None:
+    def test_old_group_setting_is_deleted_by_migration(self) -> None:
         kind, target, _ = OLD_KEYS["reply_debounce_group_sec"]
-        self.assertEqual((kind, target), ("fixed", None))
+        self.assertEqual((kind, target), ("deleted", None))
 
     def test_stale_generation_human_does_not_interrupt_current_window(self) -> None:
         key = ("qq", "group:g1")
@@ -104,7 +104,7 @@ class GroupDebounceTests(unittest.TestCase):
         self.assertEqual(current.payload["user_id"], "B")
         self.assertEqual(current.deadline_mono, 106)
 
-    def test_private_legacy_window_is_unchanged(self) -> None:
+    def test_private_helper_preserves_sliding_deadline_cap(self) -> None:
         key = ("qq", "private:u1")
         first, _ = _debounce_arrive(
             key, {"user_id": "A", "fragments": [], "is_direct": False, "addressed_to_bot": False, "ephemeral": False, "now_ms": 100000},

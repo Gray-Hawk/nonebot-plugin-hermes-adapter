@@ -252,18 +252,12 @@ YAML_SPECS: dict[str, list[Any]] = {
                 "# 坏档：完整校验失败时保留旧缓存。键间空行仅为排版，可自由增删。",
             ]
         ),
-        _Section("私聊：2 键"),
+        _Section("私聊：1 键"),
         _Key(
             "private_trigger",
             "all",
             ["私聊响应范围：all = 全部用户；allowlist = 仅白名单（名单本体在 user_lists.yaml 的 allow_users）。"],
             type_="str",
-        ),
-        _Key(
-            "reply_debounce_private_sec",
-            2.5,
-            ["私聊触发后的防抖等待秒数，用于合并连发碎片；0 = 立即起跑。"],
-            type_="float",
         ),
         _Section("群聊触发、历史与回复：9 键"),
         _Key(
@@ -287,10 +281,6 @@ YAML_SPECS: dict[str, list[Any]] = {
             ["委托锚最长寿命秒数，超时自动释放，防止模型一直忘记松锚。"],
             type_="int",
         ),
-        _Header([
-            "# 群聊首轮固定 6 秒，同人续发不延长，其他真人插话立即发车，bot 不插队。",
-            "# 旧 reply_debounce_group_sec 已忽略，不再作为可调选项。",
-        ]),
         _Key(
             "reply_delay_for_bot_sec",
             0.0,
@@ -345,9 +335,14 @@ YAML_SPECS: dict[str, list[Any]] = {
             type_="list",
         ),
         _Key(
-            "reply_debounce_max_wait_sec",
-            8.0,
-            ["私聊防抖最长等待秒数，从首条消息起算；群聊首轮固定 6 秒，不读取此项。"],
+            "reply_debounce_sec",
+            6.0,
+            [
+                "群聊与私聊共用的普通防抖秒数，默认 6.0；0 = 关闭普通防抖，立即进入后续流程。",
+                "群聊同人续发不延长首窗，第二位其他真人插话提前发车（bot/self 不触发提前）。",
+                "私聊续发顺延，普通防抖最长等待恒为本值 ×3，从首条消息起算，无独立上限配置。",
+                "已知 bot 的专用延迟独立保留：首条可超过普通 ×3 上限，也可在普通防抖为 0 时开窗。",
+            ],
             type_="float",
         ),
         _Key(
@@ -775,9 +770,9 @@ OLD_KEYS: dict[str, tuple[str, str | None, str]] = {
     "greet_on_join": ("chat", "greet_on_join", ""),
     "reactive_post_reply_cooldown_sec": ("deleted", None, "旧 post-reply 冷却闸整体删除，不新增替代键"),
     "prompt_timezone": ("misc", "prompt_timezone", ""),
-    "reply_debounce_group_sec": ("fixed", None, "群聊首轮固定 6 秒；其他真人插话立即发车，bot 不插队"),
-    "reply_debounce_private_sec": ("chat", "reply_debounce_private_sec", ""),
-    "reply_debounce_max_wait_sec": ("chat", "reply_debounce_max_wait_sec", ""),
+    "reply_debounce_group_sec": ("deleted", None, "旧分群配置已撤；统一使用 reply_debounce_sec，缺省 6.0"),
+    "reply_debounce_private_sec": ("deleted", None, "旧分私聊配置已撤；统一使用 reply_debounce_sec，缺省 6.0"),
+    "reply_debounce_max_wait_sec": ("deleted", None, "独立最长等待配置已撤；普通防抖最长等待恒为 reply_debounce_sec ×3"),
     "reply_delay_sec": ("chat", "reply_delay_for_bot_sec", "改名：只服务 bot 延迟"),
     "reply_delay_users": ("deleted", None, "额外强制延迟名单；延迟只保留给已知 bot"),
     "help_menu_file": ("misc", "help_menu_file", ""),
