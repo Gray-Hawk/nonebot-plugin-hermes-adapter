@@ -459,8 +459,8 @@ _FILE_TOOL_GUIDANCE = (
 
 _STICKER_TOOL_GUIDANCE = (
     "本地表情库：\n"
-    "- 有合适表情时用 search_sticker_library 按类型／说明检索稳定 ID；不确定内容先调 "
-    "preview_sticker 预览，不要凭 ID 盲发\n"
+    "- 闲聊与情绪表达时推荐使用表情：有合适表情时用 search_sticker_library 按类型／说明检索稳定 ID；"
+    "不确定内容先调 preview_sticker 预览，不要凭 ID 盲发\n"
     "- 当表情已能完整表达回应时，可只回一个表情，不附文字；不要为使用表情而强行使用\n"
     "- 选定后 reply_text 仅写 表情=ID（半角等号），不要夹其他文字；需要继续发言时本轮填 "
     "not_final=true 进入续跑（这是闲聊也可用的拆轮例外），下一轮再发文字"

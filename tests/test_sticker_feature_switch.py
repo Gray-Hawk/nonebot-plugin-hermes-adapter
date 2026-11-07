@@ -69,9 +69,11 @@ class StickerFeatureSwitchTests(unittest.TestCase):
             for prompt in (reactive, passive):
                 if enabled:
                     self.assertIn(runs_guidance, prompt)
+                    self.assertIn("推荐使用表情", prompt)
                     self.assertIn("可只回一个表情，不附文字", prompt)
                 else:
                     self.assertNotIn(runs_guidance, prompt)
+                    self.assertNotIn("推荐使用表情", prompt)
                     self.assertNotIn("search_sticker_library", prompt)
                     self.assertNotIn("表情=ID", prompt)
 
