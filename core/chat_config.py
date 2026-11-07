@@ -23,7 +23,7 @@ class ChatConfig:
     group_trigger: str = "keyword"
     keywords: set[str] = field(default_factory=lambda: {"/ai"})
     anchor_max_age_sec: int = 150
-    reply_debounce_group_sec: float = 3.5
+    reply_debounce_group_sec: float = 3.5  # 旧配置兼容字段；群聊首轮已固定 6 秒，不读取
     reply_delay_for_bot_sec: float = 0.0
     long_reply_forward: bool = True
     rate_limit_emoji_id: int = 96
@@ -31,7 +31,7 @@ class ChatConfig:
     active_session_ttl_sec: int = 300  # 重启生效
     history_message_limit: int = 10
     ignore_prefix: set[str] = field(default_factory=lambda: {"."})
-    reply_debounce_max_wait_sec: float = 8.0
+    reply_debounce_max_wait_sec: float = 8.0  # 仅私聊；群聊首轮固定 6 秒
     session_idle_reset_sec: int = 0
     proactive_interval_sec: int = 0
     proactive_jitter_sec: int = 0
