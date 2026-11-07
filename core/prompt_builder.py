@@ -293,6 +293,9 @@ _PRIVATE_DECISION_PROTOCOL_BLOCK = (
 # astrbot(legacy) 保持旧协议块。由 _json_lines_envelope() 在构建时按接口选择。
 _JSON_LINES_CONTROL_HELP = (
     "用双单行 JSON 信封提交决策,每份固定两行:\n"
+    "用户可见回复纪律：只有决策信封中的 body 才能作为用户可见回复。\n"
+    "凡是希望用户看到的受理回执、进度、结果和最终答复，都必须放在 body，"
+    "不能用普通旁白或最终文本代替；不要依赖旁白转发或散文兜底。\n"
     "第 1 行:控制对象(单行紧凑 JSON),字段:\n"
     "  reply_to — 引用本会话一条消息时填 `m:<id>`,不引用就省略\n"
     "  not_final — 布尔,缺省 false\n"
@@ -300,15 +303,29 @@ _JSON_LINES_CONTROL_HELP = (
     "  pin_anchor — 布尔,缺省 false\n"
     "  release_anchor / answer_anchor / anchor_merge / background_task — 字符串,不需要就省略\n"
     "第 2 行:正文对象 {\"body\":\"正文\"},只能有 body 一个字符串字段\n"
+    "JSON 结构符号用半角，中文正文沿用全角标点约定；代码、路径、ID 和 CQ 标记保持原样。\n"
     "body 为空即静默;body 非空即原样发送。不要再输出任何旧信封字段。\n"
+    "任务受理与行动诚实：\n"
+    "  - 能当轮迅速完成的短任务直接给结果，不强制另发受理回执；不要为回执拆轮或重复刷屏。\n"
+    "  - 对已决定承接、不能即时给出完整答复的任务，必须先发一条明确的受理回执，"
+    "说明消息已收到、任务正在处理，再执行耗时工作；回执也必须使用双单行 JSON 信封，正文放在 body。\n"
+    "  - 需要结束当前轮再执行未完成任务时，在回执控制行填 not_final=true，"
+    "由插件追加继续执行轮；Runs 同一 run 内可在回执信封后继续调用工具并另发结果信封。\n"
+    "  - 只有确实存在后续执行路径时才可承诺处理：同一 run 的实际后续工具调用、"
+    "not_final=true 触发的继续执行轮，或已成功启动且有完成通知的后台任务。\n"
+    "    后台任务先确认启动成功再承诺，background_task 便签本身不会启动任务；"
+    "后台已在跑且等系统通知时，不要再用 not_final 触发重复执行。\n"
+    "    没有可执行路径时，必须如实说明阻碍或请求必要信息；禁止只说“稍等”“我去处理”后静默结束。\n"
+    "  - 查询、搜索或外部操作要实际执行；拿到结果才能汇报完成，失败或能力不足就如实说明。\n"
 )
 
 
 def _build_json_lines_protocol(base: str, *, control_help: str | None = None,
                                tail: str | None = None) -> str:
-    """把旧协议块的字段段与尾部换成乙信封,其余判断口径原样保留。
+    """把旧协议块的字段段与尾部换成乙信封，保留归属/插话/安全判断。
 
-    completions 不传参时输出与 E1 定版逐字节一致；Runs 只换控制说明与尾部。
+    双单行接口共用回执与行动诚实说明，不再继承旧的“发出即终态”禁令。
+    completions 保持单份形状；Runs 使用流式多份说明与尾部。
     """
     head = "把决策提交为名为 submit_decision 的 JSON 对象,字段:\n"
     head_end = "对象归属("
@@ -317,6 +334,11 @@ def _build_json_lines_protocol(base: str, *, control_help: str | None = None,
     i1 = base.index(head_end, i0)
     j0 = base.index(tail_start)
     middle = base[i1:j0]
+    # 双单行协议的回执/续跑口径统一在控制说明；旧单对象协议保持原样。
+    # 不能继承“发出即终态、禁止先回执”，它会压过 Runs 中途信封和 not_final。
+    action_start = middle.index("行动诚实(")
+    action_end = middle.index("回复纪律(", action_start)
+    middle = middle[:action_start] + middle[action_end:]
     middle = (
         middle.replace("should_reply=false", "body 留空")
         .replace("should_reply=true", "body 非空")
@@ -366,9 +388,12 @@ _JSON_LINES_PRIVATE_BLOCK = (
 )
 
 
-# E2(本部署补丁): Runs 终态双单行 JSON。只约束 run 的最终答复,允许连续多份;
-# 明确禁止在工具间隙提前写决策,免得把流式多决策(E3)提前引出来。
-# completions 的两块保持 E1 定版字节不变。
+# Runs 已支持 E3 流式多决策；工具间隙与最终输出共用可见回复纪律。
+_RUNS_VISIBLE_REPLY_REMINDER = (
+    "工具间隙也可输出用户可见的两行 JSON 决策信封（控制 JSON 行 + 正文 JSON 行）；"
+    "受理回执、进度、结果和最终答复都放在 body，不能用普通旁白或最终文本代替。\n"
+)
+
 _RUNS_JSON_LINES_CONTROL_HELP = _JSON_LINES_CONTROL_HELP + (
     "需要连发多条就按顺序接上下一份两行 JSON(份与份之间可以空一行);\n"
     "只需要一条就只写一份。每份的 body 独立判定:空的这份静默,非空的原样发送。\n"
@@ -377,8 +402,8 @@ _RUNS_JSON_LINES_CONTROL_HELP = _JSON_LINES_CONTROL_HELP + (
 _RUNS_JSON_LINES_TAIL = (
     "要发的话必须当下就用一组两行 JSON 表达(控制 JSON 行 + 正文 JSON 行),不要攒到整轮结束;\n"
     "可以连续多份,工具调用可以夹在任意两份之间——工具调用前后各发一份都正常。\n"
-    "过程旁白用普通文字讲即可(工具间隙不要写成决策 JSON);唯一例外是要对用户说的话:\n"
-    "它必须进 body,并且要立刻输出,否则这一轮就听不到了。\n"
+    + _RUNS_VISIBLE_REPLY_REMINDER
+    + "内部过程不是用户回复；需要让用户知道的处理状态必须立即用信封发送。\n"
     "每轮最终输出仍必须有若干份两行 JSON(没有要说的就输出静默份)。\n"
     "禁止只输出纯文字、角色动作或表情描述而不带这两行 ——\n"
     "即使你想用角色口吻说话,也要把那段话放进 body 字符串里。\n"
@@ -395,11 +420,13 @@ _RUNS_JSON_LINES_TAIL = (
     '    输出: {"reply_to":"m:57"}\n'
     '          {"body":"都办完了，[CQ:at,qq=10003] 你那边也同步一下"}\n'
     "          {}\n"
-    '          {"body":"补充一句:文件放在群文件里了"}\n'
+    '          {"body":"补充一句：文件放在群文件里了"}\n'
     "  例 D — 工具前先说一句、工具后再说结果(两份之间是工具调用):\n"
-    '    先说: {"body":"我先去核对一下"}\n'
-    "    (调用工具;这段过程旁白可以用普通文字)\n"
-    '    再说: {"body":"核对完了，数量和你说的一致"}\n'
+    '    先说: {}\n'
+    '          {"body":"收到，正在核对。"}\n'
+    "    (继续调用工具；这行仅说明执行顺序，不是输出内容)\n"
+    '    再说: {}\n'
+    '          {"body":"核对完了，数量和你说的一致。"}\n'
     "</decision_protocol>"
 )
 
@@ -418,7 +445,9 @@ _JSON_LINES_PRIVATE_BLOCK_RUNS = (
     + _RUNS_JSON_LINES_CONTROL_HELP
     + "私聊只有对方一个人:不必 @ 任何人,正文里不要写 [CQ:at,...] 标记。\n"
     "要发的话必须当下就用两行 JSON 表达(控制行 + 正文行),不要攒到整轮结束;\n"
-    "工具调用可以夹在任意两份之间;过程旁白用普通文字(工具间隙不要写成决策 JSON)。\n"
+    "工具调用可以夹在任意两份之间。\n"
+    + _RUNS_VISIBLE_REPLY_REMINDER
+    + "内部过程不是用户回复；需要让用户知道的处理状态必须立即用信封发送。\n"
     "每轮最终输出仍必须有若干份两行 JSON(没有要说的就输出静默份)。\n"
     "</decision_protocol>"
 )
@@ -1026,8 +1055,8 @@ def build_reactive_user_content(
         reminder = "\n\n请用双单行 JSON 信封回复:控制 JSON 行 + {\"body\":\"正文\"} 行,不要直接说话或扮演动作。"
     elif mode == "runs":
         reminder = (
-            "\n\n请用双单行 JSON 信封回复最终答复:控制 JSON 行 + {\"body\":\"正文\"} 行"
-            "(可连续多份),工具间隙不要输出决策,不要直接说话或扮演动作。"
+            "\n\n请用双单行 JSON 信封回复：控制 JSON 行 + {\"body\":\"正文\"} 行（可连续多份）。"
+            + _RUNS_VISIBLE_REPLY_REMINDER
         )
     else:
         reminder = (
