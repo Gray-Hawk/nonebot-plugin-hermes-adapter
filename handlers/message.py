@@ -61,18 +61,21 @@ receive_message = on_message(rule=Rule(_ignore_rule), priority=98, block=True)
 class _DebounceState:
     """per-target 防抖状态。首条消息的 handler 常驻(睡满防抖窗口后 dispatch),
     期内后续消息只更新本状态并立即返回——合并语义:同一个人的碎片「拼接」
-    (文本换行拼、媒体追加),跨人碎片才「替换」载荷;截止时间顺延。"""
+    (文本换行拼、媒体追加),跨人碎片才「替换」载荷。
+    群聊首轮固定窗,其他真人提前到期;私聊仍按原规则顺延。"""
 
-    __slots__ = ("first_mono", "deadline_mono", "payload", "merged")
+    __slots__ = ("first_mono", "deadline_mono", "payload", "merged", "first_human_id")
 
     def __init__(self, first_mono: float, deadline_mono: float, payload: dict):
         self.first_mono = first_mono          # 首条消息到达时刻(monotonic),硬上限基准
-        self.deadline_mono = deadline_mono    # 当前截止时间,期内新消息可顺延
+        self.deadline_mono = deadline_mono    # 群聊只可提前;私聊期内可顺延
         self.payload = payload                # 最新触发的 dispatch 载荷(kwargs)
         self.merged = 0                       # 被合并掉的碎片条数(观测用)
+        self.first_human_id: str | None = None  # 不随 bot 替换触发载荷而丢失真人归属
 
 
 _debounce_states: dict[tuple[str, str], _DebounceState] = {}
+_GROUP_FIRST_WINDOW_SEC = 6.0  # 群聊首轮固定窗；同人不重置，其他真人插队立即到期
 
 
 def _keyword_soft_hit(keywords, text: str) -> bool:
@@ -131,30 +134,39 @@ def _debounce_arrive(
     max_wait_sec: float,
     now_mono: float,
     replaceable: bool = True,
+    fixed_window_sec: float | None = None,
+    fire_on_cross_human: bool = False,
+    trigger_sender_is_bot: bool = False,
 ) -> tuple[_DebounceState, bool]:
     """一条触发到达防抖闸。返回 (state, is_new)。
 
     is_new=True: 调用方是首条触发,负责睡满窗口后 dispatch(state.payload)。
     is_new=False: 本条被合并,调用方应立即返回。合并规则(坑2修复):
     同一个发送者的碎片一律拼接进在窗载荷(_merge_fragment_payload);
-    跨发送者碎片(群聊)按 replaceable 决定是否整体替换;截止时间顺延
-    (受 first+max_wait 硬上限)。
-    replaceable=False 用于「纯图/纯表情包非显式碎片」:顺延但不替换(该形态
+    跨发送者碎片(群聊)按 replaceable 决定是否整体替换。
+    fixed_window_sec 非空时保持首条截止,第二个不同真人使截止立即到期;
+    否则沿用私聊顺延(受 first+max_wait 硬上限)。
+    replaceable=False 用于「纯图/纯表情包非显式碎片」:不替换(该形态
     会在 reactive 图片门控被整 turn 吞掉,替换会弄丢先前的文本触发载荷)。
     get-or-create 与状态更新之间无 await,asyncio 单线程下原子。
     """
     st = _debounce_states.get(key)
     if st is None:
-        deadline = now_mono + debounce_sec
-        if max_wait_sec > 0:
-            # 首条也套 max_wait 硬上限——debounce_sec 配得比
-            # max_wait 大时,旧代码首条 deadline 会越过 first+max_wait 才发车。
-            deadline = min(deadline, now_mono + max_wait_sec)
+        if fixed_window_sec is not None:
+            deadline = now_mono + fixed_window_sec
+        else:
+            deadline = now_mono + debounce_sec
+            if max_wait_sec > 0:
+                # 首条也套 max_wait 硬上限——debounce_sec 配得比
+                # max_wait 大时,旧代码首条 deadline 会越过 first+max_wait 才发车。
+                deadline = min(deadline, now_mono + max_wait_sec)
         st = _DebounceState(
             first_mono=now_mono,
             deadline_mono=deadline,
             payload=payload,
         )
+        if not trigger_sender_is_bot:
+            st.first_human_id = payload.get("user_id")
         _debounce_states[key] = st
         return st, True
     if st.payload.get("delivery_generation") is not None and payload.get("delivery_generation") is not None \
@@ -163,6 +175,10 @@ def _debounce_arrive(
         # 新代到达时整批替换，旧 fragments 不 prepend；旧代随后才到则直接丢弃。
         if payload["delivery_generation"] > st.payload["delivery_generation"]:
             st.payload = payload
+            st.first_human_id = None if trigger_sender_is_bot else payload.get("user_id")
+        elif fixed_window_sec is not None:
+            # 群聊固定窗：迟到旧代不是有效插话，也不能影响发车时间。
+            return st, False
     elif st.payload.get("user_id") == payload.get("user_id"):
         _merge_fragment_payload(st.payload, payload)
     elif replaceable:
@@ -174,6 +190,19 @@ def _debounce_arrive(
             payload["fragments"] = prev_frags + list(payload.get("fragments") or [])
         st.payload = payload
     st.merged += 1
+    if fixed_window_sec is not None:
+        if (
+            fire_on_cross_human
+            and st.first_human_id is not None
+            and st.first_human_id != payload.get("user_id")
+            and not trigger_sender_is_bot
+        ):
+            # 其他真人插队：首条任务每 0.5s 重读 deadline，下一次循环即发车。
+            st.deadline_mono = min(st.deadline_mono, now_mono)
+        # 否则保持首条截止：后来的 bot 延迟配置不缩短也不抬高本窗。
+        if st.first_human_id is None and not trigger_sender_is_bot:
+            st.first_human_id = payload.get("user_id")
+        return st, False
     new_deadline = now_mono + debounce_sec
     if max_wait_sec > 0:
         new_deadline = min(new_deadline, st.first_mono + max_wait_sec)
@@ -345,7 +374,11 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         and _mcp.active_sessions.is_alive_for_trigger(adapter_name, group_id, now)
     )
 
-    if not is_direct and not in_active_window and not keyword_soft_hit:
+    # keyword 首条不打开活跃窗，但其防抖期内的普通续发/真人插话仍须入闸。
+    in_debounce_window = bool(group_id) and make_inflight_key(
+        adapter_name, target.private, user_id, group_id
+    ) in _debounce_states
+    if not is_direct and not in_active_window and not keyword_soft_hit and not in_debounce_window:
         logger.debug(f"[HERMES skip] not_active_not_explicit adapter={adapter_name} group={group_id} user={user_id}")
         matcher.skip()
 
@@ -380,7 +413,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
 
     # --- 应答防抖(本部署补丁) ---
     # 首条触发:登记状态 → 睡满防抖窗 → 拿合并后载荷 dispatch。
-    # 期内碎片:同人拼接/跨人替换 + 顺延截止(受 max_wait 硬上限)后立即返回,不另起 turn。
+    # 期内碎片:同人拼接/跨人替换后返回,不另起 turn;群聊固定窗,私聊沿用顺延。
     # 防抖期间不占 inflight slot;T2 定时/投递轮询不经过本 handler,天然不防抖。
     # 显式/隐式一视同仁——委托 @ 的直连豁免已砍除(本部署补丁):双 bot 场景下
     # 豁免让互 @ 零延迟直连、无限制器助燃互聊;砍后防抖窗即限速。跨人替换只换
@@ -404,18 +437,24 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     debounce_sec = (
         chat_cfg.reply_debounce_private_sec
         if target.private
-        else chat_cfg.reply_debounce_group_sec
+        else _GROUP_FIRST_WINDOW_SEC
     )
-    max_wait_sec = chat_cfg.reply_debounce_max_wait_sec
+    max_wait_sec = chat_cfg.reply_debounce_max_wait_sec if target.private else 0.0
+    sender_is_bot = _is_reply_delayed(user_id)
     # 本部署补丁: 强制延迟名单(仅 known_bots)——名单内用户的触发防抖窗提升到
     # reply_delay_for_bot_sec(防抖关闭也强制开窗,bot 交互限速器),
     # 顺延硬上限同步抬到不低于窗长,否则长窗会被默认 max_wait 钳回去。
-    if chat_cfg.reply_delay_for_bot_sec > 0 and _is_reply_delayed(user_id):
+    if chat_cfg.reply_delay_for_bot_sec > 0 and sender_is_bot:
         debounce_sec = max(debounce_sec, chat_cfg.reply_delay_for_bot_sec)
         # max_wait 的 0=不限语义优先:仅原本有上限时才抬升,0 严格保持不限
         if max_wait_sec > 0:
             max_wait_sec = max(max_wait_sec, chat_cfg.reply_delay_for_bot_sec)
-    if debounce_sec > 0:
+    # 群聊首轮固定 6 秒，不再读取 reply_debounce_group_sec／共用 max_wait；
+    # 仅保留已知 bot 首条专用延迟作为例外。群聊即使旧配置写 0 也走固定窗。
+    if group_id or debounce_sec > 0:
+        keyword_context = keyword_soft_hit or (
+            in_debounce_window and not is_direct and not in_active_window
+        )
         debounce_key = make_inflight_key(adapter_name, target.private, user_id, group_id)
         payload = dict(
             bot=bot,
@@ -433,17 +472,21 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             addressed_to_bot=addressed_to_bot,
             now_ms=now,
             replied_msg_id=replied_msg_id,
-            ephemeral=keyword_soft_hit and not in_active_window,
-            context_limit=chat_cfg.history_message_limit if keyword_soft_hit else None,
+            ephemeral=keyword_context and not in_active_window,
+            context_limit=chat_cfg.history_message_limit if keyword_context else None,
             fragments=[fragment],
         )
         # get-or-create 与状态更新之间无 await,asyncio 单线程下原子。
         loop = asyncio.get_running_loop()
         # 纯图/纯表情包非显式碎片不替换跨人载荷:它是 reactive 图片门控会整 turn
-        # 吞掉的形态,替换会把先前的文本触发载荷弄丢;但仍顺延截止(图已在 buffer
+        # 吞掉的形态,替换会把先前的文本触发载荷弄丢;真人仍可提前发车(图已在 buffer
         # 里,最终 turn 看得到)。同人碎片不走替换——_merge_fragment_payload 拼接,
         # 本保护只对群聊跨人碎片有意义。
-        media_only = (bool(image_urls) or bool(sticker_urls)) and not msg_text.strip()
+        # [表情包] 是程序占位,不是用户正文;不能让纯贴纸顶掉文本触发。
+        media_only = bool(image_urls or sticker_urls) and not (
+            keyword_match_text or quote_prefix or at_placeholders or forward_full
+            or any(p != "[表情包]" for p in nontext_placeholders)
+        )
         st, is_new = _debounce_arrive(
             debounce_key,
             payload,
@@ -451,6 +494,9 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             max_wait_sec=max_wait_sec,
             now_mono=loop.time(),
             replaceable=not (media_only and not is_direct),
+            fixed_window_sec=debounce_sec if group_id else None,
+            fire_on_cross_human=bool(group_id),
+            trigger_sender_is_bot=sender_is_bot,
         )
         if not is_new:
             logger.debug(

@@ -265,7 +265,7 @@ YAML_SPECS: dict[str, list[Any]] = {
             ["私聊触发后的防抖等待秒数，用于合并连发碎片；0 = 立即起跑。"],
             type_="float",
         ),
-        _Section("群聊触发、历史与回复：10 键"),
+        _Section("群聊触发、历史与回复：9 键"),
         _Key(
             "group_trigger",
             "keyword",
@@ -287,12 +287,10 @@ YAML_SPECS: dict[str, list[Any]] = {
             ["委托锚最长寿命秒数，超时自动释放，防止模型一直忘记松锚。"],
             type_="int",
         ),
-        _Key(
-            "reply_debounce_group_sec",
-            3.5,
-            ["群聊触发后的防抖等待秒数；0 = 立即起跑。"],
-            type_="float",
-        ),
+        _Header([
+            "# 群聊首轮固定 6 秒，同人续发不延长，其他真人插话立即发车，bot 不插队。",
+            "# 旧 reply_debounce_group_sec 已忽略，不再作为可调选项。",
+        ]),
         _Key(
             "reply_delay_for_bot_sec",
             0.0,
@@ -349,7 +347,7 @@ YAML_SPECS: dict[str, list[Any]] = {
         _Key(
             "reply_debounce_max_wait_sec",
             8.0,
-            ["公私聊共用的防抖最长等待秒数，从首条消息起算，防止不断顺延。"],
+            ["私聊防抖最长等待秒数，从首条消息起算；群聊首轮固定 6 秒，不读取此项。"],
             type_="float",
         ),
         _Key(
@@ -777,7 +775,7 @@ OLD_KEYS: dict[str, tuple[str, str | None, str]] = {
     "greet_on_join": ("chat", "greet_on_join", ""),
     "reactive_post_reply_cooldown_sec": ("deleted", None, "旧 post-reply 冷却闸整体删除，不新增替代键"),
     "prompt_timezone": ("misc", "prompt_timezone", ""),
-    "reply_debounce_group_sec": ("chat", "reply_debounce_group_sec", ""),
+    "reply_debounce_group_sec": ("fixed", None, "群聊首轮固定 6 秒；其他真人插话立即发车，bot 不插队"),
     "reply_debounce_private_sec": ("chat", "reply_debounce_private_sec", ""),
     "reply_debounce_max_wait_sec": ("chat", "reply_debounce_max_wait_sec", ""),
     "reply_delay_sec": ("chat", "reply_delay_for_bot_sec", "改名：只服务 bot 延迟"),
