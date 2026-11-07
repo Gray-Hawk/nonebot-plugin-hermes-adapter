@@ -46,6 +46,23 @@ class StickerLibraryTests(unittest.TestCase):
         self.assertEqual(total, 2)
         self.assertEqual(len(rows), 1)
 
+    def test_kinds_are_sorted_unique_and_follow_index_changes(self) -> None:
+        kinds = getattr(self.library, "kinds", None)
+        if kinds is None:
+            self.fail("缺少只读表情类型清单")
+        self.assertEqual(kinds(), ["开心", "无语|无奈"])
+        with (self.root / "index.csv").open("a", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["happy_again", "开心", "happy.png", "重复类型"])
+            writer.writerow(["cute", "卖萌", "speechless.png", "新增类型"])
+            writer.writerow(["empty", "", "happy.png", "空类型不注入"])
+        self.assertEqual(kinds(), ["卖萌", "开心", "无语|无奈"])
+        (self.root / "index.csv").write_text(
+            "id,kind,file,note\nspeechless,无语|无奈,speechless.png,只留一类\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(kinds(), ["无语|无奈"])
+
     def test_read_returns_original_bytes_and_rejects_path_escape(self) -> None:
         raw, mime = self.library.read("speechless")
         self.assertEqual(raw, PNG)

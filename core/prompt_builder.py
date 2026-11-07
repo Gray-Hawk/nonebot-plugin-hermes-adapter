@@ -38,7 +38,7 @@ from .message_buffer import (
 from .message_context import render_message_context_head
 from .message_origin import AuthorKind, MessageOrigin
 from .misc_config import load_misc_config
-from .sticker_library import sticker_feature_enabled
+from .sticker_library import default_sticker_library, sticker_feature_enabled
 
 
 _WEEKDAY_CN = "一二三四五六日"
@@ -466,6 +466,16 @@ _STICKER_TOOL_GUIDANCE = (
     "not_final=true 进入续跑（这是闲聊也可用的拆轮例外），下一轮再发文字"
 )
 
+
+def _render_sticker_tool_guidance() -> str:
+    """保留静态用法，只按当前索引追加 kind 清单，不带 ID、备注或文件名。"""
+    text = (
+        _STICKER_TOOL_GUIDANCE.replace("reply_text", "body")
+        if _json_lines_envelope() else _STICKER_TOOL_GUIDANCE
+    )
+    kinds = default_sticker_library().kinds()
+    return text + ("\n- 当前可用表情类型：" + "／".join(kinds) if kinds else "")
+
 # 本部署补丁: 群档案启用时的记忆写入路由提示。
 # 路径根需动态跟随 hermes_custom_dir 配置，不能写死。
 def _build_group_profile_routing_note(memory_root: str) -> str:
@@ -540,10 +550,7 @@ def build_reactive_system_prompt(
     }.get(_json_lines_mode(), _DECISION_PROTOCOL_BLOCK)
     parts = [protocol_block, _FILE_TOOL_GUIDANCE]
     if sticker_feature_enabled():
-        parts.append(
-            _STICKER_TOOL_GUIDANCE.replace("reply_text", "body")
-            if _json_lines_envelope() else _STICKER_TOOL_GUIDANCE
-        )
+        parts.append(_render_sticker_tool_guidance())
 
     # 会话上下文:稳定信息放路由提示附近,吃缓存
     if adapter and self_id:
@@ -767,10 +774,7 @@ def build_passive_system_prompt(
         }.get(_json_lines_mode(), _PRIVATE_DECISION_PROTOCOL_BLOCK)
     head += "\n\n" + _FILE_TOOL_GUIDANCE
     if sticker_feature_enabled():
-        head += "\n\n" + (
-            _STICKER_TOOL_GUIDANCE.replace("reply_text", "body")
-            if _json_lines_envelope() else _STICKER_TOOL_GUIDANCE
-        )
+        head += "\n\n" + _render_sticker_tool_guidance()
     # 群记忆外挂(定稿):群档案块拼在最末,字节稳定 per 群。
     # 本部署补丁:群档案功能启用时注入记忆写入路由提示。群聊用完整版(三层),
     # 私聊用简化版(两层,无群层面);功能关闭时不注入。路径根动态跟随 hermes_custom_dir。

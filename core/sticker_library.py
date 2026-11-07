@@ -128,6 +128,10 @@ class StickerLibrary:
         bounded = max(1, min(50, int(limit)))
         return rows[:bounded], len(rows)
 
+    def kinds(self) -> list[str]:
+        """返回去重、稳定排序的非空类型，供提示词按索引签名热更新。"""
+        return sorted({row.kind for row in self._load().values() if row.kind})
+
     def get(self, sticker_id: str) -> StickerEntry | None:
         return self._load().get(sticker_id)
 

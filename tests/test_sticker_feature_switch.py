@@ -75,6 +75,46 @@ class StickerFeatureSwitchTests(unittest.TestCase):
                     self.assertNotIn("search_sticker_library", prompt)
                     self.assertNotIn("表情=ID", prompt)
 
+    def test_prompt_appends_only_dynamic_kind_line(self) -> None:
+        from nonebot_plugin_hermes_adapter.config import plugin_config
+
+        old_iface = plugin_config.hermes_api_interface
+        object.__setattr__(plugin_config, "hermes_api_interface", "runs")
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "alpha.png").write_bytes(PNG)
+                (root / "beta.png").write_bytes(PNG)
+                (root / "index.csv").write_text(
+                    "id,kind,file,note\n"
+                    "alpha_id,无语|无奈,alpha.png,私有备注甲\n"
+                    "beta_id,开心,beta.png,私有备注乙\n",
+                    encoding="utf-8",
+                )
+                library = sticker_library.StickerLibrary(root)
+                sticker_library._STICKER_FEATURE_ENABLED = True
+                with patch.object(prompt_builder, "default_sticker_library", return_value=library, create=True):
+                    reactive = prompt_builder.build_reactive_system_prompt(
+                        adapter="qq", group_id="123456", self_id="999", self_nickname="bot"
+                    )
+                    passive = prompt_builder.build_passive_system_prompt(
+                        adapter="qq", is_private=True, user_id="123456", group_id=None,
+                        private_decision=True,
+                    )
+                    for prompt in (reactive, passive):
+                        self.assertIn("当前可用表情类型：开心／无语|无奈", prompt)
+                        self.assertNotIn("alpha_id", prompt)
+                        self.assertNotIn("beta_id", prompt)
+                        self.assertNotIn("私有备注甲", prompt)
+                        self.assertNotIn("alpha.png", prompt)
+                    (root / "index.csv").write_text("id,kind,file,note\n", encoding="utf-8")
+                    empty = prompt_builder.build_reactive_system_prompt(
+                        adapter="qq", group_id="123456", self_id="999", self_nickname="bot"
+                    )
+                    self.assertNotIn("当前可用表情类型：", empty)
+        finally:
+            object.__setattr__(plugin_config, "hermes_api_interface", old_iface)
+
     def test_startup_creates_template_without_overwriting(self) -> None:
         ensure = getattr(sticker_library, "ensure_sticker_library_template", None)
         if ensure is None:
