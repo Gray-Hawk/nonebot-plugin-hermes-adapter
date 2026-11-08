@@ -270,6 +270,7 @@ def build_help_text(
         if hermes_control_plane_enabled():
             lines.append(f"{_cl('run-status')} - 查看当前会话在跑的 run(管理员)")
             lines.append(f"{_cl('run-stop')} - 终止当前会话在跑的 run(管理员)")
+            lines.append(f"{_cl('compress')} - 手动压缩当前会话上下文(管理员)")
             lines.append(f"{_cl('reasoning')} - 查看/切换全局推理档位(管理员)")
         lines.append(f"{_cl('reload-config')} - 手动重载配置与表情库(管理员)")
 
@@ -499,6 +500,100 @@ async def handle_run_stop(bot: Bot, event: Event, matcher: Matcher):
         await alconna.UniMessage(f"🛑 已发送终止: {live.run_id}(协作式,正在收尾)").send(target=target, bot=bot)
     else:
         await alconna.UniMessage(f"终止请求未被受理: {live.run_id}(run 可能已自行结束)").send(target=target, bot=bot)
+
+# --- /compress(管理员;Runs 会话手动压缩控制) ---
+# 链路:QQ 命令 → 插件按当前会话 session key 调 gateway `POST /api/sessions/{id}/compress`
+# → 网关跑 messaging /compress 的同一实现(临时 agent + 共享 compress_now + 同一轮换持久化)。
+# 同会话正在跑 turn 时网关回 409 session_busy,这里只回执不重试;轮换时采纳新 session id。
+compress_command = on_command(
+    _cmd("compress"), aliases={_cmd("压缩")}, force_whitespace=True, priority=88, block=True
+)
+
+
+def compress_receipt_lines(
+    result: dict, *, previous_key: str, adopted: bool | None = None
+) -> list[str]:
+    """把压缩结果拼成 QQ 回执(纯函数,便于离线测)。
+
+    ``adopted``: 轮换时插件映射是否成功换到新 id(None = 未发生轮换)。
+    """
+    if result.get("ok"):
+        before = int(result.get("before_messages") or 0)
+        after = int(result.get("after_messages") or 0)
+        status = str(result.get("status") or "compressed")
+        if status == "preview":
+            head = "🗜️ 压缩预览(未写入)"
+        elif status == "nothing_to_do":
+            head = "🗜️ 没有可压缩的内容(会话太短或无可摘要中段)"
+        elif status == "aborted":
+            head = f"🗜️ 未压缩(摘要被拒或中止,消息仍是 {before} 条)"
+        else:
+            head = f"🗜️ 会话压缩完成:{before} → {after} 条消息"
+        lines = [head]
+        if result.get("rotated"):
+            lines.append(f"↪️ 会话已轮换:{previous_key} → {result.get('session_id')}")
+            if adopted:
+                lines.append("✅ 插件已采纳新会话 id")
+            elif adopted is False:
+                lines.append("⚠️ 新会话 id 未能写入插件映射(映射已变),下轮可能仍按旧 id 提交")
+        elif result.get("in_place"):
+            lines.append(f"🧷 in-place 压缩,session 不变:{previous_key}")
+        message = str(result.get("message") or "").strip()
+        if message:
+            lines.append(message)
+        return lines
+    code = int(result.get("code") or 0)
+    status = str(result.get("status") or "")
+    if code == 409 and status in {"session_busy", "session_compressing", "session_turn_active"}:
+        return [
+            "⏳ 当前会话正忙,压缩未执行:"
+            f"{'正在跑 turn' if status != 'session_compressing' else '已有一次压缩在进行'}",
+            "等它结束再发一次;不会并发压缩,也没有全局互斥。",
+        ]
+    if code == 404:
+        return ["⚠️ 网关侧没有这个会话(尚未建立或已被清理),无需压缩"]
+    detail = str(result.get("error") or "未知错误")[:200]
+    return [f"⚠️ 压缩失败(HTTP {code or '-'} {status or ''}):{detail}"]
+
+
+@compress_command.handle()
+async def handle_compress(bot: Bot, event: Event, matcher: Matcher):
+    """手动压缩当前会话上下文(管理员;同会话忙碌时明确拒绝)"""
+    target = alconna.get_target()
+    if not check_isolation(event, target):
+        matcher.skip()
+    adapter_name = get_adapter_name(target)
+    user_id = event.get_user_id() or ""
+    if not _is_admin(adapter_name, user_id):
+        logger.debug(f"[HERMES] /compress silent skip for {adapter_name}:{user_id}")
+        return  # 隐身策略(同 /run-status):不暴露命令存在性
+    if not hermes_control_plane_enabled():
+        await alconna.UniMessage(_HERMES_CONTROL_UNAVAILABLE).send(target=target, bot=bot)
+        return
+    is_private = target.private
+    group_id = None if is_private else target.id
+    # 手动压缩针对"当前聊天所在会话";Runs 通道下这就是 X-Hermes-Session-Id 携带的值。
+    session_key = session_manager.get_session_key(adapter_name, is_private, user_id, group_id)
+    raw = ""
+    try:
+        raw = event.get_plaintext().strip()
+    except Exception:
+        pass
+    focus = _tail_args(raw)  # 可选焦点主题(剥掉命令头/寻址前缀)
+    result = await hermes_client.compress_session(
+        tgt=resolve_target(adapter_name, is_private, group_id),
+        session_key=session_key,
+        focus_topic=focus,
+    )
+    adopted: bool | None = None
+    new_key = str(result.get("session_id") or "")
+    if result.get("ok") and result.get("rotated") and new_key and new_key != session_key:
+        # 轮换后旧会话已 closed;必须采纳新 id,别把后续 turn 写回已关闭的旧会话。
+        adopted = session_manager.adopt_session_key(session_key, new_key)
+        logger.info(f"[HERMES] /compress 轮换采纳: {session_key} -> {new_key} adopted={adopted}")
+    lines = compress_receipt_lines(result, previous_key=session_key, adopted=adopted)
+    await alconna.UniMessage("\n".join(lines)).send(target=target, bot=bot)
+
 
 # --- /reasoning(管理员;全局推理档位快切) ---
 # 链路:hermes config set 原子改写 config.yaml → api_server 每请求现读 → 即时全局生效,

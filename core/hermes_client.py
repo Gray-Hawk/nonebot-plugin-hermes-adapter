@@ -1788,6 +1788,82 @@ class HermesClient:
             logger.debug(f"[HERMES] steer 请求失败 run_id={run_id}: {exc}")
             return False
 
+    async def compress_session(
+        self,
+        *,
+        tgt: HermesTarget,
+        session_key: str,
+        focus_topic: str = "",
+        partial: bool = False,
+        keep_last: int = 2,
+        timeout: int = 900,
+    ) -> dict[str, Any]:
+        """POST /api/sessions/{id}/compress —— Runs 会话的手动压缩控制(本部署补丁)。
+
+        网关侧跑的就是 messaging ``/compress`` 的同一实现(临时 agent + 共享
+        ``compress_now`` + 同一轮换持久化),插件这里只是按 session id 触发并取回结果,
+        不重写压缩器、不另存会话历史。
+
+        返回::
+
+            {"ok": bool, "status": str, "code": int, "session_id": str,
+             "rotated": bool, "in_place": bool, "before_messages": int,
+             "after_messages": int, "message": str, "error": str}
+
+        - ``session_id``: 压缩后的会话 id。``rotated=True``(网关 ``compression.in_place:
+          false``)时是新的 continuation,调用方必须采纳,不能写回已结束的旧会话;
+          ``in_place=True`` 时与原 id 相同。
+        - 409: 同会话正在跑 turn(``session_busy``)或正在压缩(``session_compressing``),
+          原样归类给调用方,不重试——忙碌是明确冲突,不是可静默吞掉的失败。
+        - 404: 会话在网关侧不存在(未建立/已清理)。
+        """
+        from urllib.parse import quote
+
+        out: dict[str, Any] = {
+            "ok": False, "status": "", "code": 0, "session_id": session_key,
+            "rotated": False, "in_place": False, "before_messages": 0,
+            "after_messages": 0, "message": "", "error": "",
+        }
+        body: dict[str, Any] = {}
+        if focus_topic:
+            body["focus"] = focus_topic
+        if partial:
+            body["partial"] = True
+            body["keep_last"] = max(1, int(keep_last))
+        url = f"{tgt.base_url}/api/sessions/{quote(session_key, safe='')}/compress"
+        try:
+            client = _get_http_client()
+            resp = await client.post(
+                url, json=body, headers=self.get_headers(api_key=tgt.api_key), timeout=timeout
+            )
+        except Exception as exc:
+            out["error"] = f"请求异常: {exc}"
+            return out
+        out["code"] = resp.status_code
+        try:
+            data = resp.json() if resp.content else {}
+        except ValueError:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        if resp.status_code == 200:
+            after = data.get("session_id_after") or resp.headers.get("X-Hermes-Session-Id") or session_key
+            out.update(
+                ok=True,
+                status=str(data.get("status") or "compressed"),
+                session_id=str(after),
+                rotated=bool(data.get("rotated")),
+                in_place=bool(data.get("in_place")),
+                before_messages=int(data.get("before_messages") or 0),
+                after_messages=int(data.get("after_messages") or 0),
+                message=str(data.get("message") or ""),
+            )
+            return out
+        err = data.get("error") if isinstance(data.get("error"), dict) else {}
+        out["status"] = str(err.get("code") or "")
+        out["error"] = str(err.get("message") or resp.text[:300] or f"HTTP {resp.status_code}")
+        return out
+
     async def _submit_run_with_replay(
         self, client: httpx.AsyncClient, tgt: HermesTarget, body: dict, submit_headers: dict, timeout: int
     ):
