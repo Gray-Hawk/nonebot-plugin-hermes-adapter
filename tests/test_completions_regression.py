@@ -248,7 +248,7 @@ class ChatDecodeFailureTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(captured)
         system = captured[-1]["messages"][0]["content"]
-        self.assertIn("插话原则(决定是否回复;决定回复时 body 必须非空):", system)
+        self.assertIn("插话原则（决定是否回复；决定回复时 body 必须非空）：", system)
         self.assertNotIn("插话原则(决定 body 是否为空):", system)
         for legacy in ("single JSON object", "should_reply", "reply_text", "submit_decision"):
             self.assertNotIn(legacy, system)
@@ -297,17 +297,17 @@ class CompletionsGateAndPromptTests(unittest.TestCase):
 
     def test_actual_prompt_has_no_legacy_fields_for_completions(self) -> None:
         prompt = self._as_interface("completions", lambda: self.pb.build_reactive_system_prompt())
-        self.assertIn("双单行 JSON", prompt)
-        self.assertIn("插话原则(决定是否回复;决定回复时 body 必须非空):", prompt)
+        self.assertIn("每份决策固定两行", prompt)
+        self.assertIn("插话原则（决定是否回复；决定回复时 body 必须非空）：", prompt)
         self.assertNotIn("插话原则(决定 body 是否为空):", prompt)
         self.assertNotIn("submit_decision", prompt)
         self.assertNotIn("should_reply", prompt)
         self.assertNotIn("reply_text", prompt)
         self.assertNotIn("topic_hint", prompt)
         runs_prompt = self._as_interface("runs", lambda: self.pb.build_reactive_system_prompt())
-        # E2:runs 终态也走双单行 JSON(可多份,只约束最终答复)
-        self.assertIn("双单行 JSON", runs_prompt)
-        self.assertIn("若干份两行 JSON", runs_prompt)
+        # Runs 轮中／终态共用完整两行信封，多份规则按第三版定稿。
+        self.assertIn("每份决策固定两行", runs_prompt)
+        self.assertIn("需要连发多条时，按顺序接上下一份两行 JSON", runs_prompt)
         self.assertIn("工具间隙", runs_prompt)
         self.assertNotIn("submit_decision", runs_prompt)
         self.assertNotIn("should_reply", runs_prompt)

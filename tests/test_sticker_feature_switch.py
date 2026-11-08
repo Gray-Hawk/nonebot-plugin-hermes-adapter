@@ -56,7 +56,7 @@ class StickerFeatureSwitchTests(unittest.TestCase):
             object.__setattr__(plugin_config, "hermes_api_interface", old_iface)
 
     def _run_sticker_guidance_case(self) -> None:
-        runs_guidance = prompt_builder._STICKER_TOOL_GUIDANCE.replace("reply_text", "body")
+        runs_guidance = "- 发送表情时，body 仅写 表情=ID（半角等号），不要带其他文字。"
         for enabled in (True, False):
             sticker_library._STICKER_FEATURE_ENABLED = enabled
             reactive = prompt_builder.build_reactive_system_prompt(
@@ -69,11 +69,12 @@ class StickerFeatureSwitchTests(unittest.TestCase):
             for prompt in (reactive, passive):
                 if enabled:
                     self.assertIn(runs_guidance, prompt)
-                    self.assertIn("推荐使用表情", prompt)
+                    self.assertIn("闲聊时可以自然地用表情表达想法和情绪", prompt)
+                    self.assertNotIn("not_final", prompt)
                     self.assertIn("可只回一个表情，不附文字", prompt)
                 else:
                     self.assertNotIn(runs_guidance, prompt)
-                    self.assertNotIn("推荐使用表情", prompt)
+                    self.assertNotIn("闲聊时可以自然地用表情表达想法和情绪", prompt)
                     self.assertNotIn("search_sticker_library", prompt)
                     self.assertNotIn("表情=ID", prompt)
 

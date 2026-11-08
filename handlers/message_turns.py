@@ -393,19 +393,19 @@ def _handle_envelope_rejection(
     )
     if runs_rules:
         note = (
-            "系统提示:上一轮终态不是合法的两行决策(有控制没正文、残段或非法尾随)。"
-            "请每份只写一行控制 JSON + 一行 {\"body\":\"...\"},多份按顺序接在后面,"
+            "系统提示：上一轮终态不是合法的两行决策（有控制没正文、残段或非法尾随）。"
+            "请每份只写一行控制 JSON + 一行 {\"body\":\"...\"}，多份按顺序接在后面，"
             "不要全角括号、不要额外转义。"
         )
         prompt = (
             "上一轮终态信封不合法：每份必须是一行控制 JSON + 一行正文对象，"
-            "且整段必须能被若干完整两份恰好消费完(不能有残段)。"
+            "且整段必须能被若干完整两份恰好消费完（不能有残段）。"
             "请重新按这个形状输出，不要全角括号、不要额外转义。"
         )
     else:
         note = (
-            "系统提示:上一轮信封炸了(决策字段不全或多行多份)。"
-            "请只输出一行决策字段 JSON,再一行 body,不要全角括号、不要额外转义。"
+            "系统提示：上一轮信封炸了（决策字段不全或多行多份）。"
+            "请只输出一行决策字段 JSON，再一行 body，不要全角括号、不要额外转义。"
         )
         prompt = (
             "上一轮信封不合法：决策字段不全或出现多行／多份。"
@@ -427,6 +427,16 @@ def _handle_envelope_rejection(
     _settle(result, "suppressed", "envelope_rejected")
 
 
+
+
+def _missing_envelope_note() -> str:
+    """近因便签也按接口隔离；不能用通用便签推翻轮中／最终输出规则。"""
+    head = "系统提示：你上一轮的最终回复没有包双单行 JSON 信封（走了散文兜底）。"
+    if plugin_config.hermes_api_interface == "runs":
+        return head + "受理回执、进度、结果和最终答复都必须使用完整决策信封，正文放在 body，不能用普通旁白或最终裸文本代替。"
+    if plugin_config.hermes_api_interface == "completions":
+        return head + "轮中进度使用 push_message；最终答复必须是控制 JSON 行 + {\"body\":\"正文\"} 行，正文放在 body，不能用普通旁白或最终裸文本代替。"
+    return "系统提示：你上一轮的最终回复没有包 submit_decision JSON 信封（走了散文兜底）。最终答复必须输出单个 JSON 对象，正文放进 reply_text 字段。"
 
 
 def _should_hard_silence_envelope(result) -> bool:
@@ -841,6 +851,31 @@ def _make_runs_live_decisions(
     即时发送并由终态 E2 路径补发。发送段异常只记日志，不让 SSE 消费循环崩。
     """
     state = {"sent_any": False, "suppressed_any": False, "last_reply_at": 0, "outcomes": {}}
+    prepared = {}
+
+    def prepare(decision: dict, run_id: str):
+        from ..core.runs_terminal import append_stream_unit, units_from_decisions
+
+        pairs = units_from_decisions([decision])
+        if pairs:
+            prepared[id(decision)] = append_stream_unit(
+                tracker=_mcp.run_tracker, run_id=run_id, unit=pairs[0][1],
+            )
+
+    key = make_inflight_key(adapter_name, is_private, user_id, group_id)
+
+    def set_busy(busy: bool):
+        inflight = getattr(_mcp, "inflight", None)
+        if inflight is not None:
+            inflight.set_reply_batch_busy(key, busy)
+
+    async def on_drained():
+        from .message_relay import _release_runs_batch_inputs
+
+        try:
+            await _release_runs_batch_inputs(key, adapter_name, is_private, user_id, group_id)
+        except Exception:
+            logger.warning("[HERMES] 发送批后 steer 释放失败，输入仍留原接力槽", exc_info=True)
 
     async def deliver(decision: dict, run_id: str) -> None:
         from ..core.runs_terminal import append_stream_unit, units_from_decisions
@@ -850,7 +885,9 @@ def _make_runs_live_decisions(
             return  # 空 body/静默份：只占决策序，不占发送序，控制留给终态
         _, unit = pairs[0]
         tracker = _mcp.run_tracker
-        ctx = append_stream_unit(tracker=tracker, run_id=run_id, unit=unit)
+        ctx = prepared.pop(id(decision), None)
+        if ctx is None:
+            ctx = append_stream_unit(tracker=tracker, run_id=run_id, unit=unit)
         index = int(str(ctx.component_id).split(":")[-1])
         body = unit["body"]
         media_urls = list(unit["media_urls"])
@@ -873,6 +910,10 @@ def _make_runs_live_decisions(
             log_tag="HERMES live",
         )
         state["sent_any"] = True  # 与 E2 同口径：尝试过发送就不在收口时记 silent
+        if decision.get("_runs_terminal_only"):
+            from types import SimpleNamespace
+
+            await _await_order_gate(SimpleNamespace(run_id=run_id))
         sent = await send_text_with_media(
             bot=bot, target=target, text=body, media_urls=media_urls,
             reply_qq_message_id=resolved_reply.qq_message_id if resolved_reply else None,
@@ -929,6 +970,9 @@ def _make_runs_live_decisions(
         )
 
     setattr(deliver, "has_sent", lambda: bool(state["sent_any"]))
+    setattr(deliver, "prepare", prepare)
+    setattr(deliver, "set_busy", set_busy)
+    setattr(deliver, "on_drained", on_drained)
     return deliver, state
 
 
@@ -1385,12 +1429,7 @@ async def _run_passive_turn(
                 and not getattr(result, "parse_failed_reason", "")):
             task_notes.push_plugin_note(
                 _fb_key, "envelope_missing",
-                ("系统提示:你上一轮的最终回复没有包双单行 JSON 信封(走了散文兜底)。"
-                 "受理回执、进度、结果和最终答复都必须是控制 JSON 行 + {\"body\":\"正文\"} 行；"
-                 "正文放在 body，不能用普通旁白或最终文本代替。"
-                 if _json_lines_interface() else
-                 "系统提示:你上一轮的最终回复没有包 submit_decision JSON 信封(走了散文兜底)。"
-                 "最终答复必须输出单个 JSON 对象,正文放进 reply_text 字段;过程想法走旁白即可。"),
+                _missing_envelope_note(),
                 cooldown_sec=3600.0,
             )
         if use_private_decision and getattr(result, "parse_failed_reason", ""):
@@ -1421,7 +1460,10 @@ async def _run_passive_turn(
 
     async def _deliver_passive_once(reply_text: str, decision, index: int) -> None:
         nonlocal passive_attempted, passive_suppressed
-        if passive_batch_units is not None and index < streamed_unit_count:
+        outcome = (_live_state.get("outcomes") or {}).get(id(decision))
+        if passive_batch_units is not None and index < streamed_unit_count \
+                and ((outcome and outcome[0] in ("sent", "suppressed"))
+                     or (not outcome and not (decision or {}).get("_live_delivery_failed"))):
             # E3:该份正文已在 run 内即时发送；控制已按顺序消费，这里不重发。
             return
         # 类②拦截点(passive,规划书 §3.3):reply_text 定稿后、extract_response_media 前。
@@ -2023,12 +2065,7 @@ async def _run_reactive_turn(
             task_notes.push_plugin_note(
                 _feedback_scope_key(adapter_name, False, user_id, group_id),
                 "envelope_missing",
-                ("系统提示:你上一轮的最终回复没有包双单行 JSON 信封(走了散文兜底)。"
-                 "受理回执、进度、结果和最终答复都必须是控制 JSON 行 + {\"body\":\"正文\"} 行；"
-                 "正文放在 body，不能用普通旁白或最终文本代替。"
-                 if _json_lines_interface() else
-                 "系统提示:你上一轮的最终回复没有包 submit_decision JSON 信封(走了散文兜底)。"
-                 "最终答复必须输出单个 JSON 对象,正文放进 reply_text 字段;过程想法走旁白即可。"),
+                _missing_envelope_note(),
                 cooldown_sec=3600.0,
             )
         # 上游 transport_error(5xx / 网络断 / 流被掐):raw_text 是服务端错误信息原文
@@ -2300,7 +2337,7 @@ async def _run_reactive_turn(
                 task_notes.push_plugin_note(
                     _feedback_scope_key(adapter_name, False, user_id, group_id),
                     "anchor-merge-invalid",
-                    f"你上一轮填的 anchor_merge={candidate} 不在在钉锚发起者集合,已忽略;"
+                    f"你上一轮填的 anchor_merge={candidate} 不在在钉锚发起者集合，已忽略；"
                     "要归并请填在钉任务的发起者 id",
                     cooldown_sec=0,
                 )
@@ -2396,7 +2433,7 @@ async def _run_reactive_turn(
                     _feedback_scope_key(adapter_name, False, user_id, group_id),
                     "answer-anchor-invalid",
                     f"你上一轮填的 answer_anchor={who} 不在当前在钉锚委托人集合"
-                    f"({sorted(valid_ids) or '空'}),已忽略;要标应答请填在钉委托人的 id 或 all",
+                    f"（{sorted(valid_ids) or '空'}），已忽略；要标应答请填在钉委托人的 id 或 all",
                     cooldown_sec=0,
                 )
                 logger.info(
@@ -2454,7 +2491,11 @@ async def _run_reactive_turn(
                 continue
             unit_index = send_index
             send_index += 1
-            live_sent = id(decision) in streamed_ids
+            outcome = (_live_state.get("outcomes") or {}).get(id(decision))
+            live_sent = id(decision) in streamed_ids and bool(
+                (outcome and outcome[0] in ("sent", "suppressed"))
+                or (not outcome and not decision.get("_live_delivery_failed"))
+            )
             if live_sent:
                 # E3/R5/R6:正文已在 run 内即时发送，终态只跳过重复正文与历史落账；
                 # 既定轮级控制(发言开窗/touch/mark/锚 answer/release)仍按终态

@@ -228,6 +228,7 @@ def _merge_recovered_batch(
 @dataclass
 class InflightSlot:
     started_at: int
+    reply_batch_busy: bool = False
     # 非委托旁观触发:只留最新一条,turn 结束后补一次跟进即可。
     followup: PendingEntry | None = None
     # 委托触发:按到达顺序 FIFO;同一委托人重复触发合并进已排队条目。
@@ -343,6 +344,33 @@ class InflightRegistry:
         """
         slot = self._slots.get(key)
         return slot.followup if slot is not None else None
+
+    def set_reply_batch_busy(self, key: tuple[str, str], busy: bool) -> None:
+        """复用执行槽挡住当前发送批期间的 steer；不另建输入队列。"""
+        slot = self._slots.get(key)
+        if slot is not None:
+            slot.reply_batch_busy = busy
+
+    def reply_batch_busy(self, key: tuple[str, str]) -> bool:
+        slot = self._slots.get(key)
+        return slot is not None and slot.reply_batch_busy
+
+    def steer_pending(self, key: tuple[str, str]) -> list[PendingEntry]:
+        """当前槽快照；排空发送批时仍走原逐行 steer／结算逻辑。"""
+        slot = self._slots.get(key)
+        if slot is None:
+            return []
+        return [*slot.commissions, *([slot.followup] if slot.followup is not None else [])]
+
+    def contains_pending(self, key: tuple[str, str], entry: PendingEntry) -> bool:
+        return any(item is entry for item in self.steer_pending(key))
+
+    def settle_pending(self, key: tuple[str, str], entry: PendingEntry) -> None:
+        """按对象身份结算已呈递条目，绝不碰后来并入的行或别的条目。"""
+        slot = self._slots.get(key)
+        if slot is not None:
+            slot.commissions = deque(item for item in slot.commissions if item is not entry)
+            self.settle_followup(key, entry)
 
     def settle_followup(self, key: tuple[str, str], entry: PendingEntry) -> None:
         """steer 注入成功后结算:仅当槽里还是同一个条目(identity)才摘除。
@@ -527,6 +555,11 @@ class InflightRegistry:
                 queued.fragments = merged_fragments
                 return "queued"
         if len(slot.commissions) >= MAX_PENDING_COMMISSIONS:
+            if slot.reply_batch_busy:
+                # 发送批期间只是暂存，不因原委托上限丢掉本来可 steer 的消息。
+                # 复用已有 followup 合并槽，逐行身份／媒体仍由 fragments 保留。
+                self.add_followup(key, entry)
+                return "queued"
             # queue_full 静默丢弃是设计定案(勿「修」成贴表情/报错):
             # 反馈表情用户看不明白、还可能被刺激反复 @ 刷屏;委托被丢用户自己会察觉
             # 再找 bot。代价不对称,静默是对的。

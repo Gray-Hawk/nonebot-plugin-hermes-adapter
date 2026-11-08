@@ -383,6 +383,10 @@ async def _steer_text_into_live_run(
     tracker = _mcp.run_tracker
     if tracker is None:
         return SteerInjection(False)
+    inflight = getattr(_mcp, "inflight", None)
+    key = make_inflight_key(adapter_name, is_private, user_id, group_id)
+    if inflight is not None and inflight.reply_batch_busy(key) is True:
+        return SteerInjection(False)
     live = tracker.get_by_scope(make_scope_key(adapter_name, is_private, user_id, group_id))
     if live is None:
         return SteerInjection(False)
@@ -642,7 +646,10 @@ async def _try_steer_followup(
     key: tuple[str, str],
     adapter_name: str,
     user_id: str,
-    group_id: str,
+    group_id: str | None,
+    *,
+    entry: PendingEntry | None = None,
+    is_private: bool = False,
 ) -> bool:
     """阶段2b:把 followup 槽里的跟帖 steer 注入在跑的 run,成功=True(不再排队)。
 
@@ -669,14 +676,14 @@ async def _try_steer_followup(
     if tracker is None:
         logger.info(f"[HERMES steer探针] 早退: run_tracker 为 None (group={group_id})")
         return False
-    entry = _mcp.inflight.peek_followup(key)
+    entry = entry if entry is not None else _mcp.inflight.peek_followup(key)
     if entry is None:
         logger.info(f"[HERMES steer探针] 早退: followup 槽为空 (group={group_id} key={key})")
         return False
     if not entry.msg.origin.allows_steer:
         logger.info(f"[HERMES steer探针] 早退: 来源不允许 steer (group={group_id})")
         return False
-    live = tracker.get_by_scope(make_scope_key(adapter_name, False, user_id, group_id))
+    live = tracker.get_by_scope(make_scope_key(adapter_name, is_private, user_id, group_id))
     if live is None:
         logger.info(
             f"[HERMES steer探针] 早退: 查无 live run (group={group_id} "
@@ -730,7 +737,7 @@ async def _try_steer_followup(
         )
         return False
     outcome = await _steer_text_into_live_run(
-        adapter_name, False, user_id, group_id, presentation=presentation
+        adapter_name, is_private, user_id, group_id, presentation=presentation
     )
     if not outcome.ok:
         logger.info(
@@ -740,7 +747,7 @@ async def _try_steer_followup(
     # 槽是否仍归本次调用结算:await 期间 run 收尾可由 pop_next_pending 把条目取走
     # 走接力。晚到接受(200)的善后必须看这个事实,否则同一原始行会被接力轮和
     # 对账各呈递一次。
-    slot_still_ours = _mcp.inflight is not None and _mcp.inflight.peek_followup(key) is entry
+    slot_still_ours = _mcp.inflight is not None and _mcp.inflight.contains_pending(key, entry)
     # 结算冻结集(P-07/P-18):本批真正发出的行,以及本 run 台账已确认的原始行,
     # 按对象身份/行号从槽里摘掉。槽只保留尚未呈现的 fragment——await 期间并入的
     # 新行、以及别的重叠入口正在发送的行(那个入口成功时由它摘、失败时留槽接力)。
@@ -787,8 +794,8 @@ async def _try_steer_followup(
     # 接力轮手里的旧列表就是它当时的完整快照,不被这里改到一半。
     entry.fragments = remaining
     if not remaining:
-        if _mcp.inflight.peek_followup(key) is entry:
-            _mcp.inflight.settle_followup(key, entry)
+        if _mcp.inflight.contains_pending(key, entry):
+            _mcp.inflight.settle_pending(key, entry)
     else:
         # await 期间并入了新 fragment,或仍有别的入口在途的行:留槽走 pending,
         # 只把已呈现的部分摘掉。
@@ -823,6 +830,29 @@ async def _try_steer_followup(
         f"user={entry.msg.user_id} run_id={live.run_id} len={len(presentation.text)})"
     )
     return True
+
+async def _release_runs_batch_inputs(
+    key: tuple[str, str], adapter_name: str, is_private: bool,
+    user_id: str, group_id: str | None,
+) -> None:
+    """只释放已排空发送批的暂存输入；失败／媒体／无 live run 原样留槽接力。"""
+    inflight = _mcp.inflight
+    if inflight is None or inflight.reply_batch_busy(key) is True:
+        return
+    for entry in inflight.steer_pending(key):
+        if inflight.reply_batch_busy(key) is True:
+            break
+        if not inflight.contains_pending(key, entry):
+            continue
+        if not is_private and entry is not inflight.peek_followup(key):
+            if entry.msg.user_id not in _steer_eligible_ids(
+                adapter_name, False, user_id, group_id, _now_ms(),
+            ):
+                continue
+        await _try_steer_followup(
+            key, adapter_name, user_id, group_id, entry=entry, is_private=is_private,
+        )
+
 
 async def _handle_reactive_path(
     *,

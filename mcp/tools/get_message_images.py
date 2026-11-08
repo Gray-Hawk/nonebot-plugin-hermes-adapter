@@ -221,7 +221,7 @@ async def get_message_images_impl(
                 if n_blocks == 1:
                     marker = f"[{kind} for m:{message_id} idx={idx}]"
                 else:
-                    marker = f"[{kind} for m:{message_id} idx={idx} 第{bi + 1}/{n_blocks}帧,同一动图按时间顺序]"
+                    marker = f"[{kind} for m:{message_id} idx={idx} 第{bi + 1}/{n_blocks}帧，同一动图按时间顺序]"
                 content_blocks.append(TextContent(type="text", text=marker))
                 content_blocks.append(
                     ImageContent(

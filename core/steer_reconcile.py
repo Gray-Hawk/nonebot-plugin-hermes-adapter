@@ -384,8 +384,8 @@ def _build_case_a_text(rows, missing) -> tuple[str | None, bool]:
         return None, True
 
     parts: list[str] = [
-        "(系统核对:补投一条你被吞的中途插话。刚才那个 turn 里,你在模型调用飞行途中"
-        "插入的指示因上游缺陷(v0.22.1 引入的 steer 丢弃)没能送达。原时间线重构如下:",
+        "（系统核对：补投一条你被吞的中途插话。刚才那个 turn 里，你在模型调用飞行途中"
+        "插入的指示因上游缺陷（v0.22.1 引入的 steer 丢弃）没能送达。原时间线重构如下：",
     ]
     if trigger_text.strip():
         parts.append(f"[你当时的触发消息] {trigger_text}")
@@ -396,13 +396,13 @@ def _build_case_a_text(rows, missing) -> tuple[str | None, bool]:
     for t in reversed(delivered_steers):
         parts.append(f"[已送达的中途插话] {t}")
     for p in missing:  # 已按 accepted_at 升序
-        parts.append(f"[★被吞的插话,本应在这里生效] {_strip_convention(p['steer_text'])}")
-    parts.append(f"[我的最终回复] {final_reply[:500] if final_reply else '(空)'}")
+        parts.append(f"[★被吞的插话，本应在这里生效] {_strip_convention(p['steer_text'])}")
+    parts.append(f"[我的最终回复] {final_reply[:500] if final_reply else '（空）'}")
     if tool_count:
-        parts.append(f"(其间我还调用了 {tool_count} 次工具)")
+        parts.append(f"（其间我还调用了 {tool_count} 次工具）")
     parts.append(
-        "请把 ★ 处插话按它本来的位置与意图理解并回应;若其内容与最终回复冲突,"
-        "以插话为准重新执行。)"
+        "请把 ★ 处插话按它本来的位置与意图理解并回应；若其内容与最终回复冲突，"
+        "以插话为准重新执行。）"
     )
     return "\n".join(parts), False
 

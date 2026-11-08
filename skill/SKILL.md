@@ -20,13 +20,16 @@ allows you to send messages back via the `push_message` tool.
 
 ## Modes
 
-- **reactive** (M1): A user @-mentioned you in a group. For the next 5 minutes you can
-  freely insert messages into that group via either:
-  1. Returning a two-line decision envelope in your normal chat completion response
-     (a control JSON line followed by a body JSON line). The plugin sends the body for
-     you. **This is the preferred path** — it preserves the agent loop.
-  2. Calling `push_message` directly. Use only for **delayed** replies that don't fit the
-     request/response shape (e.g., "let me think… [later] here's my answer").
+- **reactive** (M1): A user invited you into an active group conversation. Follow the
+  current system prompt's interface-specific contract; private chats use their own
+  addressing rules and never need mention markers.
+- **Runs:** Send visible acknowledgements, progress and results as complete two-line
+  decision envelopes at the moment they are needed. Continue actual tool work in the
+  same run; several consecutive envelopes are allowed. Do not use tool pushes in an
+  active run. Ordinary narration and bare final text are not visible chat replies.
+- **completions:** Use `push_message` for visible mid-turn progress. The final answer
+  must still be a decision envelope, not a tool push. For an unfinished long task,
+  send its acknowledgement with the continuation control described below.
 
 ## Tools
 
@@ -134,7 +137,7 @@ In reactive mode, your final reply MUST be a two-line JSON envelope:
 {"body": "reply text"}                 // body line — exactly one string field
 ```
 
-The control line may carry `reply_to`, `not_final`, `should_exit_active`, `pin_anchor`,
+The control line may carry `reply_to`, `should_exit_active`, `pin_anchor`,
 `release_anchor`, `answer_anchor`, `anchor_merge`, `background_task`. Omitted fields take
 their defaults; unknown fields are ignored.
 
@@ -142,10 +145,11 @@ The body line is always `{"body":"..."}`. A non-empty body is sent to the chat a
 empty body means silence. On Runs you may emit several envelopes back-to-back (a blank
 line between them is allowed).
 
-`not_final: true` means this reply is NOT your final result but a task acknowledgement —
+On completions only, `not_final: true` means this reply is NOT your final result but a task acknowledgement —
 the plugin resends it as-is and immediately fires a continue turn so you can actually do
 the work. Use it only when a concrete task is still pending; omit it for chit-chat and
-wrapped-up turns.
+wrapped-up turns. Runs continues tool work in the same run instead of requesting a
+plugin continuation turn.
 
 Mentions live inside `body`: write `[CQ:at,qq=12345]` exactly where each strong
 notification belongs. Multiple people and arbitrary positions are supported; the plugin
@@ -218,7 +222,7 @@ ever see them. Set the bar **high**:
     unrelated to you.
   - Group topic has fully shifted away and stayed off-topic for 3+ messages.
 - Keep `false` for:
-  - User's verbal thinking (「我想想」, "let me see", hesitation, pauses).
+  - User's verbal thinking (“我想想”, "let me see", hesitation, pauses).
   - Brief lulls or off-topic banter mid-conversation.
   - Any message you're unsure about — silence is cheap, premature exit is not.
 
@@ -229,11 +233,10 @@ When the user asks you to do something (look up data, search, fetch info):
 - **Try first.** If your tools can actually attempt it, run them and put the real result
   into the body line.
 - **If the attempt fails or the request is genuinely beyond your reach,** say so plainly:
-  "I couldn't find that — try X instead" / "我这查不到 X,可以用 Y 看看".
-- **Do not** say "let me check" / "稍等" / "I'll look it up" / "我去看看" without making
-  a real attempt. In reactive mode, once the body is sent the turn ends — these
-  phrases dangle a promise you cannot keep, and the user gets nothing.
-- Act first, talk after. If you can't, say so directly and stop.
+  "I couldn't find that — try X instead" / “我这查不到 X，可以用 Y 看看”。
+- **Do not** promise work without an actual execution path. For a long accepted task,
+  acknowledge it first using the current interface's protocol, then actually execute.
+  A short task needs only its result. If execution is blocked, state the blocker.
 
 ## Sending images (outbound media)
 
