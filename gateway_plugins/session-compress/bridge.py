@@ -15,7 +15,9 @@ file adds no compressor and no transcript of its own.
 ``--preview`` is the one other branch the chat command has, and it is reused verbatim
 (``_compress_preview_reply``): a pure report over the loaded transcript. It performs no
 agent build, takes no turn lease and no compression lock, and writes nothing — so it stays
-available while a turn is running, exactly like the messaging command.
+available while a turn is running, exactly like the messaging command. Its numbers are also
+returned structurally (current-context token estimate, message count, the session model's
+``context_length``), so a client renders "占用/上限" without scraping the reply text.
 
 Busy fencing reuses the SAME cross-process session turn lease every agent turn takes
 (``agent/turn_facade_lease.py`` -> ``SessionDB.acquire_session_turn_lease``), so a turn
@@ -30,6 +32,8 @@ import logging
 import os
 import uuid
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +41,15 @@ logger = logging.getLogger(__name__)
 # turn starts while the replacement transcript is still being written. A crashed holder is
 # still reclaimed by the lease's dead-PID / expiry rules.
 _MANUAL_COMPRESS_LEASE_TTL_S = 1800.0
+
+#: Roles the messaging preview counts as "currently in context"
+#: (``gateway/slash_commands_session._compress_preview_reply``) — kept as a module constant so the
+#: structured figures and the reply text cannot drift apart.
+_PREVIEW_ROLES = frozenset({"user", "assistant"})
+#: Roles the real compression request carries (tool results included); the full-history estimate.
+_HISTORY_ROLES = frozenset({"user", "assistant", "tool"})
+#: A preview must answer promptly; an endpoint probe that hangs reports "上限未知" instead.
+_WINDOW_RESOLVE_TIMEOUT_S = 10.0
 
 
 class CompressError(Exception):
@@ -55,10 +68,96 @@ def _rough_tokens(messages) -> int:
     try:
         from agent.model_metadata import estimate_request_tokens_rough
         msgs = [{"role": m.get("role"), "content": m.get("content")}
-                for m in messages if m.get("role") in {"user", "assistant", "tool"}]
+                for m in messages if m.get("role") in _HISTORY_ROLES]
         return int(estimate_request_tokens_rough(msgs))
     except Exception:
         return 0
+
+
+def _preview_messages(history) -> list[dict]:
+    """The messaging preview's own message selection: user/assistant rows that carry content.
+
+    Deliberately the same comprehension ``gateway.slash_commands_session._compress_preview_reply``
+    applies, so the structured ``context_tokens`` equals the "~N tokens currently in context" number
+    the chat command prints (a test pins that equality against the real reply text).
+    """
+    return [{"role": m.get("role"), "content": m.get("content")} for m in history
+            if m.get("role") in _PREVIEW_ROLES and m.get("content")]
+
+
+def _resolve_model_window(model: str) -> dict:
+    """The session model's context window through the gateway's own resolver (sync; may probe).
+
+    ``gateway.run._resolve_gateway_model_context`` is the helper ``/context`` uses: it honours the
+    ``model.context_length`` config pin, custom providers and endpoint/catalog lookups for the
+    *current* route, so the number follows a model switch instead of being fixed here. Its
+    ``context_source == "default"`` means the model is unknown to the catalog and it fell through to
+    ``DEFAULT_FALLBACK_CONTEXT``: that fallback is NOT a known window, so the limit is ``None`` and
+    the client prints 上限未知 rather than a made-up figure.
+    """
+    from gateway.run import _resolve_gateway_model_context
+
+    resolved = _resolve_gateway_model_context(model or None)
+    limit = int(getattr(resolved, "context_length", 0) or 0)
+    known = str(getattr(resolved, "context_source", "") or "") != "default"
+    return {
+        "model": str(getattr(resolved, "model", "") or model or ""),
+        "context_length": limit if (known and limit > 0) else None,
+        "context_source": str(getattr(resolved, "context_source", "") or ""),
+    }
+
+
+async def _context_window(runner: Any, source: Any, model: str) -> dict:
+    """Resolve the window off the event loop, in the profile serving ``source`` (multiplex)."""
+    def _resolve() -> dict:
+        from gateway.run import _profile_runtime_scope
+        multiplex = bool(getattr(getattr(runner, "config", None), "multiplex_profiles", False))
+        home_for = getattr(runner, "_resolve_profile_home_for_source", None)
+        if multiplex and callable(home_for):
+            with _profile_runtime_scope(Path(home_for(source))):
+                return _resolve_model_window(model)
+        return _resolve_model_window(model)
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_resolve), timeout=_WINDOW_RESOLVE_TIMEOUT_S)
+    except Exception:  # unresolved/timeout: report "上限未知", never a guessed window
+        logger.info("session-compress: context window unresolved for %r", model, exc_info=True)
+        return {"model": model, "context_length": None, "context_source": "unresolved"}
+
+
+async def _lookup_source(runner, tip: str):
+    """``SessionSource`` this session is routed from, or the synthesized API-server one."""
+    from gateway.config import Platform
+    from gateway.session import SessionSource
+
+    entry = await runner.async_session_store.lookup_by_session_id(tip)
+    source = getattr(entry, "origin", None) if entry is not None else None
+    if source is not None:
+        return source
+    # A Runs/API session is addressed by id: mirror the source the api_server lane carries.
+    return SessionSource(platform=Platform.API_SERVER, chat_id=tip, chat_type="dm")
+
+
+def _request_from_payload(payload: dict):
+    """Payload → the shared ``CompressRequest`` (same parser every native surface uses).
+
+    A focus-only payload goes through ``compress_request``, which feeds the raw argument string to
+    the one parser (so ``here N`` stays a boundary). A client that sends the preview flag as its own
+    field keeps that parsing too: the flag is merged into the parsed request instead of bypassing
+    the parser, and ``--aggressive`` keeps the same refusal.
+    """
+    from gateway.session_mutation_compress import compress_request
+
+    if payload.get("preview") and set(payload) <= {"focus", "preview"}:
+        from agent.conversation_compression_manual import parse_compress_args
+        from hermes_state_runtime import RuntimeStoreError
+
+        request = parse_compress_args(str(payload.get("focus") or ""))
+        if request.aggressive:
+            raise RuntimeStoreError("unsupported_compress_options")
+        request.preview = True
+        return request
+    return compress_request(payload)
 
 
 def _validate_session_id(session_id: str) -> None:
@@ -68,21 +167,50 @@ def _validate_session_id(session_id: str) -> None:
         raise CompressError("invalid_session_id", "Invalid session ID", status=400)
 
 
-def _preview_outcome(history, tip: str, request, before_messages: int, before_tokens: int) -> dict:
-    """``/compress --preview``: the messaging command's own read-only report.
+async def _preview_outcome(runner, row: Any, history, tip: str, request, before_tokens: int) -> dict:
+    """``/compress --preview``: the messaging command's own read-only report, plus its numbers.
 
-    Reuses ``_compress_preview_reply`` so the numbers a Runs client sees are the numbers the
-    real run would use. Nothing is built, leased or written: the transcript is unchanged and
-    both session ids are the input id.
+    Reuses ``_compress_preview_reply``/``summarize_compress_preview`` so the numbers a Runs client
+    sees are the numbers the real run would use, and returns them as structured fields instead of
+    letting the client scrape the reply text. Nothing is built, leased or written: the transcript is
+    unchanged, both session ids are the input id, and the window comes from the session's own model.
     """
+    from agent.model_metadata import estimate_request_tokens_rough
     from gateway.slash_commands_session import _compress_preview_reply
+    from hermes_cli.partial_compress import summarize_compress_preview
 
-    report = _compress_preview_reply(
-        history, request.partial, request.keep_last, request.focus_topic, "")
+    messages = _preview_messages(history)
+    context_tokens = int(estimate_request_tokens_rough(messages))
+    report = summarize_compress_preview(
+        messages, request.partial, request.keep_last, request.focus_topic, context_tokens)
+    window = await _context_window(
+        runner, await _lookup_source(runner, tip),
+        str(row.get("model") or "") if isinstance(row, dict) else "")
     return _outcome(
-        status="preview", before=tip, after=tip, before_messages=before_messages,
-        after_messages=before_messages, before_tokens=before_tokens,
-        after_tokens=before_tokens, message=report, focus_topic=request.focus_topic)
+        status="preview", before=tip, after=tip, before_messages=len(history),
+        after_messages=len(history), before_tokens=before_tokens, after_tokens=before_tokens,
+        # The reply text stays the messaging surface's own rendering (same selection, same
+        # estimator); the structured fields above are what a client must use for numbers.
+        message=_compress_preview_reply(
+            history, request.partial, request.keep_last, request.focus_topic, ""),
+        focus_topic=request.focus_topic,
+        preview={
+            # What actually goes into the context (messaging preview's selection: user/assistant
+            # with content) — the figure the QQ receipt shows.
+            "context_tokens": context_tokens,
+            "context_messages": len(messages),
+            # The session model's window; None means genuinely unknown (never a guessed 1M).
+            "context_limit": window["context_length"],
+            "context_model": window["model"],
+            "context_source": window["context_source"],
+            # The whole stored transcript, tool results included: same estimator, wider selection.
+            "history_tokens": before_tokens,
+            "history_messages": len(history),
+            # The shared structured report the reply text is rendered from.
+            "head_count": int(report["head_count"]),
+            "tail_count": int(report["tail_count"]),
+            "partial": bool(report["partial"]),
+        })
 
 
 async def compress_session(runner, session_id: str, payload: dict) -> dict:
@@ -95,7 +223,6 @@ async def compress_session(runner, session_id: str, payload: dict) -> dict:
     from agent.conversation_compression_manual import MIN_MESSAGES
     from gateway.config import Platform
     from gateway.session import SessionEntry, SessionSource
-    from gateway.session_mutation_compress import compress_request
     from gateway.session_transcript import TranscriptReadError
     from hermes_state_errors import SessionCompressionInProgressError, SessionTurnLeaseLostError
     from hermes_state_pidns import holder_namespace_token
@@ -115,7 +242,7 @@ async def compress_session(runner, session_id: str, payload: dict) -> dict:
     tip = await asyncio.to_thread(sync_db.get_compression_tip, session_id) or session_id
 
     try:
-        request = compress_request(payload if isinstance(payload, dict) else {})
+        request = _request_from_payload(payload if isinstance(payload, dict) else {})
     except RuntimeStoreError as exc:
         raise CompressError(exc.reason, f"Invalid compression request: {exc.reason}", status=400) from None
 
@@ -139,7 +266,7 @@ async def compress_session(runner, session_id: str, payload: dict) -> dict:
     # read-only report, so it must never write history and must not be refused merely because
     # a turn is in flight (the messaging command does not gate it either).
     if request.preview:
-        return _preview_outcome(history, tip, request, before_messages, before_tokens)
+        return await _preview_outcome(runner, row, history, tip, request, before_tokens)
 
     # A compression already in flight holds the per-session compression lock; say so
     # distinctly instead of reporting a turn as busy. (Diagnostic read only.)
@@ -223,9 +350,15 @@ async def compress_session(runner, session_id: str, payload: dict) -> dict:
 
 
 def _outcome(*, status: str, before: str, after: str, before_messages: int, after_messages: int,
-             before_tokens: int, after_tokens: int, message: str, focus_topic, in_place: bool = False) -> dict:
-    """JSON-safe projection (no message bodies, no credentials)."""
-    return {
+             before_tokens: int, after_tokens: int, message: str, focus_topic, in_place: bool = False,
+             preview: dict | None = None) -> dict:
+    """JSON-safe projection (no message bodies, no credentials).
+
+    ``preview`` carries the read-only measurements (context tokens/messages, the session model's
+    window, the full-history estimate, the shared report's head/tail counts) only on the preview
+    branch; every other status keeps the fields it always had.
+    """
+    out = {
         "object": "hermes.session.compression",
         "status": status,
         "session_id_before": before,
@@ -241,3 +374,6 @@ def _outcome(*, status: str, before: str, after: str, before_messages: int, afte
         "focus_topic": focus_topic,
         "message": message,
     }
+    if preview is not None:
+        out.update(preview)
+    return out

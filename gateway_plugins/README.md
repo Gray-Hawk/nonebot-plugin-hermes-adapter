@@ -29,6 +29,13 @@ Runs 车道按 session id 触发**手动压缩**的控制端点。压缩语义�
 - 响应：`status`（`compressed` / `no_change` / `not_enough` / `preview`）、
   `session_id_before` / `session_id_after`、`rotated`、`in_place`、前后消息数与粗略 token，
   以及 `X-Hermes-Session-Id` 响应头（轮换后的新 id，客户端必须采纳）。
+- 仅 `preview` 响应附带的结构化字段（客户端据此显示“当前占用／模型上限”，不必解析 `message`
+  文本）：`context_tokens` / `context_messages`（**当前实际进入上下文**的估算，口径与 messaging
+  preview 的 `~N tokens currently in context` 完全一致：只算有内容的 user/assistant）、
+  `context_limit`（当前会话模型的 `context_length`；`null` = 模型未知，客户端显示“上限未知”，
+  绝不填猜测值）、`context_model` / `context_source`（`config` / `detected` / `default`）、
+  `history_tokens` / `history_messages`（**全量会话历史**，含 tool 结果）、
+  `head_count` / `tail_count` / `partial`（共享结构化预览的切分结果）。
 
 语义要点：
 
@@ -39,6 +46,8 @@ Runs 车道按 session id 触发**手动压缩**的控制端点。压缩语义�
   返回新的 continuation id，旧 id 只作历史，不能写回。
 - `preview` 是**只读**分支：复用 messaging 的 `_compress_preview_reply` 生成报告，
   不建 agent、不取 lease、不探测 compression lock、不写历史；turn 在跑时也可用。
+  报告里的数字以结构化字段同时返回（见上），上限按**该会话当前模型**解析：每次预览现解析，
+  模型或运行配置一换，数字就跟着变；解析不出时给 `null` 而不是默认值。
 - 未知/非法 session id：`404 session_not_found` / `400 invalid_session_id`。
 
 测试（需要 Hermes checkout；**必须在一个不是本仓库根的目录下运行**，否则本仓库根目录的

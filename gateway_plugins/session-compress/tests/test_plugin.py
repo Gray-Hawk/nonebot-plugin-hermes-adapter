@@ -15,10 +15,12 @@ root (the adapter's own ``utils.py`` there would shadow Hermes' ``utils``)::
 from __future__ import annotations
 
 import os
+import re
 import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -34,6 +36,7 @@ if "session_compress_plugin" not in sys.modules:
     sys.modules["session_compress_plugin"] = _mod
     _spec.loader.exec_module(_mod)
 
+from session_compress_plugin import bridge  # noqa: E402
 from session_compress_plugin.http_api import register_routes  # noqa: E402
 
 KEY = "test-key-0123456789abcdef0123456789abcdef"
@@ -48,10 +51,11 @@ def _msgs(count: int) -> list[dict]:
 
 
 class FakeDB:
-    def __init__(self, *, exists=True, lock_holder=None, lease_ok=True):
+    def __init__(self, *, exists=True, lock_holder=None, lease_ok=True, model="k3.1-pro"):
         self.exists = exists
         self.lock_holder = lock_holder
         self.lease_ok = lease_ok
+        self.model = model
         self.released = []
         self.lease_holder = None
         # Counters let a test assert that a path neither probed the compression lock nor
@@ -60,7 +64,8 @@ class FakeDB:
         self.lease_attempts = 0
 
     def get_session(self, session_id):
-        return {"id": session_id, "source": "api_server"} if self.exists else None
+        return ({"id": session_id, "source": "api_server", "model": self.model}
+                if self.exists else None)
 
     def get_compression_tip(self, session_id):
         return session_id
@@ -143,6 +148,15 @@ class PluginEndpointTest(unittest.IsolatedAsyncioTestCase):
         store = FakeStore(transcripts or {"sess-1": _msgs(6)}, entry=entry)
         runner = FakeRunner(db=db, store=store, rotate_to=rotate_to, **({"reply": reply} if reply else {}))
         return runner, db, store
+
+    def _patch_window(self, *, limit: int | None = 1048576, source="config", model="k3.1-pro"):
+        """Pin the model-window resolution: the real resolver reads the live gateway config."""
+        patcher = patch.object(
+            bridge, "_resolve_model_window",
+            return_value={"model": model, "context_length": limit, "context_source": source})
+        mocked = patcher.start()
+        self.addCleanup(patcher.stop)
+        return mocked
 
     async def test_status_requires_auth(self):
         runner, _, _ = self._runner()
@@ -248,6 +262,7 @@ class PluginEndpointTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_preview_is_read_only_and_never_compresses(self):
         """``--preview`` reports through the messaging helper and mutates nothing."""
+        self._patch_window()
         runner, db, store = self._runner()
         snapshot = list(store.transcripts["sess-1"])
         client = await self._client(runner)
@@ -276,8 +291,103 @@ class PluginEndpointTest(unittest.IsolatedAsyncioTestCase):
         # ...and the stored transcript is byte-identical to what it was before.
         self.assertEqual(store.transcripts["sess-1"], snapshot)
 
+    async def test_preview_returns_structured_context_and_window(self):
+        """The preview answers "占用/上限" as numbers, not as text a client must scrape."""
+        self._patch_window(limit=1048576, source="config", model="k3.1-pro")
+        runner, db, _ = self._runner()
+        client = await self._client(runner)
+        resp = await client.post("/api/plugins/session-compress/sessions/sess-1/compress",
+                                 headers=AUTH, json={"preview": True})
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertEqual(body["status"], "preview")
+        self.assertEqual(body["context_messages"], 6)          # user/assistant with content
+        self.assertGreater(body["context_tokens"], 0)
+        self.assertEqual(body["context_limit"], 1048576)
+        self.assertEqual(body["context_model"], "k3.1-pro")
+        self.assertEqual(body["context_source"], "config")
+        self.assertEqual(body["history_messages"], 6)
+        self.assertGreaterEqual(body["history_tokens"], body["context_tokens"])
+        self.assertEqual(body["head_count"], 6)
+        self.assertEqual(body["tail_count"], 0)
+        self.assertEqual(db.lease_attempts, 0)
+        self.assertEqual(runner.calls, [])
+
+    async def test_preview_tokens_match_the_messaging_preview_text(self):
+        """One estimator, one message selection: the structured figure IS the chat command's.
+
+        Only this test parses the reply text — production code never does (that is the point of
+        the structured fields). Parsing here pins the two surfaces together.
+        """
+        self._patch_window()
+        runner, _, _ = self._runner()
+        client = await self._client(runner)
+        resp = await client.post("/api/plugins/session-compress/sessions/sess-1/compress",
+                                 headers=AUTH, json={"preview": True})
+        body = await resp.json()
+        match = re.search(r"~([\d,]+) tokens currently in context", body["message"])
+        self.assertIsNotNone(match, body["message"])
+        assert match is not None
+        self.assertEqual(int(match.group(1).replace(",", "")), body["context_tokens"])
+
+    async def test_preview_without_a_known_window_reports_no_limit(self):
+        """An unknown model must not borrow the resolver's fallback as if it were the limit."""
+        self._patch_window(limit=None, source="default", model="mystery-model")
+        runner, _, _ = self._runner()
+        client = await self._client(runner)
+        resp = await client.post("/api/plugins/session-compress/sessions/sess-1/compress",
+                                 headers=AUTH, json={"preview": True})
+        body = await resp.json()
+        self.assertEqual(body["status"], "preview")
+        self.assertIsNone(body["context_limit"])
+        self.assertEqual(body["context_source"], "default")
+        self.assertGreater(body["context_tokens"], 0)
+
+    async def test_preview_window_follows_the_session_model(self):
+        """The limit is resolved for the session's own model, so a switch changes it."""
+        seen: list[str] = []
+
+        def fake(model):
+            seen.append(model)
+            return {"model": model, "context_length": 128000, "context_source": "detected"}
+
+        with patch.object(bridge, "_resolve_model_window", side_effect=fake):
+            runner, _, _ = self._runner(db=FakeDB(model="some-128k-model"))
+            client = await self._client(runner)
+            resp = await client.post("/api/plugins/session-compress/sessions/sess-1/compress",
+                                     headers=AUTH, json={"preview": True})
+        body = await resp.json()
+        self.assertEqual(seen, ["some-128k-model"])
+        self.assertEqual(body["context_limit"], 128000)
+
+    async def test_preview_keeps_the_shared_argument_parsing(self):
+        """``here N`` stays a boundary (not a focus topic) when the flag arrives separately."""
+        self._patch_window()
+        runner, _, _ = self._runner()
+        client = await self._client(runner)
+        resp = await client.post("/api/plugins/session-compress/sessions/sess-1/compress",
+                                 headers=AUTH, json={"preview": True, "focus": "here 2"})
+        body = await resp.json()
+        self.assertEqual(body["status"], "preview")
+        self.assertIsNone(body["focus_topic"])
+        self.assertTrue(body["partial"])
+        self.assertGreater(body["tail_count"], 0)
+        self.assertEqual(body["head_count"] + body["tail_count"], body["context_messages"])
+
+    async def test_preview_refuses_aggressive_like_the_shared_parser(self):
+        """``--aggressive`` has no implementation; a preview must not turn it into a focus topic."""
+        self._patch_window()
+        runner, _, _ = self._runner()
+        client = await self._client(runner)
+        resp = await client.post("/api/plugins/session-compress/sessions/sess-1/compress",
+                                 headers=AUTH, json={"preview": True, "focus": "--aggressive"})
+        self.assertEqual(resp.status, 400)
+        self.assertEqual((await resp.json())["error"]["code"], "unsupported_compress_options")
+        self.assertEqual(runner.calls, [])
+
     async def test_preview_is_not_refused_while_a_turn_is_running(self):
         """Read-only preview deliberately skips the busy fence (the messaging command does too)."""
+        self._patch_window()
         runner, db, store = self._runner(db=FakeDB(lease_ok=False))
         snapshot = list(store.transcripts["sess-1"])
         client = await self._client(runner)

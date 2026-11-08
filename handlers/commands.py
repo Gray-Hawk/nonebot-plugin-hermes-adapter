@@ -64,6 +64,24 @@ def _tail_args(raw: str) -> str:
     return parts[idx].strip() if len(parts) > idx else ""
 
 
+# /compress 的只读预览开关:独立词元精确匹配("--previewx" 之类仍按 focus 处理)。
+_PREVIEW_FLAG = "--preview"
+
+
+def split_compress_args(raw: str) -> tuple[bool, str]:
+    """``/compress`` 余文 → ``(是否 --preview, 剩余 focus)``。
+
+    ``--preview`` 只按整词识别(其余参数原样留作 focus,交给网关共享的参数解析器处理
+    ``here N`` 等形态);这样 ``/normi compress --preview`` 与 ``/normi compress 保留配方 --preview``
+    都成立,而 ``--previewx`` 不会被误判。
+    """
+    focus = _tail_args(raw)
+    tokens = focus.split()
+    if _PREVIEW_FLAG not in tokens:
+        return False, focus
+    return True, " ".join(tok for tok in tokens if tok != _PREVIEW_FLAG).strip()
+
+
 # --- /clear ---
 clear_command = on_command(_cmd("clear"), force_whitespace=True, priority=88, block=True)
 
@@ -270,7 +288,7 @@ def build_help_text(
         if hermes_control_plane_enabled():
             lines.append(f"{_cl('run-status')} - 查看当前会话在跑的 run(管理员)")
             lines.append(f"{_cl('run-stop')} - 终止当前会话在跑的 run(管理员)")
-            lines.append(f"{_cl('compress')} - 手动压缩当前会话上下文(管理员)")
+            lines.append(f"{_cl('compress')} - 手动压缩当前会话上下文;--preview 只看占用(管理员)")
             lines.append(f"{_cl('reasoning')} - 查看/切换全局推理档位(管理员)")
         lines.append(f"{_cl('reload-config')} - 手动重载配置与表情库(管理员)")
 
@@ -505,9 +523,62 @@ async def handle_run_stop(bot: Bot, event: Event, matcher: Matcher):
 # 链路:QQ 命令 → 插件按当前会话 session key 调 gateway `POST /api/sessions/{id}/compress`
 # → 网关跑 messaging /compress 的同一实现(临时 agent + 共享 compress_now + 同一轮换持久化)。
 # 同会话正在跑 turn 时网关回 409 session_busy,这里只回执不重试;轮换时采纳新 session id。
+# `--preview` 是同一命令的只读形态:网关不建 agent、不取 lease、不写历史,回结构化占用/上限,
+# 回执显示"当前上下文约 占用 / 上限 tokens(百分比),N 条消息"。
 compress_command = on_command(
     _cmd("compress"), aliases={_cmd("压缩")}, force_whitespace=True, priority=88, block=True
 )
+
+
+def _fmt_int(value: int) -> str:
+    """半角数字 + 千位分隔(与示例 1,048,576 一致)。"""
+    return f"{int(value or 0):,}"
+
+
+def _preview_share(tokens: int, limit: int) -> str:
+    """占用百分比:≥1％ 取整,不足 1％ 明写,不抹成 0％。"""
+    pct = tokens * 100 / limit if limit > 0 else 0.0
+    if tokens > 0 and pct < 1:
+        return "不足1％"
+    return f"约{pct:.0f}％"
+
+
+def _preview_receipt_lines(result: dict) -> list[str]:
+    """只读预览回执:当前占用／模型上限(百分比)＋消息数。
+
+    数字来自网关的结构化字段(``result["preview"]``),不从 ``message`` 文本反解;
+    老网关(没有这些字段)回退显示 ``message``。``context_limit`` 为 0 表示网关明确
+    "上限未知",这里只写"上限未知",绝不填一个猜测值。
+    """
+    preview = result.get("preview") or {}
+    tokens = int(preview.get("context_tokens") or 0)
+    messages = int(preview.get("context_messages") or 0)
+    if not tokens and not messages:
+        lines = ["🗜️ 压缩预览（只读，未写入）"]
+        message = str(result.get("message") or "").strip()
+        if message:
+            lines.append(message)
+        return lines
+    limit = int(preview.get("context_limit") or 0)
+    lines = ["🗜️ 上下文预览（只读，未压缩）"]
+    if limit > 0:
+        lines.append(
+            f"当前上下文约 {_fmt_int(tokens)} / {_fmt_int(limit)} tokens"
+            f"（{_preview_share(tokens, limit)}），{messages} 条消息"
+        )
+    else:
+        lines.append(f"当前上下文约 {_fmt_int(tokens)} tokens（上限未知），{messages} 条消息")
+    history_tokens = int(preview.get("history_tokens") or 0)
+    if history_tokens > tokens:
+        # 全量历史(含工具结果)与"实际进入上下文"的口径不同,分开标,避免混淆。
+        lines.append(
+            f"📚 全量会话历史约 {_fmt_int(history_tokens)} tokens"
+            f"（{int(preview.get('history_messages') or 0)} 条，含工具结果）"
+        )
+    focus = str(result.get("focus_topic") or "").strip()
+    if focus:
+        lines.append(f"🎯 聚焦：{focus}")
+    return lines
 
 
 def compress_receipt_lines(
@@ -518,12 +589,13 @@ def compress_receipt_lines(
     ``adopted``: 轮换时插件映射是否成功换到新 id(None = 未发生轮换)。
     """
     if result.get("ok"):
-        before = int(result.get("before_messages") or 0)
-        after = int(result.get("after_messages") or 0)
         status = str(result.get("status") or "compressed")
         if status == "preview":
-            head = "🗜️ 压缩预览(未写入)"
-        elif status == "nothing_to_do":
+            # 只读预览:不显示"已压缩",也不采纳任何轮换。
+            return _preview_receipt_lines(result)
+        before = int(result.get("before_messages") or 0)
+        after = int(result.get("after_messages") or 0)
+        if status == "nothing_to_do":
             head = "🗜️ 没有可压缩的内容(会话太短或无可摘要中段)"
         elif status == "aborted":
             head = f"🗜️ 未压缩(摘要被拒或中止,消息仍是 {before} 条)"
@@ -583,11 +655,12 @@ async def handle_compress(bot: Bot, event: Event, matcher: Matcher):
         raw = event.get_plaintext().strip()
     except Exception:
         pass
-    focus = _tail_args(raw)  # 可选焦点主题(剥掉命令头/寻址前缀)
+    preview, focus = split_compress_args(raw)  # --preview 只读开关 + 可选焦点主题
     result = await hermes_client.compress_session(
         tgt=resolve_target(adapter_name, is_private, group_id),
         session_key=session_key,
         focus_topic=focus,
+        preview=preview,
     )
     adopted: bool | None = None
     new_key = str(result.get("session_id") or "")

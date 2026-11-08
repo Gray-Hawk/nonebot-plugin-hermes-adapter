@@ -1796,6 +1796,7 @@ class HermesClient:
         focus_topic: str = "",
         partial: bool = False,
         keep_last: int = 2,
+        preview: bool = False,
         timeout: int = 900,
     ) -> dict[str, Any]:
         """POST /api/plugins/session-compress/sessions/{id}/compress —— Runs 会话的手动压缩控制(本部署补丁)。
@@ -1805,11 +1806,15 @@ class HermesClient:
         ``session-compress`` 提供(``ctx.register_platform_handler("api_server")``),不改
         Hermes 上游核心;插件这里只是按 session id 触发并取回结果,不重写压缩器、不另存会话历史。
 
+        ``preview=True`` 是只读预览(不建 agent、不取 turn lease、不写历史),网关回
+        ``status="preview"`` 并附带结构化的占用/上限字段(见返回里的 ``preview``)。
+
         返回::
 
             {"ok": bool, "status": str, "code": int, "session_id": str,
              "rotated": bool, "in_place": bool, "before_messages": int,
-             "after_messages": int, "message": str, "error": str}
+             "after_messages": int, "message": str, "error": str,
+             "preview": dict}  # 仅 preview 时有值
 
         - ``session_id``: 压缩后的会话 id。``rotated=True``(网关 ``compression.in_place:
           false``)时是新的 continuation,调用方必须采纳,不能写回已结束的旧会话;
@@ -1823,7 +1828,7 @@ class HermesClient:
         out: dict[str, Any] = {
             "ok": False, "status": "", "code": 0, "session_id": session_key,
             "rotated": False, "in_place": False, "before_messages": 0,
-            "after_messages": 0, "message": "", "error": "",
+            "after_messages": 0, "message": "", "error": "", "preview": {},
         }
         body: dict[str, Any] = {}
         if focus_topic:
@@ -1831,6 +1836,8 @@ class HermesClient:
         if partial:
             body["partial"] = True
             body["keep_last"] = max(1, int(keep_last))
+        if preview:
+            body["preview"] = True
         url = f"{tgt.base_url}/api/plugins/session-compress/sessions/{quote(session_key, safe='')}/compress"
         try:
             client = _get_http_client()
@@ -1859,6 +1866,17 @@ class HermesClient:
                 after_messages=int(data.get("after_messages") or 0),
                 message=str(data.get("message") or ""),
             )
+            if data.get("context_tokens") is not None or data.get("context_limit") is not None:
+                # 只读预览的占用/上限(网关结构化给出;不从 message 文本反解)。
+                out["preview"] = {
+                    "context_tokens": int(data.get("context_tokens") or 0),
+                    "context_messages": int(data.get("context_messages") or 0),
+                    "context_limit": int(data.get("context_limit") or 0),
+                    "context_model": str(data.get("context_model") or ""),
+                    "context_source": str(data.get("context_source") or ""),
+                    "history_tokens": int(data.get("history_tokens") or 0),
+                    "history_messages": int(data.get("history_messages") or 0),
+                }
             return out
         err = data.get("error") if isinstance(data.get("error"), dict) else {}
         out["status"] = str(err.get("code") or "")

@@ -49,7 +49,9 @@ NoneBot 插件，将 NoneBot2 桥接到 Hermes Agent 的 API Server
 Runs 车道的手动压缩控制端点由 Hermes gateway 用户插件提供（不改 Hermes 上游核心），
 源码在 [`gateway_plugins/`](gateway_plugins/README.md)。安装用
 `python scripts/install_gateway_plugin.py`（默认装到 `~/.hermes/plugins/session-compress`），
-装完需重启该实例的 gateway 才会加载。管理员也可在 QQ 侧用 `/compress`（别名 `/压缩`）触发。
+装完需重启该实例的 gateway 才会加载。管理员也可在 QQ 侧用 `/compress`（别名 `/压缩`）触发；
+加 `--preview`（如 `/normi compress --preview`）是只读预览，回执显示“当前上下文约 占用 / 上限
+tokens（百分比），N 条消息”，不建 agent、不写历史。
 
 ## 来源与归属
 
