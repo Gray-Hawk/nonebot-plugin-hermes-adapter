@@ -17,7 +17,7 @@ class GroupDebounceTests(unittest.TestCase):
     def tearDown(self) -> None:
         _debounce_states.clear()
 
-    def arrive(self, key, user_id, now, *, is_bot=False, replaceable=True, window=6.0):
+    def arrive(self, key, user_id, now, *, is_bot=False, replaceable=True, window=3.0):
         return _debounce_arrive(
             key,
             {"user_id": user_id, "fragments": [], "is_direct": False, "addressed_to_bot": False, "ephemeral": False, "now_ms": int(now * 1000)},
@@ -30,14 +30,14 @@ class GroupDebounceTests(unittest.TestCase):
             trigger_sender_is_bot=is_bot,
         )
 
-    def test_same_sender_does_not_extend_fixed_six_second_window(self) -> None:
+    def test_same_sender_does_not_extend_fixed_three_second_window(self) -> None:
         first, is_new = self.arrive(("qq", "group:g1"), "A", 100.0)
         self.assertTrue(is_new)
-        self.assertEqual(first.deadline_mono, 106.0)
+        self.assertEqual(first.deadline_mono, 103.0)
         second, _ = self.arrive(("qq", "group:g1"), "A", 102.0)
-        self.assertEqual(second.deadline_mono, 106.0)
-        third, _ = self.arrive(("qq", "group:g1"), "A", 105.9)
-        self.assertEqual(third.deadline_mono, 106.0)
+        self.assertEqual(second.deadline_mono, 103.0)
+        third, _ = self.arrive(("qq", "group:g1"), "A", 102.9)
+        self.assertEqual(third.deadline_mono, 103.0)
 
     def test_second_human_fires_immediately(self) -> None:
         self.arrive(("qq", "group:g1"), "A", 100.0)
@@ -47,14 +47,14 @@ class GroupDebounceTests(unittest.TestCase):
     def test_bot_second_does_not_interrupt_fixed_window(self) -> None:
         self.arrive(("qq", "group:g1"), "A", 100.0)
         second, _ = self.arrive(("qq", "group:g1"), "BOT", 102.0, is_bot=True)
-        self.assertEqual(second.deadline_mono, 106.0)
+        self.assertEqual(second.deadline_mono, 103.0)
 
     def test_bot_between_same_human_does_not_create_a_second_human(self) -> None:
         key = ("qq", "group:g1")
         self.arrive(key, "A", 100.0)
         self.arrive(key, "BOT", 101.0, is_bot=True)
         resumed, _ = self.arrive(key, "A", 102.0)
-        self.assertEqual(resumed.deadline_mono, 106.0)
+        self.assertEqual(resumed.deadline_mono, 103.0)
 
     def test_media_only_second_human_also_fires_immediately(self) -> None:
         self.arrive(("qq", "group:g1"), "A", 100.0)
@@ -78,31 +78,31 @@ class GroupDebounceTests(unittest.TestCase):
         key = ("qq", "group:g1")
         first, _ = _debounce_arrive(
             key, {"user_id": "A", "delivery_generation": 2},
-            debounce_sec=6, max_wait_sec=0, now_mono=100,
-            fixed_window_sec=6, fire_on_cross_human=True,
+            debounce_sec=3, max_wait_sec=0, now_mono=100,
+            fixed_window_sec=3, fire_on_cross_human=True,
         )
         _debounce_arrive(
             key, {"user_id": "B", "delivery_generation": 1},
-            debounce_sec=6, max_wait_sec=0, now_mono=102,
-            fixed_window_sec=6, fire_on_cross_human=True,
+            debounce_sec=3, max_wait_sec=0, now_mono=102,
+            fixed_window_sec=3, fire_on_cross_human=True,
         )
         self.assertEqual(first.payload["user_id"], "A")
-        self.assertEqual(first.deadline_mono, 106)
+        self.assertEqual(first.deadline_mono, 103)
 
     def test_new_generation_does_not_count_old_generation_human(self) -> None:
         key = ("qq", "group:g1")
         _debounce_arrive(
             key, {"user_id": "A", "delivery_generation": 1},
-            debounce_sec=6, max_wait_sec=0, now_mono=100,
-            fixed_window_sec=6, fire_on_cross_human=True,
+            debounce_sec=3, max_wait_sec=0, now_mono=100,
+            fixed_window_sec=3, fire_on_cross_human=True,
         )
         current, _ = _debounce_arrive(
             key, {"user_id": "B", "delivery_generation": 2},
-            debounce_sec=6, max_wait_sec=0, now_mono=102,
-            fixed_window_sec=6, fire_on_cross_human=True,
+            debounce_sec=3, max_wait_sec=0, now_mono=102,
+            fixed_window_sec=3, fire_on_cross_human=True,
         )
         self.assertEqual(current.payload["user_id"], "B")
-        self.assertEqual(current.deadline_mono, 106)
+        self.assertEqual(current.deadline_mono, 103)
 
     def test_private_helper_preserves_sliding_deadline_cap(self) -> None:
         key = ("qq", "private:u1")

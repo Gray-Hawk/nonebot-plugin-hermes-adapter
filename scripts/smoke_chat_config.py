@@ -79,7 +79,7 @@ check("改名: active_session_t5_sec 已撤", "active_session_t5_sec" not in nam
 c = ChatConfig()
 check("默认 history_message_limit=10", c.history_message_limit == 10)
 check("默认 reply_delay_for_bot_sec=0.0", c.reply_delay_for_bot_sec == 0.0)
-check("默认 reply_debounce_sec=6.0", c.reply_debounce_sec == 6.0)
+check("默认 reply_debounce_sec=3.0", c.reply_debounce_sec == 3.0)
 check("默认 active_session_timeout_sec=0", c.active_session_timeout_sec == 0)
 
 p = parse_chat_config(

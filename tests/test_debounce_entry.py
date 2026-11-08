@@ -80,21 +80,21 @@ class DebounceEntryTests(unittest.IsolatedAsyncioTestCase):
         return sent[0]
 
     async def test_unified_window_controls_group_duration(self):
-        for config, expected in (({}, 6.0), ({"reply_debounce_sec": 6}, 6.0),
+        for config, expected in (({}, 3.0), ({"reply_debounce_sec": 3.0}, 3.0),
                                  ({"reply_debounce_sec": 4}, 4.0)):
             with self.subTest(config=config):
                 at, _ = await self.replay([(0, "A", "/ai first", False)], config=config)
                 self.assertEqual(at, expected)
 
     async def test_unified_window_controls_private_duration(self):
-        for config, expected in (({}, 6.0), ({"reply_debounce_sec": 6}, 6.0),
+        for config, expected in (({}, 3.0), ({"reply_debounce_sec": 3.0}, 3.0),
                                  ({"reply_debounce_sec": 4}, 4.0)):
             with self.subTest(config=config):
                 at, _ = await self.replay([(0, "A", "first", False)], private=True, config=config)
                 self.assertEqual(at, expected)
 
     async def test_private_sliding_wait_is_capped_at_three_unified_windows(self):
-        for duration in (2.0, 4.0, 6.0):
+        for duration in (2.0, 3.0, 4.0, 6.0):
             with self.subTest(duration=duration):
                 at, payload = await self.replay([
                     (0, "A", "first", False),
@@ -128,24 +128,24 @@ class DebounceEntryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([f.user_id for f in payload["fragments"]], ["A", "B"])
         self.assertTrue(payload["ephemeral"])
 
-    async def test_default_group_waits_six_seconds(self):
+    async def test_default_group_waits_three_seconds(self):
         at, _ = await self.replay([(0, "A", "/ai first", False)])
-        self.assertEqual(at, 6.0)
+        self.assertEqual(at, 3.0)
 
     async def test_group_ignores_legacy_window_and_max_wait(self):
         at, _ = await self.replay(
             [(0, "A", "/ai first", False)],
             config={"reply_debounce_group_sec": 90, "reply_debounce_max_wait_sec": 1},
         )
-        self.assertEqual(at, 6.0)
+        self.assertEqual(at, 3.0)
 
     async def test_plain_same_human_joins_without_extending_keyword_window(self):
         at, payload = await self.replay([
             (0, "A", "/ai first", False),
             (2, "A", "second", False),
-            (5.9, "A", "third", False),
+            (2.9, "A", "third", False),
         ])
-        self.assertEqual(at, 6.0)
+        self.assertEqual(at, 3.0)
         self.assertEqual(payload["msg_text"], "/ai first\nsecond\nthird")
         self.assertEqual(len(payload["fragments"]), 3)
 
@@ -225,14 +225,25 @@ class DebounceEntryTests(unittest.IsolatedAsyncioTestCase):
         ], known_bots={"BOT"}, config={"reply_delay_for_bot_sec": 30})
         self.assertEqual(at, 3.0)
 
-    async def test_private_slides_by_the_shared_six_seconds(self):
+    async def test_private_slides_by_the_shared_three_seconds(self):
         at, payload = await self.replay([
             (0, "A", "first", False),
             (2, "A", "second", False),
             (4, "A", "third", False),
         ], private=True)
-        self.assertEqual(at, 10.0)
+        self.assertEqual(at, 7.0)
         self.assertEqual(len(payload["fragments"]), 3)
+
+    async def test_default_private_sliding_wait_stops_at_nine_seconds(self):
+        at, payload = await self.replay([
+            (0, "A", "first", False),
+            (2.5, "A", "second", False),
+            (5, "A", "third", False),
+            (7.5, "A", "fourth", False),
+            (8.9, "A", "last", False),
+        ], private=True)
+        self.assertEqual(at, 9.0)
+        self.assertEqual(len(payload["fragments"]), 5)
 
     async def test_private_zero_still_dispatches_immediately(self):
         at, _ = await self.replay(
@@ -243,8 +254,8 @@ class DebounceEntryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_bot_delay_preserves_independent_scope_specific_waits(self):
         for private in (False, True):
-            for ordinary in (0, 6):
-                for delay in (12, 30):
+            for ordinary in (0, 3, 6):
+                for delay in (10, 12, 30):
                     for later_bot in (False, True):
                         with self.subTest(private=private, ordinary=ordinary, delay=delay, later_bot=later_bot):
                             rows = [(0, "BOT", "/ai first", False)]
