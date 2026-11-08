@@ -1,6 +1,6 @@
 """把仓库内网关用户插件（gateway_plugins/<name>/）安装到 Hermes 的 $HERMES_HOME/plugins/。
 
-默认安装 session-compress 到 ~/.hermes/plugins/session-compress；肥鱼等独立 profile 用
+默认安装 session-compress 到 ~/.hermes/plugins/session-compress；其他独立实例用
 --hermes-home 或 --dest 指定，不要手抄 .acceptance 里的副本。
 
 在源码根目录使用：

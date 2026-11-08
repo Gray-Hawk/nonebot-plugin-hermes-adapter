@@ -9,7 +9,7 @@
 ```bash
 python scripts/install_gateway_plugin.py                    # -> ~/.hermes/plugins/session-compress
 python scripts/install_gateway_plugin.py --check             # 只比对
-python scripts/install_gateway_plugin.py --hermes-home /home/feiyu/.hermes --force
+python scripts/install_gateway_plugin.py --hermes-home /path/to/hermes-home --force
 ```
 
 装完必须重启该实例的 gateway 进程才会加载（脚本不重启服务）。
