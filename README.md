@@ -44,6 +44,13 @@ NoneBot 插件，将 NoneBot2 桥接到 Hermes Agent 的 API Server
 - 命令：`/clear`、`/ping`、`/help`、`/reload-config`（管理员）等，完整清单由 `/help` 动态生成。
 - 需要上游反向调用消息、文件与推送工具时，在 `.env` 打开 `AGENT_MCP_ENABLED`。
 
+## 网关侧插件
+
+Runs 车道的手动压缩控制端点由 Hermes gateway 用户插件提供（不改 Hermes 上游核心），
+源码在 [`gateway_plugins/`](gateway_plugins/README.md)。安装用
+`python scripts/install_gateway_plugin.py`（默认装到 `~/.hermes/plugins/session-compress`），
+装完需重启该实例的 gateway 才会加载。管理员也可在 QQ 侧用 `/compress`（别名 `/压缩`）触发。
+
 ## 来源与归属
 
 本项目自 [nonebot-plugin-hermes](https://github.com/gsskk/nonebot-plugin-hermes)（上游作者 gsskk）演进，
