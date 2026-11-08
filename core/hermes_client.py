@@ -1798,11 +1798,12 @@ class HermesClient:
         keep_last: int = 2,
         timeout: int = 900,
     ) -> dict[str, Any]:
-        """POST /api/sessions/{id}/compress —— Runs 会话的手动压缩控制(本部署补丁)。
+        """POST /api/plugins/session-compress/sessions/{id}/compress —— Runs 会话的手动压缩控制(本部署补丁)。
 
         网关侧跑的就是 messaging ``/compress`` 的同一实现(临时 agent + 共享
-        ``compress_now`` + 同一轮换持久化),插件这里只是按 session id 触发并取回结果,
-        不重写压缩器、不另存会话历史。
+        ``compress_now`` + 同一轮换持久化)。端点由 gateway 用户插件
+        ``session-compress`` 提供(``ctx.register_platform_handler("api_server")``),不改
+        Hermes 上游核心;插件这里只是按 session id 触发并取回结果,不重写压缩器、不另存会话历史。
 
         返回::
 
@@ -1830,7 +1831,7 @@ class HermesClient:
         if partial:
             body["partial"] = True
             body["keep_last"] = max(1, int(keep_last))
-        url = f"{tgt.base_url}/api/sessions/{quote(session_key, safe='')}/compress"
+        url = f"{tgt.base_url}/api/plugins/session-compress/sessions/{quote(session_key, safe='')}/compress"
         try:
             client = _get_http_client()
             resp = await client.post(

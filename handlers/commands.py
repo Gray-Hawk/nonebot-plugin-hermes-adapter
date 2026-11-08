@@ -530,6 +530,10 @@ def compress_receipt_lines(
         else:
             head = f"🗜️ 会话压缩完成:{before} → {after} 条消息"
         lines = [head]
+        if status == "not_enough":
+            lines = ["🗜️ 会话太短,没有可压缩的内容(至少需要几条消息)"]
+        elif status in {"nothing_to_do", "no_change"}:
+            lines = ["🗜️ 没有可压缩的内容(无可摘要中段,或摘要被拒/中止;消息数未变)"]
         if result.get("rotated"):
             lines.append(f"↪️ 会话已轮换:{previous_key} → {result.get('session_id')}")
             if adopted:

@@ -72,7 +72,7 @@ class CompressClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((result["before_messages"], result["after_messages"]), (14, 9))
         call = client.calls[0]
         # '+' 必须编码进路径,否则某些上游会把它当空格
-        self.assertEqual(call["url"], "http://gw.test/api/sessions/hermes-g1/compress")
+        self.assertEqual(call["url"], "http://gw.test/api/plugins/session-compress/sessions/hermes-g1/compress")
         self.assertEqual(call["json"], {"focus": "保留配方"})
         self.assertEqual(call["headers"]["Authorization"], "Bearer sk-test")
 
@@ -83,7 +83,7 @@ class CompressClientTests(unittest.IsolatedAsyncioTestCase):
                 tgt=TGT, session_key="hermes-onebotv11+group+462540549")
         self.assertEqual(
             client.calls[0]["url"],
-            "http://gw.test/api/sessions/hermes-onebotv11%2Bgroup%2B462540549/compress",
+            "http://gw.test/api/plugins/session-compress/sessions/hermes-onebotv11%2Bgroup%2B462540549/compress",
         )
 
     async def test_rotation_comes_from_header_when_body_omits_it(self):
