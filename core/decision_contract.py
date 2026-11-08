@@ -64,7 +64,7 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         en_note='string, optional, required when should_reply=true',
         en_desc='',
         cn_note='string',
-        cn_desc='should_reply=true 时必填,留空表示静默',
+        cn_desc='should_reply=true 时必填，留空表示静默',
         cn_desc_short='should_reply=true 时必填',
     ),
     DecisionFieldSpec(
@@ -73,8 +73,8 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         en_note='string, optional',
         en_desc='quote one message of this conversation by its ref `m:<id>` — the number in front of a recent_messages / current_message line, e.g. "m:123". Only that exact form is accepted: bare numbers, QQ message ids and any other shape are ignored, refs outside this conversation are rejected. Omit when not quoting. In groups, a resolved Reply automatically mentions the quoted sender immediately after it; do not manually repeat that person at the start. Private replies never auto-mention. Additional people or other positions use [CQ:at,qq=<qq id>] inside reply_text',
         cn_note='string',
-        cn_desc='引用本会话里的一条消息:值写成 `m:<id>`(如 "m:123"),即 recent_messages\n    / current_message 行首的 m: 号。只认这一种写法:裸数字、QQ 消息 id、别的形态\n    一律当没给,不属于本会话的号会被拒;不确定号就不要引用。\n    群聊成功解析 Reply 会自动 @ 被引用者,私聊不自动 @;\n    额外的人或其它位置用 reply_text 正文内联 @',
-        cn_desc_short='引用某条消息时填它行首的 m 号,如 "m:123"',
+        cn_desc='引用本会话里的一条消息：值写成 `m:<id>`（如 "m:123"），即 recent_messages\n    / current_message 行首的 m: 号。只认这一种写法：裸数字、QQ 消息 id、别的形态\n    一律当没给，不属于本会话的号会被拒；不确定号就不要引用。\n    群聊成功解析 Reply 会自动 @ 被引用者，私聊不自动 @；\n    额外的人或其它位置用 reply_text 正文内联 @',
+        cn_desc_short='引用某条消息时填它行首的 m 号，如 "m:123"',
     ),
     DecisionFieldSpec(
         name='should_exit_active',
@@ -82,7 +82,7 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         en_note='boolean, optional',
         en_desc='',
         cn_note='boolean',
-        cn_desc='谨慎使用,见下方退出门槛',
+        cn_desc='谨慎使用，见下方退出门槛',
     ),
     DecisionFieldSpec(
         name='pin_anchor',
@@ -90,7 +90,7 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         en_note='boolean, optional',
         en_desc='commission judgement turns only: true pins the current request into <pinned_tasks>; omit/false for jokes or one-off chatter',
         cn_note='boolean',
-        cn_desc='委托判断轮专用:确认当前 @/私聊请求是需要后续跟踪的\n    任务时给 true,把它钉进 <pinned_tasks>;玩笑、围观、一次性闲聊不要钉。',
+        cn_desc='委托判断轮专用：确认当前 @/私聊请求是需要后续跟踪的\n    任务时给 true，把它钉进 <pinned_tasks>；玩笑、围观、一次性闲聊不要钉。',
     ),
     DecisionFieldSpec(
         name='release_anchor',
@@ -98,7 +98,7 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         en_note='string, optional',
         en_desc='commissioner user_id or "all" to unpin finished task anchors from <pinned_tasks>',
         cn_note='string',
-        cn_desc='松锚:值为委托人的 user_id 或 "all"。\n    看到 <pinned_tasks> 里的锚已完结(任务办完/话题已漂)时设置,见下方任务锚节',
+        cn_desc='松锚：值为委托人的 user_id 或 "all"。\n    看到 <pinned_tasks> 里的锚已完结（任务办完/话题已漂）时设置，见下方任务锚节',
     ),
     DecisionFieldSpec(
         name='answer_anchor',
@@ -106,7 +106,7 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         en_note='string, optional',
         en_desc='commissioner user_id or "all": declare your reply answered that pinned task; unknown ids are rejected and echoed back next turn',
         cn_note='string',
-        cn_desc='标应答:本轮回复解答了某条在钉委托时,填委托人的\n    user_id 或 "all";只填在钉锚里的 id,填错会被忽略并在下一轮提醒你',
+        cn_desc='标应答：本轮回复解答了某条在钉委托时，填委托人的\n    user_id 或 "all"；只填在钉锚里的 id，填错会被忽略并在下一轮提醒你',
     ),
     DecisionFieldSpec(
         name='anchor_merge',
@@ -114,7 +114,7 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         en_note='string, optional',
         en_desc='starter user_id of a pinned task this message belongs to: merges the sender into its participants instead of pinning new',
         cn_note='string',
-        cn_desc='归并:当前消息属于某条在钉任务(补充/验收)时,填该\n    任务发起者的 user_id;只填在钉锚的发起者 id,填错会被忽略并下轮提醒',
+        cn_desc='归并：当前消息属于某条在钉任务（补充/验收）时，填该\n    任务发起者的 user_id；只填在钉锚的发起者 id，填错会被忽略并下轮提醒',
     ),
     DecisionFieldSpec(
         name='background_task',
@@ -122,7 +122,7 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         en_note='string, optional',
         en_desc='a one-line note when you just dispatched background work (subagent/background process). Omit when nothing is running',
         cn_note='string',
-        cn_desc='离场任务便签:刚派出后台任务(子代理/后台进程)时\n    填一句任务摘要;不派活不要填。填了便签的回合可以直接静默收尾,不必承诺「稍后汇报」',
+        cn_desc='离场任务便签：刚派出后台任务（子代理/后台进程）时\n    填一句任务摘要；不派活不要填。填了便签的回合可以直接静默收尾，不必承诺“稍后汇报”',
     ),
     DecisionFieldSpec(
         name='not_final',
@@ -130,8 +130,8 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         en_note='boolean, optional',
         en_desc='true when this reply is NOT your final result but a task acknowledgement: the plugin will resend your reply as-is and then immediately fire a continue turn so you can actually do the work and deliver the final answer in the normal flow. Set it only when a concrete task is still pending; omit it for chit-chat and wrapped-up turns',
         cn_note='boolean',
-        cn_desc='这不是最终回复(仅在有明确未完成任务时填 true):插件会把你这条\n    原样发出(当作任务回执),随即立刻追加一发「继续执行轮」,让你真去干活、\n    完成后按正常流程输出最终回复。闲聊/正常收尾不要填;它与 background_task 语义\n    互斥(那个是后台已在跑、等系统唤醒),同轮同填时以 not_final 为准(先续跑)',
-        cn_desc_short='这不是最终回复,有未完成任务才填',
+        cn_desc='这不是最终回复（仅在有明确未完成任务时填 true）：插件会把你这条\n    原样发出（当作任务回执），随即立刻追加一发“继续执行轮”，让你真去干活、\n    完成后按正常流程输出最终回复。闲聊/正常收尾不要填；它与 background_task 语义\n    互斥（那个是后台已在跑、等系统唤醒），同轮同填时以 not_final 为准（先续跑）',
+        cn_desc_short='这不是最终回复，有未完成任务才填',
     ),
 )
 
@@ -174,7 +174,7 @@ def _render_line(
         return f"  {spec.name} ({spec.en_note})"
     note = spec.cn_note
     desc = spec.cn_desc_short if short and spec.cn_desc_short else spec.cn_desc
-    line = f"  {spec.name} ({note})"
+    line = f"  {spec.name}（{note}）"
     if desc:
         line += f" — {desc}"
     return line

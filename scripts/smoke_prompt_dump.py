@@ -19,6 +19,7 @@ nonebot.init()
 
 from nonebot_plugin_hermes_adapter import config as cfg  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import prompt_dump as pd  # noqa: E402
+from nonebot_plugin_hermes_adapter.core import misc_config  # noqa: E402
 
 FAILS = []
 
@@ -31,11 +32,9 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 def fresh_dir(enabled: bool = False) -> Path:
     d = Path(tempfile.mkdtemp(prefix="pd_smoke_"))
-    # plugin_config 是 from-import 绑定：定义方与消费方两边都要替换才生效
-    cfg.plugin_config = SimpleNamespace(
-        hermes_custom_dir=str(d), hermes_prompt_dump_enabled=enabled
-    )
-    pd.plugin_config = cfg.plugin_config
+    # 启动路径保留在 plugin_config；动态开关已迁入 misc 快照，不能再测废弃键。
+    cfg.plugin_config = SimpleNamespace(hermes_custom_dir=str(d))
+    misc_config._store.commit(misc_config.MiscConfig(prompt_dump_enabled=enabled))
     return d
 
 
@@ -96,8 +95,7 @@ dump(priv=False, gid=None, text="gid none")
 check("群 id 缺失兜底 unknown", (d / "prompt_dumps" / "group" / "onebotv11_unknown.txt").is_file())
 
 # --- 7. 关回后零留痕（重新 init 为关，新内容不覆写旧文件） ---
-cfg.plugin_config = SimpleNamespace(hermes_custom_dir=str(d), hermes_prompt_dump_enabled=False)
-pd.plugin_config = cfg.plugin_config
+misc_config._store.commit(misc_config.MiscConfig(prompt_dump_enabled=False))
 pd.init_prompt_dump()
 check("init 回读关闭", pd._enabled is False)
 dump(text="sys v3 should not land")

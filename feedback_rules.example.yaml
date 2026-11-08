@@ -33,7 +33,7 @@ rules:
     pattern: "[「」]"
     where: all
     action: note
-    note: "群聊要求全角标点,你上一轮的消息里出现了直角引号「」,双引号请用“”。"
+    note: "群聊要求全角标点，你上一轮的消息里出现了直角引号「」，双引号请用“”。"
     cooldown_sec: 86400
 
   - name: departure-promise

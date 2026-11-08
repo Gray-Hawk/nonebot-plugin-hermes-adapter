@@ -22,6 +22,7 @@ nonebot.init()
 from nonebot_plugin_hermes_adapter import config as cfg  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import group_profile as gp  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
+from nonebot_plugin_hermes_adapter.core import misc_config  # noqa: E402
 
 FAILS = []
 
@@ -40,20 +41,17 @@ def write(path: Path, text: str) -> None:
 def fresh_dir() -> Path:
     d = Path(tempfile.mkdtemp(prefix="gp_smoke_"))
     gp._cache.clear()
-    # group_profile 用 from-import 绑定 plugin_config 对象,替换必须两边都打
-    # (cfg 模块命名空间 + gp 模块命名空间),否则开关替换不生效。
-    cfg.plugin_config = SimpleNamespace(hermes_custom_dir=str(d), hermes_group_profile_enabled=True)
-    gp.plugin_config = cfg.plugin_config
+    cfg.plugin_config = SimpleNamespace(hermes_custom_dir=str(d))
+    misc_config._store.commit(misc_config.MiscConfig(group_profile_enabled=True))
     return d
 
 
 # --- 1. 记忆开关关闭：静默 None；空配置回落 localstore；prompt 构造函数不变 ---
 gp._cache.clear()
-cfg.plugin_config = SimpleNamespace(hermes_custom_dir="", hermes_group_profile_enabled=False)
-gp.plugin_config = cfg.plugin_config
+cfg.plugin_config = SimpleNamespace(hermes_custom_dir="")
+misc_config._store.commit(misc_config.MiscConfig(group_profile_enabled=False))
 check("记忆开关关闭返回 None", gp.build_group_profile_block("onebotv11", "2000000001") is None)
-cfg.plugin_config = SimpleNamespace(hermes_custom_dir="", hermes_group_profile_enabled=True)
-gp.plugin_config = cfg.plugin_config
+misc_config._store.commit(misc_config.MiscConfig(group_profile_enabled=True))
 p = cfg.resolve_custom_dir()
 check("空配置回落 localstore 数据目录", p is not None and "nonebot_plugin_hermes_adapter" in str(p), str(p))
 base_reactive = pb.build_reactive_system_prompt()

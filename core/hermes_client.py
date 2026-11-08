@@ -11,6 +11,9 @@ import json
 import re
 import uuid
 import asyncio
+import time
+from collections import deque
+from contextlib import suppress
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -763,6 +766,7 @@ class RunsEventParser:
         self.stream_text = ""
         self._stream_offset = 0
         self._stream_pending: list[Any] = []
+        self.decision_batch = 0
 
     def _pop_gap_segment(self) -> str | None:
         """工具间隙段定性: strip + 达最小长度才成段(与 interim 帧同门槛)。
@@ -859,6 +863,7 @@ class RunsEventParser:
             # 不产出、不改动任何缓冲。
             return None
         if event == "tool.started":
+            self.decision_batch += 1
             # 工具间隙段定性: started 之前的间隙文本=中间轮旁白,经 feed 返回。
             seg = self._pop_gap_segment()
             self._gap_open = False
@@ -906,6 +911,114 @@ OverwrittenReplyCallback = Callable[[list[Any]], Awaitable[None]]
 # 回调正常返回=该决策已即时处理（发送/静默/业务拦截都算）；抛异常=本轮停用即时
 # 发送，剩余决策由终态链按 E2 路径处理（异常只允许发生在任何发送之前）。
 DecisionCallback = Callable[[dict[str, Any], str], Awaitable[None]]
+
+# 仅同一连续决策批加间隔，不是请求防抖，也不新增配置项。
+_RUNS_REPLY_INTERVAL_SEC = 3.0
+_runs_reply_sleep = asyncio.sleep
+_runs_reply_clock = time.monotonic
+
+
+class _RunsReplyQueue:
+    """单个 Runs 的串行回调队列；SSE 继续读，交付仍走原 delivery plan。
+
+    工具边界只改变批号，不等待整个 run。队列排空即释放入站 steer 闸，
+    每个已接收的可见份可先用 callback.prepare 同步落既有计划，再异步发送。
+    """
+
+    def __init__(self, callback, run_id: str, sink) -> None:
+        self.callback, self.run_id, self.sink = callback, run_id, sink
+        self.pending = deque()
+        self.observed = []
+        self.task = None
+        self.release_task = None
+        self.last_batch = None
+        self.last_at = None
+        self.latest_batch = -1
+        self.closed_through = -1
+        self.busy = False
+
+    def _busy(self, value: bool) -> None:
+        self.busy = value
+        hook = getattr(self.callback, "set_busy", None)
+        if callable(hook):
+            hook(value)
+
+    def put(self, decision: dict, batch: int) -> None:
+        if self.callback is None:
+            return
+        prepare = getattr(self.callback, "prepare", None)
+        if callable(prepare):
+            prepare(decision, self.run_id)
+        self.observed.append(decision)
+        self.pending.append((decision, batch))
+        self.latest_batch = batch
+        if str(decision.get("body") or "").strip():
+            self._busy(True)
+        self._wake()
+
+    def _wake(self) -> None:
+        if self.task is None or self.task.done():
+            self.task = asyncio.create_task(self._drain())
+
+    def close_batch(self, batch: int) -> None:
+        self.closed_through = max(self.closed_through, batch)
+        if self.busy:
+            self._wake()
+
+    async def _release(self, previous=None) -> None:
+        if previous is not None:
+            await previous
+        hook = getattr(self.callback, "on_drained", None)
+        if callable(hook):
+            try:
+                await hook()
+            except Exception:
+                logger.exception("[HERMES] 发送批后输入释放失败，保留原接力槽")
+
+    async def _drain(self) -> None:
+        try:
+            while self.pending:
+                decision, batch = self.pending.popleft()
+                visible = bool(str(decision.get("body") or "").strip())
+                if visible and self.last_batch == batch and self.last_at is not None:
+                    delay = _RUNS_REPLY_INTERVAL_SEC - (_runs_reply_clock() - self.last_at)
+                    if delay > 0:
+                        await _runs_reply_sleep(delay)
+                try:
+                    await self.callback(decision, self.run_id)
+                except Exception:
+                    decision["_live_delivery_failed"] = True
+                    # 已 prepare 的份保留原 pending 组件，交给既有终态／恢复链；
+                    # 不让一份发送失败卡住后面的可见份或入站闸。
+                    logger.exception(f"[HERMES] 即时决策处理失败 run_id={self.run_id}")
+                if self.sink is not None:
+                    self.sink.append(decision)
+                if visible:
+                    self.last_batch, self.last_at = batch, _runs_reply_clock()
+            # 单个 delta 暂时读空不是批结束。以工具／终态边界封批，防碎片间提前 steer。
+            if self.busy and self.closed_through >= self.latest_batch:
+                self._busy(False)
+                # 释放输入可等待 HTTP；它不占出站 worker，下一工具阶段仍能立即发。
+                self.release_task = asyncio.create_task(self._release(self.release_task))
+        except BaseException:
+            self._busy(False)
+            raise
+
+    async def finish(self, *, cancelled: bool = False) -> None:
+        current = asyncio.current_task()
+        if cancelled or (current is not None and current.cancelling()):
+            for task in (self.task, self.release_task):
+                if task is not None:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+            self._busy(False)
+        else:
+            self.close_batch(self.latest_batch)
+            if self.task is not None:
+                await self.task
+            if self.release_task is not None:
+                await self.release_task
 
 
 def is_persistence_error_text(text: str) -> bool:
@@ -1748,6 +1861,7 @@ class HermesClient:
         parser = RunsEventParser()
         run_id = ""
         registered = False
+        reply_queue = None
         from .npha_terminal import structured_from_terminal
         from .. import mcp as _mcp  # 延迟导入防环(mcp 装配在 handlers 之后)
 
@@ -1798,6 +1912,7 @@ class HermesClient:
                 logger.warning(f"[HERMES] runs 提交重放认领 (run_id={run_id})")
             if not run_id:
                 raise StreamHttpError(202, f"missing run_id: {resp.text[:200]}")
+            reply_queue = _RunsReplyQueue(decision_callback, run_id, streamed_sink)
             # 阶段2a:登记在跑 run(nb 重启后 run_resume 按此行 reattach 续跑)。
             # bot_self_id 缺失(旧调用点未传)时不登记——resume 找不到 bot 投不出去,
             # 登记了也是死行;缺 id 只发生在非 handler 直调的探测场景。
@@ -1830,31 +1945,45 @@ class HermesClient:
                 if ev.status_code != 200:
                     raise StreamHttpError(ev.status_code, (await ev.aread()).decode("utf-8", "replace"), retry_after=_parse_retry_after(ev.headers.get("Retry-After")))
                 async for line in ev.aiter_lines():
+                    previous_batch = parser.decision_batch
                     interim = parser.feed(line)
                     if interim and interim_callback is not None:
                         try:
                             await interim_callback(interim)
                         except Exception:
                             logger.warning("[HERMES] 旁白转发失败(不影响主 turn)", exc_info=True)
-                    # E3:delta 里刚完整到达的一份决策 → 立即落台账并发送（轮内）。
-                    # 失败只停用即时发送，异常必须发生在任何发送之前；剩余份由
-                    # 终态 E2 路径补发，已即时处理的份记进 streamed_sink 供折叠。
+                    # 先登记整帧完整份，再让串行发送器工作；发送间隔不阻塞读 SSE。
                     for streamed_decision in parser.drain_stream_decisions():
                         payload_decision = structured_from_terminal(streamed_decision)
-                        if decision_callback is None:
-                            continue
-                        try:
-                            await decision_callback(payload_decision, run_id)
-                        except Exception:
-                            logger.error(
-                                f"[HERMES] 即时决策处理失败,本轮停用流式发送 "
-                                f"run_id={run_id} body_len={len(payload_decision.get('body') or '')}",
-                                exc_info=True,
-                            )
-                            decision_callback = None
-                            continue
-                        if streamed_sink is not None:
-                            streamed_sink.append(payload_decision)
+                        reply_queue.put(payload_decision, parser.decision_batch)
+                    if parser.decision_batch != previous_batch:
+                        reply_queue.close_batch(previous_batch)
+                    if parser.terminal:
+                        # 无 delta 或终态新增的份也走同一个队列，不能绕过三秒节奏。
+                        if parser.output is not None and decision_callback is not None:
+                            from .npha_terminal import decode_terminal_batch, structured_batch_from_terminal
+                            from .runs_terminal import fold_stream_decisions
+
+                            try:
+                                terminal = structured_batch_from_terminal(decode_terminal_batch(parser.output))
+                            except ValueError:
+                                terminal = []  # 终态破损交回原解码失败分支，已流式份仍保留。
+                            terminal_only = not reply_queue.observed
+                            if terminal and terminal_only and registered and submission_tracked:
+                                # 终态-only 的发送仍须经过原 ready 台账／前序顺序门。
+                                # 落账失败由外层保留 run 并 detached，不能先发再补台账。
+                                tracker.record_expected_delivery(
+                                    run_id=run_id, output=parser.output or "",
+                                    expect_structured=bool(scope["expect_structured"]),
+                                )
+                            merged, _ = fold_stream_decisions(reply_queue.observed, terminal)
+                            for decision in merged[len(reply_queue.observed):]:
+                                if terminal_only:
+                                    decision["_runs_terminal_only"] = True
+                                reply_queue.put(decision, parser.decision_batch)
+                        reply_queue.close_batch(parser.decision_batch)
+                    if reply_queue.task is not None:
+                        await asyncio.sleep(0)  # 首份当下发送，后续等待在 worker 内。
                     # 阶段3c:审批挂起帧即时上交(command 已脱敏;回调失败不拖垮主 turn)
                     if parser.approval is not None and approval_callback is not None:
                         approval, parser.approval = parser.approval, None
@@ -1880,6 +2009,10 @@ class HermesClient:
                 _spawn_steer_reconcile_if_pending(tracker, run_id)
                 tracker.finish(run_id)
             raise
+
+        finally:
+            if reply_queue is not None:
+                await reply_queue.finish(cancelled=parser.interrupted)
 
         def _finish() -> None:
             if tracker is not None:

@@ -46,9 +46,9 @@ _patrol_queued: set[tuple[str, str]] = set()
 _patrol_running = False
 
 _PROACTIVE_PROMPT = (
-    "(定时巡查:以上是群里最近的新消息,请自行判断是否值得发言。"
-    "本模式 push_message 不可用,想说话就直接在 submit_decision 里给 reply_text;"
-    "没什么可说的就 should_reply=false)"
+    "（定时巡查：以上是群里最近的新消息，请自行判断是否值得发言。"
+    "本模式不使用工具推送，想说话就按当前会话的决策协议输出正文；"
+    "没什么可说的就输出静默决策）"
 )
 
 
