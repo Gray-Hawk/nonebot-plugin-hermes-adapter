@@ -50,7 +50,7 @@ kinds = Counter(kind for kind, _t, _r in ct.OLD_KEYS.values())
 check("删除 20 键(含旧防抖三键)", kinds.get("deleted") == 20, str(kinds))
 check("固定行为 8 键", kinds.get("fixed") == 8, str(kinds))
 check("合并 3+1 键", kinds.get("merge_history") == 3 and kinds.get("merge_text") == 1, str(kinds))
-# 直接迁移键数：按旧键映射计数；新统一防抖键使用缺省 6.0，不继承旧分键值。
+# 直接迁移键数：按旧键映射计数；新统一防抖键使用缺省 3.0，不继承旧分键值。
 direct = kinds["env"] + kinds["chat"] + kinds["misc"] + kinds["media"] + kinds["user_lists"]
 check("直接迁移 50 键", direct == 50, f"direct={direct}")
 

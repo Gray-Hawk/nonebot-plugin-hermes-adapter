@@ -162,7 +162,7 @@ check("ignore_prefix 保留", chat["ignore_prefix"] == [".", "!"])
 check("reply_delay_for_bot_sec 改名迁移(1.5)", chat["reply_delay_for_bot_sec"] == 1.5)
 check("active_session_timeout_sec 改名迁移(600)", chat["active_session_timeout_sec"] == 600)
 check("proactive_groups 保留", chat["proactive_groups"] == ["onebotv11:40001"])
-check("统一防抖默认 6.0", chat.get("reply_debounce_sec") == 6.0)
+check("统一防抖默认 3.0", chat.get("reply_debounce_sec") == 3.0)
 for key in ("reply_debounce_group_sec", "reply_debounce_private_sec", "reply_debounce_max_wait_sec"):
     check(f"旧防抖键撤除: {key}", key not in chat and ct.OLD_KEYS[key][:2] == ("deleted", None))
 check("max_length 迁到 misc(2500)", misc["max_length"] == 2500)

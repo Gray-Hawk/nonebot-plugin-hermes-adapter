@@ -18,7 +18,7 @@ from .config_templates import CHAT_CONFIG_TEMPLATE
 
 @dataclass(frozen=True)
 class ChatConfig:
-    reply_debounce_sec: float = 6.0
+    reply_debounce_sec: float = 3.0
     private_trigger: str = "all"
     group_trigger: str = "keyword"
     keywords: set[str] = field(default_factory=lambda: {"/ai"})
@@ -43,7 +43,7 @@ class ChatConfig:
 
 def parse_chat_config(doc: dict) -> ChatConfig:
     return ChatConfig(
-        reply_debounce_sec=float_field(doc, "reply_debounce_sec", 6.0),
+        reply_debounce_sec=float_field(doc, "reply_debounce_sec", 3.0),
         private_trigger=choice_field(doc, "private_trigger", "all", ("all", "allowlist")),
         group_trigger=choice_field(doc, "group_trigger", "keyword", ("keyword", "at")),
         keywords=str_set_field(doc, "keywords", {"/ai"}),
