@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Callable
 from dataclasses import replace
 from functools import partial
 
@@ -24,6 +25,7 @@ from ..core.active_session import (
     Participant,
 )
 from ..core.approvals import admin_user_ids
+from ..core.bg_tasks import spawn_bg_task
 from ..core.group_profile import build_group_profile_block
 from ..core import identity
 from ..config import resolve_custom_dir
@@ -360,6 +362,10 @@ async def _dispatch_chat(
 # 拖长只会把群里的回复延迟摊得更明显。
 _PERSISTENCE_RETRY_DELAY_S = 1.0
 
+# 段内重复吞掉的可见回执：给本轮触发消息贴的 emoji id（NapCat 群聊实测
+# set_msg_emoji_like 可用；私聊内部 result=65011，不调用）。不新增配置项。
+_SEGMENT_DUPLICATE_EMOJI_ID = 32
+
 # 同 turn 去重的判据。刻意很窄:只认「近乎逐字复述」。
 #
 # 早期规则是"本 turn 内 push 过就把 submit_decision 整条抑制",它把最自然的用法
@@ -579,6 +585,40 @@ async def _chat_with_overflow_recovery(label: str, /, *, reply_bot: Bot, reply_t
             "system prompt 加历史窗口就已经超了,请缩小窗口或换更大上下文的模型"
         )
     return retried
+
+def _segment_duplicate_emoji_hook(
+    *, bot: Bot, trigger_msg_id, group_id: str, adapter_name: str, interface: str
+) -> Callable[[str, str, str], None] | None:
+    """段内重复吞掉时给触发消息贴一次表情的观察口；不适用时返回 None。
+
+    只接 onebotv11 群聊 reactive（调用方是 _run_reactive_turn）＋ runs 通道＋
+    拿得到 trigger_msg_id 的路径。私聊不在调用点：NapCat 私聊
+    set_msg_emoji_like 外层 retcode=0 但内部 result=65011，是能力边界，
+    不能把外层成功当贴上。
+
+    每轮最多贴一次（首次命中即置位，失败也不重试）；后台任务自身吞异常，
+    只有 debug/warning 日志，绝不影响正文发送。
+    """
+    if interface != "runs" or adapter_name != "onebotv11" or trigger_msg_id is None:
+        return None
+    fired = False
+
+    def _hook(reason: str, text: str, source: str) -> None:
+        nonlocal fired
+        if reason != "segment_duplicate" or fired:
+            return
+        fired = True
+        logger.info(
+            f"[HERMES reactive] 段内重复吞掉,给触发消息贴表情 "
+            f"(group={group_id} msg={trigger_msg_id} len={len(text)})"
+        )
+        spawn_bg_task(
+            _emoji_like_quiet(bot, trigger_msg_id, _SEGMENT_DUPLICATE_EMOJI_ID),
+            name="segment-duplicate-emoji",
+        )
+
+    return _hook
+
 
 def _delivery_identity(result) -> tuple[object, str | None]:
     """runs 半接管交付身份(alive/108):旧结果对象/非 runs 通道安全返回 None。"""
@@ -1749,11 +1789,26 @@ async def _run_reactive_turn(
     # 注:user_content_override 已携带 user message 的全部内容(text + 多模态);
     # text/image_urls 在 chat() 中会被忽略(见 hermes_client.chat 文档),此处显式传 ""
     # /[] 让契约清晰,避免被读者误以为 image_urls 也参与了构造。
+    # 段内重复吞掉的可观察回执（主人 2026-11-09 批准）：Runs 同一 assistant 段的
+    # interim／delta 完整单元全文匹配被吞时，给「本轮应该回复的用户触发消息」贴一次
+    # 表情，作为真实使用中的快速可见验证。只接 onebotv11 群聊 reactive（本函数）
+    # 且有 trigger_msg_id 的路径；私聊不调用（NapCat 私聊 set_msg_emoji_like 外层
+    # retcode=0 但内部 result=65011，属能力边界，不把外层 0 当贴上）。
+    # 不是给 bot 自己消息贴，也不另发表情消息；unsealed_delta_tail／跨段同文／
+    # 终态重复不贴。每轮最多一次，失败只记日志，不影响正文。
+    _suppressed_hook = _segment_duplicate_emoji_hook(
+        bot=bot,
+        trigger_msg_id=trigger_msg_id,
+        group_id=group_id,
+        adapter_name=adapter_name,
+        interface=plugin_config.hermes_api_interface,
+    )
     # 纯文本正文协议：进度就是正文（Runs 决策通道），独立旁白通道整路停用。
     result = await _chat_with_overflow_recovery(
         "reactive",
         reply_bot=bot,
         reply_target=target,
+        on_suppressed=_suppressed_hook,
         text="",
         image_urls=[],
         session_key=session_key,

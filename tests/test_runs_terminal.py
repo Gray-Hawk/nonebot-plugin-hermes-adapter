@@ -232,7 +232,8 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
 
     async def _run(self, result, *, tracker, bounce=None, real_bounce: bool = False, chat=None,
                    sessions=None, current_buffered=None,
-                   replied_msg_id=None, now_ms: int = 1, resolve_reply=None):
+                   replied_msg_id=None, now_ms: int = 1, resolve_reply=None,
+                   trigger_msg_id=None):
         from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
         from nonebot_plugin_hermes_adapter.handlers import message_feedback as fb
         from nonebot_plugin_hermes_adapter.core import prompt_builder
@@ -337,6 +338,7 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
                 recent_override=[], ephemeral=True,
                 current_buffered=current_buffered,
                 replied_msg_id=replied_msg_id,
+                trigger_msg_id=trigger_msg_id,
             )
         sessions = patches["_mcp"].active_sessions
         calls["control"] = {

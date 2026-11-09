@@ -215,7 +215,7 @@ class TextProtocolParserTests(unittest.TestCase):
     def test_segment_duplicate_suppression_is_observable(self) -> None:
         """段内全文匹配去重必须可观察：原因 + 被跳过的原文。"""
         parser = RunsEventParser()
-        self.assertIsNone(parser.on_suppressed)  # 生产默认不接线
+        self.assertIsNone(parser.on_suppressed)  # parser 默认不接线（生产由群聊 reactive 按需接线）
         seen: list[tuple[str, str, str]] = []
         parser.on_suppressed = lambda reason, text, source: seen.append((reason, text, source))
         drained = feed_all(parser, [
