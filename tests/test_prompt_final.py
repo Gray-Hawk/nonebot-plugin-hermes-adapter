@@ -1,7 +1,6 @@
 """用户第三版定稿：验证实际四路转录与模式隔离。"""
 from __future__ import annotations
 
-import json
 import re
 import unittest
 from pathlib import Path
@@ -46,21 +45,21 @@ class FinalPromptTests(unittest.TestCase):
         for mode in ('runs', 'completions'):
             for scope, prompt in self.prompts(mode).items():
                 with self.subTest(mode=mode, scope=scope):
-                    self.assertIn('用户只能看到决策信封中的 body 或 push_message 工具推送的消息。', prompt)
-                    self.assertIn('用户明显还要继续说话、说话说一半、意思没表达完整时，本轮不回答、不调用工具，直接输出空 body', prompt)
+                    self.assertIn('用户能看到你输出的正文', prompt)
+                    self.assertIn('用户明显还要继续说话、说话说一半、意思没表达完整时，本轮不回答、不调用工具，什么都不输出', prompt)
                     self.assertIn('如果上一轮回复已经涵盖用户后续补充的内容，本轮保持静默，不要重复回复。', prompt)
                     self.assertIn('闲聊时输出尽可能单句不分段，简短，不超过15字。', prompt)
                     self.assertNotRegex(prompt, r'(?m)^[%#]|[%#]$')
                     if mode == 'runs':
                         self.assertNotIn('not_final', prompt)
                         self.assertNotIn('使用 push_message 工具', prompt)
-                        self.assertIn('依段落拆分为多个决策信封一次发送', prompt)
+                        self.assertIn('依段落拆分为多条正文一次发送', prompt)
                         self.assertIn('随后在当前 run 调用工具继续任务。', prompt)
                     else:
-                        self.assertIn('not_final=true', prompt)
+                        self.assertNotIn('not_final', prompt)
                         self.assertIn('先使用 push_message 工具输出消息', prompt)
-                        self.assertIn('最终答复必须写成完整决策信封。', prompt)
-                        self.assertIn('由 not_final 续跑后，调用工具继续任务。', prompt)
+                        self.assertIn('request_continuation', prompt)
+                        self.assertIn('由续跑轮调用工具继续任务。', prompt)
                         self.assertNotIn('随后在当前 run', prompt)
                     if scope == 'private':
                         self.assertIn('私聊只有对方一个人，不必 @ 任何人', prompt)
@@ -78,8 +77,10 @@ class FinalPromptTests(unittest.TestCase):
                     self.assertIn('/test/memory/onebotv11/people/<QQ号>.md', prompt)
                     self.assertNotIn('get_message_files ，', prompt)
                     self.assertNotIn('CQ 标记 不要修改', prompt)
-                    for body in re.findall(r'(?m)^\s*(\{"body":.*\})$', prompt):
-                        self.assertIsInstance(json.loads(body)['body'], str)
+                    # 正文协议：不再有可解析的 {"body": ...} 决策行（反例以 错误： 前缀出现）
+                    for line in prompt.splitlines():
+                        if line.lstrip().startswith('{"body"'):
+                            self.fail(f'正文协议残留 JSON 决策行: {line!r}')
 
     def test_chinese_prose_punctuation_protects_technical_examples(self):
         for mode in ('runs', 'completions'):

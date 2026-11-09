@@ -35,7 +35,6 @@ from ..core.hermes_client import (
     ChatResult,
     extract_response_media,
     hermes_client,
-    maybe_extract_decision_reply_text,
     preview_raw,
 )
 from ..core.image_inline import (
@@ -64,7 +63,7 @@ from ..core.message_buffer import (
 from ..core.message_origin import MessageOrigin
 from ..core import task_notes
 from ..core import user_lists
-from ..core import control_intent
+from ..core import control_intent, continuation
 from ..core.chat_config import load_chat_config
 from ..core.misc_config import load_misc_config
 from ..core.outbound import (
@@ -373,101 +372,9 @@ _RESTATEMENT_NOISE = str.maketrans(
     " \t\r\n，。！？、；：~～…!?,.;:「」『』\"'“”‘’()()【】[]",
 )
 
-def _json_lines_interface() -> bool:
-    """终态正文读 body 的接口:completions(E1)与 runs 终态(E2);astrbot 旧协议。"""
-    from ..config import plugin_config
-
-    return getattr(plugin_config, "hermes_api_interface", "") in {"completions", "runs"}
-
-
-def _handle_envelope_rejection(
-    result, *, fb_key, bot, target, adapter_name, user_id, group_id, is_private, tag: str
-) -> None:
-    """B／C 打回：[便签] + [重交] + [日志] + settle，调用方必须直接 return，不得发送。"""
-    reason = getattr(result, "parse_failed_reason", "")
-    logger.warning(f"[HERMES {tag}] 信封打回 reason={reason} (group={group_id})")
-    from ..config import plugin_config
-
-    runs_rules = (
-        getattr(plugin_config, "hermes_api_interface", "") == "runs"
-        or str(reason).startswith("runs_")
-    )
-    if runs_rules:
-        note = (
-            "系统提示：上一轮终态不是合法的两行决策（有控制没正文、残段或非法尾随）。"
-            "请每份只写一行控制 JSON + 一行 {\"body\":\"...\"}，多份按顺序接在后面，"
-            "不要全角括号、不要额外转义。"
-        )
-        prompt = (
-            "上一轮终态信封不合法：每份必须是一行控制 JSON + 一行正文对象，"
-            "且整段必须能被若干完整两份恰好消费完（不能有残段）。"
-            "请重新按这个形状输出，不要全角括号、不要额外转义。"
-        )
-    else:
-        note = (
-            "系统提示：上一轮信封炸了（决策字段不全或多行多份）。"
-            "请只输出一行决策字段 JSON，再一行 body，不要全角括号、不要额外转义。"
-        )
-        prompt = (
-            "上一轮信封不合法：决策字段不全或出现多行／多份。"
-            "请重新按一行决策 JSON + 一行 body 输出，不要全角括号、不要额外转义。"
-        )
-    # Runs 只让即时重交携带协议提示；同一次失败再写 envelope_rejected 便签，
-    # 会与重交 prompt 在下一轮叠加成多份互相重复的系统提示。
-    if not runs_rules:
-        task_notes.push_plugin_note(fb_key, "envelope_rejected", note, cooldown_sec=3600.0)
-    try:
-        _fire_followup_turn(
-            key=fb_key, tag=f"bounce:envelope-{reason}",
-            prompt=prompt,
-            bot=bot, target=target, adapter_name=adapter_name,
-            user_id=user_id, group_id=group_id, is_private=is_private,
-        )
-    except Exception as exc:
-        logger.warning(f"[HERMES {tag}] 信封重交失败 reason={reason}: {exc}")
-    _settle(result, "suppressed", "envelope_rejected")
-
-
-
-
-def _missing_envelope_note() -> str:
-    """近因便签也按接口隔离；不能用通用便签推翻轮中／最终输出规则。"""
-    head = "系统提示：你上一轮的最终回复没有包双单行 JSON 信封（走了散文兜底）。"
-    if plugin_config.hermes_api_interface == "runs":
-        return head + "受理回执、进度、结果和最终答复都必须使用完整决策信封，正文放在 body，不能用普通旁白或最终裸文本代替。"
-    if plugin_config.hermes_api_interface == "completions":
-        return head + "轮中进度使用 push_message；最终答复必须是控制 JSON 行 + {\"body\":\"正文\"} 行，正文放在 body，不能用普通旁白或最终裸文本代替。"
-    return "系统提示：你上一轮的最终回复没有包 submit_decision JSON 信封（走了散文兜底）。最终答复必须输出单个 JSON 对象，正文放进 reply_text 字段。"
-
-
-def _should_hard_silence_envelope(result) -> bool:
-    """E1:completions 的终态信封失败一律硬静默(旧散文兜底只在 Runs／旧接口用)。"""
-    reason = getattr(result, "parse_failed_reason", "")
-    if reason:
-        return False   # 解析失败一律走打回＋提示，不硬静默
-    from ..config import plugin_config
-
-    return (
-        getattr(plugin_config, "hermes_api_interface", "") == "completions"
-        and bool(getattr(result, "parse_failed", False))
-        and not bool(getattr(result, "is_transport_error", False))
-    )
-
-
-def _push_self_heal_note(fb_key, structured) -> None:
-    """放行但信封炸过：把自愈提示挂进既有 task_notes 便签组件，下轮即见。"""
-    hint = (structured or {}).get("_self_heal_hint")
-    if hint:
-        key = "envelope_missing" if "没有写信封" in str(hint) else "envelope_broken"
-        task_notes.push_plugin_note(fb_key, key, str(hint), cooldown_sec=3600.0)
-
-
-def _decision_body(structured: dict, *, prefer_body: bool = False) -> str:
-    """body 优先只限 E1／completions；Runs 与旧信封仍读 reply_text。"""
-    body = str((structured or {}).get("body") or "") if prefer_body else ""
-    if body:
-        return body
-    return str((structured or {}).get("reply_text") or "")
+def _decision_body(decision: dict) -> str:
+    """决策正文：纯文本协议下正文就是 ``body``。"""
+    return str((decision or {}).get("body") or "")
 
 
 def _merge_reply_media(result_media, extracted_media):
@@ -512,16 +419,6 @@ async def _handle_mid_turn_push(*, action: str, send_text, prepare_delivery, mar
         settle_suppressed()
         return True
     return False
-
-
-async def _emit_interim_echo(segment: str, *, feedback_check, send_text) -> bool:
-    """旁白转发（与改造前一致）：先过反馈规则，再剥媒体占位，非空才发。"""
-    feedback_check(segment)
-    cleaned, _, _ = extract_response_media(segment)
-    if not cleaned:
-        return False
-    await send_text(cleaned)
-    return True
 
 
 def _is_restatement(pushed: str, reply: str) -> bool:
@@ -1150,21 +1047,8 @@ async def _run_passive_turn(
         name_resolver=_name_resolver,
     )
 
-    # 本部署补丁: 长任务旁白实时转发。旁白是本轮 turn 的附属
-    # 输出,用 handler 现成的 bot/target 直发,不走 push_message(那是带窗口校验的
-    # 独立发话通道);不 @ 人(进度广播不针对特定个体)。extract_response_media 剥掉
-    # MEDIA:/md 图片标签——旁白里的本地路径原样发出会泄主机路径;媒体最终回复还会带。
-    async def _interim_echo(segment: str) -> None:
-        await _emit_interim_echo(
-            segment,
-            feedback_check=lambda text: _check_interim_feedback(
-                _feedback_scope_key(adapter_name, is_private, user_id, group_id), text
-            ),
-            send_text=lambda text: send_text_with_media(
-                bot=bot, target=target, text=text, media_urls=[], adapter_name=adapter_name
-            ),
-        )
-
+    # 纯文本正文协议：正文（含工具前的进度）走 Runs 决策通道，
+    # 不再有独立旁白通道——interim echo 整路停用，避免同文发两遍。
     # E3: 私聊 passive 的 runs 决策同样即时发送；群 passive 是普通文本路径，不接。
     _live_fb_key = _feedback_scope_key(adapter_name, is_private, user_id, group_id)
     _live_enabled = use_private_decision and plugin_config.hermes_api_interface == "runs"
@@ -1197,7 +1081,6 @@ async def _run_passive_turn(
         system_prompt=system_prompt,
         user_content_override=user_content,
         target=hermes_target,
-        interim_callback=_interim_echo if misc_cfg.interim_echo_enabled else None,
         decision_callback=(
             _live_deliver if _live_enabled else None
         ),
@@ -1342,51 +1225,38 @@ async def _run_passive_turn(
             )
         return result
 
-    # 本部署补丁: 私聊决策信封解析成功时按信封走——
-    # should_reply=false 即静默(私聊不再硬必回)。解析失败回 raw_text:私聊是显式
-    # 对话,静默更像故障;并保留既有防御性抠取(模型可能吐了破信封)。
+    # 纯文本正文协议：决策的 body 就是正文；空正文即静默，不合成空决策。
+    # 私聊/完成态走决策通道，普通文本（群 passive）单份直发，不再从散文里抠 JSON。
     _fb_key = _feedback_scope_key(adapter_name, is_private, user_id, group_id)
     passive_batch_units = None
     streamed_unit_count = 0
     _passive_reply_text = ""
+    passive_decisions: list[dict] = []
     if use_private_decision and result.structured is not None and not result.parse_failed:
-        terminal_decisions = getattr(result, "terminal_decisions", None)
+        terminal_decisions = [
+            item for item in (getattr(result, "terminal_decisions", None) or [])
+            if isinstance(item, dict)
+        ]
         streamed_decisions = [
             item for item in (getattr(result, "streamed_decisions", None) or [])
             if isinstance(item, dict)
         ]
         streamed_ids = {id(item) for item in streamed_decisions}
-        if streamed_decisions:
-            from ..core.runs_terminal import fold_stream_decisions
-
-            passive_decisions, _folded = fold_stream_decisions(
-                streamed_decisions, terminal_decisions
-            )
-        else:
-            passive_decisions = [
-                item for item in (terminal_decisions or [result.structured])
-                if isinstance(item, dict)
-            ]
-        # R5:连续多份终态里每份的控制都要按顺序消费；空 body 只免发送，不吞控制。
-        # 私聊 passive 原本适用的控制只有自愈提示，
-        # 不在这里新增群窗／锚语义；completions 单份行为与顺序不变。
-        # E3: 已即时发送的份同样按到达顺序走控制，只是不再重复发送。
-        # 控制队列：每份决策（含空 body）消费一份 submit_control 登记的控制；
-        # 已被即时发送器消费的份不会重弹第二份（bind_control 幂等）。
+        # 已即时发送的份 + 终态份按到达顺序拼接；不做内容级折叠（跨段同文是两条）。
+        passive_decisions = streamed_decisions or terminal_decisions or [result.structured]
+        # R5:连续多份里每份的控制都要按顺序消费；静默份不消费控制。
         for _passive_decision in passive_decisions:
-            control_intent.bind_control(_passive_decision, _fb_key)
-        for _passive_control in passive_decisions:
-            _push_self_heal_note(_fb_key, _passive_control)
+            if _passive_decision.get("should_reply"):
+                control_intent.bind_control(_passive_decision, _fb_key)
         passive_deliverable = [
             item for item in passive_decisions
             if item.get("should_reply") and id(item) not in streamed_ids
         ]
         if not passive_deliverable and not streamed_decisions:
-            logger.info(f"[HERMES passive] 终态所有份 body 为空 (user={user_id})")
-            _settle(result, "silent", "should_reply_false")
+            logger.info(f"[HERMES passive] 终态没有正文 (user={user_id})")
+            _settle(result, "silent", "empty_output")
             return result
-        streamed_unit_count = 0
-        if terminal_decisions is not None or streamed_decisions:
+        if getattr(result, "run_id", None):
             # E2/E3:runs 计划先落库;失败本轮零发送,不回落 legacy。
             # 份过滤/空字段口径与恢复链共用 units_from_decisions。
             from ..core.runs_terminal import (
@@ -1427,45 +1297,18 @@ async def _run_passive_turn(
             passive_batch_units = all_units
             passive_items = list(enumerate([decision for decision, _ in passive_pairs]))
         else:
+            # completions：多份顺序直发，不经 Runs 台账（没有计划/对账语义）。
             passive_items = list(enumerate(passive_deliverable))
     else:
-        if _should_hard_silence_envelope(result):
-            # E1:completions 乙信封失败不得回退整段原始信封／裸残骸
-            logger.info(f"[HERMES passive] completions 乙信封失败,硬静默 (group={group_id})")
-            _settle(result, "silent", "parse_failed")
-            return result
-        # 防御:同一 Hermes session 之前跑过 reactive 时学到 submit_decision 契约,
-        # 切回 passive 后仍可能吐 JSON。检测并抠 reply_text;不命中则用原 raw_text。
-        # 闭环提醒:决策轮信封缺失(模型写了散文忘包 JSON,
-        # 区别于 transport 错误)→ 留便签下轮提醒,不靠人介入纠偏。
-        if (use_private_decision and result.parse_failed and not result.is_transport_error
-                and not getattr(result, "parse_failed_reason", "")):
-            task_notes.push_plugin_note(
-                _fb_key, "envelope_missing",
-                _missing_envelope_note(),
-                cooldown_sec=3600.0,
+        if use_private_decision and result.parse_failed and not result.is_transport_error:
+            # 正文协议失败（单份超长等）：fail-closed，本轮零发送，不猜补发。
+            logger.error(
+                f"[HERMES passive] 正文协议失败,本轮零发送 "
+                f"reason={getattr(result, 'parse_failed_reason', '')!r} (group={group_id})"
             )
-        if use_private_decision and getattr(result, "parse_failed_reason", ""):
-            _handle_envelope_rejection(
-                result, fb_key=_fb_key, bot=bot, target=target, adapter_name=adapter_name,
-                user_id=user_id, group_id=group_id, is_private=is_private, tag="passive",
-            )
+            _settle(result, "failed", getattr(result, "parse_failed_reason", "") or "parse_failed")
             return result
-        # 信封炸掉但已放行:把自愈提示挂进同一提示组件,下轮直接给模型看到
-        if result.structured is not None:
-            hint = result.structured.get("_self_heal_hint")
-            if hint:
-                task_notes.push_plugin_note(_fb_key, "envelope_broken", str(hint), cooldown_sec=3600.0)
         _passive_reply_text = result.raw_text
-        extracted = maybe_extract_decision_reply_text(_passive_reply_text)
-        if extracted is not None:
-            if extracted == "":
-                logger.info(f"[HERMES passive] LLM 返回 should_reply=false 结构,静默(group={group_id})")
-                _settle(result, "silent", "should_reply_false")
-                return result
-            logger.warning(f"[HERMES passive] 检测到 submit_decision 形 JSON 残留,抠 reply_text 后发送(group={group_id})")
-            _passive_reply_text = extracted
-
         passive_items = [(0, None)]
 
     passive_attempted = bool(_live_state.get("sent_any"))
@@ -1503,10 +1346,11 @@ async def _run_passive_turn(
             file_paths = list(_unit["file_paths"])
         else:
             cleaned_text, extracted_media_urls, extracted_files = extract_response_media(reply_text)
-            media_urls = list(result.media_urls) + [u for u in extracted_media_urls if u not in result.media_urls]
-            # 本部署补丁:本地文件上传。client 层(普通文本路径)已收过一轮
-            # file_paths; handler 层对 reply_text 的二次 extract 覆盖 JSON 残留场景。
-            file_paths = list(result.file_paths) + [p for p in extracted_files if p not in result.file_paths]
+            # 本轮附件只并入第一份（主答复）；后续份按正文自带的媒体引用发送。
+            base_media = list(result.media_urls) if index == 0 else []
+            base_files = list(result.file_paths) if index == 0 else []
+            media_urls = base_media + [u for u in extracted_media_urls if u not in base_media]
+            file_paths = base_files + [p for p in extracted_files if p not in base_files]
 
         if not cleaned_text and not media_urls and not file_paths:
             if passive_batch_units is not None:
@@ -1593,10 +1437,17 @@ async def _run_passive_turn(
         )
     for _passive_index, _passive_decision in passive_items:
         if _passive_decision is not None:
-            _passive_body = _decision_body(_passive_decision, prefer_body=True).strip()
+            _passive_body = _decision_body(_passive_decision).strip()
         else:
             _passive_body = _passive_reply_text
         await _deliver_passive_once(_passive_body, _passive_decision, _passive_index)
+    if continuation.take_continuation(_fb_key):
+        # request_continuation：工具只登记，这里消费一次并追加继续执行轮；
+        # 与旧 not_final 同一条 relay 链（未发送正文时同样续跑，链上限兜底）。
+        await _fire_continuation(
+            key=_fb_key, bot=bot, target=target, adapter_name=adapter_name,
+            user_id=user_id, group_id=group_id, is_private=is_private,
+        )
     if passive_batch_units is not None and not passive_attempted:
         # 整批都被业务拦截：按既有销账语义记 suppressed，禁止对账补投。
         _settle(result, "suppressed" if passive_suppressed else "silent",
@@ -1877,18 +1728,7 @@ async def _run_reactive_turn(
     # 注:user_content_override 已携带 user message 的全部内容(text + 多模态);
     # text/image_urls 在 chat() 中会被忽略(见 hermes_client.chat 文档),此处显式传 ""
     # /[] 让契约清晰,避免被读者误以为 image_urls 也参与了构造。
-    # 本部署补丁: 旁白实时转发,同 passive 路径注释。
-    async def _interim_echo(segment: str) -> None:
-        await _emit_interim_echo(
-            segment,
-            feedback_check=lambda text: _check_interim_feedback(
-                _feedback_scope_key(adapter_name, False, user_id, group_id), text
-            ),
-            send_text=lambda text: send_text_with_media(
-                bot=bot, target=target, text=text, media_urls=[], adapter_name=adapter_name
-            ),
-        )
-
+    # 纯文本正文协议：进度就是正文（Runs 决策通道），独立旁白通道整路停用。
     result = await _chat_with_overflow_recovery(
         "reactive",
         reply_bot=bot,
@@ -1908,7 +1748,6 @@ async def _run_reactive_turn(
         system_prompt=system_prompt,
         user_content_override=user_content,
         target=hermes_target,
-        interim_callback=_interim_echo if misc_cfg.interim_echo_enabled else None,
         decision_callback=(
             _live_deliver if plugin_config.hermes_api_interface == "runs" else None
         ),
@@ -2010,7 +1849,7 @@ async def _run_reactive_turn(
         )
 
     if getattr(result, "is_run_detached", False):
-        # 原 run 已登记且仍在恢复链中；当前轮不发错误兜底或破信封提醒。
+        # 原 run 已登记且仍在恢复链中；当前轮不发错误兜底提醒。
         # 上方水位可推进：网关已接纳本轮内容，slot 释放后由 retry 续订原 run。
         logger.info(f"[HERMES reactive] runs 订阅断开,等待原 run 恢复 (group={group_id})")
         return result
@@ -2037,22 +1876,14 @@ async def _run_reactive_turn(
             _settle(result, "failed", "stream_after_partial")
             return result
         if getattr(result, "parse_failed_reason", ""):
-            _fb_key = _feedback_scope_key(adapter_name, False, user_id, group_id)
-            _handle_envelope_rejection(
-                result, fb_key=_fb_key, bot=bot, target=target, adapter_name=adapter_name,
-                user_id=user_id, group_id=group_id, is_private=False, tag="reactive",
+            # 正文协议失败（单份超长等）：fail-closed，本轮零发送，不猜补发。
+            logger.error(
+                f"[HERMES reactive] 正文协议失败,本轮零发送 "
+                f"reason={getattr(result, 'parse_failed_reason', '')!r} (group={group_id})"
             )
+            _settle(result, "failed", getattr(result, "parse_failed_reason", "") or "parse_failed")
             return result
 
-        if _should_hard_silence_envelope(result):
-            # E1:completions 乙信封失败(含超限裸正文、被拒数组、围栏残骸)
-            # 必须在旧散文兜底前硬静默,不得把原始信封发出去;Runs 兜底不动。
-            logger.info(
-                f"[HERMES reactive] completions 乙信封失败,硬静默 "
-                f"(group={group_id} raw_len={len(result.raw_text or '')})"
-            )
-            _settle(result, "silent", "parse_failed")
-            return result
         # 本部署补丁: 403 鉴权类错误硬静默(同 passive 路径注释)。
         # 扩展: provider 暂不可用/重试耗尽引导文案同口径静默。
         if result.is_forbidden_error or result.is_outage_error:
@@ -2073,16 +1904,6 @@ async def _run_reactive_turn(
             logger.info(f"[HERMES reactive] turn 被终止,硬静默 (group={group_id})")
             _settle(result, "cancelled", "interrupted")
             return result
-        # 闭环提醒:决策轮信封缺失(模型写散文忘包 JSON;
-        # 403/outage/interrupted/transport 均已提前分流,到这里是模型自己的形状问题)
-        # → 留便签下轮提醒,不靠人介入纠偏。
-        if result.parse_failed and not result.is_transport_error and not getattr(result, "parse_failed_reason", ""):
-            task_notes.push_plugin_note(
-                _feedback_scope_key(adapter_name, False, user_id, group_id),
-                "envelope_missing",
-                _missing_envelope_note(),
-                cooldown_sec=3600.0,
-            )
         # 上游 transport_error(5xx / 网络断 / 流被掐):raw_text 是服务端错误信息原文
         # (如 "Model generated invalid tool call: ..."),原文转发会把内部错误丢到群里
         # 既泄密又难看。换成 config 里的友好兜底文本;空串则静默。
@@ -2116,24 +1937,13 @@ async def _run_reactive_turn(
                 )
             return result
 
-        # raw_text 预览:用来分类失败模式(裸文本 / fenced ```json / 多 JSON 块 /
-        # nested object 等)。换行折叠成 \n 字面量,300 字够覆盖单 turn submit_decision。
+        # raw_text 预览:用来分类失败模式(裸文本 / fenced / 旧 JSON 残骸等)。
         raw = result.raw_text or ""
-        # 纯散文兜底:模型完全没进 submit_decision 信封(连 "should_reply" 键都没出现),
-        # 说明它抛开协议直接自然作答 —— 这段散文本身就是它想说的话,非显式 turn 也照发。
-        # 关键区分:信封在场但破了(截断 / 语法脏)可能正带着「这条不归我」的
-        # should_reply=false 决定,而那信号只以 JSON 形式存在,拿一段可能不该说的话去撞群
-        # 比丢一条更糟,所以那种破法非显式 turn 仍静默。transport / persistence 错误的 raw
-        # 是服务端报文,绝不当散文转发,故排除。
-        # 信封在场的嗅探从「含 "should_reply" 字面值」收紧为
-        # 「以 { 开头或存在 "should_reply": 键值形态」——旧口径下模型正文讨论协议
-        # (提及字段名)会被误判破信封,非显式 turn 静默吞话。
-        _looks_envelope = raw.strip().startswith("{") or bool(re.search(r'"should_reply"\s*:', raw))
-        is_pure_prose = bool(raw) and not result.is_transport_error and not _looks_envelope
-        # 兜底挂点(保留留痕,后续可能移除):破信封必达兜底——
-        # 直说触发必发 raw_text;隐式仅在纯散文时发,其余静默(信封破可能带
-        # should_reply=false,不敢代发)。
-        forward_raw = bool(raw) and (is_direct or is_pure_prose)
+        # 纯散文兜底（非结构化接口，例如群 completions／astrbot 旧协议）：
+        # 这段文本本身就是模型要对用户说的话，原样发送，不从中抠 JSON。
+        # transport / persistence 错误的 raw 是服务端报文，绝不当散文转发。
+        is_pure_prose = bool(raw) and not result.is_transport_error
+        forward_raw = is_pure_prose and (is_direct or not raw.strip().startswith("{"))
         raw_preview = preview_raw(raw)
         logger.warning(
             f"[HERMES reactive] structured parse failed (group={group_id}, "
@@ -2143,11 +1953,7 @@ async def _run_reactive_turn(
         )
         # 显式触发降级发 raw_text;非显式触发仅在纯散文时发,其余静默
         if forward_raw:
-            fallback_text = raw
-            extracted = maybe_extract_decision_reply_text(fallback_text)
-            if extracted is not None:
-                fallback_text = extracted
-            cleaned_text, extracted_media_urls, extracted_files = extract_response_media(fallback_text)
+            cleaned_text, extracted_media_urls, extracted_files = extract_response_media(raw)
             media_urls = list(result.media_urls) + [u for u in extracted_media_urls if u not in result.media_urls]
             fallback_files = list(result.file_paths) + [p for p in extracted_files if p not in result.file_paths]
             delivery = _prepare_delivery(
@@ -2174,7 +1980,7 @@ async def _run_reactive_turn(
             _finish_history(result, delivery, prose_sent, wrote_history=False)
             _schedule_reconcile(result)
         else:
-            # 破信封且现有语义为静默:销账,监控不得把它当丢失补发。
+            # 无正文可发（空输出）:销账,监控不得把它当丢失补发。
             _settle(result, "silent", "parse_failed")
         return result
 
@@ -2182,7 +1988,7 @@ async def _run_reactive_turn(
         f"[HERMES reactive] decision adapter={adapter_name} group={group_id} user={user_id} "
         f"direct={is_direct} should_reply={result.structured.get('should_reply')} "
         f"should_exit_active={result.structured.get('should_exit_active')} "
-        f"reply_text_len={len(str(result.structured.get('reply_text') or result.structured.get('body') or ''))} "
+        f"reply_text_len={len(str(result.structured.get('body') or ''))} "
         f"salvaged={result.structured.get('_salvaged', False)}"
     )
     # 解析成功时也留一份 raw 预览:decision 摘要看不出模型到底吐了什么形状
@@ -2200,26 +2006,29 @@ async def _run_reactive_turn(
         last_bot_reply_at_at_entry, int(_live_state.get("last_reply_at") or 0)
     )
 
-    terminal_decisions = getattr(result, "terminal_decisions", None)
+    terminal_decisions = [
+        item for item in (getattr(result, "terminal_decisions", None) or [])
+        if isinstance(item, dict)
+    ]
     streamed_decisions = [
         item for item in (getattr(result, "streamed_decisions", None) or [])
         if isinstance(item, dict)
     ]
     streamed_ids = {id(item) for item in streamed_decisions}
-    if streamed_decisions:
-        from ..core.runs_terminal import fold_stream_decisions
-
-        # E3: 终态份折叠到已即时发送的序列尾部；同文不同段不按文本全局去重。
-        decisions, _folded = fold_stream_decisions(streamed_decisions, terminal_decisions)
-        batch_mode = True
-    else:
-        decisions = [
-            item for item in (terminal_decisions or [result.structured])
-            if isinstance(item, dict)
-        ]
-        batch_mode = terminal_decisions is not None
-    if not decisions:
-        decisions = [{}]
+    # 已即时发送的份 + 终态份按到达顺序就是本轮完整决策序列；
+    # 不做内容级折叠（跨段同文是两条独立消息）。
+    decisions = streamed_decisions or terminal_decisions
+    if not decisions and isinstance(result.structured, dict):
+        decisions = [result.structured]
+    # 只有 runs 有交付台账：其它接口按单份 legacy 发送，不伪造批次计划。
+    batch_mode = bool(getattr(result, "run_id", None)) and bool(
+        streamed_decisions or terminal_decisions
+    )
+    if not any(decision.get("should_reply") for decision in decisions):
+        # 纯文本协议：没有正文就是静默，不合成空决策、不消费控制。
+        logger.info(f"[HERMES reactive] 无正文,静默 (group={group_id} user={user_id})")
+        _settle(result, "silent", "empty_output")
+        return result
     # 控制队列：终态/无即时发送器时在这里按份补齐绑定（即时发送过的份已在发送器里
     # 按同一顺序消费过，bind_control 幂等，不会重弹）。一份决策弹一份控制。
     _control_key = make_inflight_key(adapter_name, False, user_id, group_id)
@@ -2518,7 +2327,6 @@ async def _run_reactive_turn(
     live_sent = False
     for decision in decisions:
         _fb_key = _feedback_scope_key(adapter_name, False, user_id, group_id)
-        _push_self_heal_note(_fb_key, decision)
         # release_anchor 处理移在 answer_anchor 之后(alive/103):同轮 answer+release
         # 必须先让合法 answer 标记生效再松锚,否则锚被提前 release 后 answer 校验
         # 落空,模型反收「非法值」便签。见 turn 尾部。
@@ -2582,7 +2390,7 @@ async def _run_reactive_turn(
                 )
                 continue
             unit_index = 0
-            reply_text = _decision_body(decision, prefer_body=_json_lines_interface()).strip()
+            reply_text = _decision_body(decision).strip()
             cleaned_reply_text, extracted_media_urls, file_paths = extract_response_media(reply_text)
             # 结构化出口与 passive 同口径:模型本轮附件由 client 层下载进 result.media_urls,
             # reply_text 里通常只有一个占位或完全没有媒体引用——只从 reply_text 抽会把已经
@@ -2775,9 +2583,9 @@ async def _run_reactive_turn(
 # feedback→relay→turns 加载环;统一置底,由入口层 message.py 首载本域、
 # 全部 def 就位后再解析。
 from .message_feedback import (
-    _check_interim_feedback,
     _emoji_like_quiet,
     _feedback_scope_key,
+    _fire_continuation,
     _make_approval_notify,
     _fire_followup_turn,
     _maybe_intercept_bounce,

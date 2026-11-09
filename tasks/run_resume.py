@@ -264,14 +264,15 @@ def _settle(row: TrackedRun, expected_state: str, reason: str) -> None:
 def _build_units(output: str, expect_structured: bool) -> list[dict] | None:
     """终态 output → 有序 unit 列表（恢复链适配器，纯函数，离线可测）。
 
-    Runs 终态允许连续多份两行决策(E2)，与正常链／对账链共用
-    ``core.runs_terminal.units_from_output`` 的同一个解码器、同一份份过滤与空字段
-    口径：同一 output 必须得到逐字相同的 plan_json，恢复才能被 30 号 upsert 接受。
-    返回 None 表示解析失败／无正文（整批静默），[] 表示结构有效但所有份都无内容。
+    纯文本协议：正文就是 output，独立整行 § 只作连发分隔。恢复链、对账链与
+    正常链共用 ``core.runs_terminal.units_from_output`` 的同一份切分：同一 output
+    必须得到逐字相同的 plan_json，恢复才能被 30 号 upsert 接受。
+    ``expect_structured`` 只为兼容台账既有列保留，不再有任何解码分支。
+    返回 None 表示协议失败／无正文（整批静默），[] 表示有文本但所有份都无内容。
     """
     from ..core.runs_terminal import units_from_output
 
-    return units_from_output(output, expect_structured)
+    return units_from_output(output)
 
 
 def _pending_plan_indexes(tracker, run_id: str) -> list[int]:

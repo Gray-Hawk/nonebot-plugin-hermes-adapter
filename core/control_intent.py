@@ -154,18 +154,17 @@ def bind_control(
 
 
 def resolve_control(decision: Any) -> dict[str, Any]:
-    """决策最终生效的控制：工具登记值兜底缺省，旧信封控制行原样优先。
+    """决策最终生效的控制：只有 ``submit_control`` 登记值，没有就走缺省。
 
-    旧控制行是「在途兼容」：模型若仍按老两行写字段，那些字段照常生效；工具登记的
-    值只补旧行为空/False 的字段。返回值恒含全部六个字段（字符串 ""、布尔 False）。
+    纯文本正文退役了旧控制信封行：正文里不再有任何控制字段，决策只可能通过
+    工具登记拿到控制。返回值恒含全部六个字段（字符串 ""、布尔 False）。
     """
     effective: dict[str, Any] = {}
     control = (decision or {}).get("_control") if isinstance(decision, dict) else None
     control = control if isinstance(control, dict) else {}
     for name in CONTROL_FIELDS:
         default: Any = False if name in CONTROL_BOOL_FIELDS else ""
-        legacy = (decision or {}).get(name) if isinstance(decision, dict) else None
-        effective[name] = legacy or control.get(name) or default
+        effective[name] = control.get(name) or default
     return effective
 
 

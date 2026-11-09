@@ -607,73 +607,11 @@ def rotated_session_key(header_value: str | None, sent_key: str) -> str | None:
 
 
 # --- 本部署补丁: SSE 流式 + 中间旁白切分 ---
+# 纯文本正文协议退役了「旁白独立通道」：interim 与工具间隙文本都是正文单位，
+# 由 RunsEventParser 收进同一条发送队列；completions 的轮中进度统一走
+# push_message 工具。旧 InterimSegmenter／_INTERIM_MIN_CHARS 已删除，
+# 不存在第二套 interim 通道。
 
-# 旁白段最小长度:低于这个长度不值得发一条群消息(空白/单标点段)。
-_INTERIM_MIN_CHARS = 2
-
-
-class InterimSegmenter:
-    """SSE 行流 → 旁白段切分 + 最终回复累积。纯逻辑无网络依赖,可单测。
-
-    实测时序(对生产 api_server 探测): agent 每轮工具调用前的旁白
-    content delta 完整流出之后, 该轮的 hermes.tool.progress(status=running) 帧
-    才到达。因此以 running 帧为段界: 帧到时把累积缓冲作为一段旁白吐出; EOS 时
-    剩余缓冲即最终回复。无工具的 turn 没有 running 帧, 整段=最终回复,
-    与非流式语义一致。
-
-    reasoning_content / hermes.status / approval.request 帧一律不消费;
-    tool.progress 的 completed 帧不切分(段在 running 时已吐, completed 时缓冲为空)。
-    """
-
-    def __init__(self) -> None:
-        self._seg: list[str] = []
-        self._event = ""
-
-    def feed(self, line: str) -> str | None:
-        """喂一行 SSE 原始行。返回切出的旁白段(strip 后, 达最小长度),否则 None。"""
-        if not line or line.startswith(":"):  # 空行(帧界)与 keepalive
-            return None
-        if line.startswith("event:"):
-            self._event = line[6:].strip()
-            return None
-        if not line.startswith("data:"):
-            return None
-        data_str = line[5:].strip()
-        if data_str == "[DONE]":
-            return None
-        event, self._event = self._event, ""
-        try:
-            payload = json.loads(data_str)
-        except ValueError:
-            return None
-        if event == "hermes.tool.progress":
-            if isinstance(payload, dict) and payload.get("status") == "running":
-                return self._pop_segment()
-            return None
-        if event:
-            # 其余带名事件帧(approval.request / hermes.status 等)一律不消费。
-            # approval.request 的 payload 带 choices=["once","session",...](list[str]),
-            # 漏到下方会被当 chat chunk 解析, choices[0].get 抛 AttributeError
-            # ('str' object has no attribute 'get') 实证炸断 SSE。
-            return None
-        # 普通 chat.completion.chunk(无 event 名): 只取 content delta, reasoning 等丢弃
-        choices = payload.get("choices") if isinstance(payload, dict) else None
-        if not choices or not isinstance(choices[0], dict):
-            return None
-        delta = choices[0].get("delta")
-        piece = delta.get("content") if isinstance(delta, dict) else None
-        if piece:
-            self._seg.append(piece)
-        return None
-
-    def _pop_segment(self) -> str | None:
-        text = "".join(self._seg).strip()
-        self._seg.clear()
-        return text if len(text) >= _INTERIM_MIN_CHARS else None
-
-    def final_text(self) -> str:
-        """EOS 时调用: 剩余缓冲 = 最终回复段(送原解析管线的 raw_text)。"""
-        return "".join(self._seg)
 
 
 # 进程级共享 AsyncClient 连接池复用——原实现每轮/每次探测新建 client,
@@ -739,23 +677,19 @@ def _is_control_tool_payload(payload: Any) -> bool:
 
 
 class RunsEventParser:
-    """runs events SSE 行流 → 旁白段 + 终态。纯逻辑无网络依赖,可单测。
+    """runs events SSE 行流 → 正文发送单元 + 终态。纯逻辑无网络依赖,可单测。
 
-    本部署补丁(runs 迁移阶段1)。消费规则按阶段0实测定案:
-    - message.interim = 上游切好的旁白段 → 逐段交给调用方(达最小长度,strip);
-      旧形态/上游恢复供给时与下方工具间隙切分并存, interim 帧到达即清间隙
-      缓冲,同一文本不双推;
-    - message.delta  = 混有旁白的预览流 → 只计数,**绝不拼正文**(output 才是正文);
-      本部署补丁: 同时喂工具间隙切分缓冲(旁白修复),只做实时推送归因,
-      不改变正文只取 output 的定案;
-    - tool.started/tool.completed → 工具间隙段的定性边界: started 把间隙缓冲
-      定成旁白段(经 feed 返回), completed 重新开攒; run.* 帧把间隙缓冲丢弃
-      (段尾=最终正文,不推);
-    - run.completed → 正文取 output;run.failed → 取 error(已脱敏);
-      run.cancelled → interrupted 标记;
-    - 其余帧(reasoning.*/approval.* 等)与注释帧(: keepalive 等)
-      一律不消费(approval.request 整帧暂存除外)。runs 帧是 data-only
-      (事件名在 payload["event"]),event: 行形态作兜底兼容。
+    纯文本协议（t_306c4938 v5）：
+    - 段 = 一段连续 assistant 文本，边界是轮开始、``tool.started``、``run.completed``；
+    - ``message.interim`` 与工具间隙的 ``message.delta`` 都是同一段正文的来源，
+      按「完整发送单元全文匹配」在段内去重，跨段不去重；
+    - ``§`` 独立整行只作连发分隔（见 ``core.runs_text``），不按行／空行切；
+    - ``tool.started`` 封段：普通工具另起新批，``submit_control`` 只封段不切批；
+    - ``run.completed`` 最后一段只认 ``output``，delta 未封口尾部丢弃；
+    - 不识别旧 JSON 信封，也不产出旁白通道：用户能看到的就是正文本身。
+    其它帧（reasoning.*／approval.* 等）与注释帧（: keepalive 等）不消费
+    （approval.request 整帧暂存除外）。runs 帧是 data-only（事件名在
+    payload["event"]），event: 行形态作兜底兼容。
     """
 
     def __init__(self) -> None:
@@ -769,133 +703,123 @@ class RunsEventParser:
         self.last_seq = -1
         self.pending_steer = ""
         self.approval: dict | None = None
-        # 本部署补丁: 工具间隙旁白缓冲。turn 开始即开攒(首个 tool.started 前
-        # 的 commentary 也是间隙段); started 定性 started 前文本, completed 重新开攒,
-        # run.* 丢弃(最终正文)。
-        self._gap_open = True
-        self._gap_buf = ""
         self._event = ""
-        # 本部署补丁(E3):delta 全文累积 + 完整决策候选。决策只在这里产出，
-        # 解析仍复用 npha_terminal 的同一份 decode_terminal，不另起状态机。
-        self.stream_text = ""
-        self._stream_offset = 0
-        self._stream_pending: list[Any] = []
+        # 纯文本协议：段 = 一段连续 assistant 文本。`_seg_text` 是当前段已到达
+        # 但未封口的 delta 文本，`_seg_sent` 是本段**已原样发出**的完整单元文本。
+        # 去重只在段内做全文匹配（interim 与 delta 是同一段文本的两种切帧），
+        # 工具／控制帧封段即清空，跨段同文是两条独立消息——不做任何后缀折叠。
+        self._seg_text = ""
+        self._seg_sent: list[str] = []
+        self.last_sealed: list[str] = []
+        self.final_segment_pending = False
+        self._stream_pending: list[dict] = []
         self.decision_batch = 0
+        self.interim_count = 0
+        # 单位超长等协议失败：置位后本轮不再发送任何单元，由终态链 fail-closed。
+        self.text_error = ""
 
-    def _pop_gap_segment(self) -> str | None:
-        """工具间隙段定性: strip + 达最小长度才成段(与 interim 帧同门槛)。
+    def _emit_text(self, text: str) -> None:
+        """把一段正文按纯文本协议切分，段内已发过的完整单元跳过。"""
+        from .runs_text import TextUnitsError, split_text_units
 
-        R1: 间隙缓冲里同时攒着 delta 正文与已即时发送的决策信封。决策由
-        ``drain_stream_decisions`` 消费后，这里按同一份扫描区间把它摘掉，
-        绝不把原始两行 JSON 再当旁白发一遍；普通旁白原样保留。
-        """
-        from .npha_terminal import strip_complete_decisions
+        if not text or not text.strip():
+            return
+        try:
+            units = split_text_units(text)
+        except TextUnitsError as exc:
+            self.text_error = exc.reason
+            logger.error(f"[HERMES] runs 正文单位不合法,本轮停止发送 reason={exc.reason}")
+            return
+        for unit in units:
+            if unit in self._seg_sent:
+                continue
+            self._seg_sent.append(unit)
+            # 封段发生在批号自增之前：带上封段时的批号，发送节奏按原批计算。
+            self._stream_pending.append(
+                {"body": unit, "should_reply": True, "_batch": self.decision_batch}
+            )
 
-        text = strip_complete_decisions(self._gap_buf).strip()
-        self._gap_buf = ""
-        return text if len(text) >= _INTERIM_MIN_CHARS else None
-
-    def _scan_stream_decisions(self) -> None:
-        """E3: 从累积 delta 文本里取出新完成的决策（复用同一份 decode_terminal）。"""
-        from .npha_terminal import scan_stream_decisions
-
-        decisions, self._stream_offset = scan_stream_decisions(
-            self.stream_text, self._stream_offset
-        )
-        if decisions:
-            self._stream_pending.extend(decisions)
+    def _seal_segment(self) -> None:
+        """封段：补发当前段 delta 里尚未发出的单元，然后开新段（段内去重清零）。"""
+        self._emit_text(self._seg_text)
+        self.last_sealed = list(self._seg_sent)
+        self._seg_text = ""
+        self._seg_sent = []
 
     def drain_stream_decisions(self) -> list[Any]:
-        """取走自上次调用以来新完成的决策（调用方负责即时发送）。"""
+        """取走自上次调用以来新完成的发送单元（调用方负责即时发送）。"""
         pending, self._stream_pending = self._stream_pending, []
         return pending
 
-    def feed(self, line: str) -> str | None:
-        """喂一行 SSE 原始行。切出旁白段则返回(strip 后,达最小长度),否则 None。
+    def feed(self, line: str) -> None:
+        """喂一行 SSE 原始行。
 
-        旁白段两个来源: message.interim 帧(上游切好)与工具间隙段(本类自切,
-        tool.started 帧到达时定性返回)。
+        纯文本协议下本方法**不产出旁白**：interim 与工具间隙文本都作为正文单位
+        进入同一条 ``_stream_pending`` 队列，由 ``drain_stream_decisions`` 统一
+        发送；普通旁白不再是独立通道（echo 与长度门槛都不参与）。
         """
         if not line:
-            return None
+            return
         if line.startswith(":"):
             # 注释帧:keepalive/open 忽略;stream closed 记录(供调用方判提早断流)
             if "stream closed" in line:
                 self.stream_closed = True
-            return None
+            return
         if line.startswith("event:"):
             self._event = line[6:].strip()
-            return None
+            return
         if line.startswith("id:"):
-            return None
+            return
         if not line.startswith("data:"):
-            return None
+            return
         data_str = line[5:].strip()
         if data_str == "[DONE]":
-            return None
+            return
         event, self._event = self._event, ""
         try:
             payload = json.loads(data_str)
         except ValueError:
-            return None
+            return
         if not isinstance(payload, dict):
-            return None
+            return
         seq = payload.get("seq")
         if isinstance(seq, int):
             self.last_seq = seq
         if not event:
             event = str(payload.get("event") or "")
-        # run.* 帧(run.steered 除外)是工具间隙的丢弃边界:
-        # 段尾即最终正文/终态,旁白收集到此为止。
-        if event.startswith("run.") and event != "run.steered":
-            self._gap_open = False
-            self._gap_buf = ""
         if event == "message.interim":
-            # 上游已切好的段:清工具间隙缓冲——旧形态/上游恢复 interim 供给时,
-            # 间隙缓冲里的 delta 文本与 interim 段同源,不双推。
-            self._gap_buf = ""
-            # R1: interim 段里若本就是决策信封（已即时发送/由扫描消费），同样
-            # 只留旁白部分，绝不把控制/正文 JSON 发出去。
-            from .npha_terminal import strip_complete_decisions
-
-            text = strip_complete_decisions(str(payload.get("text") or "")).strip()
-            return text if len(text) >= _INTERIM_MIN_CHARS else None
+            # interim 是工具调用前的完整中途消息：作为本段正文参与封段，
+            # 与 delta 产物按段内全文匹配去重（不清空 delta 缓冲，留给工具边界
+            # 补齐 delta 比 interim 多出的部分）。
+            self.interim_count += 1
+            self._emit_text(str(payload.get("text") or ""))
+            return
         if event == "message.delta":
             self.delta_count += 1
             piece = str(payload.get("delta") or "")
             if piece:
-                # 本部署补丁: delta 喂工具间隙切分缓冲(不改「正文只取 output」定案):
-                # 工具间隙开着才攒旁白候选。
-                if self._gap_open:
-                    self._gap_buf += piece
-                # E3: 同时累积全文，只产出**已完整到达**的两行决策候选。
-                self.stream_text += piece
-                self._scan_stream_decisions()
-            return None
+                self._seg_text += piece
+            return
         if event == "run.steered":
             # steer 被接受的信号帧:仅作事件存在性消费(迟到回收等链路不依赖),
             # 不产出、不改动任何缓冲。
-            return None
+            return
         if event == "tool.started":
+            # 封段固定在 tool.started：此时 submit_control 还没登记，控制只会配给
+            # 封段之后的下一份正文；放 tool.completed 会吞掉控制前的正文。
             if _is_control_tool_payload(payload):
-                # submit_control 只登记控制：不是普通工作工具的封批边界。切批会重置
-                # 3 秒条间节奏、提前释放输入暂存，还会把间隙缓冲当旁白吐出去。
-                return None
+                # 控制帧只封段、不切批：不重置 3 秒节奏、不提前释放输入暂存。
+                self._seal_segment()
+                return
+            self._seal_segment()
             self.decision_batch += 1
-            # 工具间隙段定性: started 之前的间隙文本=中间轮旁白,经 feed 返回。
-            seg = self._pop_gap_segment()
-            self._gap_open = False
-            return seg
+            return
         if event == "tool.completed":
-            if _is_control_tool_payload(payload):
-                return None
-            # 工具跑完,重新开攒间隙段。
-            self._gap_open = True
-            return None
+            return
         if event == "approval.request":
             # 阶段3c:整帧原文暂存(command 上游已脱敏),由消费循环交 approval_callback
             self.approval = payload
-            return None
+            return
         if event == "run.completed":
             self.output = str(payload.get("output") or "")
             usage = payload.get("usage")
@@ -904,27 +828,30 @@ class RunsEventParser:
             # steer 进 result.pending_steer,api_server_runs 透到 completed 帧)
             pending = payload.get("pending_steer")
             self.pending_steer = str(pending) if pending else ""
+            # 最后一段只认 output：delta 里未封口的尾部丢弃。记下「最后一段是否
+            # 真的产出过新文本」——没有就是上一段被 output 重复带来，不是新消息。
+            self.final_segment_pending = bool(self._seg_text.strip())
+            self._seg_text = ""
             self.terminal = True
-            return None
+            return
         if event == "run.failed":
             self.error = str(payload.get("error") or "unknown")
             self.terminal = True
-            return None
+            return
         if event == "run.cancelled":
             self.interrupted = True
             self.terminal = True
-            return None
+            return
         if event == "run.interrupted":
             # 网关关停/owner 失联会把 run 打成
             # interrupted,终态集与网关 TERMINAL_STATUSES 对齐,别落成「事件流提前
             # 关闭」的传输错误文案——按取消同语义硬静默处理。
             self.interrupted = True
             self.terminal = True
-            return None
-        return None
+            return
+        return
 
 
-InterimCallback = Callable[[str], Awaitable[None]]
 ApprovalCallback = Callable[[dict], Awaitable[None]]  # 阶段3c:approval.request 帧原文(已脱敏)
 OverwrittenReplyCallback = Callable[[list[Any]], Awaitable[None]]
 # E3: runs delta 里一份完整两行决策到达时即时回调。第二参是 run_id（落台账用）。
@@ -1244,7 +1171,6 @@ class HermesClient:
         system_prompt: str | None = None,
         user_content_override: UserContent | None = None,
         target: HermesTarget | None = None,
-        interim_callback: InterimCallback | None = None,
         bot_self_id: str | None = None,
         approval_callback: "ApprovalCallback | None" = None,
         overwritten_reply_callback: "OverwrittenReplyCallback | None" = None,
@@ -1267,9 +1193,6 @@ class HermesClient:
           单上游下恒为默认接入点(handler 经 routing.resolve_target() 解析后传入)。
         - mode 字段当前为路由元数据,chat() 内部不分支判断;Task 15 handler 据此决定
           如何呈现结果(reactive 走 structured 流,passive 走 raw_text)。
-        - interim_callback(本部署补丁): 非 None 时改走 SSE 流式,
-          agent 每轮工具调用前的旁白段实时回调给它(发送失败仅记日志,不影响主 turn);
-          raw_text 只含最终回复段。None = 旧行为(一次性非流式)。
         """
         tgt = target or default_target()
         url = f"{tgt.base_url}/v1/chat/completions"
@@ -1324,7 +1247,7 @@ class HermesClient:
         payload: dict[str, Any] = {
             "model": "hermes-agent",
             "messages": messages,
-            "stream": interim_callback is not None,
+            "stream": False,  # 旁白回显通道已退役；正文/进度都走非流式终态 + push_message
         }
         # 路径 B:不发 tools / tool_choice(Hermes 透传不可靠,P0-spike 已验)
 
@@ -1435,7 +1358,7 @@ class HermesClient:
                 raw_r, rotated_r, failure_r, steer_r, run_id_r = await self._chat_via_runs(
                     tgt=tgt, headers=headers, content=content,
                     system_prompt=system_prompt, session_key=session_key,
-                    timeout=tgt.timeout, interim_callback=interim_callback,
+                    timeout=tgt.timeout,
                     approval_callback=approval_callback,
                     overwritten_reply_callback=overwritten_reply_callback,
                     decision_callback=live_decision_callback,
@@ -1451,13 +1374,6 @@ class HermesClient:
                 )
                 runs_run_id[0] = run_id_r
                 return raw_r, rotated_r, failure_r, steer_r
-            if interim_callback is not None:
-                # 本部署补丁: SSE 流式读取,旁白段实时回调,
-                # raw_text 只取最终回复段(旁白不进原解析管线)。
-                raw_text, rotated = await self._stream_chat(
-                    url, payload, headers, tgt.timeout, session_key, interim_callback
-                )
-                return raw_text, rotated, None, ""
             client = _get_http_client()
             resp = await client.post(url, json=payload, headers=headers, timeout=tgt.timeout)
             if resp.status_code != 200:
@@ -1604,56 +1520,39 @@ class HermesClient:
                 is_outage_error=outage,
             ))
 
-        # 路径 B-乙(本部署补丁 E1):completions 走双单行 JSON 终态解码。
-        # Runs 不经过本函数(走 _chat_via_runs),提示词与解析保持原样。
+        # 纯文本正文协议（Runs 与 completions 同一份）：终态就是正文本身，
+        # 独立整行 § 只作连发分隔，不要求也不解析 {"body":...}。
+        # 非流式 Runs 与 completions 共用这一支；astrbot 走下面的旧协议。
         if expect_structured and structured_tool_name == "submit_decision" \
-                and plugin_config.hermes_api_interface == "completions":
-            from .npha_terminal import TerminalFormatError, decode_terminal, structured_from_terminal
+                and plugin_config.hermes_api_interface in ("runs", "completions"):
+            from .runs_text import TextUnitsError, decisions_from_text
 
             try:
-                decision = decode_terminal(raw_text)
-            except TerminalFormatError as exc:
+                decisions = decisions_from_text(raw_text)
+            except TextUnitsError as exc:
                 logger.warning(
-                    f"[HERMES] 终态乙信封不合法 reason={exc.reason} "
-                    f"raw_len={len(raw_text)} preview={preview_raw(raw_text)!r}"
-                )
-                # 任何解析失败都不得回退整段原始信封发送
-                return _out(ChatResult(raw_text=raw_text, parse_failed=True, parse_failed_reason=exc.reason))
-            structured = structured_from_terminal(decision)
-            return _out(ChatResult(raw_text=raw_text, structured=structured))
-
-        # 本部署补丁 E2:runs 终态走双单行 JSON,允许连续多份两行决策。
-        # 与 completions 共用同一个解码器(单份解码在上,这里只加切分与完整消费校验),
-        # 不复制第二套解析;发送侧只消费 body,control 单独携带。
-        if expect_structured and structured_tool_name == "submit_decision" \
-                and plugin_config.hermes_api_interface == "runs":
-            from .npha_terminal import (
-                TerminalFormatError, decode_terminal_batch, structured_batch_from_terminal,
-            )
-
-            try:
-                decisions = structured_batch_from_terminal(decode_terminal_batch(raw_text))
-            except TerminalFormatError as exc:
-                logger.warning(
-                    f"[HERMES] runs 终态信封不合法 reason={exc.reason} "
+                    f"[HERMES] 终态正文单位不合法 reason={exc.reason} "
                     f"raw_len={len(raw_text)} preview={preview_raw(raw_text)!r}"
                 )
                 if runs_streamed:
-                    # E3: 已即时发送的份不因终态残段被判整轮失败（否则 handler
-                    # 会走失败兜底重复投递）。终态只折叠已流式份，不再补发。
+                    # 已即时发送的份不因终态残段被判整轮失败：终态不再补发。
                     folded = ChatResult(raw_text=raw_text, structured=runs_streamed[-1])
                     folded.terminal_decisions = []
                     return _out(folded)
-                # 任何解析失败都整体拒绝：不取首份／末份，也不回退原始信封发送。
                 return _out(ChatResult(
                     raw_text=raw_text, parse_failed=True,
-                    parse_failed_reason=f"runs_{exc.reason}",
+                    parse_failed_reason=f"text_{exc.reason}",
+                ))
+            if not decisions:
+                # 空 output 即静默：0 单位、零发送，不合成空决策。
+                return _out(ChatResult(
+                    raw_text="", structured={"should_reply": False}, terminal_decisions=[],
                 ))
             result = ChatResult(raw_text=raw_text, structured=decisions[0])
             result.terminal_decisions = decisions
             return _out(result)
 
-        # 路径 B:从 raw_text 提取首个 {...} JSON5 块(旧信封,仅非 completions 使用)
+        # 路径 B:从 raw_text 提取首个 {...} JSON5 块（astrbot 旧协议，未迁移）
         if expect_structured and structured_tool_name == "submit_decision":
             structured = _try_parse_first_json_block(raw_text)
             if structured is None:
@@ -1667,45 +1566,6 @@ class HermesClient:
         # 普通文本路径(passive 或未要求结构化)
         cleaned, media_urls, file_paths = extract_response_media(raw_text)
         return _out(ChatResult(raw_text=cleaned, media_urls=media_urls, file_paths=file_paths))
-
-    async def _stream_chat(
-        self,
-        url: str,
-        payload: dict[str, Any],
-        headers: dict[str, str],
-        timeout: int,
-        session_key: str,
-        interim_callback: InterimCallback,
-    ) -> tuple[str, str | None]:
-        """SSE 流式读取(本部署补丁)。返回 (最终回复段, rotated_session_key)。
-
-        旁白段经 InterimSegmenter 切出后逐段 await interim_callback;回调失败仅记
-        WARNING(旁白是附属输出,发不出去不能搞砸主 turn)。
-
-        错误面与 chat() 非流式分支对齐:非 200 抛 StreamHttpError(由调用方归纳),
-        超时/连接/其他异常原样向上抛(chat() 的 except 链统一接管)。
-        SSE keepalive 帧保证长 turn 中 read timeout 不会误杀(上游按
-        CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS 周期发 `: keepalive`)。
-        """
-        seg = InterimSegmenter()
-        rotated: str | None = None
-        client = _get_http_client()
-        async with client.stream("POST", url, json=payload, headers=headers, timeout=timeout) as resp:
-            if resp.status_code != 200:
-                body = (await resp.aread()).decode("utf-8", "replace")
-                raise StreamHttpError(resp.status_code, body, retry_after=_parse_retry_after(resp.headers.get("Retry-After")))
-            rotated = rotated_session_key(resp.headers.get("X-Hermes-Session-Id"), session_key)
-            async for line in resp.aiter_lines():
-                interim = seg.feed(line)
-                if interim is None:
-                    continue
-                try:
-                    await interim_callback(interim)
-                except Exception:
-                    logger.warning("[HERMES] 旁白转发失败(不影响主 turn)", exc_info=True)
-        # 流式下上游不做 _resolve_media_to_data_urls(只在非流式响应路径),
-        # 本地图片在这里按插件白名单补内联, 让 raw_text 形态与非流式一致(补丁)。
-        return inline_local_media_images(seg.final_text()), rotated
 
     async def respond_approval(self, *, tgt: HermesTarget, run_id: str, choice: str,
                                request_id: str = "") -> tuple[bool, str]:
@@ -1943,7 +1803,6 @@ class HermesClient:
         system_prompt: str,
         session_key: str,
         timeout: int,
-        interim_callback: InterimCallback | None,
         approval_callback: "ApprovalCallback | None",
         overwritten_reply_callback: "OverwrittenReplyCallback | None",
         idempotency_key: str,
@@ -1977,7 +1836,6 @@ class HermesClient:
         run_id = ""
         registered = False
         reply_queue = None
-        from .npha_terminal import structured_from_terminal
         from .. import mcp as _mcp  # 延迟导入防环(mcp 装配在 handlers 之后)
 
         tracker = _mcp.run_tracker
@@ -2061,41 +1919,52 @@ class HermesClient:
                     raise StreamHttpError(ev.status_code, (await ev.aread()).decode("utf-8", "replace"), retry_after=_parse_retry_after(ev.headers.get("Retry-After")))
                 async for line in ev.aiter_lines():
                     previous_batch = parser.decision_batch
-                    interim = parser.feed(line)
-                    if interim and interim_callback is not None:
-                        try:
-                            await interim_callback(interim)
-                        except Exception:
-                            logger.warning("[HERMES] 旁白转发失败(不影响主 turn)", exc_info=True)
-                    # 先登记整帧完整份，再让串行发送器工作；发送间隔不阻塞读 SSE。
-                    for streamed_decision in parser.drain_stream_decisions():
-                        payload_decision = structured_from_terminal(streamed_decision)
-                        reply_queue.put(payload_decision, parser.decision_batch)
+                    previous_interim = parser.interim_count
+                    parser.feed(line)
+                    # 正文单位（interim 与工具间隙 delta 同源）走同一条队列；
+                    # 3 秒节奏由队列控制，读 SSE 不被发送阻塞。
+                    for streamed_unit in parser.drain_stream_decisions():
+                        reply_queue.put(
+                            streamed_unit,
+                            int(streamed_unit.get("_batch", parser.decision_batch)),
+                        )
                     if parser.decision_batch != previous_batch:
                         reply_queue.close_batch(previous_batch)
                     if parser.terminal:
-                        # 无 delta 或终态新增的份也走同一个队列，不能绕过三秒节奏。
-                        if parser.output is not None and decision_callback is not None:
-                            from .npha_terminal import decode_terminal_batch, structured_batch_from_terminal
-                            from .runs_terminal import fold_stream_decisions
+                        # 终态正文只认 output（纯文本协议），delta 未封口尾部丢弃；
+                        # 不做内容后缀折叠——跨段同文是两条独立消息。
+                        terminal: list[dict] = []
+                        if parser.output is not None and decision_callback is not None \
+                                and not parser.text_error:
+                            from .runs_text import TextUnitsError, decisions_from_text
 
                             try:
-                                terminal = structured_batch_from_terminal(decode_terminal_batch(parser.output))
-                            except ValueError:
-                                terminal = []  # 终态破损交回原解码失败分支，已流式份仍保留。
-                            terminal_only = not reply_queue.observed
-                            if terminal and terminal_only and registered and submission_tracked:
-                                # 终态-only 的发送仍须经过原 ready 台账／前序顺序门。
-                                # 落账失败由外层保留 run 并 detached，不能先发再补台账。
-                                tracker.record_expected_delivery(
-                                    run_id=run_id, output=parser.output or "",
-                                    expect_structured=bool(scope["expect_structured"]),
+                                terminal = decisions_from_text(parser.output)
+                            except TextUnitsError as exc:
+                                parser.text_error = exc.reason
+                                logger.error(
+                                    f"[HERMES] runs 终态正文单位不合法,本轮 fail-closed "
+                                    f"reason={exc.reason} run_id={run_id}"
                                 )
-                            merged, _ = fold_stream_decisions(reply_queue.observed, terminal)
-                            for decision in merged[len(reply_queue.observed):]:
-                                if terminal_only:
-                                    decision["_runs_terminal_only"] = True
-                                reply_queue.put(decision, parser.decision_batch)
+                            if not parser.final_segment_pending and parser.last_sealed:
+                                # 最后一段没有新文本：output 只是上一段被终态重复带来，
+                                # 已发过的同一单元不再追加（同文新段不受影响）。
+                                terminal = [
+                                    item for item in terminal
+                                    if item["body"] not in parser.last_sealed
+                                ]
+                        terminal_only = not reply_queue.observed
+                        if terminal and terminal_only and registered and submission_tracked:
+                            # 终态-only 的发送仍须经过原 ready 台账／前序顺序门。
+                            # 落账失败由外层保留 run 并 detached，不能先发再补台账。
+                            tracker.record_expected_delivery(
+                                run_id=run_id, output=parser.output or "",
+                                expect_structured=bool(scope["expect_structured"]),
+                            )
+                        for decision in terminal:
+                            if terminal_only:
+                                decision["_runs_terminal_only"] = True
+                            reply_queue.put(decision, parser.decision_batch)
                         reply_queue.close_batch(parser.decision_batch)
                     if reply_queue.task is not None:
                         await asyncio.sleep(0)  # 首份当下发送，后续等待在 worker 内。
@@ -2106,8 +1975,10 @@ class HermesClient:
                             await approval_callback(approval)
                         except Exception:
                             logger.warning("[HERMES] 审批通知回调失败(不影响主 turn)", exc_info=True)
-                    # 粗粒度写库:旁白帧与终态帧才更新 last_seq(delta 高频不写)
-                    if tracker is not None and parser.last_seq >= 0 and (interim or parser.terminal):
+                    # 粗粒度写库:interim 帧与终态帧才更新 last_seq(delta 高频不写)
+                    if tracker is not None and parser.last_seq >= 0 and (
+                        parser.interim_count != previous_interim or parser.terminal
+                    ):
                         tracker.update_seq(run_id, parser.last_seq)
                     if parser.terminal:
                         break
@@ -2136,6 +2007,18 @@ class HermesClient:
                 _spawn_steer_reconcile_if_pending(tracker, run_id)
                 tracker.finish(run_id)
 
+        if parser.text_error:
+            # 正文协议失败（单份超长等）：本轮 fail-closed，不发送半截，也不补发猜测内容。
+            logger.error(
+                f"[HERMES] runs 正文单位不合法,本轮零发送 (run_id={run_id} reason={parser.text_error})"
+            )
+            _finish()
+            return "", None, ChatResult(
+                raw_text="",
+                parse_failed=True,
+                parse_failed_reason=f"text_{parser.text_error}",
+                run_id=run_id,
+            ), "", run_id
         if parser.interrupted:
             logger.warning(f"[HERMES] runs turn 被中断 (run_id={run_id})")
             _finish()

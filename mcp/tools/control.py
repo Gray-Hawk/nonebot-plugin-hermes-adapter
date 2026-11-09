@@ -1,14 +1,14 @@
-"""submit_control: Runs 控制输入的可选 MCP 工具（只登记，不直接执行）。
+"""submit_control: 正文决策的控制输入工具（只登记，不直接执行）。
 
 控制字段仍是既有真实字段：reply_to / should_exit_active / pin_anchor /
 release_anchor / answer_anchor / anchor_merge。一次调用登记一份控制，按登记
-先后顺序配给接下来的一份明确正文决策（空 body 也算一份）；没有登记就是缺省。
+先后顺序配给接下来的一份明确正文（Runs 与 completions 共用）；没有登记就是缺省。
 
 硬边界：
-- 只登记：不发消息、不提前退窗、不提前钉锚——正文仍由决策信封发出，锚/退窗仍走
+- 只登记：不发消息、不提前退窗、不提前钉锚——正文仍按纯文本协议发送，锚/退窗仍走
   发送成功后的原有控制应用时机；
-- 只在 runs 接口生效：completions 与 astrbot 的控制输入仍是信封控制行（旧协议
-  原样），本工具在那些接口下直接拒（控制丢失，正文照发）；
+- 只在有正文决策通道的接口生效（Runs / completions）：astrbot 等接口直接拒
+  （控制丢失，正文照发）；
 - 失败一律返回 ok=False 而不是抛异常：控制是增强，绝不允许卡住正文。
 """
 
@@ -90,12 +90,11 @@ def submit_control_impl(
         # make_inflight_key 的群分支只看 group_id、私聊分支只看 user_id。
         return make_inflight_key(inp.adapter, is_private, inp.user_id or "", inp.group_id)
 
-    if interface != "runs":
-        # completions / astrbot 的控制输入仍是信封控制行；这里拒掉而不是静默排队，
-        # 免得控制永远没人消费。正文不受影响。
+    if interface not in ("runs", "completions"):
+        # astrbot 与其它接口没有正文决策通道，登记了也没人消费；直接拒，
+        # 正文不受影响。
         return _fail(
-            f"control tools are Runs-only (current interface: {interface!r}); "
-            "put the fields in the decision envelope control line instead"
+            f"control tools need a text-body decision channel (current interface: {interface!r})"
         )
     if is_private:
         if scope is None:

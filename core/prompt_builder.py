@@ -312,16 +312,16 @@ def _build_json_lines_protocol(base: str, *, runs: bool = False) -> str:
     action_end = middle.index("回复纪律（", action_start)
     middle = middle[:action_start] + middle[action_end:]
     middle = (
-        middle.replace("should_reply=false", "body 留空")
-        .replace("should_reply=true", "body 非空")
-        .replace("should_reply", "body 是否为空")
-        .replace("reply_text", "body")
+        middle.replace("should_reply=false", "不输出正文")
+        .replace("should_reply=true", "输出正文")
+        .replace("should_reply", "是否输出正文")
+        .replace("reply_text", "正文")
     )
-    # 顺序：先把 should_reply 换成 body 口径，再替换标题，避免锚不到原文
-    middle = middle.replace(
-        "插话原则（决定 body 是否为空）：",
-        "插话原则（决定是否回复；决定回复时 body 必须非空）：",
-    )
+    # 顺序：先把 should_reply 换成正文口径，再替换标题，避免锚不到原文
+    for source in ("插话原则（决定 是否输出正文）：", "插话原则（决定是否输出正文）："):
+        middle = middle.replace(
+            source, "插话原则（决定是否发言；决定发言时正文必须非空）：",
+        )
     source_note = base[len("<decision_protocol>\n"):i0].split("\n", 1)[1]
     built = render_decision_protocol(runs=runs, group_rules=source_note + middle)
     # 允许“不要再输出 should_reply/reply_text”这条禁令本身,但不能残留旧字段用法
@@ -334,10 +334,10 @@ _DECISION_PROTOCOL_BLOCK_COMPLETIONS = _build_json_lines_protocol(_DECISION_PROT
 _JSON_LINES_PRIVATE_BLOCK = render_decision_protocol(runs=False)
 
 
-# Runs 已支持 E3 流式多决策；工具间隙与最终输出共用可见回复纪律。
+# 纯文本正文协议：工具间隙与最终输出都是正文，没有独立旁白通道。
 _RUNS_VISIBLE_REPLY_REMINDER = (
-    "工具调用之间想对用户说的话也必须在当下写成完整决策信封，正文放在 body；"
-    "不要攒到整轮结束，不要使用信封外普通旁白。\n"
+    "工具调用之间想对用户说的话也直接输出正文；"
+    "不要攒到整轮结束，不要写 JSON 信封。\n"
 )
 
 
@@ -933,17 +933,19 @@ def build_reactive_user_content(
     if current_sticker_urls:
         current_block_text += _STICKER_MOOD_NOTE
 
-    # 近因 reminder:小模型容易在长 protocol + 角色 core 双重 system 下忘掉 JSON 信封,
-    # 直接吐裸文本回复(典型表现:整段角色对白 0 个花括号)。把契约提示放到 user content
-    # 最末,LLM 近因效应让它最难忘 —— 这一行不能改成 byte-stable system 的一部分,
-    # 必须紧贴 current_message,才能在每个 turn 都重新"撞"一次模型。
-    # 字段单单一来源:core/decision_contract.py(render_field_name_list;审计确认5)。
+    # 近因 reminder:小模型容易在长 protocol + 角色 core 双重 system 下忘掉正文协议,
+    # 又把回复写回 JSON 信封。把契约提示放到 user content 最末,LLM 近因效应让它最难忘
+    # ——这一行不能改成 byte-stable system 的一部分,必须紧贴 current_message。
     mode = _json_lines_mode()
     if mode == "completions":
-        reminder = "\n\n请用双单行 JSON 信封回复：控制 JSON 行 + {\"body\":\"正文\"} 行，不要直接说话或扮演动作。"
+        reminder = (
+            "\n\n请直接输出最终正文，不要写 JSON 信封；要分成多条最终消息时，"
+            "在两条之间单独写一行 §；轮中进度用 push_message，需要续跑时调用 request_continuation，"
+            "需要引用／退窗／锚时调用 submit_control。"
+        )
     elif mode == "runs":
         reminder = (
-            "\n\n请用单行 JSON 回复：{\"body\":\"正文\"}（可连续多份）；"
+            "\n\n请直接输出正文，不要写 JSON 信封；要分成多条时，在两条之间单独写一行 §；"
             "需要引用／退窗／锚控制时先调 submit_control 登记，普通回复不要调控制工具。"
             + _RUNS_VISIBLE_REPLY_REMINDER
         )

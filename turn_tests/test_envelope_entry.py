@@ -1,48 +1,25 @@
-import asyncio
-import os
+"""passive turn 入口：正文即消息，协议失败 fail-closed，不再有信封打回/自愈便签。"""
 import sys
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
-# 先让真 mcp 包进 sys.modules，避免被本地 work/mcp 同名目录遮住（后者是插件源码目录）
-sys.path[:] = [p for p in sys.path if Path(p or os.getcwd()).resolve() != ROOT]
-import mcp.types  # noqa: E402,F401
 sys.path.insert(0, str(ROOT))
 
-
-
-
-def _load():
-    """把工作树挂成包名导入，确保测的是本地改动而不是 site-packages 里的旧副本。"""
-    import importlib.util
-
-    name = "nonebot_plugin_hermes_adapter"
-    current = sys.modules.get(name)
-    if current is None or ROOT not in Path(getattr(current, "__file__", "")).parents:
-        spec = importlib.util.spec_from_file_location(
-            name, ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
-        )
-        for cached in [k for k in sys.modules if k == name or k.startswith(name + ".")]:
-            del sys.modules[cached]
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        spec.loader.exec_module(module)
-    from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
-    from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
-
-    return mt, ChatResult
+from tests import _bootstrap  # noqa: E402,F401
+from nonebot_plugin_hermes_adapter.core import prompt_builder  # noqa: E402
+from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult  # noqa: E402
+from nonebot_plugin_hermes_adapter.handlers import message_turns as mt  # noqa: E402
 
 
 def _stub_everything(calls, result):
-    """把 passive turn 的依赖全换成可用的 stub，只为走到信封判定分支。"""
+    """把 passive turn 的依赖全换成可用的 stub，只为走到正文投递分支。"""
     cfg = MagicMock()
     cfg.group_profile_enabled = False
     cfg.sticker_vision_enabled = False
     cfg.history_message_limit = 5
-    patches = {
+    return {
         "load_misc_config": MagicMock(return_value=cfg),
         "load_chat_config": MagicMock(return_value=cfg),
         "load_media_config": MagicMock(return_value=cfg),
@@ -71,17 +48,14 @@ def _stub_everything(calls, result):
             )
         ),
     }
-    return patches
 
 
-class PassiveTurnEnvelopeTests(unittest.IsolatedAsyncioTestCase):
+class PassiveTurnTextProtocolTests(unittest.IsolatedAsyncioTestCase):
     async def _run(self, result):
-        mt, _ = _load()
         calls = {"note": [], "followup": [], "settle": [], "send": []}
         patches = _stub_everything(calls, result)
         note_mock = MagicMock(side_effect=lambda key, name, text, **kw: calls["note"].append(name))
         patches["task_notes"] = MagicMock(push_plugin_note=note_mock)
-        from nonebot_plugin_hermes_adapter.core import prompt_builder
 
         prompts = patch.object(prompt_builder, "render_current_rows", MagicMock(return_value="hi"))
         prompts.start()
@@ -94,134 +68,41 @@ class PassiveTurnEnvelopeTests(unittest.IsolatedAsyncioTestCase):
             )
         return calls
 
-    async def test_reject_reason_resubmits_at_turn_entry(self):
-        _, ChatResult = _load()
-        result = ChatResult(raw_text="{}", parse_failed=True)
-        result.parse_failed_reason = "envelope_fields_missing"
+    async def test_protocol_failure_is_fail_closed(self):
+        result = ChatResult(raw_text="超长正文", parse_failed=True)
+        result.parse_failed_reason = "text_body_overflow"
         calls = await self._run(result)
-        self.assertIn("envelope_rejected", calls["note"], msg=str(calls))
-        self.assertEqual(len(calls["followup"]), 1)
-        self.assertEqual(calls["followup"][0]["tag"], "bounce:envelope-envelope_fields_missing")
-        self.assertEqual(calls["settle"], [("suppressed", "envelope_rejected")])
-        self.assertEqual(calls["send"], [])
+        self.assertEqual(calls["send"], [])                      # 零发送
+        self.assertEqual(calls["note"], [])                      # 无自愈/打回便签
+        self.assertEqual(calls["followup"], [])                  # 不重跑一轮
+        self.assertEqual(calls["settle"], [("failed", "text_body_overflow")])
 
-    async def test_a_class_hint_no_resubmit(self):
-        mt, ChatResult = _load()
-        from nonebot_plugin_hermes_adapter.core.npha_terminal import ENVELOPE_MISSING_HINT
-        result = ChatResult(raw_text="hi", structured={
-            "body": "hi", "should_reply": True, "_self_heal_hint": ENVELOPE_MISSING_HINT
-        })
+    async def test_plain_text_units_sent_in_order(self):
+        result = ChatResult(raw_text="你好\n§\n再见", structured={"body": "你好", "should_reply": True})
+        result.terminal_decisions = [
+            {"body": "你好", "should_reply": True},
+            {"body": "再见", "should_reply": True},
+        ]
         calls = await self._run(result)
-        self.assertEqual(calls["note"], ["envelope_missing"])
+        self.assertEqual(calls["send"], ["你好", "再见"])
+        self.assertEqual(calls["note"], [])
         self.assertEqual(calls["followup"], [])
 
-    async def _run_reactive(self, result):
-        mt, _ = _load()
-        calls = {"note": [], "followup": [], "settle": [], "send": []}
-        patches = _stub_everything(calls, result)
-        patches.update({
-            "get_bot_nickname": AsyncMock(return_value="nano"),
-            "build_reactive_system_prompt": MagicMock(return_value="sys"),
-            "split_unpushed_messages": MagicMock(return_value=([], None)),
-            "session_manager": MagicMock(
-                get_push_watermark=MagicMock(return_value=None),
-                get_session_key=MagicMock(return_value="sess"),
-            ),
-            "ActiveSession": MagicMock(return_value=SimpleNamespace(
-                generation=1, last_bot_reply_at=None, session_id="sess",
-                triggered_by="u1", participants=set(),
-                should_exit_active=False, interim_echo_enabled=False,
-            )),
-            "_mcp": MagicMock(
-                active_sessions=MagicMock(get_if_trigger_alive=MagicMock(return_value=None)),
-                message_buffer=MagicMock(get_recent=MagicMock(return_value=[])), run_tracker=None,
-            ),
-            "task_notes": MagicMock(push_plugin_note=MagicMock(
-                side_effect=lambda key, name, text, **kw: calls["note"].append(name))),
-        })
-        from nonebot_plugin_hermes_adapter.core import prompt_builder
-
-        prompts = patch.object(prompt_builder, "render_current_rows", MagicMock(return_value="hi"))
-        prompts.start()
-        self.addCleanup(prompts.stop)
-        with patch.multiple(mt, **patches):
-            await mt._run_reactive_turn(
-                bot=MagicMock(self_id=1), target=object(), adapter_name="onebotv11",
-                user_id="u1", group_id="g1", text="hi", image_urls=[],
-                is_direct=True, addressed_to_bot=True, now_ms=1, recent_override=[], ephemeral=True,
-            )
-        return calls
-
-    async def test_broken_fullwidth_envelope_sends_clean_body(self):
-        mt, ChatResult = _load()
-        from nonebot_plugin_hermes_adapter.core.npha_terminal import (
-            decode_terminal, structured_from_terminal,
-        )
-        ctrl = ('｛"reply_to"："m:1"，"release_anchor"：""，"answer_anchor"：""，'
-                '"anchor_merge"：""，"not_final"：false，'
-                '"should_exit_active"：false，"pin_anchor"：false｝')
-        text = ctrl + "\n" + '｛"body"："正文A"｝'
-        result = ChatResult(raw_text=text, structured=structured_from_terminal(decode_terminal(text)))
+    async def test_legacy_json_line_is_sent_verbatim(self):
+        legacy = '{"body":"旧格式","reply_to":"m:1"}'
+        result = ChatResult(raw_text=legacy)
+        result.terminal_decisions = [{"body": legacy, "should_reply": True}]
         calls = await self._run(result)
-        self.assertIn("正文A", " ".join(str(c) for c in calls["send"]))
-        self.assertIn("envelope_broken", calls["note"])
-        self.assertEqual(calls["followup"], [])
+        self.assertEqual(calls["send"], [legacy])                # 逐字一条，不识别控制
+        self.assertEqual(calls["note"], [])
 
-    async def test_reactive_reject_resubmits(self):
-        mt, ChatResult = _load()
-        result = ChatResult(raw_text="{}", parse_failed=True)
-        result.parse_failed_reason = "multiline_envelope"
-        calls = await self._run_reactive(result)
-        self.assertIn("envelope_rejected", calls["note"], msg=str(calls))
-        self.assertEqual(len(calls["followup"]), 1)
-        self.assertEqual(calls["followup"][0]["tag"], "bounce:envelope-multiline_envelope")
-        self.assertEqual(calls["settle"], [("suppressed", "envelope_rejected")])
+    async def test_empty_output_stays_silent(self):
+        result = ChatResult(raw_text="")
+        result.terminal_decisions = []
+        calls = await self._run(result)
         self.assertEqual(calls["send"], [])
+        self.assertEqual(calls["note"], [])
 
-    def test_fire_followup_accepts_bounce_namespace(self):
-        """真实 _fire_followup_turn：tag 走 bounce 命名空间能到 spawn，不抛 KeyError。"""
-        from unittest.mock import patch as _patch
-        from nonebot_plugin_hermes_adapter.handlers import message_relay as relay
 
-        spawned = []
-        with _patch.object(relay, "spawn_bg_task", side_effect=lambda coro: (spawned.append(coro), coro.close())):
-            relay._fire_followup_turn(
-                key=("g1", "u1"), tag="bounce:envelope-multiline_envelope",
-                prompt="重写", bot=MagicMock(self_id=1), target=object(),
-                adapter_name="onebotv11", user_id="u1", group_id="g1", is_private=False,
-            )
-        self.assertEqual(len(spawned), 1)
-
-    async def test_quoted_body_kept_whole(self):
-        mt, ChatResult = _load()
-        from nonebot_plugin_hermes_adapter.core.npha_terminal import (
-            decode_terminal, structured_from_terminal,
-        )
-        ctrl = '｛"reply_to"："m:1"，"release_anchor"：""，"answer_anchor"：""，' \
-               '"anchor_merge"：""，"not_final"：false，' \
-               '"should_exit_active"：false，"pin_anchor"：false｝'
-        text = ctrl + "\n" + '｛"body"："他说：\\"你好\\"，然后走了"｝'
-        result = ChatResult(raw_text=text, structured=structured_from_terminal(decode_terminal(text)))
-        calls = await self._run(result)
-        joined = " ".join(str(c) for c in calls["send"])
-        self.assertIn("然后走了", joined)
-
-    async def test_control_value_invalid_rejected_and_resubmitted(self):
-        mt, ChatResult = _load()
-        result = ChatResult(raw_text="{}", parse_failed=True)
-        result.parse_failed_reason = "control_value_invalid"
-        calls = await self._run(result)
-        self.assertIn("envelope_rejected", calls["note"])
-        self.assertEqual(len(calls["followup"]), 1)
-        self.assertEqual(calls["followup"][0]["tag"], "bounce:envelope-control_value_invalid")
-        self.assertEqual(calls["settle"], [("suppressed", "envelope_rejected")])
-        self.assertEqual(calls["send"], [])
-
-    async def test_envelope_broken_rejected_and_resubmitted(self):
-        mt, ChatResult = _load()
-        result = ChatResult(raw_text="{}", parse_failed=True)
-        result.parse_failed_reason = "envelope_broken"
-        calls = await self._run(result)
-        self.assertIn("envelope_rejected", calls["note"])
-        self.assertEqual(calls["followup"][0]["tag"], "bounce:envelope-envelope_broken")
-        self.assertEqual(calls["send"], [])
+if __name__ == "__main__":
+    unittest.main()

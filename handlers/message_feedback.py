@@ -188,6 +188,35 @@ async def _post_send_feedback(
         _chain_reset(key, "relay")
 
 
+async def _fire_continuation(
+    *,
+    key: tuple[str, str],
+    bot: Bot,
+    target,
+    adapter_name: str,
+    user_id: str,
+    group_id: str | None,
+    is_private: bool,
+) -> None:
+    """request_continuation 的续跑出口：与 not_final 同一条 relay 链与上限。
+
+    旧协议从控制行读 ``not_final``；正文信封退役后由工具登记、轮末在这里
+    消费一次。回复照发已发生过，这里只追加继续执行轮；达上限只 WARN 不接力。
+    """
+    if not _chain_allow(key, "relay", _RELAY_CHAIN_MAX):
+        _chain_reset(key, "relay")
+        logger.warning(f"[HERMES feedback] 接力链达上限({_RELAY_CHAIN_MAX}),不续跑 {key} tag=request_continuation")
+        return
+    _chain_bump(key, "relay")
+    _fire_followup_turn(
+        key=key,
+        tag="relay:request_continuation",
+        prompt=_CONTINUE_TASK_PROMPT,
+        bot=bot, target=target, adapter_name=adapter_name,
+        user_id=user_id, group_id=group_id, is_private=is_private,
+    )
+
+
 def _match_bounce_rule(reply_text: str):
     """类②第一步:返回首条命中的 action=bounce 规则(where=reply/all),无则 None。
 
