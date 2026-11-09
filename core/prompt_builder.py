@@ -126,6 +126,10 @@ _IDENTITY_OTHER_BOT = "其他BOT"
 _IDENTITY_MASTER = "主人"
 _IDENTITY_ADMIN = "管理员"
 _IDENTITY_USER = "普通用户"
+# 固定档位全集:渲染只产出这些字面量,回收剥壳按同一份清单锚定,不各写一份。
+_IDENTITY_LABELS = (
+    _IDENTITY_SELF, _IDENTITY_OTHER_BOT, _IDENTITY_MASTER, _IDENTITY_ADMIN, _IDENTITY_USER,
+)
 _AT_ME_MARK = "[有人@我] "
 
 
@@ -923,7 +927,8 @@ def render_current_rows(
 # 冒号之前)。steer_reconcile 的转录命中判据就是 `[m:id]:`(带冒号),native 回收
 # 的剥壳正则也锚这一形态;换成 current 外壳(`[m:id] [id=…]: `)会让对账命中与
 # 回收剥壳同时失效。完整媒体寻址(`[图 m:id#idx]` + 随条读图提示)只用于 steer,
-# current 行不加这套噪声。
+# current 行不加这套噪声。身份栏与 [有人@我] 由 identity_ctx 决定,贴在这段文法
+# 最前(`[有人@我] [主人] [id=…] [m:id]: 正文`),与 current/recent 同一优先级。
 
 _STEER_MEDIA_HINT = (
     "（随条媒体未内联，需要看图/表情时用 get_message_images "
@@ -952,13 +957,20 @@ class SteerPresentation:
     text: str
 
 
-def _render_steer_message_line(row: BufferedMessage, *, name_resolver=None) -> str:
+def _render_steer_message_line(
+    row: BufferedMessage, *, name_resolver=None,
+    identity_ctx: tuple[str, str] | None = None,
+) -> str:
     """渲染一条 steer 行;不合法时抛 ValueError,由 relay 边界转成安全回退。
 
     与 _render_message_line 共用 speaker 装配与 iter_message_media 寻址,
     区别只在文法(m:id 在 speaker 之后)与媒体形态(完整寻址标签 + 随条提示)。
     每行只贴自己的 m:id 与自己那份媒体清单的 idx——媒体错贴别行正是本项要治的
     缺陷,所以这里不做任何跨行的号/标签复用。
+
+    identity_ctx 非空时在 `[id=…]` 前加身份栏、在 `[m:id]` 前加真实 @ 强提醒
+    (与 current/recent 行同一套判定与同一优先级);None 保持旧字节形态,只有
+    拿不到 bot 上下文的低层旧调用会走到这里,生产 steer 两入口都带 ctx。
     """
     if row.origin.author_kind is AuthorKind.MIXED:
         raise ValueError("混合聚合消息必须先展开 fragments 再呈递")
@@ -966,12 +978,17 @@ def _render_steer_message_line(row: BufferedMessage, *, name_resolver=None) -> s
         raise ValueError("bot 消息不得作为 steer 输入")
     if row.origin.author_kind is AuthorKind.SYSTEM:
         raise ValueError("系统来源行不得作为 steer 输入")
+    at_mark = _at_me_mark(row, identity_ctx)
+    identity = _identity_label(row, identity_ctx)
+    identity_prefix = f"[{identity}] " if identity else ""
     tag = _format_speaker_tag(
         row.nickname, row.user_id,
         canonical=name_resolver(row.user_id) if name_resolver else None)
     mid = f" [m:{row.id}]" if row.id is not None else ""
     body = (row.content or "").strip()
-    line = f"{tag}{mid}: {body}".rstrip()
+    # 前缀序与 current/recent 一致:强提醒 → 身份栏 → speaker([id=…]) → m:id。
+    # m:id 必须留在冒号前,steer_reconcile 的 `[m:id]:` 转录命中与这块文法绑定。
+    line = f"{at_mark}{identity_prefix}{tag}{mid}: {body}".rstrip()
     media = iter_message_media(row)
     if media:
         if row.id is None:
@@ -985,19 +1002,26 @@ def _render_steer_message_line(row: BufferedMessage, *, name_resolver=None) -> s
 
 def render_steer_rows(
     rows: Sequence[BufferedMessage], *, name_resolver=None,
+    self_id: str | None = None, adapter: str | None = None,
 ) -> SteerPresentation:
     """steer 唯一呈递入口:正文、媒体寻址、台账与去重同一份身份事实。
 
     单条只是一元素序列的特例。任一行来源不合法(系统/混合/bot)或有媒体却没有
     可寻址行号,整批 ValueError——由 relay 边界失败关闭,不半贴号、不丢媒体、
     不改写原始消息。
+
+    self_id/adapter 是身份栏与 [有人@我] 的事实输入,取自本 scope 在跑 run 的
+    bot_self_id 与当前 adapter(与 current/recent 同一事实源);不传则保持旧形态。
     """
     if not rows:
         raise ValueError("steer 行序列不得为空")
+    ctx = _identity_context(self_id, adapter)
     items = tuple(
         SteerRowPresentation(
             source_row=row,
-            rendered_line=_render_steer_message_line(row, name_resolver=name_resolver),
+            rendered_line=_render_steer_message_line(
+                row, name_resolver=name_resolver, identity_ctx=ctx,
+            ),
         )
         for row in rows
     )

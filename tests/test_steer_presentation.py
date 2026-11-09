@@ -151,8 +151,8 @@ class SteerRowPresentationTests(_TrackerCase):
         self.assertEqual(len(captured), 1)
         lines = captured[0].split("\n")
         self.assertEqual(len(lines), 2, captured[0])
-        self.assertTrue(lines[0].startswith("[id=u1 user=小光] [m:101]: "), lines[0])
-        self.assertTrue(lines[1].startswith("[id=u2 user=小李] [m:102]: "), lines[1])
+        self.assertTrue(lines[0].startswith("[普通用户] [id=u1 user=小光] [m:101]: "), lines[0])
+        self.assertTrue(lines[1].startswith("[普通用户] [id=u2 user=小李] [m:102]: "), lines[1])
         # 媒体寻址只贴本行自己的号与自己的 idx
         self.assertIn("[图 m:101#0]", lines[0])
         self.assertIn("[引用图 m:101#1]", lines[0])
@@ -195,7 +195,7 @@ class SteerRowPresentationTests(_TrackerCase):
         row = msg(user="u1", nickname="小光", content="同一行", m_id=101)
         ok, captured = self._direct([row, row])
         self.assertTrue(ok)
-        self.assertEqual(captured[0].split("\n"), ["[id=u1 user=小光] [m:101]: 同一行"])
+        self.assertEqual(captured[0].split("\n"), ["[普通用户] [id=u1 user=小光] [m:101]: 同一行"])
         self.assertEqual(len(self.ledger()), 1)
         self.assertEqual(self.seen_ids(), {101})
 
@@ -308,7 +308,7 @@ class FollowupSteerGateTests(_TrackerCase):
         )
         ok, captured = self._try()
         self.assertTrue(ok)
-        self.assertEqual(captured, ["[id=u3 user=小周] [m:103]: 你怎么看"])
+        self.assertEqual(captured, ["[普通用户] [id=u3 user=小周] [m:103]: 你怎么看"])
         self.assertIsNone(self.registry.peek_followup(KEY), "纯文本注入成功后应摘槽")
         self.assertEqual(
             [(r["m_id"], r["sender_id"]) for r in self.ledger()], [("103", "u3")]
@@ -329,7 +329,7 @@ class FollowupSteerGateTests(_TrackerCase):
         )
         ok, captured = self._try()
         self.assertTrue(ok)
-        self.assertEqual(captured, ["[id=u3 user=小周]: 没有行号的跟帖"])
+        self.assertEqual(captured, ["[普通用户] [id=u3 user=小周]: 没有行号的跟帖"])
         self.assertIsNone(
             self.registry.peek_followup(KEY), "已呈现的无号行必须结算,留槽会重复呈递"
         )
@@ -462,7 +462,7 @@ class FollowupSteerGateTests(_TrackerCase):
         ok, captured = self._try(during_await=merge_notice)
         # 冻结集在 await 前已定:injected 只含真人那一行(系统事件行不冒充 steer 输入);
         # 结算按对象身份发现新 fragment → 槽保留,系统行留给接力轮呈递
-        self.assertEqual(captured, ["[id=u3 user=小周] [m:114]: 我再补一句"])
+        self.assertEqual(captured, ["[普通用户] [id=u3 user=小周] [m:114]: 我再补一句"])
         self.assertTrue(ok)
         # 槽里只剩系统事件行(未呈现,交由接力轮呈递);已 steer 的真人行已摘。
         self.assertEqual(len(entry.fragments), 1)

@@ -33,8 +33,8 @@ from nonebot_plugin_hermes_adapter.core.run_tracker import (  # noqa: E402
 from nonebot_plugin_hermes_adapter.handlers import message_relay as relay  # noqa: E402
 
 RAWS = {
-    "group": "[id=u1 user=小光]: 你怎么看这个",
-    "private": "[id=u1 user=小光]: 你怎么看这个",
+    "group": "[普通用户] [id=u1 user=小光]: 你怎么看这个",
+    "private": "[普通用户] [id=u1 user=小光]: 你怎么看这个",
 }
 GROUP_ID = "g1"
 USER_ID = "u1"

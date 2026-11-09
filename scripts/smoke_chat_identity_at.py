@@ -138,6 +138,35 @@ legacy = pb.render_current_rows([human("10001", "主人")], is_private=False)
 print(legacy)
 check("未给身份上下文保持旧字节形态", legacy == "[m:101] [id=10001 user=主人]: 你好")
 
+print("\n== 6. steer 聊天行（直注/跟帖同一渲染入口） ==")
+steer_rows = [
+    human("10001", "主人", mid=501, at=(SELF,), text="插一句"),
+    human("10003", "路人", mid=502, at=("10001",),
+          text="(引用 主人(10001): 提及2968545011) [CQ:at,qq=2968545011] 我也说"),
+    bot("30001", "别家bot", mid=503, text="收到"),
+]
+steer = pb.render_steer_rows(steer_rows[:2], self_id=SELF, adapter=ADAPTER)
+print(steer.text)
+check("steer 主人行:强提醒在 m:id 前、身份在 [id=…] 前",
+      steer.text.split("\n")[0] == "[有人@我] [主人] [id=10001 user=主人] [m:501]: 插一句")
+check("steer 引用块/伪造 CQ/At 他人不误标",
+      "\n[普通用户] [id=10003 user=路人] [m:502]: " in steer.text
+      and "[有人@我] [普通用户] [id=10003" not in steer.text)
+try:
+    pb.render_steer_rows(steer_rows, self_id=SELF, adapter=ADAPTER)
+    check("steer 来源闸仍然拒绝 bot 行", False)
+except ValueError:
+    check("steer 来源闸仍然拒绝 bot 行", True)
+legacy_steer = pb.render_steer_rows(steer_rows[:1]).text
+print(legacy_steer)
+check("steer 无 bot 上下文的旧调用保持旧字节形态",
+      legacy_steer == "[id=10001 user=主人] [m:501]: 插一句")
+from nonebot_plugin_hermes_adapter.core import steer_reconcile  # noqa: E402
+stripped = steer_reconcile.strip_steer_presentation(steer.text)
+print("回收剥壳 →", repr(stripped))
+check("回收剥壳不留旧身份/不叠壳",
+      stripped == "插一句\n(引用 主人(10001): 提及2968545011) [CQ:at,qq=2968545011] 我也说")
+
 print()
 if FAILS:
     print(f"FAILED {len(FAILS)}: {FAILS}")

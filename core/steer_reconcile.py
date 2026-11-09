@@ -447,13 +447,40 @@ def _strip_convention(text: str) -> str:
     return text.rstrip("\n")
 
 
+_STEER_STRIP_RE = None
+
+
+def _steer_strip_pattern() -> re.Pattern:
+    """steer 呈递外壳的剥壳正则,档位字面量与强提醒标记都取自渲染端常量。
+
+    渲染文法(与 current/recent 同一优先级):
+      `[有人@我] [主人] [id=…] [m:id]: 正文`
+    强提醒与身份栏各自可选(真实 @ / 有 bot 上下文才出现),`[id=…]` 标签必在
+    (speaker 装配恒产出),m:id 可有可无(无号行发不出对账锚但仍是合法字符串)。
+    只锚行首 + 这些固定标记 + 紧随其后的 `:` —— 正文里同样字样的文本不受影响。
+    """
+    global _STEER_STRIP_RE
+    if _STEER_STRIP_RE is None:
+        from ..core.prompt_builder import _AT_ME_MARK, _IDENTITY_LABELS
+
+        labels = "|".join(re.escape(x) for x in _IDENTITY_LABELS)
+        _STEER_STRIP_RE = re.compile(
+            r"^(?:%(at)s\s+)?(?:\[(?:%(labels)s)\]\s+)?"
+            r"(?:\[id=[^\]\n]+\](?:\s+\[m:\d+\])?|\[m:\d+\])\s*:\s*"
+            % {"at": re.escape(_AT_ME_MARK.strip()), "labels": labels},
+            flags=re.MULTILINE,
+        )
+    return _STEER_STRIP_RE
+
+
 def strip_steer_presentation(text: str) -> str:
-    """真人原文回投前剥掉 steer 呈递外壳，避免与当前行渲染重复叠加。"""
+    """真人原文回投前剥掉 steer 呈递外壳，避免与当前行渲染重复叠加。
+
+    身份栏与 [有人@我] 属于呈递装饰,和 speaker/m:id 一起剥净:否则原文回投后
+    新一轮渲染会在正文里留下旧身份字面量(叠壳)。
+    """
     text = _strip_convention(text)
-    return re.sub(
-        r"^(?:\[id=[^\]\n]+\](?:\s+\[m:\d+\])?|\[m:\d+\])\s*:\s*",
-        "", text, flags=re.MULTILINE,
-    )
+    return _steer_strip_pattern().sub("", text)
 
 
 def _strip_out_of_band(content: str) -> str:

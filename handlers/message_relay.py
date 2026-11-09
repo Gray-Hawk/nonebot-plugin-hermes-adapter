@@ -559,6 +559,51 @@ from ..core.steer_seen import (
 )
 
 
+def _scope_live_run(adapter_name: str, is_private: bool, user_id: str, group_id: str | None):
+    """本 scope 在跑的 run;查不到/查询失败都返回 None,不改变入口的失败语义。"""
+    tracker = getattr(_mcp, "run_tracker", None)
+    if tracker is None:
+        return None
+    try:
+        return tracker.get_by_scope(
+            make_scope_key(adapter_name, is_private, user_id, group_id)
+        )
+    except Exception:
+        logger.warning(
+            "[HERMES steer] 身份上下文取 run 失败,本轮按旧形态渲染 "
+            f"(group={group_id})",
+            exc_info=True,
+        )
+        return None
+
+
+def _render_steer_presentation_for_scope(
+    rows, *, adapter_name: str, is_private: bool, user_id: str, group_id: str | None,
+    live=None,
+):
+    """按本 scope 在跑 run 的 bot 身份渲染 steer 整批。
+
+    身份栏与 [有人@我] 的事实输入只有「当前 BOT 的 self_id + adapter」:self_id
+    取自 live run 既有的 ``bot_self_id``(与 current/recent 行同一事实源,不新建
+    身份系统),adapter 是当前入站适配器。steer 与 current/recent 是同一条聊天行,
+    不能因为卡片没点名就退回裸数字身份。
+
+    拿不到 live run 时 ctx 为空、渲染退化成旧形态——那条路径的注入本来就会因为
+    没有 live run 而失败返回 False,不会把无身份文本发进生产聊天。
+    """
+    if live is None:
+        live = _scope_live_run(adapter_name, is_private, user_id, group_id)
+    self_id = getattr(live, "bot_self_id", None) if live is not None else None
+    # 只认真实账号 id:替身/缺字段(非 str/int)与空串一律按「拿不到 bot 上下文」
+    # 处理,绝不拿对象 repr 去比 user_id 或冒充身份事实。
+    if not isinstance(self_id, (str, int)) or self_id == "":
+        self_id = None
+    return render_steer_rows(
+        rows, self_id=None if self_id is None else str(self_id),
+        adapter=adapter_name,
+    )
+
+
 async def _maybe_steer_direct(
     *,
     target,
@@ -629,7 +674,11 @@ async def _maybe_steer_direct(
     if not _is_subsequence(_stable_unique(list(sticker_urls or [])), observed_stickers):
         return False
     try:
-        presentation = render_steer_rows(steer_rows)
+        presentation = _render_steer_presentation_for_scope(
+            steer_rows,
+            adapter_name=adapter_name, is_private=target.private,
+            user_id=user_id, group_id=group_id,
+        )
     except ValueError:
         # 任一行来源闸(SYSTEM/MIXED/BOT)或媒体寻址不合法 → 整批安全回退。
         return False
@@ -731,7 +780,11 @@ async def _try_steer_followup(
         )
         return False
     try:
-        presentation = render_steer_rows(cleaned)
+        presentation = _render_steer_presentation_for_scope(
+            cleaned,
+            adapter_name=adapter_name, is_private=is_private,
+            user_id=user_id, group_id=group_id, live=live,
+        )
     except ValueError:
         logger.info(
             f"[HERMES steer探针] 早退: 行来源闸/渲染拒绝 (group={group_id})"
