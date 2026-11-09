@@ -230,6 +230,7 @@ def build_mcp_app(
     message_store: MessageStore,
     image_cache: ImageCache,
     background_outbox: Any = None,
+    running_sources: Any = None,
 ) -> Any:
     """构造 FastMCP 实例并返回 http_app(),由调用者交给 uvicorn。
 
@@ -667,24 +668,31 @@ def build_mcp_app(
         group_id: str | None = None,
         user_id: str | None = None,
     ) -> GetBackgroundTasksResult:
-        """List background tasks really registered for this conversation (read-only).
+        """List real background state for this conversation (read-only).
 
-        Reads the plugin's background-completion registry: subagent/Kanban work whose
-        result still has to be reported into this chat. task_state is the upstream task
-        state, report_state the plugin's own delivery progress. An empty list means
-        nothing is registered — never claim a background task from memory. Exactly one
-        of group_id / user_id must be given.
+        Two separate lists, never conflate them:
+        - `running`: background work actually running now, aggregated from real
+          registries (Kanban tasks with status=running; background delegations
+          still registered). `running_sources` names the sources actually read;
+          when it is empty, `running_unknown=true` and an empty `running` list
+          does NOT prove that nothing is running.
+        - `reports`: completed results still awaiting report into this chat
+          (task_state is terminal; report_state is delivery progress).
+        Empty `reports` only means nothing is awaiting report. Exactly one of
+        group_id / user_id must be given.
         """
         inp = GetBackgroundTasksInput(adapter=adapter, user_id=user_id, group_id=group_id)
         result = get_background_tasks_impl(
             inp,
             outbox=background_outbox,
             scope=caller_scope_from_request(),
+            running_sources=running_sources,
         )
         _log_tool_call(
             "get_background_tasks",
             f"adapter={adapter} group={group_id} user={user_id}",
-            f"ok={result.ok} count={result.count}"
+            f"ok={result.ok} running={result.running_count} reports={result.report_count}"
+            + (f" running_unknown={result.running_unknown}" if result.running_unknown else "")
             + (f" error={_clip(result.error)!r}" if result.error else ""),
         )
         return result

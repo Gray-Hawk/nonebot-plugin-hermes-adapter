@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -21,6 +23,7 @@ from unittest.mock import MagicMock
 from tests import _bootstrap  # noqa: F401
 
 from tests import test_runs_terminal as e2
+from tests.test_background_report_chain import build_board
 from tests.test_runs_stream import ReactiveControlParityTests, RunsEventParser, sse_lines
 
 from nonebot_plugin_hermes_adapter.core import control_intent
@@ -31,6 +34,7 @@ from nonebot_plugin_hermes_adapter.core.active_session import (
 )
 from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 from nonebot_plugin_hermes_adapter.core.inflight import make_inflight_key
+from nonebot_plugin_hermes_adapter.core.kanban_report_source import KanbanReportSource, ingest_into
 from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage
 from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin
 from nonebot_plugin_hermes_adapter.core.npha_terminal import (
@@ -38,6 +42,10 @@ from nonebot_plugin_hermes_adapter.core.npha_terminal import (
     structured_batch_from_terminal,
 )
 from nonebot_plugin_hermes_adapter.core.routing import CallerScope
+from nonebot_plugin_hermes_adapter.core.running_tasks import (
+    DelegationRunningSource,
+    KanbanRunningSource,
+)
 from nonebot_plugin_hermes_adapter.core.background_report_outbox import BackgroundReportOutbox
 from nonebot_plugin_hermes_adapter.mcp.tools.background_status import (
     GetBackgroundTasksInput,
@@ -205,16 +213,20 @@ class SubmitControlToolTests(unittest.TestCase):
 
 
 class BackgroundStatusToolTests(unittest.TestCase):
-    """后台状态必须来自真实登记查询，而不是模型自报。"""
+    """后台状态：运行中来自真实运行源，待汇报来自完成信箱，两者不许混读。"""
+
+    SESSION = "hermes-onebotv11+group+g1"
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.outbox = BackgroundReportOutbox(Path(tmp.name) / "background_reports.db")
+        self.dir = Path(tmp.name)
+        self.outbox = BackgroundReportOutbox(self.dir / "background_reports.db")
         self.addCleanup(self.outbox.close)
+        # 完成待汇报事件（真实信箱语义：上游终态才会进信箱）。
         self.outbox.upsert_event({
             "event_id": "e1",
-            "origin_session_id": "hermes-onebotv11+group+g1",
+            "origin_session_id": self.SESSION,
             "state": "completed",
             "result": "第一行结果\n第二行细节",
             "completed_at": 123.0,
@@ -223,42 +235,136 @@ class BackgroundStatusToolTests(unittest.TestCase):
         self.outbox.upsert_event({
             "event_id": "e2",
             "origin_session_id": "hermes-onebotv11+group+g2",
-            "state": "running",
+            "state": "completed",
             "source": "subagent",
         })
-        self.outbox.upsert_event({
-            "event_id": "e3",
-            "origin_session_id": "hermes-onebotv11+group+g1-g3",
-            "state": "running",
-            "source": "kanban",
-        })
+        # 真实看板库：一条执行中卡片 + 一条已完成卡片。
+        self.board = self.dir / "board.db"
+        build_board(self.board, [
+            ("t_run", "spawned", {}, self.SESSION),
+            ("t_done", "completed", {"summary": "done"}, self.SESSION),
+        ])
+        with sqlite3.connect(self.board) as con:
+            con.execute("UPDATE tasks SET status='running' WHERE id='t_run'")
+            con.execute("UPDATE tasks SET status='done' WHERE id='t_done'")
+        # 真实 background-completion 登记库：一条已派发未终态 + 一条已汇报完。
+        self.registry = self.dir / "background-completion.db"
+        with sqlite3.connect(self.registry) as con:
+            con.executescript(
+                """
+                CREATE TABLE bg_completions (
+                    delegation_id TEXT PRIMARY KEY,
+                    origin_session_id TEXT NOT NULL,
+                    claim_id TEXT,
+                    state TEXT NOT NULL DEFAULT 'registered',
+                    acked INTEGER NOT NULL DEFAULT 0,
+                    dispatched_at REAL,
+                    completed_at REAL,
+                    drop_reason TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
+                """
+            )
+            con.execute(
+                "INSERT INTO bg_completions VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("deleg_run", self.SESSION, "", "registered", 0, 111.0, None, None, 1.0, 1.0),
+            )
+            con.execute(
+                "INSERT INTO bg_completions VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("deleg_done", self.SESSION, "", "external_ack", 1, 100.0, 120.0, None, 2.0, 2.0),
+            )
+        self.sources = [
+            KanbanRunningSource(self.board),
+            DelegationRunningSource(self.registry),
+        ]
 
-    def test_lists_only_this_conversation_from_real_registry(self) -> None:
-        result = get_background_tasks_impl(
+    def _query(self, **kwargs):
+        return get_background_tasks_impl(
             GetBackgroundTasksInput(adapter="onebotv11", group_id="g1"),
-            outbox=self.outbox, scope=CallerScope.dev(),
+            scope=CallerScope.dev(), **kwargs,
         )
+
+    def test_running_comes_from_real_sources_not_the_report_outbox(self) -> None:
+        result = self._query(outbox=self.outbox, running_sources=self.sources)
         self.assertTrue(result.ok)
-        self.assertEqual([task.event_id for task in result.tasks], ["e1", "e3"])
-        first = result.tasks[0]
-        self.assertEqual(first.task_state, "completed")
-        self.assertEqual(first.report_state, "pending")
-        self.assertEqual(first.summary, "第一行结果")
-        self.assertEqual(result.count, 2)
+        self.assertEqual(
+            sorted(item.task_id for item in result.running), ["deleg_run", "t_run"],
+        )
+        self.assertEqual(sorted(item.source for item in result.running), ["delegation", "kanban"])
+        self.assertEqual(result.running_count, 2)
+        self.assertEqual(sorted(result.running_sources), ["delegation", "kanban"])
+        self.assertFalse(result.running_unknown)
+        # 完成待汇报只来自信箱；手工伪造的 running 信箱行不是运行态来源。
+        self.assertEqual([item.event_id for item in result.reports], ["e1"])
+        self.assertEqual(result.reports[0].task_state, "completed")
+        self.assertEqual(result.reports[0].report_state, "pending")
+        self.assertEqual(result.reports[0].summary, "第一行结果")
+        self.assertEqual(result.report_count, 1)
+        self.assertEqual(result.count, 3)
+        self.assertEqual(result.note, "")
+
+    def test_completed_real_task_moves_from_running_to_pending_report(self) -> None:
+        running = self._query(outbox=self.outbox, running_sources=self.sources)
+        self.assertIn("t_run", [item.task_id for item in running.running])
+
+        # 真实源变化：看板任务结束（status=done + completed 事件）。
+        with sqlite3.connect(self.board) as con:
+            con.execute("UPDATE tasks SET status='done' WHERE id='t_run'")
+            con.execute(
+                "INSERT INTO task_events (task_id, run_id, kind, payload, created_at)"
+                " VALUES (?,?,?,?,?)",
+                ("t_run", None, "completed", json.dumps({"summary": "finished"}), 2.0),
+            )
+        self.outbox.put_source_cursor("kanban", "0")
+        self.assertGreaterEqual(
+            ingest_into(self.outbox, KanbanReportSource(self.board)), 1,
+        )
+
+        after = self._query(outbox=self.outbox, running_sources=self.sources)
+        # 运行中只剩子代理；结束的看板任务出现在待汇报里。
+        self.assertEqual([item.task_id for item in after.running], ["deleg_run"])
+        self.assertEqual(after.running_count, 1)
+        event_ids = [item.event_id for item in after.reports]
+        self.assertTrue(any(item.startswith("kanban:t_run:") for item in event_ids), event_ids)
+        states = {item.event_id: item.task_state for item in after.reports}
+        self.assertIn("completed", states.values())
 
     def test_other_conversation_is_empty(self) -> None:
         result = get_background_tasks_impl(
             GetBackgroundTasksInput(adapter="onebotv11", user_id="u1"),
-            outbox=self.outbox, scope=CallerScope.dev(),
+            outbox=self.outbox, scope=CallerScope.dev(), running_sources=self.sources,
         )
         self.assertTrue(result.ok)
+        self.assertEqual(result.running, [])
+        self.assertEqual(result.reports, [])
         self.assertEqual(result.count, 0)
+        # 有可读运行源：空 running 是真实「没有在跑任务」。
+        self.assertFalse(result.running_unknown)
 
-    def test_missing_registry_is_an_error_not_an_empty_list(self) -> None:
-        result = get_background_tasks_impl(
-            GetBackgroundTasksInput(adapter="onebotv11", group_id="g1"),
-            outbox=None, scope=CallerScope.dev(),
+    def test_no_running_source_is_unknown_not_empty(self) -> None:
+        result = self._query(outbox=self.outbox, running_sources=None)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.running, [])
+        self.assertTrue(result.running_unknown)
+        self.assertEqual(result.running_sources, [])
+        self.assertTrue(result.note)
+        self.assertIn("不能证明", result.note)
+        # 信箱里的完成待汇报仍然可读。
+        self.assertEqual(result.report_count, 1)
+
+    def test_read_failure_is_reported_as_unknown_source(self) -> None:
+        result = self._query(
+            outbox=self.outbox,
+            running_sources=[KanbanRunningSource(self.dir / "missing.db")],
         )
+        self.assertTrue(result.ok)
+        self.assertTrue(result.running_unknown)
+        self.assertTrue(result.running_source_errors)
+        self.assertIn("not found", result.running_source_errors[0])
+
+    def test_missing_registry_and_no_running_source_is_an_error(self) -> None:
+        result = self._query(outbox=None)
         self.assertFalse(result.ok)
         self.assertIn("unavailable", result.error or "")
 

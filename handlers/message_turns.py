@@ -853,17 +853,21 @@ def _make_runs_live_decisions(
     """
     state = {"sent_any": False, "suppressed_any": False, "last_reply_at": 0, "outcomes": {}}
     prepared = {}
+    key = make_inflight_key(adapter_name, is_private, user_id, group_id)
 
     def prepare(decision: dict, run_id: str):
         from ..core.runs_terminal import append_stream_unit, units_from_decisions
 
+        # 控制按「完整正文决策到达／入队」的确定性时点消费，而不是等到实际发送：
+        # 发送受 3 秒条间节奏约束，若把绑定推迟到 deliver，等待期间新登记的控制会
+        # 被已经到达的旧正文抢走（甲/乙/丙 见证）。prepare 在 _RunsReplyQueue.put
+        # 同步调用一次；bind_control 对同一决策幂等，deliver/终态再绑不会弹第二份。
+        control_intent.bind_control(decision, key)
         pairs = units_from_decisions([decision])
         if pairs:
             prepared[id(decision)] = append_stream_unit(
                 tracker=_mcp.run_tracker, run_id=run_id, unit=pairs[0][1],
             )
-
-    key = make_inflight_key(adapter_name, is_private, user_id, group_id)
 
     def set_busy(busy: bool):
         inflight = getattr(_mcp, "inflight", None)
@@ -881,8 +885,9 @@ def _make_runs_live_decisions(
     async def deliver(decision: dict, run_id: str) -> None:
         from ..core.runs_terminal import append_stream_unit, units_from_decisions
 
-        # 控制队列：一份决策消费一份登记控制（空 body 也占一份）。控制只登记不执行，
-        # 这一份照旧走原 delivery/outbound；工具失败/断流/重启导致控制缺失时就是缺省。
+        # 控制队列：一份决策消费一份登记控制（空 body 也占一份）。正常 Runs 流式
+        # 路径已在 prepare（决策入队）绑定过；这里的再次绑定是幂等兜底（非流式/终态
+        # 直投不经 prepare）。控制只登记不执行，这一份照旧走原 delivery/outbound。
         control_intent.bind_control(decision, key)
         pairs = units_from_decisions([decision])
         if not pairs:
@@ -2220,6 +2225,14 @@ async def _run_reactive_turn(
     _control_key = make_inflight_key(adapter_name, False, user_id, group_id)
     for _decision in decisions:
         control_intent.bind_control(_decision, _control_key)
+    # 轮级退窗：本组任一明确决策带了 should_exit_active，就整组生效一次，且必须在
+    # 组内**最后一条发出之后**才真正收窗。逐份立即收窗会被后续份的「发言即开窗」
+    # 重新顶开（世代号 +1 后旧世代收窗也会失效），用户侧表现为「说要走却没走」。
+    # 只延后执行时机，不把该字段继承给其他份；reply_to/锚仍各按原份一次性生效。
+    group_exit_requested = any(
+        control_intent.control_value(decision, "should_exit_active")
+        for decision in decisions
+    )
     # R1:控制副作用与正文发送分离——所有有效决策都先做锚/收窗等轮级控制，
     # 空 body 只跳过发送；不得因过滤空份把本来在发送判断前执行的控制一起丢掉。
     unit_of: dict[int, dict] = {}
@@ -2286,7 +2299,9 @@ async def _run_reactive_turn(
         # 发言即开窗(窗口生命周期定案):隐式激活的临时 turn 真说了话 → 开启活跃
         # 窗口,群内跟帖可被听见。should_exit_active 优先——LLM 明说了「这轮谈完了」,
         # 不得借发言把窗又顶开。开窗后 touch / mark_bot_replied 都有了落点。
-        if ephemeral and not ctl["should_exit_active"]:
+        # 本组带退窗时同样不开:否则后续份的 trigger() 会把世代号 +1,轮末按入口
+        # 世代收窗就落空,整组退窗被自己的连发重新顶开。
+        if ephemeral and not ctl["should_exit_active"] and not group_exit_requested:
             _mcp.active_sessions.trigger(adapter_name, group_id, user_id, now_ms=reply_now_ms)
             logger.info(f"[HERMES reactive] ephemeral turn spoke; active window opened (group={group_id})")
         if write_history:
@@ -2311,8 +2326,8 @@ async def _run_reactive_turn(
                     qq_message_id=getattr(sent, "primary_qq_message_id", None),
                 )
             )
-        # 注:若 should_exit_active=True,session 已在上方 end(),touch / mark_bot_replied
-        # 都是安全 no-op(两者文档统一:session 缺失则 no-op)。
+        # 注:本轮带 should_exit_active 时,窗口在整组末条发出后的统一收尾里 end();
+        # touch / mark_bot_replied 在此之前仍有落点(收窗已延后到组末)。
         _mcp.active_sessions.touch(adapter_name, group_id, now_ms=reply_now_ms)
         # B.2: 记下「bot 刚回过」时间戳/文本/媒体数,供同 turn 防重与活跃窗状态使用。
         # 本地能力拒绝没有模型回复，不写回复时间戳；or 短路同时避免误报落空。
@@ -2323,7 +2338,7 @@ async def _run_reactive_turn(
             media_count=len(media_urls) + send_result_sticker_count(sent),
             text=cleaned_reply_text,
         )
-        if not marked and not ctl["should_exit_active"]:
+        if not marked and not ctl["should_exit_active"] and not group_exit_requested:
             # 排除 should_exit_active:那是本 turn 自己刚 end() 掉窗口,mark 落空是预期的。
             # 剩下的只能是别人的 turn 在本 turn 期间 end() 掉了这个 key(跨用户场景),
             # 日志里 last_bot_reply_at 会一直是 0,同 turn 防重也失去依据 —— 没有这条就查不出为什么。
@@ -2485,13 +2500,9 @@ async def _run_reactive_turn(
         # release_anchor 处理移在 answer_anchor 之后(alive/103):同轮 answer+release
         # 必须先让合法 answer 标记生效再松锚,否则锚被提前 release 后 answer 校验
         # 落空,模型反收「非法值」便签。见 turn 尾部。
-        if control_intent.control_value(decision, "should_exit_active") and not _mcp.active_sessions.end_if_current_generation(session, turn_generation):
-            # 收窗只对本 turn 入口快照的那个世代生效:期间若有别人 @bot 续期过窗口,
-            # 世代号已 +1,旧世代的收窗请求不再匹配,新窗口留在字典里等它的 refire。
-            logger.info(
-                f"[HERMES reactive] should_exit_active not applied: window was re-triggered "
-                f"during this turn (group={group_id})"
-            )
+        # should_exit_active 是轮级控制:这里只记录(见 group_exit_requested),
+        # 真正收窗在整组最后一条发出后的统一收尾执行——逐份立即收窗会被后续份
+        # 的「发言即开窗」顶开。
 
         # chat() 返回后到这里没有 await,快照一次即可(见循环入口的整批快照)。
 
@@ -2716,6 +2727,14 @@ async def _run_reactive_turn(
                 wrote_history=bool(sent and _mcp.message_buffer is not None),
                 component_id=_history_component(unit_index) if batch_mode else "history",
             )
+    # 轮级退窗的统一收尾：整组所有份都发完（含 live 已发份与空 body 份）之后才收。
+    # 世代保护不变：期间若有别人 @bot 续期过窗口，世代号已 +1，本 turn 的收窗请求
+    # 不匹配新窗口，仍留给新窗口自己的 pending/refire。
+    if group_exit_requested and not _mcp.active_sessions.end_if_current_generation(session, turn_generation):
+        logger.info(
+            f"[HERMES reactive] should_exit_active not applied: window was re-triggered "
+            f"or already gone (group={group_id})"
+        )
     if not sent_any:
         # 全部份都没有发送(静默／全部被业务拦截)：按既有销账语义收口，禁止对账补投。
         _settle(

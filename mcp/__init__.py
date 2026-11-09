@@ -92,6 +92,9 @@ background_report_gateway: BackgroundCompletionGateway | None = None
 background_report_consumer = None
 # Kanban 终态事件源（本部署补丁）：与子代理共用同一张持久信箱与唤醒闸。
 kanban_report_source = None
+# 后台「运行中」真实来源（本部署补丁）：看板执行中卡片 + background-completion
+# 已派发未终态的登记行；只读，不新建登记系统。
+running_sources: list = []
 # WindowStore 走延迟导入(在 init_runtime_state 里),这里只留槽位给 shutdown 关连接
 window_store = None
 
@@ -141,12 +144,36 @@ def _kanban_db_path() -> Path | None:
     return None
 
 
+def _background_completion_db_path() -> Path | None:
+    """background-completion 登记库位置（只读复用其已派发任务登记）。
+
+    HERMES_BACKGROUND_COMPLETION_DB 显式优先；否则按 HERMES_HOME / ~/.hermes 探测。
+    文件不存在就不启用这一路运行源——不新建库、不写任何状态。
+    """
+    import os
+
+    raw = os.environ.get("HERMES_BACKGROUND_COMPLETION_DB") or ""
+    if raw:
+        candidates = [Path(raw).expanduser()]
+    else:
+        home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
+        candidates = [Path(home).expanduser() / "background-completion.db"]
+    for path in candidates:
+        try:
+            if path.is_file() and os.access(path, os.R_OK):
+                return path
+        except OSError:
+            continue
+    logger.info("[HERMES] 未发现可读 background-completion 登记库,子代理运行源不启用")
+    return None
+
+
 def init_runtime_state() -> None:
     """由 plugin __init__.py 在 startup 钩子里调用,装配全局对象。"""
     global message_buffer, active_sessions, bot_registry, inflight
     global message_store, image_cache, image_fetcher, session_key_store, run_tracker, window_store
     global background_report_outbox, background_report_gateway, background_report_consumer
-    global kanban_report_source
+    global kanban_report_source, running_sources
 
     # 启动捕获一次(重启生效):存储与媒体缓存的构造参数在装配期定型,不随后续重载变化。
     misc_cfg = load_misc_config()
@@ -178,6 +205,18 @@ def init_runtime_state() -> None:
             from ..core.kanban_report_source import KanbanReportSource
 
             kanban_report_source = KanbanReportSource(board_path)
+    if not running_sources:
+        # 运行中任务只从已有真实登记聚合：看板执行中卡片 + 已派发未终态的后台子代理。
+        from ..core.running_tasks import (
+            DelegationRunningSource,
+            KanbanRunningSource,
+        )
+
+        if kanban_report_source is not None:
+            running_sources.append(KanbanRunningSource(kanban_report_source.db_path))
+        _delegation_db = _background_completion_db_path()
+        if _delegation_db is not None:
+            running_sources.append(DelegationRunningSource(_delegation_db))
     if background_report_consumer is None:
         background_report_consumer = build_background_report_consumer(
             outbox=background_report_outbox,
@@ -292,6 +331,7 @@ async def start_mcp_server() -> None:
         message_store=message_store,
         image_cache=image_cache,
         background_outbox=background_report_outbox,
+        running_sources=running_sources,
     )
 
     config = uvicorn.Config(

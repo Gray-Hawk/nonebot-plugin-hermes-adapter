@@ -104,11 +104,20 @@ Each returned message carries:
 
 ### `get_background_tasks(adapter, group_id? | user_id?)`
 
-Read-only view of the background work really registered for this conversation: subagent /
-Kanban results the plugin still has to report back here. `task_state` is the upstream task
-state, `report_state` the plugin's own delivery progress, `summary` a one-line result
-excerpt. An empty list means nothing is registered — never claim a background task from
-memory, and never invent a task note; the plugin wakes you when the result is ready.
+Read-only view of real background state for this conversation, as two separate lists:
+
+- `running` — work actually running now, aggregated from real registries (Kanban
+  `tasks.status='running'` cards; background delegations still registered). Each item
+  has `source`, `task_id`, `title`, `started_at`. `running_sources` names the sources
+  actually read. When it is empty, `running_unknown=true` and an empty `running` list
+  does **not** prove that nothing is running — say the running state is unknown.
+- `reports` — completed results the plugin still has to report back here. `task_state`
+  is the upstream terminal state, `report_state` the plugin's own delivery progress,
+  `summary` a one-line result excerpt. Empty `reports` only means nothing is awaiting
+  report.
+
+Never claim a background task from memory and never invent a task note; the plugin
+wakes you when a result is ready.
 
 ### `get_message_images(message_ids, adapter?, group_id?)`
 
