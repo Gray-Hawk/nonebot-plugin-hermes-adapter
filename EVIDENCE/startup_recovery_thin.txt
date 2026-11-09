@@ -1,0 +1,300 @@
+# t_f8be4ef7 startup-recovery-thin evidence
+date: 2026-11-09T20:32:14+08:00
+repo head: 9a5b4f9 on feat/plain-text-protocol
+hermes agent: 2bd378ed1b (gateway/run_runtime.py locally modified:  M gateway/run_runtime.py)
+plugin production LOC:  159 总计
+
+== 1. plugin unit tests ==
+test_event_loop_call_skips_original_and_logs_once (test_plugin.MediaGuardTest.test_event_loop_call_skips_original_and_logs_once) ... ok
+test_foreign_patch_is_refused (test_plugin.MediaGuardTest.test_foreign_patch_is_refused) ... ok
+test_reinstall_stacks_nothing (test_plugin.MediaGuardTest.test_reinstall_stacks_nothing) ... ok
+test_unrecognized_shape_raises (test_plugin.MediaGuardTest.test_unrecognized_shape_raises) ... ok
+test_worker_thread_call_runs_original (test_plugin.MediaGuardTest.test_worker_thread_call_runs_original) ... ok
+test_binding_on_worker_thread_recovery_on_loop (test_plugin.NativeBindingTest.test_binding_on_worker_thread_recovery_on_loop) ... ok
+test_core_already_patched_is_deferred (test_plugin.NativeBindingTest.test_core_already_patched_is_deferred) ... ok
+test_extracted_stage_is_threaded_and_reused (test_plugin.NativeBindingTest.test_extracted_stage_is_threaded_and_reused) ... ok
+test_outcome_matches_stock_function (test_plugin.NativeBindingTest.test_outcome_matches_stock_function) ... ok
+test_unknown_body_is_refused (test_plugin.NativeBindingTest.test_unknown_body_is_refused) ... ok
+test_unrecognized_shape_raises (test_plugin.NativeBindingTest.test_unrecognized_shape_raises) ... ok
+test_real_install_is_idempotent_and_recognizes_the_core (test_plugin.RealModuleInstallTest.test_real_install_is_idempotent_and_recognizes_the_core) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 0.048s
+
+OK
+unit exit: 0
+
+== 2. isolated PoC (own HERMES_HOME, ephemeral loopback port; no main/feiyu contact) ==
+[poc] isolated HERMES_HOME /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/startup-recovery-thin-poc-b4dpp7nn
+INFO hermes_cli.plugin_capabilities: capability_check plugin=startup-recovery-thin capability=tools.override decision=deny checked_by=plugin_capability_granted evidence=not granted
+INFO hermes_plugins.startup_recovery_thin: startup-recovery-thin: media=installed native=deferred-core-patched
+INFO hermes_cli.plugins: Plugin discovery complete: 1 found, 1 enabled
+[poc] plugin discovered; api_server factories=['startup-recovery-thin']
+INFO hermes_plugins.startup_recovery_thin: startup-recovery-thin: verified at api_server connect: media=already-installed native=deferred-core-patched
+[poc] connect() returned; install marker on collect_unheld_api_images=startup-recovery-thin/1
+WARNING hermes_plugins.startup_recovery_thin.patches: startup-recovery-thin: skipped the startup retained-API-image sweep on the event loop (<__main__.PoCDB object at 0x7f4ed4cc3230>); off-loop callers (delete-session) still collect
+[poc] recover_api_turns reached compact_settled_api_payloads (install marker=startup-recovery-thin/1)
+[poc] publish+recover done; events=['connect', 'recover_api_turns reached compact_settled_api_payloads (install marker=startup-recovery-thin/1)', 'compact']; db touches=['_read_ctx']
+[poc] stock run_runtime.py has _native_recovery_bindings=False
+[poc] stock install state: media=installed native=installed
+INFO stock_plain: Native session startup recovery s1 (home): ready
+[poc] unpatched stock: outcome={'s1': 'ready'} binding threads=[139976616855424, 139976616855424, 139976616855424] (loop=139976616855424)
+INFO hermes_plugins.startup_recovery_thin.patches: Native session startup recovery s1 (home): ready
+[poc] patched stock:   outcome={'s1': 'ready'} binding threads=[139976551429824, 139976551429824, 139976551429824] recovery thread=139976616855424 (loop=139976616855424)
+[poc] PASS: stock core binding moved off the loop, outcome unchanged, recovery on the loop
+[poc] live core install: media=already-installed native=deferred-core-patched
+[poc] ALL PASS
+poc exit: 0
+
+== 3a. upstream recovery regressions (media delete/lease, native provenance, parked rescan, plugin wiring) ==
+.................................                                        [100%]
+33 passed in 3.81s
+
+== 3b. upstream recovery regressions (native recovery callers, webhook, late plugin rewire) ==
+........................................................................ [ 94%]
+....                                                                     [100%]
+76 passed in 31.46s
+
+== 3c. upstream native startup recovery / watchdog / retired media ==
+.s...............................................FFF..............       [100%]
+=================================== FAILURES ===================================
+___ test_rejected_api_images_are_collected_and_history_owns_accepted_images ____
+
+api = <gateway.platforms.api_server.APIServerAdapter object at 0x7fd6944ec2f0>
+owner = <gateway.session_authority.SessionAuthority object at 0x7fd699cbc050>
+
+    def test_rejected_api_images_are_collected_and_history_owns_accepted_images(api, owner):
+        from gateway.session_ingress_media import _media_root
+        kwargs = dict(session_id='s', request_id='one', conversation_history=[])
+        _, _, row = admit_api_turn(api, user_message=image(PNG), **kwargs)
+        path = Path(row['payload']['api_turn_v1']['media'][0]['path'])
+        with pytest.raises(RuntimeStoreError, match='admission_conflict'):
+            admit_api_turn(api, user_message=image(PNG + b'different'), **kwargs)
+        assert list(_media_root().glob('*/*')) == [path]
+        started = claim_session_input(owner.db, epoch=owner.epoch, session_id='s')
+        settle_session_input(owner.db, epoch=owner.epoch, admission_id=row['admission_id'],
+                             generation=started['generation'], outcome='completed')
+        owner.db.create_session('branch', source='api_server', model_config={'_branched_from': 's'})
+>       owner.db.append_message('branch', 'user', f'[Image attached at: {path}]')
+
+tests/gateway/test_api_retired_media.py:30: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+hermes_state_messages.py:418: in append_message
+    params = self._message_row_params(
+hermes_state_messages.py:300: in _message_row_params
+    display_metadata, self._display_identity(self._display_dedupe_key(identity_row)),
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+hermes_state_messages.py:1110: in _display_dedupe_key
+    handoff, live_view = split_user_originated_turn({
+agent/context_compressor.py:5663: in split_user_originated_turn
+    if not cls._is_real_user_turn(candidate):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+agent/context_compressor.py:4598: in _is_real_user_turn
+    return cls._is_actionable_user_turn(message) and not cls._is_synthetic_compression_user_turn(message)
+                                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+agent/context_compressor.py:4243: in _is_synthetic_compression_user_turn
+    from agent.conversation_loop import (
+agent/conversation_loop.py:24: in <module>
+    from agent.process_bootstrap import _install_safe_stdio
+agent/process_bootstrap.py:18: in <module>
+    from hermes_bootstrap import _happy_eyeballs_create_connection
+hermes_bootstrap.py:613: in <module>
+    activate_dependencies(_root)
+pm/environments.py:496: in activate_dependencies
+    environment = payload_venv(project_root)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+pm/environments.py:189: in payload_venv
+    payload = _payload_manifest(root)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+pm/environments.py:162: in _payload_manifest
+    manifest = json.loads(path.read_text(encoding="utf-8-sig"))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/pathlib/_local.py:548: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/pathlib/_abc.py:632: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/pathlib/_local.py:539: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/home_io_guard.py:187: in guarded
+    self.check(value, dir_fd=kwargs.get(descriptor) if descriptor else None, metadata=metadata,
+tests/home_io_guard.py:127: in check
+    self.refuse(value)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+value = PosixPath('/home/neonsky/.hermes/manifest.json')
+
+    @staticmethod
+    def refuse(value):
+>       raise AssertionError(
+            f"TEST BUG: file I/O against the REAL hermes home: {value}\n"
+            "Use the isolated HERMES_HOME or a temporary fixture instead."
+        )
+E       AssertionError: TEST BUG: file I/O against the REAL hermes home: /home/neonsky/.hermes/manifest.json
+E       Use the isolated HERMES_HOME or a temporary fixture instead.
+
+tests/home_io_guard.py:160: AssertionError
+------------------------------ Captured log setup ------------------------------
+WARNING  hermes_state:hermes_state_wal.py:582 response_store.db: linked SQLite 3.46.1 (interpreter /home/neonsky/.hermes/hermes-agent/venv/bin/python) is vulnerable to the WAL-reset corruption bug (https://sqlite.org/wal.html#walresetbug) — using journal_mode=DELETE instead of enabling WAL. Upgrade to SQLite 3.51.3+ (or backports 3.50.7 / 3.44.6); Hermes-managed installs can repair the embedded runtime with `hermes update`. See `hermes doctor`. This warning fires once per process per database.
+WARNING  hermes_state:hermes_state_wal.py:582 runs_idempotency.db: linked SQLite 3.46.1 (interpreter /home/neonsky/.hermes/hermes-agent/venv/bin/python) is vulnerable to the WAL-reset corruption bug (https://sqlite.org/wal.html#walresetbug) — using journal_mode=DELETE instead of enabling WAL. Upgrade to SQLite 3.51.3+ (or backports 3.50.7 / 3.44.6); Hermes-managed installs can repair the embedded runtime with `hermes update`. See `hermes doctor`. This warning fires once per process per database.
+___________________ test_candidates_share_one_messages_pass ____________________
+
+owner = <gateway.session_authority.SessionAuthority object at 0x7fd6943a8050>
+tmp_path = PosixPath('/tmp/pytest-of-neonsky/pytest-25/test_candidates_share_one_mess0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fd699b8fa10>
+
+    def test_candidates_share_one_messages_pass(owner, tmp_path, monkeypatch):
+        from gateway.session_ingress_media import _media_root
+        from hermes_state_media import PREFIX, collect_retired_media
+        monkeypatch.setenv('HERMES_HOME', str(tmp_path))
+        db, root = owner.db, _media_root()
+        db.create_session('keep', source='api_server')
+        references = []
+        for index in range(6):
+            sha = f'{index:064x}'
+            path = root / sha / f'api_{sha[:32]}.png'
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b'x')
+            references.append({'path': str(path), 'sha256': sha, 'size': 1})
+        for reference in references[:3]:
+>           db.append_message('keep', 'user', '[Image attached at: {}]'.format(reference['path']))
+
+tests/gateway/test_retired_media_scan_bound.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+hermes_state_messages.py:418: in append_message
+    params = self._message_row_params(
+hermes_state_messages.py:300: in _message_row_params
+    display_metadata, self._display_identity(self._display_dedupe_key(identity_row)),
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+hermes_state_messages.py:1110: in _display_dedupe_key
+    handoff, live_view = split_user_originated_turn({
+agent/context_compressor.py:5663: in split_user_originated_turn
+    if not cls._is_real_user_turn(candidate):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+agent/context_compressor.py:4598: in _is_real_user_turn
+    return cls._is_actionable_user_turn(message) and not cls._is_synthetic_compression_user_turn(message)
+                                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+agent/context_compressor.py:4243: in _is_synthetic_compression_user_turn
+    from agent.conversation_loop import (
+agent/conversation_loop.py:24: in <module>
+    from agent.process_bootstrap import _install_safe_stdio
+agent/process_bootstrap.py:18: in <module>
+    from hermes_bootstrap import _happy_eyeballs_create_connection
+hermes_bootstrap.py:613: in <module>
+    activate_dependencies(_root)
+pm/environments.py:496: in activate_dependencies
+    environment = payload_venv(project_root)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+pm/environments.py:189: in payload_venv
+    payload = _payload_manifest(root)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+pm/environments.py:162: in _payload_manifest
+    manifest = json.loads(path.read_text(encoding="utf-8-sig"))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/pathlib/_local.py:548: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/pathlib/_abc.py:632: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/pathlib/_local.py:539: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/home_io_guard.py:187: in guarded
+    self.check(value, dir_fd=kwargs.get(descriptor) if descriptor else None, metadata=metadata,
+tests/home_io_guard.py:127: in check
+    self.refuse(value)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+value = PosixPath('/home/neonsky/.hermes/manifest.json')
+
+    @staticmethod
+    def refuse(value):
+>       raise AssertionError(
+            f"TEST BUG: file I/O against the REAL hermes home: {value}\n"
+            "Use the isolated HERMES_HOME or a temporary fixture instead."
+        )
+E       AssertionError: TEST BUG: file I/O against the REAL hermes home: /home/neonsky/.hermes/manifest.json
+E       Use the isolated HERMES_HOME or a temporary fixture instead.
+
+tests/home_io_guard.py:160: AssertionError
+________ test_gateway_delete_collects_retired_media_off_the_event_loop _________
+
+tmp_path = PosixPath('/tmp/pytest-of-neonsky/pytest-25/test_gateway_delete_collects_r0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fd699b8ff50>
+
+    @pytest.mark.asyncio
+    async def test_gateway_delete_collects_retired_media_off_the_event_loop(tmp_path, monkeypatch):
+        import hermes_state_media
+        from gateway.session_mutations import mutate_session
+        from tests.gateway.test_local_authority_transitions import local_session
+>       owner, connection, ref = await local_session(tmp_path, monkeypatch)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/gateway/test_retired_media_scan_bound.py:62: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/gateway/test_local_authority_transitions.py:11: in local_session
+    from gateway import run
+gateway/run.py:8: in <module>
+    import hermes_bootstrap
+hermes_bootstrap.py:613: in <module>
+    activate_dependencies(_root)
+pm/environments.py:496: in activate_dependencies
+    environment = payload_venv(project_root)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+pm/environments.py:189: in payload_venv
+    payload = _payload_manifest(root)
+              ^^^^^^^^^^^^^^^^^^^^^^^
+pm/environments.py:162: in _payload_manifest
+    manifest = json.loads(path.read_text(encoding="utf-8-sig"))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/pathlib/_local.py:548: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/pathlib/_abc.py:632: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.13/pathlib/_local.py:539: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/home_io_guard.py:187: in guarded
+    self.check(value, dir_fd=kwargs.get(descriptor) if descriptor else None, metadata=metadata,
+tests/home_io_guard.py:127: in check
+    self.refuse(value)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+value = PosixPath('/home/neonsky/.hermes/manifest.json')
+
+    @staticmethod
+    def refuse(value):
+>       raise AssertionError(
+            f"TEST BUG: file I/O against the REAL hermes home: {value}\n"
+            "Use the isolated HERMES_HOME or a temporary fixture instead."
+        )
+E       AssertionError: TEST BUG: file I/O against the REAL hermes home: /home/neonsky/.hermes/manifest.json
+E       Use the isolated HERMES_HOME or a temporary fixture instead.
+
+tests/home_io_guard.py:160: AssertionError
+=========================== short test summary info ============================
+FAILED tests/gateway/test_api_retired_media.py::test_rejected_api_images_are_collected_and_history_owns_accepted_images
+FAILED tests/gateway/test_retired_media_scan_bound.py::test_candidates_share_one_messages_pass
+FAILED tests/gateway/test_retired_media_scan_bound.py::test_gateway_delete_collects_retired_media_off_the_event_loop
+3 failed, 62 passed, 1 skipped in 40.00s
+
+NOTE 3c: 3 failures are the host's pre-existing payload-venv fixture, unrelated to this plugin:
+  pm/environments._payload_manifest probes <real HERMES_HOME>/manifest.json, which does not exist
+  here, and tests/home_io_guard.py refuses the read ('TEST BUG: file I/O against the REAL hermes
+  home'). The plugin is not installed in ~/.hermes/plugins and not imported by those tests.
+
+== 4. installer against a throwaway HERMES_HOME ==
+[install_gateway_plugin] installed startup-recovery-thin -> /home/neonsky/.cache/t-f8be-install-LoWY/plugins/startup-recovery-thin (4 files, sha256 verified)
+  README.md  53761ba70b89
+  __init__.py  3bd6ddb37fcf
+  patches.py  50609eac666b
+  plugin.yaml  9c0919b9065e
+[install_gateway_plugin] restart that instance's gateway to load the plugin
+install exit: 0
+[install_gateway_plugin] in sync: /home/neonsky/.cache/t-f8be-install-LoWY/plugins/startup-recovery-thin (4 files)
+check exit: 0

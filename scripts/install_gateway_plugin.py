@@ -128,7 +128,8 @@ def main() -> int:
     for rel in rels:
         print(f"  {rel}  {_sha256(dest / rel)[:12]}")
     print("[install_gateway_plugin] restart that instance's gateway to load the plugin")
-    print('[install_gateway_plugin] route: POST /api/plugins/<name>/sessions/{session_id}/compress (Bearer API_SERVER_KEY)')
+    if args.name == "session-compress":
+        print('[install_gateway_plugin] route: POST /api/plugins/<name>/sessions/{session_id}/compress (Bearer API_SERVER_KEY)')
     return 0
 
 
