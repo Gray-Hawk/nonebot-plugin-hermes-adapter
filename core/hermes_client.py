@@ -710,13 +710,20 @@ class RunsEventParser:
         # 工具／控制帧封段即清空，跨段同文是两条独立消息——不做任何后缀折叠。
         self._seg_text = ""
         self._seg_sent: list[str] = []
-        self.last_sealed: list[str] = []
-        self.final_segment_pending = False
         self._stream_pending: list[dict] = []
         self.decision_batch = 0
         self.interim_count = 0
+        # 可选观察口：正文被去重／丢弃时回调 (reason, text, source)。
+        # 生产默认 None 且全仓不接线；只给测试断言「吞掉了什么、原文是什么」。
+        self.on_suppressed: Callable[[str, str, str], None] | None = None
         # 单位超长等协议失败：置位后本轮不再发送任何单元，由终态链 fail-closed。
         self.text_error = ""
+
+    def _note_suppressed(self, reason: str, text: str, source: str) -> None:
+        """正文被去重／丢弃时通知观察口；未接线时零开销。"""
+        hook = self.on_suppressed
+        if hook is not None:
+            hook(reason, text, source)
 
     def _emit_text(self, text: str) -> None:
         """把一段正文按纯文本协议切分，段内已发过的完整单元跳过。"""
@@ -732,6 +739,7 @@ class RunsEventParser:
             return
         for unit in units:
             if unit in self._seg_sent:
+                self._note_suppressed("segment_duplicate", unit, "segment")
                 continue
             self._seg_sent.append(unit)
             # 封段发生在批号自增之前：带上封段时的批号，发送节奏按原批计算。
@@ -742,7 +750,6 @@ class RunsEventParser:
     def _seal_segment(self) -> None:
         """封段：补发当前段 delta 里尚未发出的单元，然后开新段（段内去重清零）。"""
         self._emit_text(self._seg_text)
-        self.last_sealed = list(self._seg_sent)
         self._seg_text = ""
         self._seg_sent = []
 
@@ -828,9 +835,11 @@ class RunsEventParser:
             # steer 进 result.pending_steer,api_server_runs 透到 completed 帧)
             pending = payload.get("pending_steer")
             self.pending_steer = str(pending) if pending else ""
-            # 最后一段只认 output：delta 里未封口的尾部丢弃。记下「最后一段是否
-            # 真的产出过新文本」——没有就是上一段被 output 重复带来，不是新消息。
-            self.final_segment_pending = bool(self._seg_text.strip())
+            # 最后一段只认 output：delta 里未封口的尾部丢弃。终态 output 一律按
+            # 正文发送——哪怕它与上一段同文，也不按文本折叠（用户看到的重发就是
+            # 重发，不做猜测性吞掉）。
+            if self._seg_text:
+                self._note_suppressed("unsealed_delta_tail", self._seg_text, "terminal")
             self._seg_text = ""
             self.terminal = True
             return
@@ -1946,13 +1955,6 @@ class HermesClient:
                                     f"[HERMES] runs 终态正文单位不合法,本轮 fail-closed "
                                     f"reason={exc.reason} run_id={run_id}"
                                 )
-                            if not parser.final_segment_pending and parser.last_sealed:
-                                # 最后一段没有新文本：output 只是上一段被终态重复带来，
-                                # 已发过的同一单元不再追加（同文新段不受影响）。
-                                terminal = [
-                                    item for item in terminal
-                                    if item["body"] not in parser.last_sealed
-                                ]
                         terminal_only = not reply_queue.observed
                         if terminal and terminal_only and registered and submission_tracked:
                             # 终态-only 的发送仍须经过原 ready 台账／前序顺序门。

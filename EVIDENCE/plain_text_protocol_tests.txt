@@ -817,3 +817,38 @@ test_single_sentence_is_one_unit (tests.test_completions_regression.CompletionsT
 Ran 42 tests in 9.047s
 
 OK
+
+# ===== 18:10 简化复核：删除终态重复上一段过滤 + 观察口统计 =====
+# 时间: 2026-11-09T18:11:49+08:00
+# 运行时的 HEAD（提交前工作树）: feat/plain-text-protocol e8d0696 + 未提交改动
+
+## 定向用例 -v（终态重复段照发 / 段内去重 / 跨段两份 / 失败重试 / 观察口）
+test_terminal_repeating_last_segment_is_resent (tests.test_runs_stream.ClientChainTests.test_terminal_repeating_last_segment_is_resent) ... ok
+test_same_text_across_segments_sends_twice (tests.test_runs_stream.TextProtocolParserTests.test_same_text_across_segments_sends_twice) ... ok
+test_interim_and_delta_same_text_sent_once_per_segment (tests.test_runs_stream.TextProtocolParserTests.test_interim_and_delta_same_text_sent_once_per_segment) ... ok
+段内全文匹配去重必须可观察：原因 + 被跳过的原文。 ... ok
+test_terminal_dropping_unsealed_delta_is_observable (tests.test_runs_stream.TextProtocolParserTests.test_terminal_dropping_unsealed_delta_is_observable) ... ok
+刚删除的 last_sealed 特判不得借观察口恢复：重复段是正常发送。 ... ok
+test_real_retained_samples (tests.test_runs_stream.SuppressionObservationTests.test_real_retained_samples) ... ok
+test_regression_scenarios (tests.test_runs_stream.SuppressionObservationTests.test_regression_scenarios) ... ok
+Ran 10 tests in 3.033s
+OK
+
+## 观察口统计（真实留存 SSE + 回归场景）
+# 样例来源: SAMPLES/runs_terminal_single_b4.json (40 帧, 4 工具) / SAMPLES/runs_terminal_multi_b5.json (29 帧, 无工具)
+# 均为 2026-11-09 k3.1-pro 旧 JSON 协议期的真实上游事件留存；抓包无 message.interim，故去重命中由回归场景覆盖
+real/runs_terminal_single_b4 (b4_k3.1pro_json): {"segments": 2, "stream_units": 1, "terminal_units": 1, "units": 2, "dedup": 0, "tail": 1, "suppressed": [["unsealed_delta_tail", "\n\n{}\n{\"body\":\"待办已记录，当前为进行中\"}", "terminal"]], "error": ""}
+real/runs_terminal_multi_b5 (b5_k3.1pro_json_notools): {"segments": 1, "stream_units": 0, "terminal_units": 1, "units": 1, "dedup": 0, "tail": 1, "suppressed": [["unsealed_delta_tail", "{\"reply_to\":\"m:7\"}\n{\"body\":\"第一份正文\"}\n{}\n{\"body\":\"第二份第一行\\n第二份第二行\"}", "terminal"]], "error": ""}
+reg/interim_delta_same_text: {"segments": 1, "stream_units": 1, "terminal_units": 1, "units": 2, "dedup": 1, "tail": 0, "suppressed": [["segment_duplicate", "好", "segment"]], "error": ""}
+reg/unsealed_delta_tail: {"segments": 1, "stream_units": 0, "terminal_units": 1, "units": 1, "dedup": 0, "tail": 1, "suppressed": [["unsealed_delta_tail", "未封口的尾巴", "terminal"]], "error": ""}
+reg/terminal_repeat_last_segment: {"segments": 1, "stream_units": 1, "terminal_units": 1, "units": 2, "dedup": 0, "tail": 0, "suppressed": [], "error": ""}
+reg/a_tool_a: {"segments": 2, "stream_units": 2, "terminal_units": 0, "units": 2, "dedup": 0, "tail": 0, "suppressed": [], "error": ""}
+reg/multi_unit_segment: {"segments": 1, "stream_units": 2, "terminal_units": 2, "units": 4, "dedup": 2, "tail": 0, "suppressed": [["segment_duplicate", "甲", "segment"], ["segment_duplicate", "乙", "segment"]], "error": ""}
+
+## 全量 tests/ discover
+Ran 442 tests in 32.328s
+OK
+
+## turn_tests（入口） discover
+Ran 6 tests in 0.054s
+OK

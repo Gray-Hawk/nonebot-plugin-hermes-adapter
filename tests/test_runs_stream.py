@@ -212,6 +212,43 @@ class TextProtocolParserTests(unittest.TestCase):
         self.assertEqual(drained, [])
         self.assertEqual(parser.output, "真正的终态正文")
 
+    def test_segment_duplicate_suppression_is_observable(self) -> None:
+        """段内全文匹配去重必须可观察：原因 + 被跳过的原文。"""
+        parser = RunsEventParser()
+        self.assertIsNone(parser.on_suppressed)  # 生产默认不接线
+        seen: list[tuple[str, str, str]] = []
+        parser.on_suppressed = lambda reason, text, source: seen.append((reason, text, source))
+        drained = feed_all(parser, [
+            {"event": "message.interim", "text": "好", "seq": 0},
+            {"event": "message.delta", "delta": "好", "seq": 1},
+            {"event": "tool.started", "tool": "todo_list", "seq": 2},
+        ])
+        self.assertEqual([d["body"] for d in drained], ["好"])
+        self.assertEqual(seen, [("segment_duplicate", "好", "segment")])
+
+    def test_terminal_dropping_unsealed_delta_is_observable(self) -> None:
+        parser = RunsEventParser()
+        seen: list[tuple[str, str, str]] = []
+        parser.on_suppressed = lambda reason, text, source: seen.append((reason, text, source))
+        feed_all(parser, [
+            {"event": "message.delta", "delta": "未封口的尾巴", "seq": 0},
+            {"event": "run.completed", "output": "真正的终态正文", "seq": 1},
+        ])
+        self.assertEqual(seen, [("unsealed_delta_tail", "未封口的尾巴", "terminal")])
+
+    def test_terminal_repeating_last_segment_reports_no_suppression(self) -> None:
+        """刚删除的 last_sealed 特判不得借观察口恢复：重复段是正常发送。"""
+        parser = RunsEventParser()
+        seen: list[tuple[str, str, str]] = []
+        parser.on_suppressed = lambda reason, text, source: seen.append((reason, text, source))
+        drained = feed_all(parser, [
+            {"event": "message.delta", "delta": "正文", "seq": 0},
+            {"event": "tool.started", "tool": "submit_control", "seq": 1},
+            {"event": "run.completed", "output": "正文", "seq": 2},
+        ])
+        self.assertEqual([d["body"] for d in drained], ["正文"])
+        self.assertEqual(seen, [])
+
     def test_legacy_json_output_is_plain_text(self) -> None:
         legacy = '{"reply_to":"m:1"}\n{"body":"旧格式正文"}'
         units = runs_text.units_from_text(legacy)
@@ -235,6 +272,131 @@ class TextProtocolParserTests(unittest.TestCase):
             {"event": "tool.started", "tool": "todo_list", "seq": 2},
         ]):
             self.assertIsNone(parser.feed(line))
+
+
+class SuppressionObservationTests(unittest.TestCase):
+    """观察口只给测试接线：统计分母（正文段／单元）与两类抑制命中，不接生产日志。
+
+    真实样例：``SAMPLES/runs_terminal_*.json`` 是上游 runs 事件流的真实留存抓包
+    （2026-11-09 k3.1-pro 旧 JSON 协议期，40／29 帧，含 4 工具与无工具两条）。
+    局限：文本内容是旧协议产物、且抓包中没有 ``message.interim`` 帧，所以段内
+    去重命中只能由回归场景覆盖；样本量只有 2 条，不能当生产概率。
+    """
+
+    @staticmethod
+    def _measure(events: list[dict]) -> dict:
+        parser = RunsEventParser()
+        suppressed: list[tuple[str, str, str]] = []
+        parser.on_suppressed = lambda reason, text, source: suppressed.append((reason, text, source))
+        stream_units = 0
+        segments = 0
+        seg_has_text = False
+        for event in events:
+            name = event.get("event")
+            if name == "message.interim":
+                seg_has_text = seg_has_text or bool(str(event.get("text") or "").strip())
+            elif name == "message.delta":
+                seg_has_text = seg_has_text or bool(str(event.get("delta") or "").strip())
+            parser.feed(f"data: {json.dumps(event, ensure_ascii=False)}")
+            stream_units += len(parser.drain_stream_decisions())
+            if name in ("tool.started", "run.completed"):
+                if seg_has_text:
+                    segments += 1
+                seg_has_text = False
+        terminal_units = (
+            len(runs_text.decisions_from_text(parser.output)) if parser.output else 0
+        )
+        return {
+            "segments": segments,
+            "stream_units": stream_units,
+            "terminal_units": terminal_units,
+            "units": stream_units + terminal_units,
+            "dedup": sum(1 for reason, _, _ in suppressed if reason == "segment_duplicate"),
+            "tail": sum(1 for reason, _, _ in suppressed if reason == "unsealed_delta_tail"),
+            "suppressed": suppressed,
+            "error": parser.text_error,
+        }
+
+    def test_real_retained_samples(self) -> None:
+        cases = {
+            # b4：4 次工具调用；工具前发过 1 份、终态 1 份；终态 output 覆盖未封口 delta。
+            "runs_terminal_single_b4": {
+                "segments": 2, "stream_units": 1, "terminal_units": 1,
+                "units": 2, "dedup": 0, "tail": 1,
+            },
+            "runs_terminal_multi_b5": {
+                "segments": 1, "stream_units": 0, "terminal_units": 1,
+                "units": 1, "dedup": 0, "tail": 1,
+            },
+        }
+        for name, expected in cases.items():
+            path = ROOT / "SAMPLES" / f"{name}.json"
+            self.assertTrue(path.exists(), f"真实留存样例缺失: {path}")
+            events = json.loads(path.read_text(encoding="utf-8"))["events"]
+            with self.subTest(sample=name):
+                got = self._measure(events)
+                # 真实样例无 message.interim：段内去重命中为 0 是样本局限，不是结论。
+                self.assertEqual(
+                    {key: got[key] for key in expected}, expected
+                )
+                self.assertEqual(got["error"], "")
+
+    def test_regression_scenarios(self) -> None:
+        same = "甲\n§\n乙"
+        cases = {
+            "interim_delta_same_text": (
+                [
+                    {"event": "message.interim", "text": "好", "seq": 0},
+                    {"event": "message.delta", "delta": "好", "seq": 1},
+                    {"event": "tool.started", "tool": "todo_list", "seq": 2},
+                    {"event": "run.completed", "output": "好", "seq": 3},
+                ],
+                {"segments": 1, "stream_units": 1, "terminal_units": 1,
+                 "units": 2, "dedup": 1, "tail": 0},
+            ),
+            "unsealed_delta_tail": (
+                [
+                    {"event": "message.delta", "delta": "未封口的尾巴", "seq": 0},
+                    {"event": "run.completed", "output": "真正的终态正文", "seq": 1},
+                ],
+                {"segments": 1, "stream_units": 0, "terminal_units": 1,
+                 "units": 1, "dedup": 0, "tail": 1},
+            ),
+            "terminal_repeat_last_segment": (
+                [
+                    {"event": "message.delta", "delta": "正文", "seq": 0},
+                    {"event": "tool.started", "tool": "submit_control", "seq": 1},
+                    {"event": "run.completed", "output": "正文", "seq": 2},
+                ],
+                {"segments": 1, "stream_units": 1, "terminal_units": 1,
+                 "units": 2, "dedup": 0, "tail": 0},
+            ),
+            "a_tool_a": (
+                [
+                    {"event": "message.delta", "delta": "甲", "seq": 0},
+                    {"event": "tool.started", "tool": "lookup", "seq": 1},
+                    {"event": "message.delta", "delta": "甲", "seq": 2},
+                    {"event": "tool.started", "tool": "lookup", "seq": 3},
+                    {"event": "run.completed", "output": "", "seq": 4},
+                ],
+                {"segments": 2, "stream_units": 2, "terminal_units": 0,
+                 "units": 2, "dedup": 0, "tail": 0},
+            ),
+            "multi_unit_segment": (
+                [
+                    {"event": "message.interim", "text": same, "seq": 0},
+                    {"event": "message.delta", "delta": same, "seq": 1},
+                    {"event": "tool.started", "tool": "lookup", "seq": 2},
+                    {"event": "run.completed", "output": "丙\n§\n丁", "seq": 3},
+                ],
+                {"segments": 1, "stream_units": 2, "terminal_units": 2,
+                 "units": 4, "dedup": 2, "tail": 0},
+            ),
+        }
+        for name, (events, expected) in cases.items():
+            with self.subTest(scenario=name):
+                got = self._measure(events)
+                self.assertEqual({key: got[key] for key in expected}, expected)
 
 
 class _ClientChain:
@@ -393,15 +555,17 @@ class ClientChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.seen, ["控制前正文", "控制后正文"])
         self.assertEqual([d["body"] for d in result.terminal_decisions], ["控制后正文"])
 
-    async def test_terminal_repeating_last_sealed_segment_not_resent(self) -> None:
+    async def test_terminal_repeating_last_segment_is_resent(self) -> None:
         result = await self._chat([
             {"event": "message.delta", "delta": "正文", "seq": 0},
             {"event": "tool.started", "tool": "submit_control", "seq": 1},
             {"event": "tool.completed", "tool": "submit_control", "seq": 2},
             {"event": "run.completed", "output": "正文", "seq": 3},
         ])
-        # 控制帧封段后没有新文本：output 只是同一段被终态重复带来，不再追加一份。
-        self.assertEqual(self.seen, ["正文"])
+        # 控制帧封段后没有新文本：终态 output 重复上一段也照样作为正文发送，
+        # 不做按文本折叠——用户视角的重发就是重发，不靠猜测吞掉。
+        self.assertEqual(self.seen, ["正文", "正文"])
+        self.assertEqual([d["body"] for d in result.terminal_decisions], ["正文"])
 
     async def test_overflow_terminal_fails_closed(self) -> None:
         chat = real_chat(self.tracker, [
@@ -500,8 +664,6 @@ class _StreamingChat:
                 run_id=self.run_id, output=output, expect_structured=True
             )
         terminal = runs_text.decisions_from_text(output) if output.strip() else []
-        if not parser.final_segment_pending and parser.last_sealed:
-            terminal = [item for item in terminal if item["body"] not in parser.last_sealed]
         terminal_only = not self.streamed
         for decision in terminal:
             if terminal_only:
