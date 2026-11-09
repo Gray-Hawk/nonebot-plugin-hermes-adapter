@@ -14,6 +14,18 @@ python scripts/install_gateway_plugin.py --hermes-home /path/to/hermes-home --fo
 
 装完必须重启该实例的 gateway 进程才会加载（脚本不重启服务）。
 
+## startup-recovery-thin
+
+启动恢复的两处窄补丁（**不改 Hermes 上游文件**）：启动期 `collect_unheld_api_images` 在事件
+循环上被跳过（worker 线程／删除会话路径仍执行原函数）；native 启动恢复的绑定阶段（pending
+读取、路由遍历、压缩血缘）进 `asyncio.to_thread`，`recover_native_sessions` 仍回主事件循环
+（以 PR #148062 head 为蓝本，已含该 PR 的内核自动 defer）。详见
+[`startup-recovery-thin/README.md`](startup-recovery-thin/README.md)。
+
+```bash
+python scripts/install_gateway_plugin.py startup-recovery-thin
+```
+
 ## session-compress
 
 Runs 车道按 session id 触发**手动压缩**的控制端点。压缩语义完全复用 messaging `/compress`
