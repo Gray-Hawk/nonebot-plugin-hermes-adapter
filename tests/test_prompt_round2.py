@@ -107,6 +107,22 @@ class PlainTextPromptResidueTests(unittest.TestCase):
                 for stray in ("理由 不输出正文", "默认 不输出正文", "仍应 不输出正文", "直接 不输出正文"):
                     self.assertNotIn(stray, prompt)
 
+    def test_speaker_tag_note_has_no_dangling_parenthesis(self) -> None:
+        # 去掉「2026-10-16 起 id 前置；」时留下的右括号，四份渲染与 legacy 共用同一常量。
+        for interface in ("runs", "completions"):
+            prompt = render(interface, private=False)
+            with self.subTest(interface=interface):
+                self.assertIn("两者等价。", prompt)
+                self.assertNotIn("两者等价）。", prompt)
+        previous = plugin_config.hermes_api_interface
+        try:
+            object.__setattr__(plugin_config, "hermes_api_interface", "astrbot")
+            legacy = prompt_builder.build_reactive_system_prompt()
+        finally:
+            object.__setattr__(plugin_config, "hermes_api_interface", previous)
+        self.assertIn("两者等价。", legacy)
+        self.assertNotIn("两者等价）。", legacy)
+
     def test_completions_keeps_push_message_and_request_continuation(self) -> None:
         prompt = render("completions", private=False)
         self.assertIn("push_message", prompt)
