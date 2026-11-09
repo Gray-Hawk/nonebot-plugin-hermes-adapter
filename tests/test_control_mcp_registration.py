@@ -19,7 +19,7 @@ from nonebot_plugin_hermes_adapter.mcp import server  # noqa: E402
 
 
 class ControlMcpRegistrationTests(unittest.TestCase):
-    def _tools(self) -> set[str]:
+    def _tool_map(self) -> dict:
         real_factory = server.FastMCP
         holder = {}
 
@@ -37,7 +37,11 @@ class ControlMcpRegistrationTests(unittest.TestCase):
                 image_cache=None,
                 background_outbox=None,
             )
-        return {tool.name for tool in asyncio.run(holder["mcp"].list_tools())}
+        tools = asyncio.run(holder["mcp"].list_tools())
+        return {tool.name: tool for tool in tools}
+
+    def _tools(self) -> set[str]:
+        return set(self._tool_map())
 
     def test_submit_control_and_background_status_are_registered(self) -> None:
         tools = self._tools()
@@ -45,6 +49,19 @@ class ControlMcpRegistrationTests(unittest.TestCase):
         self.assertIn("get_background_tasks", tools)
         # 既有工具不受影响。
         self.assertIn("push_message", tools)
+
+    def test_tool_descriptions_are_plain_text_protocol(self) -> None:
+        """工具描述也是模型可见提示词：不能再教 body 信封或两行决策。"""
+        tools = self._tool_map()
+        for name in ("submit_control", "request_continuation"):
+            description = tools[name].description or ""
+            with self.subTest(tool=name):
+                self.assertNotIn('"body"', description)
+                self.assertNotIn("body decision", description)
+                self.assertNotIn("body text", description)
+                self.assertNotIn("two-line", description)
+        self.assertIn("reply text", tools["submit_control"].description or "")
+        self.assertIn("Runs / completions", tools["submit_control"].description or "")
 
 
 if __name__ == "__main__":

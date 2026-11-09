@@ -245,7 +245,7 @@ _DECISION_PROTOCOL_BLOCK = (
     "  - recent_messages 里 `[bot]` 且 `id=` 你那个 id 的行就是你自己说过的话；\n"
     "    那行的昵称是平台账号名，可能和你的角色名不一样，不代表另一个 bot 在说话。\n"
     "\n"
-    "称呼与身份：speaker 标签格式 `[id=用户ID user=昵称]`（2026-10-16 起 id 前置；\n"
+    "称呼与身份：speaker 标签格式 `[id=用户ID user=昵称]`；\n"
     "    更早的历史消息里可能是旧格式 `[user=昵称 id=用户ID]`，两者等价）。\n"
     "  - “**判断身份**”（主人/管理员/白名单/角色设定等）**只认最前面的 `id=` 字段**，\n"
     "    用它匹配你的系统设定 / SOUL 等记忆——昵称随时可改、可整活，不参与身份判定。\n"
@@ -330,10 +330,34 @@ def _build_json_lines_protocol(base: str, *, runs: bool = False) -> str:
         middle = middle.replace(
             source, "插话原则（决定是否发言；决定发言时正文必须非空）：",
         )
-    source_note = base[len("<decision_protocol>\n"):i0].split("\n", 1)[1]
-    built = render_decision_protocol(runs=runs, group_rules=source_note + middle)
+    # 纯文本正文 + 工具化控制：把旧信封时代的字段动词改成工具调用口径，
+    # 免得模型把 pin_anchor/release_anchor/answer_anchor 当成写进正文的字段。
+    # source_note（消息来源标签等）也在 base 里提旧字段，所以一起收敛。
+    combined = base[len("<decision_protocol>\n"):i0].split("\n", 1)[1] + middle
+    combined = (
+        combined.replace("不可 reply_to 或钉锚", "不可用 submit_control 引用或钉锚")
+        .replace("由你显式 pin_anchor=true 钉入", "由你显式调用 submit_control 传 pin_anchor=true 钉入")
+        .replace("时带 release_anchor 松掉它", "时调用 submit_control 传 release_anchor 松掉它")
+        .replace("时，带 answer_anchor=发起者的", "时，调用 submit_control 传 answer_anchor=发起者的")
+        .replace("只在以下情况设 true：", "只在以下情况登记 should_exit_active=true：")
+    )
+    # reply_text→正文 的替换会在中文词间留下空格（“正文 就”“在 正文 里”），
+    # 只清这一批固定形态，避免模型读到夹空格的残句。
+    for stray, fixed in (
+        ("正文 就只回", "正文就只回"),
+        ("禁止在 正文 里写", "禁止在正文里写"),
+        ("（正文 里怎么 @ 人）", "（正文里怎么 @ 人）"),
+        ("正文 里**称呼**", "正文里**称呼**"),
+        ("为理由 不输出正文", "为理由不输出正文"),
+        ("默认 不输出正文", "默认不输出正文"),
+        ("时仍应 不输出正文", "时仍应不输出正文"),
+        ("或直接 不输出正文", "或直接不输出正文"),
+    ):
+        combined = combined.replace(stray, fixed)
+    built = render_decision_protocol(runs=runs, group_rules=combined)
     # 允许“不要再输出 should_reply/reply_text”这条禁令本身,但不能残留旧字段用法
     assert "should_reply=" not in built and "把决策提交为" not in built
+    assert "任务便签" not in built and "2026-10-16" not in built
     return built
 
 

@@ -627,21 +627,23 @@ def build_mcp_app(
         group_id: str | None = None,
         user_id: str | None = None,
     ) -> SubmitControlResult:
-        """Register ONE control for the NEXT body decision of this conversation (Runs only).
+        """Register ONE control for the NEXT reply text of this conversation (Runs / completions).
 
-        Ordinary replies need no control call at all: just emit {"body":"..."} and the
+        Ordinary replies need no control call at all: just write the reply text and the
         defaults apply. Call this only when you actually need one of these:
-          - reply_to: quote a message by its plugin m:id (only "m:<positive int>" is accepted)
+          - reply_to: quote a message by its plugin m:id (only "m:<positive int>" is accepted);
+            use it only when the reply must point at that message
           - should_exit_active: true = leave the active window once your reply is sent
           - pin_anchor: commission judgement turns only; true pins the current request
           - release_anchor / answer_anchor: commissioner user_id or "all" (unpin / mark answered)
           - anchor_merge: starter user_id of a pinned task this message belongs to
 
-        One call registers one control, consumed by the next explicit body (an empty body
-        counts as a decision). Several calls are consumed in registration order. This tool
-        only registers: it never sends a message, never leaves the window and never pins by
-        itself — the body decision still does the sending and the existing post-send step
-        still applies the controls. Exactly one of group_id / user_id must be given.
+        One call registers one control — several fields passed together travel as one control
+        — consumed by the next reply text (silence still counts as a decision). Call it again
+        only to control further replies. This tool only registers: it never sends a message,
+        never leaves the window and never pins by itself — the reply text still does the
+        sending and the existing post-send step still applies the controls. Exactly one of
+        group_id / user_id must be given.
         """
         inp = SubmitControlInput(
             adapter=adapter,
@@ -676,9 +678,9 @@ def build_mcp_app(
         """Ask the plugin to end this turn and append one continuation turn (completions only).
 
         Use it only when you have decided to take the task but cannot finish it inside this
-        turn: say the receipt as normal body text, then call this before starting the long
+        turn: say the receipt as plain reply text, then call this before starting the long
         work. It is the replacement for the old `not_final` JSON field. It registers only —
-        it never sends a message, never writes body text, and an ordinary final answer needs
+        it never sends a message, never writes reply text, and an ordinary final answer needs
         no call at all. Exactly one of group_id / user_id must be given.
         """
         inp = RequestContinuationInput(
