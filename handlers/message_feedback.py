@@ -318,15 +318,31 @@ def _make_approval_notify(
     return _notify
 
 
-async def _emoji_like_quiet(bot: Bot, msg_id, emoji_id: int) -> None:
+async def _emoji_like_quiet(bot: Bot, msg_id, emoji_id: int) -> bool:
     """贴 emoji 回执,失败只记 debug(阶段2d:429 丢单「丢了就贴」用)。
 
     QQ NT 协议下 set_msg_emoji_like 仅群聊可用——调用方自己保证群聊场景。
+
+    返回 True 只在平台确认贴上时；``call_api`` 外层 status/retcode=0 不等于成功：
+    NapCat 私聊会回外层 0 而 ``data.result=65011`` / errMsg 非空，必须按内部
+    结果判定。调用方（429 丢单）可忽略返回值；段内重复观察用它区分能力边界。
     """
     try:
-        await bot.call_api("set_msg_emoji_like", message_id=msg_id, emoji_id=emoji_id)
+        data = await bot.call_api("set_msg_emoji_like", message_id=msg_id, emoji_id=emoji_id)
     except Exception as e:
         logger.debug(f"[HERMES] emoji 回执失败 (msg_id={msg_id} emoji_id={emoji_id}): {e}")
+        return False
+    if isinstance(data, dict):
+        result = data.get("result")
+        err_msg = data.get("errMsg")
+        # 兼容不回 result 的旧适配器（缺失按成功）；内部非 0 或带 errMsg 一律判失败。
+        if result not in (None, 0, "0") or err_msg not in (None, ""):
+            logger.warning(
+                f"[HERMES] emoji 回执被平台拒绝 (msg_id={msg_id} emoji_id={emoji_id}): "
+                f"result={result!r} errMsg={err_msg!r}"
+            )
+            return False
+    return True
 
 
 # relay 域顶部 import 本域(_sweep_ts_marks),本域对 relay 的调用置底,

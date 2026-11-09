@@ -738,7 +738,8 @@ class RunsEventParser:
         self.decision_batch = 0
         self.interim_count = 0
         # 可选观察口：正文被去重／丢弃时回调 (reason, text, source)。
-        # 生产默认 None 且全仓不接线；只给测试断言「吞掉了什么、原文是什么」。
+        # 生产默认 None；群聊 reactive 有触发消息 id 时由 chat(on_suppressed=…)
+        # 接线，只用来贴一次表情，不改变正文发送。
         self.on_suppressed: Callable[[str, str, str], None] | None = None
         # 单位超长等协议失败：置位后本轮不再发送任何单元，由终态链 fail-closed。
         self.text_error = ""
@@ -891,6 +892,10 @@ OverwrittenReplyCallback = Callable[[list[Any]], Awaitable[None]]
 # 回调正常返回=该决策已即时处理（发送/静默/业务拦截都算）；抛异常=本轮停用即时
 # 发送，剩余决策由终态链按 E2 路径处理（异常只允许发生在任何发送之前）。
 DecisionCallback = Callable[[dict[str, Any], str], Awaitable[None]]
+# 正文被吞观察口：段内重复／未封口尾丢弃时同步回调 (reason, text, source)。
+# 生产只在群聊 reactive 且拿得到触发消息 id 时接线，用来给触发消息贴一次表情；
+# 回调不得阻塞、不得抛异常影响正文发送。
+SuppressedCallback = Callable[[str, str, str], None]
 
 # 仅同一连续决策批加间隔，不是请求防抖，也不新增配置项。
 _RUNS_REPLY_INTERVAL_SEC = 3.0
@@ -1210,6 +1215,7 @@ class HermesClient:
         decision_callback: "DecisionCallback | None" = None,
         delivery_generation: int | None = None,
         source_event_id: str | None = None,
+        on_suppressed: "SuppressedCallback | None" = None,
     ) -> ChatResult:
         """调用 Hermes,返回 ChatResult。
 
@@ -1224,6 +1230,8 @@ class HermesClient:
           (str 或 OpenAI 多模态 parts 列表;text + image_urls 参数将被忽略)
         - target: 本轮发往的接入点(url + key + timeout)。None = 默认接入点。
           单上游下恒为默认接入点(handler 经 routing.resolve_target() 解析后传入)。
+        - on_suppressed: 可选正文被吞观察口 (reason, text, source)，仅 runs 通道
+          生效（completions 无段内去重，不会调用）；默认 None，不影响正文发送。
         - mode 字段当前为路由元数据,chat() 内部不分支判断;Task 15 handler 据此决定
           如何呈现结果(reactive 走 structured 流,passive 走 raw_text)。
         """
@@ -1399,6 +1407,7 @@ class HermesClient:
                     decision_callback=live_decision_callback,
                     streamed_sink=runs_streamed,
                     idempotency_key=turn_idem_key,
+                    on_suppressed=on_suppressed,
                     scope=dict(
                         adapter=adapter_name, is_private=is_private, user_id=user_id,
                         group_id=group_id, bot_self_id=bot_self_id or "",
@@ -1847,6 +1856,7 @@ class HermesClient:
         scope: dict[str, Any],
         decision_callback: "DecisionCallback | None" = None,
         streamed_sink: list[dict[str, Any]] | None = None,
+        on_suppressed: "SuppressedCallback | None" = None,
     ) -> tuple[str, str | None, "ChatResult | None", str, str]:
         """runs 通道(本部署补丁:阶段1)。返回 (raw_text, rotated, failure, pending_steer, run_id)。
 
@@ -1871,6 +1881,8 @@ class HermesClient:
         submit_headers = dict(headers)
         submit_headers["Idempotency-Key"] = idempotency_key
         parser = RunsEventParser()
+        # 正文被吞观察口（群聊触发消息表情回执）；未接线时 parser 内零开销。
+        parser.on_suppressed = on_suppressed
         run_id = ""
         registered = False
         reply_queue = None
