@@ -177,5 +177,28 @@ class SteerReplyConventionTests(unittest.TestCase):
         self.assertNotIn("push_message", text)
 
 
+class InterimEchoRetirementTests(unittest.TestCase):
+    """interim_echo_enabled 退役：配置不再有该键，steer_push 只看接口。"""
+
+    def test_misc_config_drops_switch(self) -> None:
+        from dataclasses import fields
+
+        from nonebot_plugin_hermes_adapter.core.misc_config import MiscConfig
+
+        self.assertNotIn(
+            "interim_echo_enabled", {field.name for field in fields(MiscConfig)}
+        )
+
+    def test_steer_push_active_is_interface_only(self) -> None:
+        for interface, expected in (
+            ("runs", True), ("completions", False), ("astrbot", False),
+        ):
+            with self.subTest(interface=interface):
+                with patch.object(
+                    plugin_config_module.plugin_config, "hermes_api_interface", interface
+                ):
+                    self.assertIs(plugin_config_module.steer_reply_push_active(), expected)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -274,6 +274,25 @@ class TextProtocolParserTests(unittest.TestCase):
             self.assertIsNone(parser.feed(line))
 
 
+class RunResumeTextHygieneTests(unittest.TestCase):
+    """恢复链只读帧：旁白转发与 last_seq 推进随旁白通道一起删除。"""
+
+    def test_resume_has_no_interim_channel_left(self) -> None:
+        source = (ROOT / "tasks/run_resume.py").read_text(encoding="utf-8")
+        self.assertNotIn("interim_echo_enabled", source)
+        self.assertNotIn("update_seq", source)
+        self.assertNotIn("extract_response_media", source)
+
+    def test_feed_consumes_interim_without_returning_text(self) -> None:
+        parser = RunsEventParser()
+        for line in sse_lines([
+            {"event": "message.interim", "text": "进度", "seq": 0},
+            {"event": "run.completed", "output": "最终正文", "seq": 1},
+        ]):
+            self.assertIsNone(parser.feed(line))
+        self.assertEqual(parser.output, "最终正文")
+
+
 class SuppressionObservationTests(unittest.TestCase):
     """观察口只给测试接线：统计分母（正文段／单元）与两类抑制命中，不接生产日志。
 

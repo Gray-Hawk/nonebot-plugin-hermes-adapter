@@ -232,6 +232,10 @@ class CompletionsPromptTests(unittest.TestCase):
         self.assertIn("插话原则（决定是否发言；决定发言时正文必须非空）：", prompt)
         for legacy in ("每份决策固定两行", "submit_decision", "should_reply", "reply_text", "not_final"):
             self.assertNotIn(legacy, prompt)
+        # 纯文本口径：插话原则不写布尔字段值，回复纪律不留双空格，退窗不教输出字段。
+        for residue in ("→ true", "→ false", "决定 正文 范围", "should_exit_active=false"):
+            self.assertNotIn(residue, prompt)
+        self.assertIn("→ 输出正文", prompt)
 
     def test_runs_prompt_is_plain_text(self) -> None:
         prompt = self._as_interface("runs", lambda: self.pb.build_reactive_system_prompt())
@@ -240,6 +244,16 @@ class CompletionsPromptTests(unittest.TestCase):
         for legacy in ("每份决策就是一行 JSON", "submit_decision", "should_reply", "reply_text", "not_final"):
             self.assertNotIn(legacy, prompt)
         self.assertNotIn("background_task 便签", prompt)
+        # Runs 没有 push_message 工具：正文/进度都走同一条正文通道。
+        self.assertNotIn("push_message", prompt)
+        for residue in ("→ true", "→ false", "决定 正文 范围", "should_exit_active=false"):
+            self.assertNotIn(residue, prompt)
+        self.assertIn("→ 输出正文", prompt)
+
+    def test_runs_private_prompt_has_no_push_message(self) -> None:
+        block = self.pb._JSON_LINES_PRIVATE_BLOCK_RUNS
+        self.assertNotIn("push_message", block)
+        self.assertIn("submit_control", block)
 
     def test_sticker_guidance_follows_interface(self) -> None:
         from nonebot_plugin_hermes_adapter.core import sticker_library
