@@ -319,13 +319,14 @@ def _make_approval_notify(
 
 
 async def _emoji_like_quiet(bot: Bot, msg_id, emoji_id: int) -> bool:
-    """贴 emoji 回执,失败只记 debug(阶段2d:429 丢单「丢了就贴」用)。
+    """贴 emoji 回执,调用失败只记 debug(阶段2d:429 丢单「丢了就贴」用)。
 
     QQ NT 协议下 set_msg_emoji_like 仅群聊可用——调用方自己保证群聊场景。
 
     返回 True 只在平台确认贴上时；``call_api`` 外层 status/retcode=0 不等于成功：
     NapCat 私聊会回外层 0 而 ``data.result=65011`` / errMsg 非空，必须按内部
-    结果判定。调用方（429 丢单）可忽略返回值；段内重复观察用它区分能力边界。
+    结果判定（内部拒绝记 warning）。调用方（429 丢单）可忽略返回值；段内重复
+    观察用它区分能力边界。
     """
     try:
         data = await bot.call_api("set_msg_emoji_like", message_id=msg_id, emoji_id=emoji_id)

@@ -19,13 +19,13 @@ from nonebot.adapters import (
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
-from ..core.bg_tasks import spawn_bg_task
 from ..core.active_session import (
     ActiveSession,
     AnchorRecord,
     Participant,
 )
 from ..core.approvals import admin_user_ids
+from ..core.bg_tasks import spawn_bg_task
 from ..core.group_profile import build_group_profile_block
 from ..core import identity
 from ..config import resolve_custom_dir
