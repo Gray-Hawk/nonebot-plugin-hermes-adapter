@@ -53,12 +53,12 @@ class BatchDecodeTests(unittest.TestCase):
         self.assertEqual(decisions[0].reminder, "")
 
     def test_multiple_units_in_order(self) -> None:
-        text = batch(({"reply_to": "m:1"}, "第一条"), ({}, "第二条"), ({"topic_hint": "t"}, "第三条"))
+        text = batch(({"reply_to": "m:1"}, "第一条"), ({}, "第二条"), ({"legacy_unknown": "t"}, "第三条"))
         decisions = decode_terminal_batch(text)
         self.assertEqual([d.body for d in decisions], ["第一条", "第二条", "第三条"])
         self.assertEqual(decisions[0].control["reply_to"], "m:1")
-        # 旧字段 topic_hint 已退出控制表；残留按未知键忽略。
-        self.assertNotIn("topic_hint", decisions[2].control)
+        # 未知旧键按未知键忽略（不恢复成任何现行控制字段）。
+        self.assertNotIn("legacy_unknown", decisions[2].control)
 
     def test_blank_line_between_units_allowed(self) -> None:
         text = unit({}, "A") + "\n\n" + unit({}, "B") + "\n"
@@ -74,7 +74,8 @@ class BatchDecodeTests(unittest.TestCase):
         decisions = decode_terminal_batch('{"body":"只有正文"}')
         self.assertEqual(len(decisions), 1)
         self.assertEqual(decisions[0].body, "只有正文")
-        self.assertTrue(decisions[0].reminder)
+        # 单行正文对象就是现行 Runs 写法：不再挂「缺信封」自愈提示。
+        self.assertEqual(decisions[0].reminder, "")
 
     def test_missing_control_mixed_with_units(self) -> None:
         text = '{"body":"A"}\n' + unit({"reply_to": "m:2"}, "B")
@@ -279,7 +280,8 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
         return tracker
 
     async def _run(self, result, *, tracker, bounce=None, real_bounce: bool = False, chat=None,
-                   interim_echo: bool = False):
+                   interim_echo: bool = False, sessions=None, current_buffered=None,
+                   replied_msg_id=None, now_ms: int = 1, resolve_reply=None):
         from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
         from nonebot_plugin_hermes_adapter.handlers import message_feedback as fb
         from nonebot_plugin_hermes_adapter.core import prompt_builder
@@ -290,6 +292,8 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
         cfg.sticker_vision_enabled = False
         cfg.history_message_limit = 5
         cfg.interim_echo_enabled = interim_echo
+        # 锚控制路径要拿真实数值算超龄；MagicMock 参与 `>` 比较会直接 TypeError。
+        cfg.anchor_max_age_sec = 3600
         bot = MagicMock(self_id=1)
         bot.call_api = AsyncMock(return_value={"file_id": "f"})
         target = SimpleNamespace(private=False, id="g1")
@@ -348,7 +352,10 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
             "send_local_files": fake_files,
             "task_notes": MagicMock(push_plugin_note=MagicMock()),
             "_mcp": MagicMock(
-                active_sessions=MagicMock(get_if_trigger_alive=MagicMock(return_value=None)),
+                active_sessions=(
+                    sessions if sessions is not None
+                    else MagicMock(get_if_trigger_alive=MagicMock(return_value=None))
+                ),
                 message_buffer=MagicMock(get_recent=MagicMock(return_value=[])),
                 run_tracker=tracker,
             ),
@@ -364,7 +371,10 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
             "_absent_media_note": MagicMock(return_value=""),
             "build_media_address_index": MagicMock(return_value={}),
             "deliver_companion_run_output": AsyncMock(return_value=False),
-            "resolve_reply": MagicMock(return_value=None),
+            "resolve_reply": (
+                resolve_reply if resolve_reply is not None
+                else MagicMock(return_value=None)
+            ),
         }
         prompts = patch.object(prompt_builder, "render_current_rows", MagicMock(return_value="hi"))
         prompts.start()
@@ -373,12 +383,21 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
             await mt._run_reactive_turn(
                 bot=bot, target=target, adapter_name="onebotv11",
                 user_id="u1", group_id="g1", text="hi", image_urls=[],
-                is_direct=True, addressed_to_bot=True, now_ms=1,
+                is_direct=True, addressed_to_bot=True, now_ms=now_ms,
                 recent_override=[], ephemeral=True,
+                current_buffered=current_buffered,
+                replied_msg_id=replied_msg_id,
             )
         sessions = patches["_mcp"].active_sessions
         calls["control"] = {
-            "end_window": sessions.end_if_current_generation.call_count,
+            "end_window": getattr(sessions.end_if_current_generation, "call_count", 0),
+        }
+        # 锚控制只能按调用计数观察（真实 ActiveSessionManager 也可传进来）。
+        calls["anchor"] = {
+            "pin": getattr(sessions.pin_anchor, "call_count", 0),
+            "answer": getattr(sessions.mark_anchor_answered, "call_count", 0),
+            "release": getattr(sessions.release_anchor, "call_count", 0),
+            "merge": getattr(sessions.merge_into_anchor, "call_count", 0),
         }
         return calls
 
@@ -634,42 +653,42 @@ class PassiveBatchDeliveryTests(_PassiveHarness):
 class PassiveMultiControlTests(_PassiveHarness):
     """R5：私聊 passive 连续多份终态必须按份顺序消费仍存在的控制，空 body 只免发送。"""
 
-    async def test_second_unit_background_task_kept_in_control(self) -> None:
+    async def test_second_unit_control_kept(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
-        output = batch(({}, "先回应"), ({"background_task": "第二份异步任务"}, "任务已登记"))
+        output = batch(({}, "先回应"), ({"answer_anchor": "all"}, "任务已登记"))
         decisions = structured_batch_from_terminal(decode_terminal_batch(output))
         result = ChatResult(raw_text=output, structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-e2-p"
         calls = await self._run(result, tracker=self._tracker())
-        self.assertEqual(decisions[1]["background_task"], "第二份异步任务")
+        self.assertEqual(decisions[1]["answer_anchor"], "all")
         self.assertEqual([c["text"] for c in calls["send"]], ["先回应", "任务已登记"])
         self.assertEqual(calls["heal"], [None, None])
 
-    async def test_silent_second_unit_keeps_background_task_control(self) -> None:
+    async def test_silent_second_unit_keeps_control(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
-        output = batch(({}, "先回应"), ({"background_task": "静默份任务"}, ""))
+        output = batch(({}, "先回应"), ({"answer_anchor": "all"}, ""))
         decisions = structured_batch_from_terminal(decode_terminal_batch(output))
         result = ChatResult(raw_text=output, structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-e2-p"
         calls = await self._run(result, tracker=self._tracker())
-        self.assertEqual(decisions[1]["background_task"], "静默份任务")
+        self.assertEqual(decisions[1]["answer_anchor"], "all")
         self.assertEqual([c["text"] for c in calls["send"]], ["先回应"])
         self.assertEqual(calls["settle"], [])
 
-    async def test_all_silent_batch_decodes_background_task_control(self) -> None:
+    async def test_all_silent_batch_decodes_control(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
-        output = unit({"background_task": "全静默任务"}, "")
+        output = unit({"answer_anchor": "all"}, "")
         decisions = structured_batch_from_terminal(decode_terminal_batch(output))
         result = ChatResult(raw_text=output, structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-e2-p"
         calls = await self._run(result, tracker=self._tracker())
-        self.assertEqual(decisions[0]["background_task"], "全静默任务")
+        self.assertEqual(decisions[0]["answer_anchor"], "all")
         self.assertEqual(calls["send"], [])
         self.assertEqual(calls["settle"], [("silent", "should_reply_false")])
 
@@ -677,9 +696,9 @@ class PassiveMultiControlTests(_PassiveHarness):
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
         first = {"body": "一", "should_reply": True, "reply_to": "",
-                 "background_task": "", "_self_heal_hint": "第一份提示"}
+                 "_self_heal_hint": "第一份提示"}
         second = {"body": "二", "should_reply": True, "reply_to": "",
-                  "background_task": "", "_self_heal_hint": "第二份提示"}
+                  "_self_heal_hint": "第二份提示"}
         result = ChatResult(raw_text="x", structured=first)
         result.terminal_decisions = [first, second]
         result.run_id = "run-e2-p"
@@ -687,15 +706,15 @@ class PassiveMultiControlTests(_PassiveHarness):
         self.assertEqual([c["text"] for c in calls["send"]], ["一", "二"])
         self.assertEqual(calls["heal"], ["第一份提示", "第二份提示"])
 
-    async def test_single_completions_decodes_background_task_control(self) -> None:
+    async def test_single_completions_decodes_control(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
-        output = '{"background_task":"单份任务"}\n{"body":"单份正文"}'
+        output = '{"answer_anchor":"all"}\n{"body":"单份正文"}'
         decision = structured_from_terminal(decode_terminal(output))
         result = ChatResult(raw_text=output, structured=decision)
         result.run_id = "run-e2-p"
         calls = await self._run(result, tracker=self._tracker())
-        self.assertEqual(decision["background_task"], "单份任务")
+        self.assertEqual(decision["answer_anchor"], "all")
         self.assertEqual([c["text"] for c in calls["send"]], ["单份正文"])
 
 
@@ -804,15 +823,13 @@ class SilentControlSideEffectTests(_ReactiveHarness):
             "body": "",
             "should_reply": False,
             "should_exit_active": True,
-            "topic_hint": "收尾",
-            "background_task": "任务登记",
         }
 
     async def test_completions_silent_keeps_controls(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
         result = ChatResult(
-            raw_text='{"should_exit_active":true,"topic_hint":"收尾"}\n{"body":""}',
+            raw_text='{"should_exit_active":true,"legacy_unknown":"收尾"}\n{"body":""}',
             structured=self._silent_decision(),
         )
         result.run_id = "run-e2-h"

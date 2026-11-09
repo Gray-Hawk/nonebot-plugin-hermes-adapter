@@ -7,8 +7,8 @@ current_message 附近——不拦截不当轮打断;错误已发出覆水难收
 Key 与 inflight 同形(构造统一走 core/inflight.make_inflight_key):
 (adapter, "group:<id>" / "private:<id>")。
 
-离场任务便签的登记点已删除:旧 `background_task` 登记只有写、没有弹出消费者,
-保留只会积内存而不产生任何行为。
+离场任务便签已退役:后台状态改由 `background_report_outbox` 的真实登记查询
+(`get_background_tasks` MCP 工具),模型不再自报任务摘要,这里只保留插件提示便签。
 """
 
 from __future__ import annotations

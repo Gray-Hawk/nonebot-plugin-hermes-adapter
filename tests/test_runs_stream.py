@@ -192,11 +192,11 @@ class StreamScanTests(unittest.TestCase):
         self.assertEqual(decisions[0].control["reply_to"], "m:1")
 
     def test_empty_body_unit_still_emitted(self) -> None:
-        decisions, _ = scan_stream_decisions(unit({"topic_hint": "收尾"}, "") + "\n")
+        decisions, _ = scan_stream_decisions(unit({"legacy_unknown": "收尾"}, "") + "\n")
         self.assertEqual(len(decisions), 1)
         self.assertTrue(decisions[0].silent)
-        # topic_hint 已退出控制字段；旧会话残留按未知键忽略。
-        self.assertNotIn("topic_hint", decisions[0].control)
+        # 未知旧键按未知键忽略（不恢复成任何现行控制字段）。
+        self.assertNotIn("legacy_unknown", decisions[0].control)
 
     def test_same_body_twice_is_two_units(self) -> None:
         decisions, _ = scan_stream_decisions(unit({}, "同一句") + "\n" + unit({}, "同一句") + "\n")
@@ -732,7 +732,7 @@ class ReactiveLiveChainTests(_e2._ReactiveHarness):
 
     async def test_silent_empty_body_control_kept_and_next_unit_sent(self) -> None:
         events = [
-            {"event": "message.delta", "delta": '{"should_exit_active":true,"topic_hint":"收尾"}', "seq": 0},
+            {"event": "message.delta", "delta": '{"should_exit_active":true,"legacy_unknown":"收尾"}', "seq": 0},
             {"event": "message.delta", "delta": '\n{"body":""}', "seq": 1},
             {"event": "tool.started", "tool": "todo_list", "seq": 2},
             {"event": "tool.completed", "tool": "todo_list", "seq": 3},

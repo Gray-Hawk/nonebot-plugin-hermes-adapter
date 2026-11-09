@@ -303,17 +303,19 @@ class CompletionsGateAndPromptTests(unittest.TestCase):
         self.assertNotIn("submit_decision", prompt)
         self.assertNotIn("should_reply", prompt)
         self.assertNotIn("reply_text", prompt)
-        self.assertNotIn("topic_hint", prompt)
+        self.assertNotIn("background_task 便签", prompt)
         runs_prompt = self._as_interface("runs", lambda: self.pb.build_reactive_system_prompt())
-        # Runs 轮中／终态共用完整两行信封，多份规则按第三版定稿。
-        self.assertIn("每份决策固定两行", runs_prompt)
-        self.assertIn("需要连发多条时，按顺序接上下一份两行 JSON", runs_prompt)
+        # Runs 现行形态：普通回复单行正文对象，控制由 submit_control 工具登记。
+        self.assertIn("每份决策就是一行 JSON", runs_prompt)
+        self.assertIn("submit_control", runs_prompt)
+        self.assertIn("需要连发多条时，按顺序接上下一份单行 JSON", runs_prompt)
         self.assertIn("工具间隙", runs_prompt)
+        self.assertNotIn("每份决策固定两行", runs_prompt)
         self.assertNotIn("submit_decision", runs_prompt)
         self.assertNotIn("should_reply", runs_prompt)
-        self.assertNotIn("topic_hint", runs_prompt)
+        self.assertNotIn("background_task 便签", runs_prompt)
         legacy_prompt = self._as_interface("astrbot", lambda: self.pb.build_reactive_system_prompt())
-        self.assertNotIn("topic_hint", legacy_prompt)
+        self.assertNotIn("background_task 便签", legacy_prompt)
 
     def test_sticker_guidance_follows_interface(self) -> None:
         from nonebot_plugin_hermes_adapter.core import sticker_library

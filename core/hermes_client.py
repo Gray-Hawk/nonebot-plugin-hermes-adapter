@@ -25,6 +25,7 @@ from nonebot import logger
 from ..config import plugin_config
 from ..backends.astrbot import client as astrbot_client
 from .decision_contract import render_en_field_lines
+from .control_intent import CONTROL_TOOL_NAME
 from .media_patterns import _MD_IMAGE_PATTERN, _MEDIA_TAG_PATTERN
 from .media_whitelist import inline_local_media_images
 from .message_context import render_message_context_head
@@ -724,6 +725,19 @@ class StreamHttpError(Exception):
         self.retry_after = retry_after
 
 
+def _is_control_tool_payload(payload: Any) -> bool:
+    """tool.* 帧是否属于控制工具（submit_control）。
+
+    上游的工具名可能带 MCP 前缀（namespace/`__` 分隔），所以按末段比对；
+    控制工具不是工作工具，绝不参与封批。
+    """
+    if not isinstance(payload, dict):
+        return False
+    raw = payload.get("tool") or payload.get("name") or ""
+    name = str(raw).strip().replace(":", "__").replace(".", "__").split("__")[-1]
+    return name == CONTROL_TOOL_NAME
+
+
 class RunsEventParser:
     """runs events SSE 行流 → 旁白段 + 终态。纯逻辑无网络依赖,可单测。
 
@@ -863,12 +877,18 @@ class RunsEventParser:
             # 不产出、不改动任何缓冲。
             return None
         if event == "tool.started":
+            if _is_control_tool_payload(payload):
+                # submit_control 只登记控制：不是普通工作工具的封批边界。切批会重置
+                # 3 秒条间节奏、提前释放输入暂存，还会把间隙缓冲当旁白吐出去。
+                return None
             self.decision_batch += 1
             # 工具间隙段定性: started 之前的间隙文本=中间轮旁白,经 feed 返回。
             seg = self._pop_gap_segment()
             self._gap_open = False
             return seg
         if event == "tool.completed":
+            if _is_control_tool_payload(payload):
+                return None
             # 工具跑完,重新开攒间隙段。
             self._gap_open = True
             return None

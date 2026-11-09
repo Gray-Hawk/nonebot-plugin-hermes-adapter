@@ -18,6 +18,7 @@ from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..adapter_norm import normalize_adapter_name
 from ..config import plugin_config, steer_reply_push_active
 from ..core import rate_bucket, user_lists
+from ..core import control_intent
 from ..core.chat_config import load_chat_config
 from ..core.hermes_client import (
     hermes_client,
@@ -268,6 +269,8 @@ async def _handle_passive_path(
         should_refire = False
         raise
     finally:
+        # 控制是进程内增强：本轮结束丢弃未消费的登记，绝不跨轮误配给下一份正文。
+        control_intent.CONTROL_QUEUE.discard(key)
         if not should_refire:
             _release_slot_and_retry(key, adapter_name, is_private, user_id, group_id)
         else:
@@ -1041,6 +1044,8 @@ async def _handle_reactive_path(
         logger.exception(f"[HERMES] reactive turn raised; dropping pending for {key}")
         raise
     finally:
+        # 控制是进程内增强：本轮结束丢弃未消费的登记，绝不跨轮误配给下一份正文。
+        control_intent.CONTROL_QUEUE.discard(key)
         # 先还租约(剩余窗口不足时在这里垫到下限),再决定要不要接力 —— 顺序反了
         # 就等于让 refire 去撞一个刚死的窗口。
         _mcp.active_sessions.end_turn(lease, now_ms=_now_ms())
@@ -1113,6 +1118,8 @@ async def _refire(
     # 字节在到达时已入库,召回路径不受影响。
 
     if depth > MAX_REFIRE_DEPTH:
+        # 这一跳不再开轮，但仍是本轮所有权的退出点：剩余控制不得带进下一轮。
+        control_intent.CONTROL_QUEUE.discard(key)
         _release_slot_and_retry(key, adapter_name, trigger_msg.group_id is None, trigger_msg.user_id, trigger_msg.group_id)  # release slot first to avoid race with concurrent arrivals
         logger.warning(f"[HERMES] refire depth exceeded ({depth}); dropping pending {key}")
         return
@@ -1188,6 +1195,11 @@ async def _refire(
         logger.exception(f"[HERMES] refire raised at depth {depth}; dropping pending for {key}")
         should_refire = False
     finally:
+        # 接力轮同样是「一轮所有权」：正常结束、异常、transport_error 以及本跳为
+        # 下一跳让出 slot 之前，都丢弃未消费的登记——控制只配给本轮明确正文，绝不
+        # 跨轮误继承。与 _handle_passive_path/_handle_reactive_path 的收尾同一口径，
+        # 这里补的是 _refire 不经那两个外壳的接力路径。
+        control_intent.CONTROL_QUEUE.discard(key)
         if lease is not None:
             _mcp.active_sessions.end_turn(lease, now_ms=_now_ms())
         if not should_refire:
