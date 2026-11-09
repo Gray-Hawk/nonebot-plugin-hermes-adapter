@@ -1,7 +1,7 @@
 # Round 1 审查修复 + 卫生项：真实执行输出
-# 2026-11-09T18:32:47+08:00
+# 2026-11-09T18:35:59+08:00
 # branch feat/plain-text-protocol
-# commit 672f31d87fedd0af6e28c3e69c7e4f8b8f5d4415（代码状态；本文件与交付说明随后续文档提交入库，不改代码）
+# 代码提交 672f31d（修复+卫生项）、ad89284（补覆盖用例）；本文件与交付说明随后续文档提交入库，不改代码
 # ancestry: a27ca76 是祖先；2843c65 不是祖先
 # interpreter: /home/neonsky/NeonBot/.venv/bin/python (python3.13, 生产 venv)
 # 未部署 / 未重启 / 未上传
@@ -9,18 +9,18 @@
 ## 全量 tests/ discover
 $ PYTHONDONTWRITEBYTECODE=1 /home/neonsky/NeonBot/.venv/bin/python -B -m unittest discover -s tests -t . -q
 ----------------------------------------------------------------------
-Ran 451 tests in 32.351s
+Ran 456 tests in 32.386s
 
 OK
 
 ## turn_tests（入口）discover
 $ PYTHONDONTWRITEBYTECODE=1 /home/neonsky/NeonBot/.venv/bin/python -B -m unittest discover -s turn_tests -t turn_tests -q
 ----------------------------------------------------------------------
-Ran 6 tests in 0.056s
+Ran 6 tests in 0.051s
 
 OK
 
-## 本轮新增/修改用例 -v（17 项，真实名单）
+## 本轮新增/修改用例 -v（21 项，真实名单）
 test_path_b_normalizes_reply_text (tests.test_astrbot_text_compat.AstrbotClientPathBTests.test_path_b_normalizes_reply_text) ... ok
 test_path_b_silent_decision_stays_silent (tests.test_astrbot_text_compat.AstrbotClientPathBTests.test_path_b_silent_decision_stays_silent) ... ok
 test_private_and_group_keys_are_distinct (tests.test_astrbot_text_compat.AstrbotGroupScopeTests.test_private_and_group_keys_are_distinct) ... ok
@@ -33,12 +33,16 @@ test_passive_empty_content_still_fires_continuation (tests.test_continuation.Pas
 test_passive_zero_body_still_fires_continuation (tests.test_continuation.PassiveContinuationConsumptionTests.test_passive_zero_body_still_fires_continuation) ... ok
 test_fenced_separator_still_splits (tests.test_runs_terminal.TextUnitTests.test_fenced_separator_still_splits) ... ok
 test_silent_round_does_not_consume_control (tests.test_control_mcp.ControlToolTurnTests.test_silent_round_does_not_consume_control) ... ok
-test_completions_followup_keeps_steer_text_verbatim (tests.test_steer_reply_convention.SteerReplyConventionTests.test_completions_followup_keeps_steer_text_verbatim) ... ok
-test_completions_keeps_steer_text_verbatim (tests.test_steer_reply_convention.SteerReplyConventionTests.test_completions_keeps_steer_text_verbatim) ... ok
-test_runs_convention_line_is_stripped_on_replay (tests.test_steer_reply_convention.SteerReplyConventionTests.test_runs_convention_line_is_stripped_on_replay) ... ok
-test_runs_followup_guides_plain_text_body (tests.test_steer_reply_convention.SteerReplyConventionTests.test_runs_followup_guides_plain_text_body) ... ok
-test_runs_guides_plain_text_body (tests.test_steer_reply_convention.SteerReplyConventionTests.test_runs_guides_plain_text_body) ... ok
-Ran 17 tests in 0.097s
+test_feed_consumes_interim_without_returning_text (tests.test_runs_stream.RunResumeTextHygieneTests.test_feed_consumes_interim_without_returning_text) ... ok
+test_resume_has_no_interim_channel_left (tests.test_runs_stream.RunResumeTextHygieneTests.test_resume_has_no_interim_channel_left) ... ok
+test_misc_config_drops_switch (tests.test_steer_reply_convention.InterimEchoRetirementTests.test_misc_config_drops_switch) ... ok
+test_steer_push_active_is_interface_only (tests.test_steer_reply_convention.InterimEchoRetirementTests.test_steer_push_active_is_interface_only) ... ok
+test_completions_prompt_is_plain_text (tests.test_completions_regression.CompletionsPromptTests.test_completions_prompt_is_plain_text) ... ok
+test_decision_body_reads_body_only (tests.test_completions_regression.CompletionsPromptTests.test_decision_body_reads_body_only) ... ok
+test_runs_private_prompt_has_no_push_message (tests.test_completions_regression.CompletionsPromptTests.test_runs_private_prompt_has_no_push_message) ... ok
+test_runs_prompt_is_plain_text (tests.test_completions_regression.CompletionsPromptTests.test_runs_prompt_is_plain_text) ... ok
+test_sticker_guidance_follows_interface (tests.test_completions_regression.CompletionsPromptTests.test_sticker_guidance_follows_interface) ... ok
+Ran 21 tests in 0.079s
 
 OK
 
@@ -46,9 +50,9 @@ OK
 $ PYTHONDONTWRITEBYTECODE=1 /home/neonsky/NeonBot/.venv/bin/python -B verify.py
 interpreter=/home/neonsky/NeonBot/.venv/bin/python
 root=/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109
-HEAD=672f31d fix(protocol): AstrBot 决策归一化、passive 续跑消费与 Round 1 卫生项
+HEAD=ad89284 test: 覆盖恢复链无旁白通道、interim_echo 退役与提示词残影
 [PASS] 交付树无 pyc／pytest 缓存
-[PASS] 全量既有＋新增测试通过 — exit=0 ran=451 Ran 451 tests in 32.351s /  / OK
+[PASS] 全量既有＋新增测试通过 — exit=0 ran=456 Ran 456 tests in 32.386s /  / OK
 [PASS] 已删除的信封模块／符号零引用 — 文件仍在=[] 引用=[]
 [PASS] Runs 终态／流式／恢复／对账共用同一纯文本解析器
 [PASS] _DECISION_PROTOCOL_BLOCK_COMPLETIONS 纯文本（无信封字段）
@@ -84,3 +88,4 @@ ALL PASS
 - passive 空 body 轮：settle ("silent","empty_content") 后同样触发续跑。
 - 代码围栏内整行 §：`"```\n§\n```"` → ["```", "```"]；`"~~~\n§\n~~~"` → ["~~~", "~~~"]。
 - 静默轮不消费控制：end_window=0，控制队列仍有 1 份（轮末由 relay 收尾丢弃）。
+- 恢复链：`feed()` 对 interim/delta 恒返回 None；订阅期间零正文发送，终态才按 output 补发。

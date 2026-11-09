@@ -1,7 +1,7 @@
 # t_979bff13 交付说明：Runs 与 completions 正文信封退役
 
 - 分支：`feat/plain-text-protocol`（起点 `a27ca76`，`2843c65` 保留在 `feat/control-mcp`，未 reset、未带入）
-- 提交：`f3c7fbc`（主体）+ `8b27b0c`（续跑消费修正）+ `5210912`（终态不折叠 + 观察口）+ `672f31d`（Round 1 审查修复 + 卫生项）
+- 提交：`f3c7fbc`（主体）+ `8b27b0c`（续跑消费修正）+ `5210912`（终态不折叠 + 观察口）+ `672f31d`（Round 1 审查修复 + 卫生项）+ `ad89284`（补覆盖用例）+ 文档/证据提交
 - 范围：**只本地提交**。未部署、未重启、未上传。等 GPT 代码审查 + 糯米验收后才开部署卡。
 
 ## 1. 生产代码规模
@@ -39,11 +39,12 @@ scripts/replay_*.py (3)         | 299 ---        删
 
 | 运行 | 结果 |
 | --- | --- |
-| `python -m unittest discover -s tests -t .` | **Ran 451 tests / OK**（本轮修复后复跑） |
+| `python -m unittest discover -s tests -t .` | **Ran 456 tests / OK**（本轮修复+补测试后复跑） |
 | `cd turn_tests && discover -s . -t .` | **Ran 6 tests / OK** |
 | `python verify.py`（当前验收入口） | **19/19 PASS**（本轮重写后，证据见 `EVIDENCE/round2_review_fixes.txt`） |
 | 关键用例 `-v`（纯文本解析/客户端链/续跑/ completions 终态） | **Ran 42 tests / OK** |
 | 简化复核定向 `-v`（终态重复段/去重/跨段/失败重试/观察口） | **Ran 10 tests / OK** |
+| 本轮新增/修改 `-v`（AstrBot/续跑/围栏/控制/恢复链/提示词） | **Ran 21 tests / OK** |
 
 要求的覆盖面对应关系：
 
@@ -123,6 +124,11 @@ scripts/replay_*.py (3)         | 299 ---        删
    Runs/ completions 块不再教 `should_exit_active=false` 输出字段；steer 约定行
    从「两行 JSON 写进 body」改为「直接输出正文」。
 6. `verify.py` 重写为当前纯文本协议的验收入口（详见 §3 第 7 条）。
+
+对应测试：`tests/test_runs_stream.py::RunResumeTextHygieneTests`（恢复链无旁白通道／`feed()` 不返回文本）、
+`tests/test_steer_reply_convention.py::InterimEchoRetirementTests`（MiscConfig 无该键、steer_push 只看接口）、
+`tests/test_completions_regression.py` 的提示词残影断言、`test_fenced_separator_still_splits`、
+`test_silent_round_does_not_consume_control` 与本节 4.1/4.2 的 AstrBot/续跑用例。
 
 ### 4.4 实现前提（写给下一位，别以为有显式护栏）
 
