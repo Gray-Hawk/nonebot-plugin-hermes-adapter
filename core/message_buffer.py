@@ -40,6 +40,13 @@ class BufferedMessage:
     """本条合并转发展开(第一层)内节点的图片 URL(kind='forward_image')。idx 接在
     引用图之后连续编号。只注册发号、按需拉图,恒不内联。"""
     reply_to_ts: int | None = None
+    at_user_ids: tuple[str, ...] = ()
+    """本条消息里**结构化 At 段**指向的账号(按事件顺序去重;不含 @全体)。
+
+    唯一来源是平台事件的 At 段(含 OneBot v11 被 _check_at_me 剥走后从
+    original_message 补回的那一个),不是正文里手打的 `@数字`,也不是引用块里
+    转述的历史 @。渲染层据此判断「这条真的 @ 了我」;正文中的 @ 文本与引用块
+    都不参与。老库行/合成消息为空元组 = 未知,不猜。"""
     is_bot: bool = False
     """平台 bot 账号身份轴，与文本来源正交；现有存储与权限逻辑继续使用本字段。"""
     id: int | None = None

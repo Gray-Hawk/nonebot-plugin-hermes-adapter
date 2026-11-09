@@ -689,6 +689,20 @@ YAML_SPECS: dict[str, list[Any]] = {
             ],
             type_="list",
         ),
+        _Key(
+            "master_users",
+            None,
+            [
+                "admin_users 中属于「主人」的子集（{adapter}:{user_id} 复合 id），可选。",
+                "缺键 = 沿用既有口径：整组 admin_users 即主人（active_session 的 master_ids 同源）。",
+                "显式配置（含空表 []）后，列出的账号呈现为主人，其余 admin_users 呈现为管理员。",
+                "只影响聊天行身份栏，不改变权限判定；权限仍只看 admin_users。",
+            ],
+            type_="list",
+            target=False,
+            optional=True,
+            example=[],
+        ),
     ],
 }
 

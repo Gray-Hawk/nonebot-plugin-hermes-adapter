@@ -28,3 +28,9 @@ allow_groups: []
 # 敏感命令与管理操作的管理员集合（{adapter}:{user_id} 复合 id）；空集 = 默认 deny。
 # 手动重载先按旧集合鉴权，成功后再替换新集合。
 admin_users: []
+
+# admin_users 中属于「主人」的子集（{adapter}:{user_id} 复合 id），可选。
+# 缺键 = 沿用既有口径：整组 admin_users 即主人（active_session 的 master_ids 同源）。
+# 显式配置（含空表 []）后，列出的账号呈现为主人，其余 admin_users 呈现为管理员。
+# 只影响聊天行身份栏，不改变权限判定；权限仍只看 admin_users。
+# master_users: []

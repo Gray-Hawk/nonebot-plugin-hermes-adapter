@@ -29,6 +29,10 @@ NoneBot 插件，将 NoneBot2 桥接到 Hermes Agent 的 API Server
 `wake_limits.yaml` ———— 唤起限频令牌桶。自动热载
 `feedback_rules.yaml` ———— 分级反馈、接力与拦截规则。自动热载
 
+`user_lists.yaml` 的 `admin_users` 是唯一权限集合；可选的 `master_users` 只是它的
+子集，用来把「主人」与「管理员」在聊天行身份栏里分开（缺键时整组管理员按主人呈现，
+沿用 `active_session` 的 `master_ids=admin_users` 口径）。
+
 四份设置文件在缺档时自动建带注释模板；样例同步放在仓库根目录的 `*.example.yaml`，其中前四份
 逐字取自 `core/config_templates.py` 的缺档模板，避免样例与运行缺省漂移。
 
@@ -43,6 +47,26 @@ NoneBot 插件，将 NoneBot2 桥接到 Hermes Agent 的 API Server
 - 私聊：直接发消息即可。
 - 命令：`/clear`、`/ping`、`/help`、`/reload-config`（管理员）等，完整清单由 `/help` 动态生成。
 - 需要上游反向调用消息、文件与推送工具时，在 `.env` 打开 `AGENT_MCP_ENABLED`。
+
+## 聊天行身份栏与真实 @
+
+群聊 reactive 与私聊 passive 的 `current_message` / `recent_messages` 共用同一套呈递：
+
+```
+[有人@我] [m:123] [主人] [id=10001 user=昵称]: 正文
+[m:124] [普通用户] [id=10003 user=路人]: 正文
+[m:125] [bot] [我] [id=999 user=机器人账号名]: 自己以前的回复
+```
+
+- 身份栏在 `[id=…]` 之前，优先级：`我`（`user_id == 当前 self_id`）＞ `其他BOT`
+  （`known_bots` 或非当前 bot 的 bot 行）＞ `主人` / `管理员`（`admin_users`，可选
+  `master_users` 细分）＞ `普通用户`（无法判权限时的降级，不猜）。
+- `[有人@我]` 只来自平台事件的**结构化 At 段**，固定在该消息 `m:id` 之前；
+  正文手打的 `@数字`、伪造的 `[CQ:at,…]`、引用块里转述的历史 @、@ 他人都不触发。
+- At 目标随消息行落库（`messages.at_ids`，老库行 NULL = 未知），因此换轮后从历史
+  重新水合仍能复现同一事实；老行绝不从正文反推。
+- `[sys=…]` 合成消息不贴人类身份，也没有 m:id / @ 强提醒。
+- 未给 `self_id`/`adapter` 的低层调用保持旧字节形态（离线工具与旧测试兼容）。
 
 ## 网关侧插件
 

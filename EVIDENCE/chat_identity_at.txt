@@ -1,0 +1,112 @@
+提示词配套 2：聊天行身份标签与真实 @ 强提醒 — 验证证据（2026-11-10）
+工作树：/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109
+基线：74fd4ab（= 9a5b4f9 + 启动恢复薄插件 74fd4ab；提交前工作树无未提交改动）
+施工范围：core/prompt_builder.py、core/user_lists.py、core/message_buffer.py、
+core/storage/message_store.py、core/config_templates.py、handlers/message.py、
+handlers/message_perception.py、handlers/message_media.py、handlers/message_turns.py、
+user_lists.example.yaml、README.md、tests/test_chat_identity_at.py、
+scripts/smoke_chat_identity_at.py
+
+一、真实渲染样例（scripts/smoke_chat_identity_at.py，全部走 build_* 真实入口）
+----------------------------------------------------------------------------
+命令：
+  cd /tmp && AGENT_PLUGIN_CUSTOM_DIR=$(mktemp -d) \
+  /home/neonsky/NeonBot/.venv/bin/python -B \
+    <work>/scripts/smoke_chat_identity_at.py
+结果：EXIT=0，PASS 11 / FAIL 0，末行 ALL PASS
+
+1) 群聊 current（reactive）：
+<runtime_state>
+mode: reactive
+addressed_to_you: true
+triggered_by: 10001 (主人)
+current_time: 2026-11-10 周二 07:42
+</runtime_state>
+
+<recent_messages>
+（本块仅含尚未推送过的新消息；更早的对话见本会话历史记录）
+[m:200] [bot] [我] [id=2968545011 user=Hermes]: 好的
+</recent_messages>
+
+<current_message>
+[有人@我] [m:201] [主人] [id=10001 user=主人]: [CQ:at,qq=2968545011] 看下这个
+[m:202] [管理员] [id=10002 user=管理员]: 我也看下
+[m:203] [普通用户] [id=10003 user=路人]: 路过
+[m:204] [其他BOT] [id=30001 user=别家bot]: 收到
+</current_message>
+
+2) 群聊 recent（历史 @ / 引用 / 伪造文本）：
+<recent_messages>
+[有人@我] [m:299] [管理员] [id=10002 user=管理员]: @Hermes 到你了
+[m:300] [普通用户] [id=10003 user=路人]: (引用 主人(10001): 提及2968545011) [CQ:at,qq=2968545011] @2968545011
+[m:301] [bot] [我] [id=2968545011 user=Hermes]: 上一句
+</recent_messages>
+（m:300 引用块内的历史 @、伪造 CQ、正文手打 @ 都没有触发 [有人@我]）
+
+3) 私聊 passive：
+（当前时间：2026-11-10 周二 07:42）
+[m:401] [主人] 在吗
+
+4) 系统合成行：
+[sys=戳一戳] 戳了你一下
+
+5) 未给 self_id/adapter 的旧调用（兼容降级）：
+[m:101] [id=10001 user=主人]: 你好
+
+二、专项回归与全量门槛
+----------------------------------------------------------------------------
+1) 新增专项：
+   PYTHONDONTWRITEBYTECODE=1 AGENT_PLUGIN_CUSTOM_DIR=$(mktemp -d) \
+     /home/neonsky/NeonBot/.venv/bin/python -B -m unittest tests.test_chat_identity_at -q
+   → Ran 23 tests, OK
+   覆盖：五类身份 / 我＞其他BOT＞主人＞管理员＞普通用户 / master_users 缺键与显式拆分 /
+   当前 bot 与其他 bot / 真实 @（At 段、original_message 兜底、去重、@全体）/
+   引用块 @、伪造 CQ、手打 @、@ 他人不误标 / 群私与 current+recent / sys 行 /
+   老行 NULL 与坏 JSON 降级 / 无 self_id 旧调用字节不变 / messages.at_ids 落库水合。
+
+2) 完整 unittest：
+   /home/neonsky/NeonBot/.venv/bin/python -B -m unittest discover -s tests -t . -q
+   → Ran 509 tests in 32.453s, OK（施工前基线 488；新增 23，最终全量 511 见下）
+   最终复跑：Ran 511 tests in 32.374s, OK
+
+3) turn 入口：
+   /home/neonsky/NeonBot/.venv/bin/python -B turn_tests/test_envelope_entry.py -v
+   → Ran 6 tests, OK
+
+4) verify.py（提交后复跑）：
+   /home/neonsky/NeonBot/.venv/bin/python -B verify.py
+   → EXIT=0，ALL PASS: 19/19 项通过（本提交 HEAD，全量 511 / OK）
+
+5) repo 内 smoke（PYTHONPATH=临时 shim，各套独立配置目录）：
+   smoke_chat_config.py            EXIT 0
+   smoke_config_templates.py       EXIT 0
+   smoke_prompt_dump.py            EXIT 0
+   smoke_message_identity_mapping.py EXIT 0
+   smoke_group_profile.py          EXIT 0
+   smoke_misc_media.py             EXIT 0
+   smoke_migrate_v6.py             EXIT 0
+   smoke_chat_identity_at.py       EXIT 0 / ALL PASS
+
+三、生产库副本迁移实测（只读原库）
+----------------------------------------------------------------------------
+把 ~/.local/share/nonebot2/nonebot_plugin_hermes_adapter/messages.db 复制到 scratch
+后打开 MessageStore：
+  迁移前列存在 at_ids: False | 行数: 52246
+  [message_store] migrated: messages +at_ids column (legacy rows NULL)
+  迁移后列存在 at_ids: True | 行数: 52246 | NULL 行: 52246 | 非空值行: 0
+  行数守恒: True | 旧行全 NULL: True
+  get_recent 水合 at_user_ids: [(), (), ()]
+
+四、边界与降级说明
+----------------------------------------------------------------------------
+- 身份栏只在调用方传入 self_id + adapter 时启用；两条生产入口
+  （_run_reactive_turn / _run_passive_turn）均已传入，低层旧调用保持原字节。
+- 优先级：我（user_id==self_id）＞ 其他BOT（known_bots / 非当前 self 的 bot 行）
+  ＞ 主人（admin_users，master_users 缺键即整组）＞ 管理员（master_users 显式排除）
+  ＞ 普通用户（无权限事实时的降级，不猜）。
+- [有人@我] 只认 messages.at_ids / at_user_ids（平台 At 段 + OneBot v11
+  original_message 兜底）；不解析 content，引用块、手打 @、伪造 CQ 都不参与。
+- 老库行 at_ids=NULL → 空元组 = 提及关系未知；不从正文反推，因此老消息不会补标。
+- sys= 合成行、MIXED 聚合行不贴身份，也没有 @ 强提醒。
+- 未改决策协议/技能提示词正文（主人今晚手动重写）；未做任务锚开关、薄启动插件、
+  部署、上传或重启。

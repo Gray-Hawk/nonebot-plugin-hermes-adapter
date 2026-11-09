@@ -10,6 +10,9 @@
     前缀取裸 id);显式配置(含空表)以显式值为准,显式空表 = 不允许任何人。
   - admin_users:        敏感命令与管理操作的管理员集合({adapter}:{user_id} 复合 id),
     空集 = 默认 deny。手动重载先按旧集合鉴权,成功后再替换新集合。
+  - master_users:       admin_users 中属于「主人」的子集({adapter}:{user_id} 复合 id),
+    可选键。缺键 = 沿用既有架构口径(admin_users 即 master_ids,整组按主人呈现);
+    显式配置(含空表)只把列出的账号当主人,其余 admin_users 呈现为管理员。
   - allow_users:        私聊 allowlist 模式的被动聊天白名单({adapter}:{user_id} 复合 id),
     仅当 chat_config.yaml 的 private_trigger = allowlist 时生效;与 private_allow
     语义不同,不得合并。
@@ -46,6 +49,9 @@ class UserLists:
     集合(见 private_allowed,读本文件 admin_users);显式配置(含空表)以显式值为准。"""
     admin_users: set[str] = field(default_factory=set)
     """管理员集合({adapter}:{user_id} 复合 id)。空集 = 默认 deny。"""
+    master_users: set[str] | None = None
+    """主人子集({adapter}:{user_id} 复合 id)。None = 未配置,整组 admin_users 即主人
+    (与 active_session 的 master_ids 口径一致);显式空集 = 没有主人,全部按管理员。"""
     allow_users: set[str] = field(default_factory=set)
     """私聊 allowlist 被动聊天白名单({adapter}:{user_id} 复合 id)。与 private_allow 不混。"""
     allow_groups: set[str] = field(default_factory=set)
@@ -122,6 +128,13 @@ def _parse_composite_set(raw: Any) -> set[str]:
     return out
 
 
+def _parse_optional_composite_set(raw: Any) -> set[str] | None:
+    """可选复合 id 集合:键缺席/形态坏 → None(按未配置回退);显式 [] → 空集。"""
+    if not isinstance(raw, list):
+        return None
+    return _parse_composite_set(raw)
+
+
 def parse_user_lists(doc: dict) -> UserLists:
     """解析 user_lists.yaml 顶层映射为 UserLists 快照。"""
     return UserLists(
@@ -129,6 +142,7 @@ def parse_user_lists(doc: dict) -> UserLists:
         known_bots=_parse_id_tuple(doc.get("known_bots")) or (),
         private_allow=_parse_id_tuple(doc.get("private_allow")),
         admin_users=_parse_composite_set(doc.get("admin_users")),
+        master_users=_parse_optional_composite_set(doc.get("master_users")),
         allow_users=_parse_composite_set(doc.get("allow_users")),
         allow_groups=_parse_composite_set(doc.get("allow_groups")),
     )
@@ -163,6 +177,24 @@ def is_blacklisted(group_id: str | None, user_id: str) -> bool:
 def is_known_bot(user_id: str) -> bool:
     """已知 bot 账号判定(裸 id 直比,全局生效)。"""
     return user_id in load_user_lists().known_bots
+
+
+def authority_role(adapter_name: str, user_id: str) -> str | None:
+    """把现有权限事实映射成呈现档位:``"master"`` / ``"admin"`` / ``None``。
+
+    唯一权限来源是 ``admin_users``;``master_users`` 只是它的可选细分子集,
+    不另建一套身份表。缺键时整组管理员按主人呈现——这不是新约定,
+    而是沿用 active_session 里 ``master_ids=admin_users`` 的既有口径;
+    显式配置后只有子集是主人,其余是管理员。非管理员一律 None(普通用户)。
+    """
+    lists = load_user_lists()
+    admins = set(admin_user_ids(set(lists.admin_users), adapter_name))
+    if user_id not in admins:
+        return None
+    if lists.master_users is None:
+        return "master"
+    masters = set(admin_user_ids(set(lists.master_users), adapter_name))
+    return "master" if user_id in masters else "admin"
 
 
 def private_allowed(adapter_name: str, user_id: str) -> bool:
