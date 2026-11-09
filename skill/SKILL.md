@@ -23,13 +23,13 @@ allows you to send messages back via the `push_message` tool.
 - **reactive** (M1): A user invited you into an active group conversation. Follow the
   current system prompt's interface-specific contract; private chats use their own
   addressing rules and never need mention markers.
-- **Runs:** Send visible acknowledgements, progress and results as complete two-line
-  decision envelopes at the moment they are needed. Continue actual tool work in the
-  same run; several consecutive envelopes are allowed. Do not use tool pushes in an
-  active run. Ordinary narration and bare final text are not visible chat replies.
-- **completions:** Use `push_message` for visible mid-turn progress. The final answer
-  must still be a decision envelope, not a tool push. For an unfinished long task,
-  send its acknowledgement with the continuation control described below.
+- **Runs:** Reply text is the message itself: write it as plain text at the moment you
+  want it sent, and keep doing tool work in the same run. To send several messages, put
+  a line containing only `§` between them. There is no JSON wrapper and no `body` field;
+  ordinary narration is exactly what the user sees.
+- **completions:** Use `push_message` for visible mid-turn progress. The final answer is
+  plain text as well. For an unfinished long task, acknowledge it in plain text and call
+  `request_continuation` to request the continuation turn.
 
 ## Tools
 
@@ -40,15 +40,15 @@ Send one message into a group. Constraints:
   `m:123`; never pass a NapCat/OneBot message id. Invalid or unavailable mappings degrade
   to an ordinary unquoted message and are logged. A resolved group Reply automatically
   adds `At(quoted sender) + one space` after the Reply segment; private replies do not.
-- Insert `[CQ:at,qq=数字]` directly in `text` or decision `body` for ordered
+- Insert `[CQ:at,qq=数字]` directly in `text` (or in your plain-text reply) for ordered
   mentions. Multiple markers and arbitrary positions are supported. Other CQ codes and
   `@all` are not enabled.
 - `image_urls` accepts **only** `http(s)://` and `data:` URLs. A path on this host
   (`/root/.hermes/cache/images/…`) is not reachable from the bot process and is
   **not** delivered — the result reports it in `skipped_images` with a `warning`,
   and the text is still sent. Do not retry the same path: to send a locally
-  generated image, return a decision envelope whose `body` carries a
-  `MEDIA:<absolute path>` tag instead (see "Sending images" below).
+  generated image, put a `MEDIA:<absolute path>` tag in your plain-text reply instead
+  (see "Sending images" below).
 - The (adapter, group_id) must currently be in an **active reactive session**. If not,
   returns `ok=false` with `error="no active reactive session"`. Do not retry — the user
   has not invited you in.
@@ -116,8 +116,7 @@ Read-only view of real background state for this conversation, as two separate l
   `summary` a one-line result excerpt. Empty `reports` only means nothing is awaiting
   report.
 
-Never claim a background task from memory and never invent a task note; the plugin
-wakes you when a result is ready.
+Never claim a background task from memory; the plugin wakes you when a result is ready.
 
 ### `get_message_images(message_ids, adapter?, group_id?)`
 
@@ -147,78 +146,90 @@ multiple frames (up to the configured fetch frame cap) with per-frame markers.
 
 ## Output contract (Runs)
 
-On Runs your final reply is a one-line JSON body object:
+Your visible reply is the plain text you output — there is no JSON envelope:
 
 ```
-{"body": "reply text"}
+你好，这条会原样发出去
 ```
 
-A non-empty body is sent to the chat as-is; an empty body means silence. You may emit
-several of these back-to-back (a blank line between them is allowed); each one is judged
-and sent on its own. Ordinary replies need no control call at all — do not spend a turn
-just to express control.
+Everything you write outside tool calls is delivered as chat text at that moment.
+Silence = output nothing at all. Do not wrap replies in JSON or a `body` field, and do
+not use `push_message` in an active run: the plugin sends your text for you.
+
+To send several messages, separate them with a line that contains exactly `§`:
+
+```
+第一句
+§
+第二句
+```
+
+A blank line or an ordinary newline does not split a message; only a standalone `§`
+line does.
 
 When a reply actually needs a control, register it with the `submit_control` tool first
-and then emit the body decision:
+and then output the reply text. One tool call registers one control — several fields
+passed together travel as a single control — consumed by the next reply text; call it
+again only to control further replies. With none registered the defaults apply. The tool
+only registers: it never sends a message, leaves the window, or pins by itself — the
+reply text still does the sending, and the existing post-send step applies the controls.
+If the control is lost (tool failure, broken stream, restart) the reply is still sent
+with default controls.
 
 - `reply_to` — quote one message of this conversation by its plugin `m:id` (`m:123`); only
-  that shape is accepted, never a NapCat id or a Hermes transcript id
+  that shape is accepted, never a NapCat id or a Hermes transcript id. Use it only when
+  the reply needs to point at that specific message; ordinary back-and-forth needs no quote
 - `should_exit_active` — `true` = leave the active window once this reply is sent
 - `pin_anchor` — commission judgement turns only; `true` pins the current request
 - `release_anchor` / `answer_anchor` — commissioner user_id or `"all"` (unpin / mark answered)
 - `anchor_merge` — starter user_id of a pinned task this message belongs to
 
-One tool call registers one control, consumed by the next explicit body (an empty body
-counts as a decision); several registrations are consumed in order, and with none
-registered the defaults apply. The tool only registers: it never sends a message and never
-leaves the window or pins by itself — the body still does the sending and the existing
-post-send step still applies the controls. If the control is lost (tool failure, broken
-stream, restart) the body is still sent with default controls.
+Private chats only ever use `reply_to`; exit windows and task anchors are group-state
+concepts.
 
-On completions the input is still the two-line envelope (control line + body line) and
-`not_final: true` is available there: it means this reply is NOT your final result but a
-task acknowledgement — the plugin resends it as-is and immediately fires a continue turn.
-Runs continues tool work in the same run instead of requesting a plugin continuation turn.
+completions uses the same plain-text output, with two differences: mid-turn progress goes
+through `push_message`, and an unfinished long task calls `request_continuation` (there is
+no `not_final` field) to request the next turn.
 
-Mentions live inside `body`: write `[CQ:at,qq=12345]` exactly where each strong
+Mentions live in the reply text: write `[CQ:at,qq=12345]` exactly where each strong
 notification belongs. Multiple people and arbitrary positions are supported; the plugin
 preserves segment order and does not prepend or infer mentions. Omit markers for ordinary
 replies, and do not use other CQ codes or `@all`.
 
-`reply_to` independently quotes one specific message: set it to the plugin `m:id` already
-shown in history, such as `m:123`. Never substitute a NapCat message id or Hermes transcript
-row id. Unknown, legacy, malformed or cross-chat mappings are ignored with a log rather than
-being sent raw.
+`reply_to` independently quotes one specific message: register it with
+`submit_control(reply_to="m:123")`, using the plugin `m:id` already shown in history. Never
+substitute a NapCat message id or Hermes transcript row id. Unknown, legacy, malformed or
+cross-chat mappings are ignored with a log rather than being sent raw.
 
 Task anchors: when the input contains a `<pinned_tasks>` block, those are pinned
 commission anchors (📌 + attribution + age), NOT latest messages — they keep the
 original request visible after context trimming. Anchors are pinned only when a
-commission judgement turn explicitly sets `pin_anchor=true`; don't pin jokes or
-one-off chatter. When an anchored task is finished
-or the topic has drifted away, set `release_anchor` to the commissioner's user_id
-(or "all") to unpin. When your reply answers an anchored commission, set
-`answer_anchor` to the commissioner's user_id (or "all") to mark it answered — an
+commission judgement turn explicitly registers `pin_anchor=true` through `submit_control`;
+don't pin jokes or one-off chatter. When an anchored task is finished
+or the topic has drifted away, register `release_anchor` with the commissioner's user_id
+(or "all") to unpin. When your reply answers an anchored commission, register
+`answer_anchor` with the commissioner's user_id (or "all") to mark it answered — an
 answered guest anchor yields its slot to new commissions sooner. Only ids currently
 pinned are accepted; unknown ids are ignored and echoed back next turn as a plugin
 note, so fix it then.
 
 Anchors are per-task, not per-person: participants share equal footing. When the
 current message belongs to a pinned task (a follow-up spec change, an acceptance
-reply), set `anchor_merge` to that task's starter user_id to join its participants
+reply), register `anchor_merge` with that task's starter user_id to join its participants
 instead of pinning a new anchor; quoting the task's original message auto-merges
 too. Mid-turn you may receive steered messages from stakeholders ([user=…] lines):
 handle them inline; if one is a brand-new independent commission, acknowledge it in
 your reply or ask them to re-send later — steered messages never create anchors.
 
 Blacklist: when runtime_state has `sender_blacklisted: true`, the current
-sender is on the soft blacklist — default to an empty body even if they @ you.
+sender is on the soft blacklist — output nothing even if they @ you.
 Exception: an active anchor or a recent human message explicitly commissioned
 interaction with that account (e.g. "你去跟它说 X"); resume normal conversation for
 the commission's lifetime only.
 
-An empty body sends nothing — that is the **correct** behavior for
-"this conversation isn't about me, I'll stay quiet." Staying silent ≠ leaving — keep
-`should_exit_active=false` so you still hear the next message in the active window.
+No reply text sends nothing — that is the **correct** behavior for
+"this conversation isn't about me, I'll stay quiet." Staying silent ≠ leaving — don't
+register `should_exit_active` so you still hear the next message in the active window.
 
 ### Your own account
 
@@ -243,7 +254,7 @@ above apply.
 ### Exit threshold (`should_exit_active`)
 
 Registering `should_exit_active: true` with `submit_control` closes the active window after
-that reply is sent (on completions the same flag lives in the envelope control line). Once
+that reply is sent (the same field works on completions). Once
 closed, non-@ messages are dropped before you ever see them. Set the bar **high**:
 
 - Set `true` only when:
@@ -261,7 +272,7 @@ closed, non-@ messages are dropped before you ever see them. Set the bar **high*
 When the user asks you to do something (look up data, search, fetch info):
 
 - **Try first.** If your tools can actually attempt it, run them and put the real result
-  into the body line.
+  into the reply text.
 - **If the attempt fails or the request is genuinely beyond your reach,** say so plainly:
   "I couldn't find that — try X instead" / “我这查不到 X，可以用 Y 看看”。
 - **Do not** promise work without an actual execution path. For a long accepted task,
@@ -273,7 +284,7 @@ When the user asks you to do something (look up data, search, fetch info):
 To put an image in the chat, write a `MEDIA:<absolute path>` tag **inside** the field the
 plugin actually delivers:
 
-- reactive mode → inside the body line of your decision envelope.
+- reactive / Runs → in your plain-text reply.
 - `push_message` → pass an http(s) URL in `image_urls` (the `text` field's MEDIA tag is
   NOT processed there).
 
@@ -290,16 +301,16 @@ message. Constraints:
   with no upload behind it, so **say in your reply text that the file couldn't be sent**
   rather than acting as though it went through.
 - **Never hand-write a `data:` / base64 URL yourself**, and never put the `MEDIA:` tag
-  outside the JSON envelope — content outside the envelope is dropped, not sent.
+  outside the reply text — text that never reaches the reply body is dropped, not sent.
 - If a reply is cut off mid-image the user gets a `[图片传输不完整]` placeholder. Keep
-  the body short when it carries an image; the image itself costs you no output tokens,
+  the reply short when it carries an image; the image itself costs you no output tokens,
   but a long reply around it raises the odds of truncation.
 
 ## Historical media recall
 
 When the user refers to a past image (e.g. "上图", "这图", "刚才那张", "他刚发的"),
 the `<recent_messages>` block shows `[图片]` placeholders but not the actual image.
-Media addressing (2026-10-15): every addressable medium carries a per-image label —
+Media addressing: every addressable medium carries a per-image label —
 history lines append a compact manifest like `(图#0 #1 表情#2)` (idx runs continuous
 per message: images → stickers → quoted images → forward images); inlined image parts
 are preceded by a full label `[图 m:22371#0]`; quoted images appear as `(引用图#k)`
@@ -360,13 +371,13 @@ are transcript snapshots of a "merged forward" message the user shared:
 
 ## What NOT to do
 
-- Don't call `push_message` for normal request/response replies — return a decision
-  envelope instead. The plugin handles the send for you.
+- Don't call `push_message` for normal request/response replies — output the reply text
+  directly instead. The plugin handles the send for you.
 - Don't call `push_message` to "ping" or "say hi" to inactive groups. The reactive guard
   will return 422 and your message will be discarded.
 - Don't try to set user profiles / facts via this skill. M1 has no user profile support.
 - Use `submit_control(reply_to="m:123")` to quote a message already visible in this chat's
-  history; it applies to the very next body decision. It is resolved through the plugin
+  history; it applies to the very next reply text. It is resolved through the plugin
   mapping; unknown, legacy or cross-chat ids degrade to an ordinary unquoted message.
   Never pass a NapCat message id.
 - Don't call `get_message_images` speculatively for every reactive turn — only when the
