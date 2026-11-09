@@ -20,6 +20,7 @@ from ..utils import get_adapter_name
 from .message_ingress import _extract_sender_nickname, _now_ms
 from .message_media import (
     _collect_at_placeholders,
+    _collect_at_targets,
     _collect_file_placeholders,
     _collect_nontext_placeholders,
     _compose_quote_prefix,
@@ -142,6 +143,9 @@ async def handle_perception(bot: Bot, event: Event):
     # At 段回填:plain_text 默认丢 At,补回让历史里 "@C 你看" 这类指向可读
     # 传 event + bot_self_id 让 helper 检测「OneBot v11 _check_at_me 剥走的 @bot」并补回
     at_placeholders = _collect_at_placeholders(uni_msg, event=event, bot_self_id=str(bot.self_id))
+    # 结构化 @ 目标与上面同一批 At 段:落库的事实用它,渲染端的「有人@我」
+    # 只查这份集合,不解析 content(正文手打 @ / 引用转述不会误标)。
+    at_user_ids = _collect_at_targets(uni_msg, event=event, bot_self_id=str(bot.self_id))
     if at_placeholders:
         suffix = " ".join(at_placeholders)
         msg_text = (msg_text + " " + suffix) if msg_text else suffix
@@ -185,6 +189,7 @@ async def handle_perception(bot: Bot, event: Event):
         file_entries=file_entries,
         quote_image_urls=quote_image_urls,
         forward_image_urls=forward_image_urls,
+        at_user_ids=at_user_ids,
         is_bot=False,
         forward_content=_forward_full_for_store(forward_full),
         qq_message_id=qq_message_id,

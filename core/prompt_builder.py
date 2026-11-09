@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 
 from nonebot import logger
 
+from . import user_lists
 from .decision_contract import render_cn_field_lines, render_field_name_list
 from .hermes_client import UserContent
 from .message_buffer import (
@@ -105,6 +106,79 @@ def _format_speaker_tag(nickname: str | None, user_id: str,
             return f"[id={user_id} user={canon}]"
         return f"[id={user_id}]"
     return f"[id={user_id} user={nick}{suffix}]"
+
+
+# --- 聊天行身份栏与真实 @ 强提醒 -----------------------------------------------
+# 身份栏与 @ 标记都只在调用方给出「当前 BOT 的 self_id + adapter」时启用:
+# 这两个事实是判「我 / 其他 BOT / 权限档位」的最小输入。老调用方(离线工具、
+# 无 bot 上下文的测试)不传时保持原字节形态,不靠猜身份补标签。
+#
+# 优先级(高 → 低):
+#   1. 我        —— user_id 严格等于当前 self_id。平台账号身份精确,压过一切。
+#   2. 其他 BOT  —— is_bot 行(非本 self)或 user_lists.known_bots 命中。
+#                  账号类型是客观事实,且现有委托/钉锚逻辑本来就用 known_bots
+#                  做排除,权限标签不能盖掉「这是自动账号」的更强事实。
+#   3. 主人      —— user_lists.authority_role()=="master"(admin_users 或其显式子集)。
+#   4. 管理员    —— 同一权限集合里被 master_users 显式排除在外的账号。
+#   5. 普通用户  —— 其余;权限表读不到/adapter 为空时也降级到这里,不猜权限。
+_IDENTITY_SELF = "我"
+_IDENTITY_OTHER_BOT = "其他BOT"
+_IDENTITY_MASTER = "主人"
+_IDENTITY_ADMIN = "管理员"
+_IDENTITY_USER = "普通用户"
+# 固定档位全集:渲染只产出这些字面量,回收剥壳按同一份清单锚定,不各写一份。
+_IDENTITY_LABELS = (
+    _IDENTITY_SELF, _IDENTITY_OTHER_BOT, _IDENTITY_MASTER, _IDENTITY_ADMIN, _IDENTITY_USER,
+)
+_AT_ME_MARK = "[有人@我] "
+
+
+def _identity_context(self_id: str | None, adapter: str | None) -> tuple[str, str] | None:
+    """当前 BOT 的呈现上下文;两样缺一即 None(不启用身份栏,旧形态不变)。"""
+    if not self_id or not adapter:
+        return None
+    return str(self_id), str(adapter)
+
+
+def _identity_label(row: BufferedMessage, ctx: tuple[str, str] | None) -> str | None:
+    """一行消息的身份档位;系统/混合合成行没有人类或 bot 身份,不贴。
+
+    复用既有事实源:self_id 来自 bot 会话、known_bots 与 admin_users/master_users
+    来自 user_lists 快照——不新建第二套身份映射,也不看昵称。
+    """
+    if ctx is None:
+        return None
+    if row.origin.author_kind not in (AuthorKind.HUMAN, AuthorKind.BOT):
+        return None
+    self_id, adapter = ctx
+    user_id = str(row.user_id)
+    if user_id == self_id:
+        return _IDENTITY_SELF
+    if (
+        row.is_bot
+        or row.origin.author_kind is AuthorKind.BOT
+        or user_lists.is_known_bot(user_id)
+    ):
+        return _IDENTITY_OTHER_BOT
+    role = user_lists.authority_role(adapter, user_id)
+    if role == "master":
+        return _IDENTITY_MASTER
+    if role == "admin":
+        return _IDENTITY_ADMIN
+    return _IDENTITY_USER
+
+
+def _at_me_mark(row: BufferedMessage, ctx: tuple[str, str] | None) -> str:
+    """真实 @ 当前 BOT 的强提醒前缀;只查结构化 At 事实 ``at_user_ids``。
+
+    content 里的 `@<id>`、引用前缀里的「提及<id>」都是文本,不是平台提及关系,
+    一律不参与——伪造 CQ/手打 @、引用历史 @、@ 了别人都不能触发本标记。
+    """
+    if ctx is None:
+        return ""
+    if row.origin.author_kind not in (AuthorKind.HUMAN, AuthorKind.BOT):
+        return ""
+    return _AT_ME_MARK if ctx[0] in row.at_user_ids else ""
 
 
 # 字段名与 hermes_client._DECISION_HINT 共用 core/decision_contract.py 的单一字段表,
@@ -620,6 +694,8 @@ def _render_recent_messages_block(
     *,
     incremental: bool = False,
     name_resolver: "Callable[[str], str | None] | None" = None,
+    self_id: str | None = None,
+    adapter: str | None = None,
 ) -> str:
     """渲染 <recent_messages> 块。recent_messages: 新→旧顺序;在 prompt 内反转为旧→新。
 
@@ -635,8 +711,12 @@ def _render_recent_messages_block(
 
     incremental=True(增量推送,reactive 路径):块头加一行说明本块只含未推过的
     新消息——否则模型会把块变短误读成历史被截断/群冷了。
+
+    self_id/adapter 给定时历史行也带身份栏与真实 @ 强提醒(与 current 行同一套
+    判定);缺省保持旧形态。
     """
     msgs = list(recent_messages)
+    identity_ctx = _identity_context(self_id, adapter)
     # 单轮一致快照:历史行截断上限一次取出复用,循环内不反复读 misc_config。
     history_cap = load_misc_config().history_text_max_chars
     # 新→旧序里第一条带全文的折叠 = 窗口内最新一条;只展开它,更旧的保持 preview——
@@ -652,13 +732,16 @@ def _render_recent_messages_block(
         speaker_tag = _format_speaker_tag(
             m.nickname, m.user_id,
             canonical=name_resolver(m.user_id) if name_resolver else None)
+        identity = _identity_label(m, identity_ctx)
+        identity_prefix = f"[{identity}] " if identity else ""
+        at_mark = _at_me_mark(m, identity_ctx)
         id_prefix = f"[m:{m.id}] " if m.id is not None else ""
         if m is expand_target:
             content = _expand_forward_preview(m.content, m.forward_content or "")
             rendered = _sanitize_history_content(content, max_chars=_MAX_EXPANDED_FORWARD_LINE_CHARS)
         else:
             rendered = _sanitize_history_content(m.content, max_chars=history_cap)
-        line = f"{id_prefix}{bot_prefix}{speaker_tag}: {rendered}"
+        line = f"{at_mark}{id_prefix}{bot_prefix}{identity_prefix}{speaker_tag}: {rendered}"
         # 行尾追加紧凑媒体清单(带全局连续 idx,号即 message_images 地址,
         # 供按号拉图/指认)。占位带号不代表该图已内联——豁免/未内联行同样带号。
         media_summary = render_media_summary(m)
@@ -773,13 +856,21 @@ def _render_pinned_tasks_block(anchors: Sequence[Any], *, now_ms: int) -> str:
 
 def _render_message_line(
     row: BufferedMessage, *, name_resolver=None, with_speaker: bool = True,
+    identity_ctx: tuple[str, str] | None = None,
 ) -> str:
-    """渲染一个来源明确的当前消息碎片；聚合资格判断不在这里做。"""
+    """渲染一个来源明确的当前消息碎片；聚合资格判断不在这里做。
+
+    identity_ctx 非空时在 [`id=…`] 前加身份栏、在 `m:id` 前加真实 @ 强提醒;
+    None 保持旧字节形态(低层调用方没有当前 BOT 身份,不猜)。
+    """
     prefix = (
         f"[m:{row.id}] "
         if row.id is not None and row.origin.author_kind not in (AuthorKind.SYSTEM, AuthorKind.MIXED)
         else ""
     )
+    identity = _identity_label(row, identity_ctx)
+    identity_prefix = f"[{identity}] " if identity else ""
+    at_mark = _at_me_mark(row, identity_ctx)
     if row.origin.author_kind is AuthorKind.SYSTEM:
         tag = f"[sys={_sanitize_tag_text(row.origin.display_label or '系统')}]"
     elif with_speaker:
@@ -789,9 +880,12 @@ def _render_message_line(
     else:
         tag = ""
     if row.origin.author_kind is AuthorKind.SYSTEM:
-        line = f"{prefix}{tag} {row.content}"
+        line = f"{prefix}{identity_prefix}{tag} {row.content}"
     else:
-        line = f"{prefix}{tag}: {row.content}" if tag else f"{prefix}{row.content}"
+        line = (
+            f"{at_mark}{prefix}{identity_prefix}{tag}: {row.content}"
+            if tag else f"{at_mark}{prefix}{identity_prefix}{row.content}"
+        )
     summary = render_media_summary(row)
     if summary:
         line += f" {summary}"
@@ -800,14 +894,18 @@ def _render_message_line(
 
 def render_current_rows(
     rows: Sequence[BufferedMessage], *, is_private: bool, name_resolver=None,
+    self_id: str | None = None, adapter: str | None = None,
 ) -> str:
     """当前消息唯一呈递入口；单元素只是多元素序列的特例。
 
     混合聚合体必须先由调用方展开成 fragments，bot 行只能走历史渲染；
     两种错线都响亮失败，避免借首条真人身份给整批内容背书。
+
+    self_id/adapter 是身份栏与 [有人@我] 的事实输入;不传则保持旧形态。
     """
     if not rows:
         raise ValueError("当前消息序列不得为空")
+    ctx = _identity_context(self_id, adapter)
     lines = []
     for row in rows:
         if row.origin.author_kind is AuthorKind.MIXED:
@@ -819,6 +917,7 @@ def render_current_rows(
         )
         lines.append(_render_message_line(
             row, name_resolver=name_resolver, with_speaker=not private_single_human,
+            identity_ctx=ctx,
         ))
     return "\n".join(lines)
 
@@ -828,7 +927,8 @@ def render_current_rows(
 # 冒号之前)。steer_reconcile 的转录命中判据就是 `[m:id]:`(带冒号),native 回收
 # 的剥壳正则也锚这一形态;换成 current 外壳(`[m:id] [id=…]: `)会让对账命中与
 # 回收剥壳同时失效。完整媒体寻址(`[图 m:id#idx]` + 随条读图提示)只用于 steer,
-# current 行不加这套噪声。
+# current 行不加这套噪声。身份栏与 [有人@我] 由 identity_ctx 决定,贴在这段文法
+# 最前(`[有人@我] [主人] [id=…] [m:id]: 正文`),与 current/recent 同一优先级。
 
 _STEER_MEDIA_HINT = (
     "（随条媒体未内联，需要看图/表情时用 get_message_images "
@@ -857,13 +957,20 @@ class SteerPresentation:
     text: str
 
 
-def _render_steer_message_line(row: BufferedMessage, *, name_resolver=None) -> str:
+def _render_steer_message_line(
+    row: BufferedMessage, *, name_resolver=None,
+    identity_ctx: tuple[str, str] | None = None,
+) -> str:
     """渲染一条 steer 行;不合法时抛 ValueError,由 relay 边界转成安全回退。
 
     与 _render_message_line 共用 speaker 装配与 iter_message_media 寻址,
     区别只在文法(m:id 在 speaker 之后)与媒体形态(完整寻址标签 + 随条提示)。
     每行只贴自己的 m:id 与自己那份媒体清单的 idx——媒体错贴别行正是本项要治的
     缺陷,所以这里不做任何跨行的号/标签复用。
+
+    identity_ctx 非空时在 `[id=…]` 前加身份栏、在 `[m:id]` 前加真实 @ 强提醒
+    (与 current/recent 行同一套判定与同一优先级);None 保持旧字节形态,只有
+    拿不到 bot 上下文的低层旧调用会走到这里,生产 steer 两入口都带 ctx。
     """
     if row.origin.author_kind is AuthorKind.MIXED:
         raise ValueError("混合聚合消息必须先展开 fragments 再呈递")
@@ -871,12 +978,17 @@ def _render_steer_message_line(row: BufferedMessage, *, name_resolver=None) -> s
         raise ValueError("bot 消息不得作为 steer 输入")
     if row.origin.author_kind is AuthorKind.SYSTEM:
         raise ValueError("系统来源行不得作为 steer 输入")
+    at_mark = _at_me_mark(row, identity_ctx)
+    identity = _identity_label(row, identity_ctx)
+    identity_prefix = f"[{identity}] " if identity else ""
     tag = _format_speaker_tag(
         row.nickname, row.user_id,
         canonical=name_resolver(row.user_id) if name_resolver else None)
     mid = f" [m:{row.id}]" if row.id is not None else ""
     body = (row.content or "").strip()
-    line = f"{tag}{mid}: {body}".rstrip()
+    # 前缀序与 current/recent 一致:强提醒 → 身份栏 → speaker([id=…]) → m:id。
+    # m:id 必须留在冒号前,steer_reconcile 的 `[m:id]:` 转录命中与这块文法绑定。
+    line = f"{at_mark}{identity_prefix}{tag}{mid}: {body}".rstrip()
     media = iter_message_media(row)
     if media:
         if row.id is None:
@@ -890,19 +1002,26 @@ def _render_steer_message_line(row: BufferedMessage, *, name_resolver=None) -> s
 
 def render_steer_rows(
     rows: Sequence[BufferedMessage], *, name_resolver=None,
+    self_id: str | None = None, adapter: str | None = None,
 ) -> SteerPresentation:
     """steer 唯一呈递入口:正文、媒体寻址、台账与去重同一份身份事实。
 
     单条只是一元素序列的特例。任一行来源不合法(系统/混合/bot)或有媒体却没有
     可寻址行号,整批 ValueError——由 relay 边界失败关闭,不半贴号、不丢媒体、
     不改写原始消息。
+
+    self_id/adapter 是身份栏与 [有人@我] 的事实输入,取自本 scope 在跑 run 的
+    bot_self_id 与当前 adapter(与 current/recent 同一事实源);不传则保持旧形态。
     """
     if not rows:
         raise ValueError("steer 行序列不得为空")
+    ctx = _identity_context(self_id, adapter)
     items = tuple(
         SteerRowPresentation(
             source_row=row,
-            rendered_line=_render_steer_message_line(row, name_resolver=name_resolver),
+            rendered_line=_render_steer_message_line(
+                row, name_resolver=name_resolver, identity_ctx=ctx,
+            ),
         )
         for row in rows
     )
@@ -927,6 +1046,8 @@ def build_reactive_user_content(
     plugin_note: str | None = None,
     now_ms: int = 0,
     name_resolver: "Callable[[str], str | None] | None" = None,
+    self_id: str | None = None,
+    adapter: str | None = None,
 ) -> UserContent:
     """reactive user content: <runtime_state> + [pinned_tasks] + <recent_messages> + <current_message>。
 
@@ -955,12 +1076,17 @@ def build_reactive_user_content(
         sender_blacklisted=sender_blacklisted,
     )
     history_block = _render_recent_messages_block(
-        recent_messages, incremental=True, name_resolver=name_resolver)
+        recent_messages, incremental=True, name_resolver=name_resolver,
+        self_id=self_id, adapter=adapter,
+    )
     pinned_block = (
         _render_pinned_tasks_block(pinned_anchors, now_ms=now_ms) if pinned_anchors else ""
     )
 
-    cur_line = render_current_rows(rows, is_private=False, name_resolver=name_resolver)
+    cur_line = render_current_rows(
+        rows, is_private=False, name_resolver=name_resolver,
+        self_id=self_id, adapter=adapter,
+    )
     current_block_text = f"<current_message>\n{cur_line}\n</current_message>"
     if current_sticker_urls:
         current_block_text += _STICKER_MOOD_NOTE
@@ -1011,12 +1137,19 @@ def build_passive_user_content(
     is_private: bool = True,
     plugin_note: str | None = None,
     name_resolver: "Callable[[str], str | None] | None" = None,
+    self_id: str | None = None,
+    adapter: str | None = None,
 ) -> UserContent:
     """passive user content:可选 <recent_messages> + 统一当前行(图片走多模态 parts)。"""
-    cur_line = render_current_rows(rows, is_private=is_private, name_resolver=name_resolver)
+    cur_line = render_current_rows(
+        rows, is_private=is_private, name_resolver=name_resolver,
+        self_id=self_id, adapter=adapter,
+    )
     if recent_messages:
         text_block = _render_recent_messages_block(
-            recent_messages, name_resolver=name_resolver) + "\n\n" + cur_line
+            recent_messages, name_resolver=name_resolver,
+            self_id=self_id, adapter=adapter,
+        ) + "\n\n" + cur_line
     else:
         text_block = cur_line
     if current_sticker_urls:

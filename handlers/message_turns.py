@@ -1089,6 +1089,10 @@ async def _run_passive_turn(
             task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, is_private, user_id, group_id))
         ) or None,
         name_resolver=_name_resolver,
+        # 身份栏与 [有人@我]:当前 bot 的 self_id 是「我」的唯一事实源;
+        # adapter 用于 admin_users/master_users 复合键归属。
+        self_id=str(bot.self_id),
+        adapter=adapter_name,
     )
 
     # 纯文本正文协议：正文（含工具前的进度）走 Runs 决策通道，
@@ -1730,6 +1734,9 @@ async def _run_reactive_turn(
         ) or None,
         now_ms=now_ms,
         name_resolver=_name_resolver,
+        # 身份栏与 [有人@我]:与 passive 同一事实源,群/私两条真实路径一致。
+        self_id=str(bot.self_id),
+        adapter=adapter_name,
     )
 
     # 出站 prompt 体量:模型在 explicit @ 下静默时,第一件要排除的就是「上下文被

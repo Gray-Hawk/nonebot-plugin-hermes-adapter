@@ -23,6 +23,7 @@ from ..utils import check_isolation, get_adapter_name
 
 from .message_media import (
     _collect_at_placeholders,
+    _collect_at_targets,
     _collect_nontext_placeholders,
     _compose_quote_prefix,
     _extract_forward_full,
@@ -94,6 +95,7 @@ def _build_current_fragment(
     own_image_urls: list[str], sticker_urls: list[str],
     quote_image_urls: list[str], forward_image_urls: list[str],
     delivery_generation: int | None, event_msg_id,
+    at_user_ids: tuple[str, ...] = (),
 ) -> BufferedMessage:
     """构造本事件的触发 fragment(P-08:生产唯一构造点)。
 
@@ -111,6 +113,7 @@ def _build_current_fragment(
         quote_image_urls=list(quote_image_urls),
         forward_image_urls=list(forward_image_urls),
         reply_to_ts=None, is_bot=False,
+        at_user_ids=tuple(at_user_ids),
         delivery_generation=delivery_generation,
     )
     fragment.id = _peek_event_db_id(adapter_name, event_msg_id)
@@ -291,6 +294,8 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # (无文本/无图/无 At/无转发)仍走原 skip。仅 @ 他人的消息由下游闸门兜底:
     # 窗口外被 not_active_not_explicit 挡,窗口内被 @s-only-other-users 挡。
     at_placeholders = _collect_at_placeholders(uni_msg, event=event, bot_self_id=str(bot.self_id))
+    # 结构化 @ 目标:与占位同一批 At 段,渲染层的 [有人@我] 只认这份事实。
+    at_user_ids = _collect_at_targets(uni_msg, event=event, bot_self_id=str(bot.self_id))
     has_real_content = bool(msg_text) or bool(image_urls) or bool(at_placeholders)
     if at_placeholders:
         suffix = " ".join(at_placeholders)
@@ -432,6 +437,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         forward_image_urls=list(_forward_image_urls or []),
         delivery_generation=delivery_generation,
         event_msg_id=getattr(event, "message_id", None),
+        at_user_ids=at_user_ids,
     )
     debounce_sec = chat_cfg.reply_debounce_sec
     # 普通防抖仅一个时长，顺延上限从首条起算恒为三倍；群聊仍保持首窗不顺延。

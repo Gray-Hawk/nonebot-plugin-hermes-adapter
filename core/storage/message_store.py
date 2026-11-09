@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections import defaultdict
 from pathlib import Path
@@ -34,7 +35,8 @@ _SCHEMA_STATEMENTS = [
         is_bot        INTEGER NOT NULL,
         reply_to_ts   INTEGER,
         qq_message_id TEXT,
-        private_owner_id TEXT
+        private_owner_id TEXT,
+        at_ids        TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_msgs_group_ts ON messages (adapter, group_id, ts DESC)",
@@ -89,6 +91,31 @@ def _norm_qq_message_id(value: Any) -> str | None:
     return text or None
 
 
+def _encode_at_ids(ids: tuple[str, ...]) -> str | None:
+    """结构化 @ 目标 → JSON 文本;空/非法一律 NULL(= 该行没有可用提及事实)。
+
+    只存 At 段派生的目标,不从正文解析。JSON 是为了不依赖目标字符集
+    (QQ 是数字,但 adapter 可跨平台),列值仍是一段可读文本。
+    """
+    clean = [str(i) for i in ids if str(i).strip()]
+    if not clean:
+        return None
+    return json.dumps(clean, ensure_ascii=False)
+
+
+def _decode_at_ids(value: Any) -> tuple[str, ...]:
+    """列值 → 结构化 @ 目标;NULL/坏档一律空元组(未知,不猜)。"""
+    if not value:
+        return ()
+    try:
+        rows = json.loads(value)
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(rows, list):
+        return ()
+    return tuple(str(i) for i in rows if str(i).strip())
+
+
 class MessageStore:
     """SQLite WAL 模式的消息日志,单进程内多线程读写安全。"""
 
@@ -139,6 +166,12 @@ class MessageStore:
         if "private_owner_id" not in msg_cols:
             self._conn.execute("ALTER TABLE messages ADD COLUMN private_owner_id TEXT")
             logger.info("[message_store] migrated: messages +private_owner_id column")
+        msg_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(messages)")}
+        if "at_ids" not in msg_cols:
+            # 结构化 @ 目标。老库存量行留 NULL = 「该行提及关系未知」,
+            # 绝不从 content 里的 @ 文本反推(正文手打 @ 与引用转述都会误标)。
+            self._conn.execute("ALTER TABLE messages ADD COLUMN at_ids TEXT")
+            logger.info("[message_store] migrated: messages +at_ids column (legacy rows NULL)")
         # 普通私聊行的 sender 就是对端，可确定回填；老 bot 行没有这条事实，
         # 保持 NULL。重复执行只补仍缺归属的普通行，不覆盖显式归属。
         self._conn.execute(
@@ -173,8 +206,8 @@ class MessageStore:
                 cur = self._conn.execute(
                     "INSERT INTO messages "
                     "(ts, adapter, group_id, user_id, nickname, content, is_bot, reply_to_ts, "
-                    "qq_message_id, private_owner_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "qq_message_id, private_owner_id, at_ids) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         msg.ts,
                         msg.adapter,
@@ -186,6 +219,7 @@ class MessageStore:
                         msg.reply_to_ts,
                         _norm_qq_message_id(msg.qq_message_id),
                         private_owner_id,
+                        _encode_at_ids(msg.at_user_ids),
                     ),
                 )
                 msg_id = cur.lastrowid
@@ -261,7 +295,7 @@ class MessageStore:
         params.append(limit)
         rows = self._conn.execute(
             "SELECT id, ts, adapter, group_id, user_id, nickname, content, is_bot, reply_to_ts, "
-            "qq_message_id, private_owner_id "
+            "qq_message_id, private_owner_id, at_ids "
             f"FROM messages WHERE {where} ORDER BY ts DESC LIMIT ?",
             params,
         ).fetchall()
@@ -326,6 +360,7 @@ class MessageStore:
                 quote_image_urls=quote_by_msg.get(r["id"], []),
                 forward_image_urls=fwdimg_by_msg.get(r["id"], []),
                 reply_to_ts=r["reply_to_ts"],
+                at_user_ids=_decode_at_ids(r["at_ids"]),
                 is_bot=bool(r["is_bot"]),
                 id=r["id"],
                 qq_message_id=r["qq_message_id"],

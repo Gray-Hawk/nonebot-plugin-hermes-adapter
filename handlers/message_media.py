@@ -300,6 +300,37 @@ def _collect_at_placeholders(
     return placeholders
 
 
+def _collect_at_targets(
+    uni_msg: alconna.UniMessage,
+    *,
+    event: Event | None = None,
+    bot_self_id: str | None = None,
+) -> tuple[str, ...]:
+    """结构化 At 段 → 去重后的目标账号元组(持久化/强提醒的唯一事实)。
+
+    与 ``_collect_at_placeholders`` 扫同一批 At 段,但这里只保留**可寻址目标**:
+    - 不含 ``@全体``:AtAll 是广播,不是对当前 BOT 的点名;
+    - 不做任何正文解析:手打的 ``@999``、引用前缀里的「提及999」都不会进来;
+    - 保留 OneBot v11 ``_check_at_me`` 剥走 @bot 时的 original_message 兜底
+      (平台事件确实 @ 了我,只是 adapter 提前把段从 event.message 删了)。
+    顺序按事件顺序,重复目标只留第一次——渲染端只需要「是否包含我」。
+    """
+    targets: list[str] = []
+    if uni_msg.has(alconna.At):
+        for at in uni_msg[alconna.At]:
+            target = str(at.target).strip()
+            if target and target not in targets:
+                targets.append(target)
+    if (
+        event is not None
+        and bot_self_id is not None
+        and str(bot_self_id) not in targets
+        and _has_at_bot_in_original(event, str(bot_self_id))
+    ):
+        targets.insert(0, str(bot_self_id))
+    return tuple(targets)
+
+
 # --- Phase B-1: 合并转发消息提取 ---
 
 
