@@ -57,3 +57,7 @@ def take_continuation(key: ContinuationKey) -> bool:
 
 def pending_continuation(key: ContinuationKey) -> bool:
     return CONTINUATION_QUEUE.pending(key)
+
+
+def discard_continuation(key: ContinuationKey) -> bool:
+    return CONTINUATION_QUEUE.discard(key)

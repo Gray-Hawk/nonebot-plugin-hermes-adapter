@@ -1051,6 +1051,8 @@ async def _run_passive_turn(
     # 不再有独立旁白通道——interim echo 整路停用，避免同文发两遍。
     # E3: 私聊 passive 的 runs 决策同样即时发送；群 passive 是普通文本路径，不接。
     _live_fb_key = _feedback_scope_key(adapter_name, is_private, user_id, group_id)
+    # 续跑请求按会话键登记：轮开始先清掉上一轮残留（本轮工具会重新登记）。
+    continuation.discard_continuation(_live_fb_key)
     _live_enabled = use_private_decision and plugin_config.hermes_api_interface == "runs"
     _passive_nickname = await get_bot_nickname(bot) if _live_enabled else ""
     _live_deliver, _live_state = _make_runs_live_decisions(
@@ -1717,6 +1719,9 @@ async def _run_reactive_turn(
     hermes_target = resolve_target(adapter_name, False, group_id)
     # E3: runs 轮内即时决策发送器。只对 runs 通道启用；completions 保持 E1 原路。
     _live_fb_key = _feedback_scope_key(adapter_name, False, user_id, group_id)
+    # 续跑请求是本轮工具调用时登记的：轮开始先清掉上一轮残留，避免陈旧标记
+    # 让本轮的静默/早退分支凭空续跑一次。
+    continuation.discard_continuation(_live_fb_key)
     _live_deliver, _live_state = _make_runs_live_decisions(
         bot=bot, target=target, adapter_name=adapter_name, user_id=user_id,
         group_id=group_id, is_private=False, fb_key=_live_fb_key,
@@ -2028,6 +2033,12 @@ async def _run_reactive_turn(
         # 纯文本协议：没有正文就是静默，不合成空决策、不消费控制。
         logger.info(f"[HERMES reactive] 无正文,静默 (group={group_id} user={user_id})")
         _settle(result, "silent", "empty_output")
+        if continuation.take_continuation(_live_fb_key):
+            # 只登记了续跑、没输出正文：仍按工具语义追加继续执行轮。
+            await _fire_continuation(
+                key=_live_fb_key, bot=bot, target=target, adapter_name=adapter_name,
+                user_id=user_id, group_id=group_id, is_private=False,
+            )
         return result
     # 控制队列：终态/无即时发送器时在这里按份补齐绑定（即时发送过的份已在发送器里
     # 按同一顺序消费过，bind_control 幂等，不会重弹）。一份决策弹一份控制。
@@ -2568,6 +2579,12 @@ async def _run_reactive_turn(
     # 轮级退窗的统一收尾：整组所有份都发完（含 live 已发份与空 body 份）之后才收。
     # 早退分支已在各自出口调用同一收窗点；世代保护见 _close_group_exit_window。
     _close_group_exit_window("group_done")
+    if continuation.take_continuation(_live_fb_key):
+        # request_continuation：本轮正文发完后消费一次，追加继续执行轮（同 relay 链）。
+        await _fire_continuation(
+            key=_live_fb_key, bot=bot, target=target, adapter_name=adapter_name,
+            user_id=user_id, group_id=group_id, is_private=False,
+        )
     if not sent_any:
         # 全部份都没有发送(静默／全部被业务拦截)：按既有销账语义收口，禁止对账补投。
         _settle(

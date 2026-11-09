@@ -51,9 +51,19 @@ def _stub_everything(calls, result):
 
 
 class PassiveTurnTextProtocolTests(unittest.IsolatedAsyncioTestCase):
-    async def _run(self, result):
-        calls = {"note": [], "followup": [], "settle": [], "send": []}
+    async def _run(self, result, *, on_chat=None):
+        calls = {"note": [], "followup": [], "settle": [], "send": [], "continuation": []}
         patches = _stub_everything(calls, result)
+
+        async def _chat(*_a, **_k):
+            if on_chat is not None:
+                on_chat()
+            return result
+
+        patches["_chat_with_overflow_recovery"] = _chat
+        patches["_fire_continuation"] = AsyncMock(
+            side_effect=lambda **kw: calls["continuation"].append(kw)
+        )
         note_mock = MagicMock(side_effect=lambda key, name, text, **kw: calls["note"].append(name))
         patches["task_notes"] = MagicMock(push_plugin_note=note_mock)
 
@@ -95,6 +105,34 @@ class PassiveTurnTextProtocolTests(unittest.IsolatedAsyncioTestCase):
         calls = await self._run(result)
         self.assertEqual(calls["send"], [legacy])                # 逐字一条，不识别控制
         self.assertEqual(calls["note"], [])
+
+    async def test_request_continuation_is_consumed_once_after_send(self):
+        from nonebot_plugin_hermes_adapter.core import continuation
+        from nonebot_plugin_hermes_adapter.core.inflight import make_inflight_key
+
+        key = make_inflight_key("onebotv11", True, "u1", None)
+        self.addCleanup(continuation.discard_continuation, key)
+        result = ChatResult(raw_text="收到", structured={"body": "收到", "should_reply": True})
+        result.terminal_decisions = [{"body": "收到", "should_reply": True}]
+        calls = await self._run(
+            result, on_chat=lambda: continuation.request_continuation(key),
+        )
+        self.assertEqual(calls["send"], ["收到"])
+        self.assertEqual(len(calls["continuation"]), 1)      # 一轮只续跑一次
+        self.assertFalse(continuation.pending_continuation(key))
+
+    async def test_stale_continuation_from_previous_turn_is_dropped(self):
+        from nonebot_plugin_hermes_adapter.core import continuation
+        from nonebot_plugin_hermes_adapter.core.inflight import make_inflight_key
+
+        key = make_inflight_key("onebotv11", True, "u1", None)
+        self.addCleanup(continuation.discard_continuation, key)
+        continuation.request_continuation(key)                # 上一轮残留
+        result = ChatResult(raw_text="收到", structured={"body": "收到", "should_reply": True})
+        result.terminal_decisions = [{"body": "收到", "should_reply": True}]
+        calls = await self._run(result)
+        self.assertEqual(calls["continuation"], [])          # 不凭陈旧标记续跑
+        self.assertFalse(continuation.pending_continuation(key))
 
     async def test_empty_output_stays_silent(self):
         result = ChatResult(raw_text="")
