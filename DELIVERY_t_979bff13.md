@@ -1,7 +1,7 @@
 # t_979bff13 交付说明：Runs 与 completions 正文信封退役
 
 - 分支：`feat/plain-text-protocol`（起点 `a27ca76`，`2843c65` 保留在 `feat/control-mcp`，未 reset、未带入）
-- 提交：`f3c7fbc`（主体）+ `8b27b0c`（续跑消费修正）+ `5210912`（终态不折叠 + 观察口）+ 本轮（Round 1 审查修复 + 卫生项，哈希见 `git log -1`）
+- 提交：`f3c7fbc`（主体）+ `8b27b0c`（续跑消费修正）+ `5210912`（终态不折叠 + 观察口）+ `672f31d`（Round 1 审查修复 + 卫生项）
 - 范围：**只本地提交**。未部署、未重启、未上传。等 GPT 代码审查 + 糯米验收后才开部署卡。
 
 ## 1. 生产代码规模
@@ -26,6 +26,12 @@ scripts/replay_*.py (3)         | 299 ---        删
 
 新增生产代码 238 行（89+63+86），落在设计给的 250～340 行区间内（含改写后的净增量）；
 未引入新持久状态、未建第二套协议、未做兼容层。
+
+本轮（`672f31d`）生产代码增量：`config.py +2/−4`、`core/config_templates.py +6/−12`、
+`core/hermes_client.py +31/−2`、`core/misc_config.py +0/−2`、`core/prompt_builder.py +8/−0`、
+`core/prompt_protocol.py +2/−1`、`core/runs_text.py +4/−15`、`handlers/message_relay.py +6/−8`、
+`handlers/message_turns.py +17/−1`、`tasks/run_resume.py +8/−22`、`misc_config.example.yaml +0/−3`
+——合计 **+84/−70（净 +14）**，全部是修复/清理，没有新增协议面。
 
 ## 2. 真实测试结果
 
