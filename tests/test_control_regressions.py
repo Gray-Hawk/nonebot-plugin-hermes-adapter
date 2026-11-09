@@ -25,16 +25,13 @@ from tests.test_runs_stream import _ClientChain, real_chat
 
 from nonebot_plugin_hermes_adapter.config import plugin_config
 from nonebot_plugin_hermes_adapter.core import control_intent
+from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text
 from nonebot_plugin_hermes_adapter.core import hermes_client as hc
 from nonebot_plugin_hermes_adapter.core.active_session import ActiveSessionManager
 from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 from nonebot_plugin_hermes_adapter.core.inflight import InflightRegistry, make_inflight_key
 from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage
 from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin
-from nonebot_plugin_hermes_adapter.core.npha_terminal import (
-    decode_terminal_batch,
-    structured_batch_from_terminal,
-)
 from nonebot_plugin_hermes_adapter.core.routing import CallerScope
 from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker
 from nonebot_plugin_hermes_adapter.handlers import message_relay as relay
@@ -43,9 +40,34 @@ from nonebot_plugin_hermes_adapter.mcp.tools.control import SubmitControlInput, 
 KEY = make_inflight_key("onebotv11", False, "u1", "g1")
 
 
+def _legacy_units(text: str) -> list[str]:
+    """测试便利：把历史上的 ``{"body": ...}`` 夹具行翻成纯文本正文单位。
+
+    生产端已不识别旧信封；这里只让既有夹具继续可读，控制一律走 submit_control 队列。
+    """
+    bodies: list[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            bodies.append(line)
+            continue
+        if isinstance(obj, dict) and isinstance(obj.get("body"), str):
+            if obj["body"].strip():
+                bodies.append(obj["body"])
+            continue
+        # 旧控制行不再存在：纯文本协议里控制只由工具登记。
+    return bodies
+
+
 def _result(text: str) -> ChatResult:
-    decisions = structured_batch_from_terminal(decode_terminal_batch(text))
-    result = ChatResult(raw_text=text, structured=decisions[0])
+    units = _legacy_units(text)
+    decisions = [{"body": body, "should_reply": True} for body in units]
+    result = ChatResult(raw_text="\n§\n".join(units) or text,
+                        structured=decisions[0] if decisions else {"should_reply": False})
     result.terminal_decisions = decisions
     result.run_id = "run-e2-h"
     return result
@@ -67,16 +89,13 @@ class ControlBindingAtArrivalTests(e2._ReactiveHarness):
         self.addCleanup(control_intent.CONTROL_QUEUE.discard, KEY)
         blocked, resume = asyncio.Event(), asyncio.Event()
         sleeps, quotes, observed = [], [], []
-        output = "\n".join(
-            json.dumps({"body": body}, ensure_ascii=False) for body in ["甲", "乙", "丙"]
-        )
-        lines = output.splitlines()
+        output = "甲\n§\n乙\n§\n丙"
         events = [
-            {"event": "message.delta", "delta": "\n".join(lines[:2]), "seq": 0},
+            {"event": "message.delta", "delta": "甲\n§\n乙", "seq": 0},
             {"event": "tool.started", "tool": "mcp__bridge__submit_control", "seq": 1},
             {"event": "tool.completed", "tool": "mcp__bridge__submit_control", "seq": 2},
-            {"event": "message.delta", "delta": "\n" + lines[2], "seq": 3},
-            {"event": "run.completed", "output": output, "seq": 4},
+            {"event": "message.delta", "delta": "丙", "seq": 3},
+            {"event": "run.completed", "output": "丙", "seq": 4},
         ]
         temp = tempfile.TemporaryDirectory(prefix="fifo-regression-")
         self.addCleanup(temp.cleanup)
@@ -97,13 +116,13 @@ class ControlBindingAtArrivalTests(e2._ReactiveHarness):
             expected_quote = "" if register_after_second_arrival else "m:11"
             async for line in original_lines(response):
                 yield line
-                if index == 0:
-                    # 乙已到达并进入发送队列，正在等条间节奏；此刻才登记给丙的控制。
+                if index == 1:
+                    # 甲/乙已在控制帧封段时入队；发送器正在等条间节奏。
+                    # 此刻才登记的控制只能配给之后的下一份正文丙。
                     await asyncio.wait_for(blocked.wait(), 1)
                     self.assertEqual(quotes, [expected_quote])
                     if register_after_second_arrival:
                         register(reply_to="m:12")
-                if index == 3:
                     resume.set()
                 index += 1
 
@@ -118,7 +137,7 @@ class ControlBindingAtArrivalTests(e2._ReactiveHarness):
             result = await transport(*args, **kwargs)
             observed.extend(
                 (decision["body"], control_intent.control_value(decision, "reply_to"))
-                for decision in result.streamed_decisions
+                for decision in (result.streamed_decisions or [])
             )
             return result
 
@@ -380,18 +399,23 @@ class ControlGroupScopeTests(e2._ReactiveHarness):
         # 没有退窗控制 → 窗口仍在。
         self.assertIsNotNone(manager.get("onebotv11", "g1"))
 
-    async def test_legacy_control_line_scopes_the_same_way(self) -> None:
+    async def test_legacy_control_line_is_plain_text_now(self) -> None:
+        """旧控制行不再有任何控制语义：整段按纯文本发出，控制只来自 submit_control。"""
         resolved: list = []
         manager, observed = self._manager(progress=resolved)
+        legacy = '{"should_exit_active":true,"reply_to":"m:9"}\n{"body":"甲"}'
+        result = ChatResult(raw_text=legacy, structured={"body": legacy, "should_reply": True})
+        result.terminal_decisions = [{"body": legacy, "should_reply": True}]
+        result.run_id = "run-e2-h"
         calls = await self._run(
-            _result('{"should_exit_active":true,"reply_to":"m:9"}\n{"body":"甲"}\n{"body":"乙"}'),
+            result,
             tracker=self._tracker(), sessions=manager, now_ms=self.now,
             resolve_reply=MagicMock(side_effect=lambda *a, **kw: resolved.append(kw["reply_to"])),
         )
-        self.assertEqual([call["text"] for call in calls["send"]], ["甲", "乙"])
-        self.assertEqual(resolved, ["m:9", ""])
-        self.assertEqual(observed["closes"], [2])
-        self.assertIsNone(manager.get("onebotv11", "g1"))
+        self.assertEqual([call["text"] for call in calls["send"]], [legacy])
+        self.assertEqual(resolved, [""])
+        self.assertEqual(observed["closes"], [])
+        self.assertIsNotNone(manager.get("onebotv11", "g1"))
 
     async def test_live_streamed_group_same_scope(self) -> None:
         resolved: list = []
@@ -408,8 +432,8 @@ class ControlGroupScopeTests(e2._ReactiveHarness):
             calls = await self._run(
                 None, tracker=tracker,
                 chat=real_chat(tracker, [
-                    {"event": "message.delta", "delta": '{"body":"甲"}\n{"body":"乙"}', "seq": 0},
-                    {"event": "run.completed", "output": '{"body":"甲"}\n{"body":"乙"}', "seq": 1},
+                    {"event": "message.delta", "delta": "甲\n§\n乙", "seq": 0},
+                    {"event": "run.completed", "output": "甲\n§\n乙", "seq": 1},
                 ]),
                 sessions=manager, now_ms=self.now,
                 resolve_reply=MagicMock(side_effect=lambda *a, **kw: resolved.append(kw["reply_to"])),
@@ -442,19 +466,23 @@ class LegacyCompletionEarlyExitTests(e2._ReactiveHarness):
         manager.end_if_current_generation = MagicMock(side_effect=real_end)
         return manager
 
-    def _legacy_exit_result(self, text: str = "再见") -> ChatResult:
-        # 合法旧 completions 信封：没有 terminal_decisions，控制行随正文一起给。
-        result = ChatResult(raw_text="legacy", structured={
-            "should_reply": True, "should_exit_active": True,
-            "reply_text": text, "reply_to": "",
-        })
+    def _exit_result(self, text: str = "再见") -> ChatResult:
+        # 纯文本协议：正文即消息，退窗控制来自 submit_control 登记。
+        self.addCleanup(control_intent.CONTROL_QUEUE.discard, KEY)
+        control_intent.CONTROL_QUEUE.register(KEY, {"should_exit_active": True})
+        units = decisions_from_text(text) if text.strip() else []
+        result = ChatResult(
+            raw_text=text,
+            structured=units[0] if units else {"should_reply": False},
+        )
+        result.terminal_decisions = units
         result.run_id = "run-e2-h"
         return result
 
     async def test_bounce_early_exit_closes_window(self) -> None:
         manager = self._manager()
         calls = await self._run(
-            self._legacy_exit_result(), tracker=self._tracker(),
+            self._exit_result(), tracker=self._tracker(),
             bounce=[True], sessions=manager, now_ms=self.now,
         )
         # 正文被业务拦截：零发送、按既有语义销账。
@@ -464,21 +492,22 @@ class LegacyCompletionEarlyExitTests(e2._ReactiveHarness):
         self.assertEqual(manager.end_if_current_generation.call_count, 1)
         self.assertIsNone(manager.get("onebotv11", "g1"))
 
-    async def test_empty_content_early_exit_closes_window(self) -> None:
+    async def test_silent_turn_does_not_close_window(self) -> None:
+        """纯文本协议：没有正文就是静默，未配对控制在轮末丢弃，不静默退窗。"""
         manager = self._manager()
         calls = await self._run(
-            self._legacy_exit_result(""), tracker=self._tracker(),
+            self._exit_result(""), tracker=self._tracker(),
             sessions=manager, now_ms=self.now,
         )
         self.assertEqual(calls["send"], [])
-        self.assertEqual(calls["settle"], [("silent", "empty_content")])
-        self.assertEqual(manager.end_if_current_generation.call_count, 1)
-        self.assertIsNone(manager.get("onebotv11", "g1"))
+        self.assertEqual(calls["settle"], [("silent", "empty_output")])
+        self.assertEqual(manager.end_if_current_generation.call_count, 0)
+        self.assertIsNotNone(manager.get("onebotv11", "g1"))
 
     async def test_normal_single_reply_still_closes_after_send(self) -> None:
         manager = self._manager()
         calls = await self._run(
-            self._legacy_exit_result(), tracker=self._tracker(),
+            self._exit_result(), tracker=self._tracker(),
             sessions=manager, now_ms=self.now,
         )
         self.assertEqual([call["text"] for call in calls["send"]], ["再见"])
@@ -490,7 +519,7 @@ class LegacyCompletionEarlyExitTests(e2._ReactiveHarness):
         """尾部与早退共用同一个收窗点：本 turn 只尝试一次，不重复 end。"""
         manager = self._manager()
         await self._run(
-            self._legacy_exit_result(), tracker=self._tracker(),
+            self._exit_result(), tracker=self._tracker(),
             bounce=[True], sessions=manager, now_ms=self.now,
         )
         self.assertEqual(manager.end_if_current_generation.call_count, 1)

@@ -1,7 +1,7 @@
 """Runs 终态多份交付（E2）。
 
-`core.npha_terminal.decode_terminal_batch()` 把 `run.completed.output` 解成 N 份
-control/body；本模块只负责把整批**一次形成完整终态计划**并落库，再按份返回各自的
+`core.runs_text.split_text_units()` 把 `run.completed.output` 按纯文本协议切成 N 份
+正文单位；本模块只负责把整批**一次形成完整终态计划**并落库，再按份返回各自的
 投递上下文。
 
 两条硬约束（E2 卡片）：
@@ -87,25 +87,21 @@ def units_from_decisions(decisions) -> list[tuple[dict, dict]]:
     return pairs
 
 
-def units_from_output(output: str, expect_structured: bool) -> list[dict] | None:
-    """终态 output → 有序 units；None=解析失败／无正文，[]=结构有效但全空内容。"""
+def units_from_output(output: str) -> list[dict] | None:
+    """终态 output → 有序 units；None=无正文／协议失败，[]=有文本但全空内容。
+
+    纯文本协议：正文就是 ``run.completed.output``，独立整行 ``§`` 只作连发分隔。
+    正常链、恢复链、对账链共用 ``core.runs_text`` 的同一份切分，不识别旧 JSON。
+    """
+    from .runs_text import TextUnitsError, units_from_text
+
     text = output or ""
     if not text.strip():
         return None
-    if not expect_structured:
-        unit = _text_unit(text)
-        return [unit] if unit is not None else []
-    from .npha_terminal import (
-        TerminalFormatError,
-        decode_terminal_batch,
-        structured_batch_from_terminal,
-    )
-
     try:
-        decisions = structured_batch_from_terminal(decode_terminal_batch(text))
-    except TerminalFormatError:
+        return units_from_text(text)
+    except TextUnitsError:
         return None
-    return [unit for _, unit in units_from_decisions(decisions)]
 
 
 def build_batch_plan(units: list[dict]) -> tuple[dict, list[dict]]:
@@ -182,70 +178,13 @@ def prepare_terminal_batch(
 
 
 # ---------------------------------------------------------------------------
-# E3：流式即时决策的台账追加与终态折叠（本部署补丁）
+# E3：流式即时决策的台账追加（本部署补丁）
 #
 # 30 号台账的约束不变：已落的 decisions 必须是新 decisions 的逐字前缀，已 sent
-# 组件不重置。E3 只允许「在尾部追加新份」，不允许改写/重排旧份；终态 output
-# 解出的份若是已流式份的后缀，就折掉不重发。
+# 组件不重置。E3 只允许「在尾部追加新份」，不允许改写/重排旧份；纯文本协议下
+# 终态只追加 output 里计划尾部还没有的份，不做任何内容级后缀折叠（跨段同文是
+# 两条独立消息）。
 # ---------------------------------------------------------------------------
-
-
-def _media_identity(url: str) -> str:
-    """媒体身份摘要：比较用定长表示，避免把整段 base64 塞进比较键。"""
-    return hashlib.sha256(str(url).encode("utf-8")).hexdigest()
-
-
-def normalize_decision(decision: dict) -> dict:
-    """比较用决策规范表示：去掉插件内部 `_` 前缀键，正文按**计划器同款**归一。
-
-    delta 与终态是同一段文本的两种切帧：同一张本地图片在流式 body 里可能是
-    本地路径，终态却已被真实 inliner 换成 data URL（R2）。直接比较原始 body
-    会把同一份判成两份，终态因此再发一遍。这里复用 `_decision_unit` 的清洗
-    与媒体摘取（`extract_response_media` 内部就是同一份 inliner）得到
-    （正文, 媒体身份, 文件, reply_to），两侧落在同一规范表示上。
-
-    仍然只做**后缀逐份**等价比较，不按正文全局去重：同文不同段是两条独立决策。
-    """
-    payload = {
-        str(key): value
-        for key, value in (decision or {}).items()
-        if not str(key).startswith("_")
-    }
-    unit = _decision_unit(decision)
-    if unit is None:
-        payload["body"] = ("raw", str((decision or {}).get("body") or "").strip())
-    else:
-        payload["body"] = (
-            "unit",
-            unit["body"],
-            tuple(_media_identity(url) for url in unit["media_urls"]),
-            tuple(unit["file_paths"]),
-            unit["reply_to"],
-        )
-    return payload
-
-
-def fold_stream_decisions(
-    streamed: list[dict], terminal: list[dict] | None
-) -> tuple[list[dict], int]:
-    """把终态决策折回已即时发送的决策序列；返回 (合并后决策, 已折叠的终态份数)。
-
-    delta 流的终态段与 run.completed.output 是同一段文本的两种切帧，正常情况
-    下终态份是已流式决策的**后缀**。只按后缀逐份等价比较（正文+控制），
-    不按文本全局去重——同文不同段是两条独立决策。
-    终态里多出来的份（流式没收到）原样追加，由调用方补发。
-    """
-    stream = [normalize_decision(item) for item in (streamed or []) if isinstance(item, dict)]
-    term = [normalize_decision(item) for item in (terminal or []) if isinstance(item, dict)]
-    folded = 0
-    for size in range(min(len(stream), len(term)), 0, -1):
-        if stream[len(stream) - size:] == term[:size]:
-            folded = size
-            break
-    merged = list(streamed or [])
-    if folded < len(term):
-        merged.extend((terminal or [])[folded:])
-    return merged, folded
 
 
 def append_terminal_batch(

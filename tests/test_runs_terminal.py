@@ -1,4 +1,4 @@
-"""E2：Runs 终态双单行 JSON（多份）解码、整批计划与按份交付。"""
+"""Runs 纯文本终态（多份）切分、整批计划与按份交付。"""
 
 from __future__ import annotations
 
@@ -15,157 +15,103 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.core.npha_terminal import (  # noqa: E402
+from nonebot_plugin_hermes_adapter.core.runs_text import (  # noqa: E402
     MAX_BODY_CHARS,
-    TerminalFormatError,
-    decode_terminal,
-    decode_terminal_batch,
-    structured_batch_from_terminal,
-    structured_from_terminal,
+    TextUnitsError,
+    decisions_from_text,
+    split_text_units,
+    units_from_text,
 )
 from nonebot_plugin_hermes_adapter.core.runs_terminal import (  # noqa: E402
     TerminalPlanError,
     build_batch_plan,
     prepare_terminal_batch,
+    units_from_output,
 )
 from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker  # noqa: E402
 
 
 def unit(control: dict | None = None, body: str = "正文") -> str:
-    return (
-        json.dumps(control or {}, ensure_ascii=False)
-        + "\n"
-        + json.dumps({"body": body}, ensure_ascii=False)
-    )
+    """纯文本协议：一份正文就是这段文本；control 形参只为保留调用形状。"""
+    return body
 
 
 def batch(*pairs) -> str:
-    return "\n".join(unit(control, body) for control, body in pairs)
+    """多份正文按协议连发：两份之间一行 ``§``。"""
+    return "\n§\n".join(unit(control, body) for control, body in pairs)
 
 
-class BatchDecodeTests(unittest.TestCase):
-    def test_single_unit(self) -> None:
-        decisions = decode_terminal_batch(unit({"reply_to": "m:1", "not_final": True}, "你好"))
-        self.assertEqual(len(decisions), 1)
-        self.assertEqual(decisions[0].body, "你好")
-        self.assertEqual(decisions[0].control["reply_to"], "m:1")
-        self.assertIs(decisions[0].control["not_final"], True)
-        self.assertEqual(decisions[0].reminder, "")
+def decisions(*bodies) -> list[dict]:
+    """正文 → 决策序列（空正文不产生决策，也不占发送序）。"""
+    return [{"body": body, "should_reply": True} for body in bodies if str(body).strip()]
 
-    def test_multiple_units_in_order(self) -> None:
-        text = batch(({"reply_to": "m:1"}, "第一条"), ({}, "第二条"), ({"legacy_unknown": "t"}, "第三条"))
-        decisions = decode_terminal_batch(text)
-        self.assertEqual([d.body for d in decisions], ["第一条", "第二条", "第三条"])
-        self.assertEqual(decisions[0].control["reply_to"], "m:1")
-        # 未知旧键按未知键忽略（不恢复成任何现行控制字段）。
-        self.assertNotIn("legacy_unknown", decisions[2].control)
 
-    def test_blank_line_between_units_allowed(self) -> None:
-        text = unit({}, "A") + "\n\n" + unit({}, "B") + "\n"
-        self.assertEqual([d.body for d in decode_terminal_batch(text)], ["A", "B"])
+class TextUnitTests(unittest.TestCase):
+    """正文切分：正文即消息，独立整行 § 只作连发分隔。"""
 
-    def test_empty_control_object(self) -> None:
-        decisions = decode_terminal_batch(batch(({}, "A"), ({}, "B")))
-        self.assertEqual([d.body for d in decisions], ["A", "B"])
-        self.assertIs(decisions[0].control["not_final"], False)
-        self.assertEqual(decisions[0].control["reply_to"], "")
+    def test_single_sentence_is_one_unit(self) -> None:
+        self.assertEqual(split_text_units("你好"), ["你好"])
 
-    def test_missing_control_body_only(self) -> None:
-        decisions = decode_terminal_batch('{"body":"只有正文"}')
-        self.assertEqual(len(decisions), 1)
-        self.assertEqual(decisions[0].body, "只有正文")
-        # 单行正文对象就是现行 Runs 写法：不再挂「缺信封」自愈提示。
-        self.assertEqual(decisions[0].reminder, "")
+    def test_multiline_without_separator_stays_one(self) -> None:
+        text = "第一行\n\n第二段\n第三行"
+        self.assertEqual(split_text_units(text), [text])
 
-    def test_missing_control_mixed_with_units(self) -> None:
-        text = '{"body":"A"}\n' + unit({"reply_to": "m:2"}, "B")
-        self.assertEqual([d.body for d in decode_terminal_batch(text)], ["A", "B"])
+    def test_three_units_in_order(self) -> None:
+        self.assertEqual(split_text_units("甲\n§\n乙\n§\n丙"), ["甲", "乙", "丙"])
 
-    def test_bad_control_still_delivers_body(self) -> None:
-        text = '{"reply_to":"m:9",,}\n{"body":"正文照发"}'
-        decisions = decode_terminal_batch(text)
-        self.assertEqual(decisions[0].body, "正文照发")
-        self.assertEqual(decisions[0].control["reply_to"], "m:9")
-        self.assertTrue(decisions[0].reminder)
+    def test_inline_separator_is_literal(self) -> None:
+        self.assertEqual(split_text_units("第 3 节 §3"), ["第 3 节 §3"])
+        self.assertEqual(split_text_units("§ 内容"), ["§ 内容"])
 
-    def test_empty_body_is_silent(self) -> None:
-        decisions = decode_terminal_batch(batch(({}, "第一条"), ({}, "")))
-        self.assertTrue(decisions[1].silent)
-        self.assertFalse(decisions[0].silent)
+    def test_separator_with_spaces_is_literal(self) -> None:
+        # 严格整行匹配：分节符前后只要多一个空格就是普通正文。
+        for line in (" §", "§ ", " § "):
+            self.assertEqual(split_text_units(f"甲\n{line}\n乙"), [f"甲\n{line}\n乙"])
+            self.assertEqual(split_text_units(line), [line.strip()])
 
-    def test_same_body_twice_is_two_decisions(self) -> None:
-        decisions = decode_terminal_batch(batch(({}, "同一句"), ({}, "同一句")))
-        self.assertEqual(len(decisions), 2)
-        self.assertEqual([d.body for d in decisions], ["同一句", "同一句"])
+    def test_fenced_separator_is_literal(self) -> None:
+        text = "```\n§\n```"
+        self.assertEqual(split_text_units(text), [text])
 
-    def test_quotes_backslash_emoji_preserved(self) -> None:
-        body = '他说："你好\\n第二行"，🙂 emoji'
-        decisions = decode_terminal_batch(unit({}, body))
-        self.assertEqual(decisions[0].body, body)
+    def test_backslash_separator_line_is_plain_text(self) -> None:
+        # 不设转义协议：`\§` 就是普通正文原样发送。
+        self.assertEqual(split_text_units("\\§"), ["\\§"])
 
-    def test_long_body_delivers_intact(self) -> None:
-        # E1 定版：合法 JSON 正文走标准解码，不做 4000 截断（与 completions 同口径）
-        body = "长" * (MAX_BODY_CHARS + 1)
-        decisions = decode_terminal_batch(unit({}, body))
-        self.assertEqual(decisions[0].body, body)
+    def test_leading_trailing_and_repeated_separators_drop_empties(self) -> None:
+        self.assertEqual(split_text_units("§\n甲\n§\n§\n乙\n§"), ["甲", "乙"])
 
-    def test_naked_body_over_limit_rejected(self) -> None:
-        with self.assertRaises(TerminalFormatError) as ctx:
-            decode_terminal_batch("x" * (MAX_BODY_CHARS + 1))
-        self.assertEqual(ctx.exception.reason, "naked_overflow")
+    def test_blank_and_whitespace_only_text_is_silent(self) -> None:
+        for text in ("", "   ", "\n\n", "§"):
+            self.assertEqual(split_text_units(text), [])
 
-    def test_naked_body_is_single_decision(self) -> None:
-        text = "普通一句话\n第二行 {not_final:true}"
-        decisions = decode_terminal_batch(text)
-        self.assertEqual(len(decisions), 1)
-        self.assertEqual(decisions[0].body, text)
-        self.assertTrue(decisions[0].reminder)
+    def test_over_limit_fails_closed(self) -> None:
+        self.assertEqual(len(split_text_units("长" * MAX_BODY_CHARS)[0]), MAX_BODY_CHARS)
+        with self.assertRaises(TextUnitsError) as ctx:
+            split_text_units("长" * (MAX_BODY_CHARS + 1))
+        self.assertEqual(ctx.exception.reason, "body_overflow")
 
-    def test_illegal_trailing_plain_line_rejected(self) -> None:
-        text = unit({}, "A") + "\n尾随文字"
-        with self.assertRaises(TerminalFormatError) as ctx:
-            decode_terminal_batch(text)
-        self.assertEqual(ctx.exception.reason, "residue")
+    def test_units_from_output_uses_same_splitter(self) -> None:
+        units = units_from_output("甲\n§\n乙")
+        self.assertEqual([u["body"] for u in units], ["甲", "乙"])
+        self.assertEqual([u["reply_to"] for u in units], ["", ""])
+        self.assertIsNone(units_from_output("   "))
 
-    def test_complete_unit_plus_residue_rejected(self) -> None:
-        text = unit({}, "A") + "\n" + json.dumps({"reply_to": "m:2"})
-        with self.assertRaises(TerminalFormatError):
-            decode_terminal_batch(text)
+    def test_units_from_output_keeps_legacy_json_verbatim(self) -> None:
+        # 旧 JSON 不再识别：按纯文本原样发送，不拆壳、不消毒。
+        legacy = '{"reply_to":"m:1"}\n{"body":"正文"}'
+        units = units_from_output(legacy)
+        self.assertEqual([u["body"] for u in units], [legacy])
 
-    def test_complete_units_plus_garbage_rejected(self) -> None:
-        text = batch(({}, "A"), ({}, "B")) + "\nxxx"
-        with self.assertRaises(TerminalFormatError):
-            decode_terminal_batch(text)
+    def test_units_from_text_extracts_media(self) -> None:
+        units = units_from_text("看这个 MEDIA:/tmp/a.png")
+        self.assertTrue(units[0]["body"].startswith("看这个"))
+        self.assertEqual(units[0]["file_paths"], ["/tmp/a.png"])
 
-    def test_control_without_body_rejected(self) -> None:
-        text = json.dumps({"reply_to": "m:1"}) + "\n" + json.dumps({"reply_to": "m:2"})
-        with self.assertRaises(TerminalFormatError) as ctx:
-            decode_terminal_batch(text)
-        self.assertEqual(ctx.exception.reason, "control_without_body")
-
-    def test_empty_text_rejected(self) -> None:
-        for text in ("", "   ", "\n\n"):
-            with self.assertRaises(TerminalFormatError):
-                decode_terminal_batch(text)
-
-    def test_fullwidth_envelope_single_and_batch(self) -> None:
-        text = '｛"reply_to"："m:7"，"not_final"：true｝\n｛"body"："正文"｝'
-        one = decode_terminal_batch(text)
-        self.assertEqual(one[0].body, "正文")
-        self.assertEqual(one[0].control["reply_to"], "m:7")
-        two = decode_terminal_batch(text + "\n" + text)
-        self.assertEqual([d.body for d in two], ["正文", "正文"])
-
-    def test_completions_decoder_still_rejects_multi(self) -> None:
-        # E1 定版：completions 只接受恰好一份，多份必须失败
-        with self.assertRaises(TerminalFormatError):
-            decode_terminal(batch(({}, "A"), ({}, "B")))
-
-    def test_structured_batch_shape(self) -> None:
-        payload = structured_batch_from_terminal(decode_terminal_batch(batch(({}, "A"), ({}, ""))))
-        self.assertEqual([item["body"] for item in payload], ["A", ""])
-        self.assertEqual([item["should_reply"] for item in payload], [True, False])
-        self.assertTrue(all("reply_text" not in item for item in payload))
+    def test_decisions_from_text_keeps_raw_body(self) -> None:
+        self.assertEqual(
+            decisions_from_text("甲\n§\n乙"),
+            [{"body": "甲", "should_reply": True}, {"body": "乙", "should_reply": True}],
+        )
 
 
 class TerminalPlanTests(unittest.TestCase):
@@ -406,9 +352,7 @@ class ReactiveBatchDeliveryTests(_ReactiveHarness):
     async def test_multi_decisions_send_in_order(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
-        decisions = structured_batch_from_terminal(
-            decode_terminal_batch(batch(({"reply_to": "m:1"}, "第一条"), ({}, "第二条")))
-        )
+        decisions = decisions_from_text(batch(({}, "第一条"), ({}, "第二条")))
         result = ChatResult(raw_text="x", structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-e2-h"
@@ -424,11 +368,10 @@ class ReactiveBatchDeliveryTests(_ReactiveHarness):
     async def test_empty_body_unit_not_sent(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
-        decisions = structured_batch_from_terminal(
-            decode_terminal_batch(batch(({}, "只有这条"), ({}, "")))
-        )
+        # 尾部空的 § 单元不产生消息，也不占发送序。
+        decisions = decisions_from_text(batch(({}, "只有这条"), ({}, "")))
         result = ChatResult(raw_text="x", structured=decisions[0])
-        result.terminal_decisions = [d for d in decisions if d["should_reply"]]
+        result.terminal_decisions = decisions
         result.run_id = "run-e2-h"
         calls = await self._run(result, tracker=self._tracker())
         self.assertEqual([c["text"] for c in calls["send"]], ["只有这条"])
@@ -436,21 +379,18 @@ class ReactiveBatchDeliveryTests(_ReactiveHarness):
     async def test_all_silent_settles_without_send(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
-        decisions = structured_batch_from_terminal(decode_terminal_batch(unit({}, "")))
-        result = ChatResult(raw_text="x", structured=decisions[0])
-        result.terminal_decisions = decisions
+        result = ChatResult(raw_text="", structured={"should_reply": False})
+        result.terminal_decisions = []
         result.run_id = "run-e2-h"
         calls = await self._run(result, tracker=self._tracker())
         self.assertEqual(calls["send"], [])
-        self.assertEqual(calls["settle"], [("silent", "should_reply_false")])
+        self.assertEqual(calls["settle"], [("silent", "empty_output")])
 
     async def test_plan_failure_means_zero_sends(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
         # tracker 里没有该 run 的 delivery 行 → 真实 upsert 失败 → 必须零发送
-        decisions = structured_batch_from_terminal(
-            decode_terminal_batch(batch(({}, "第一条"), ({}, "第二条")))
-        )
+        decisions = decisions_from_text(batch(({}, "第一条"), ({}, "第二条")))
         result = ChatResult(raw_text="x", structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-without-ledger"
@@ -590,15 +530,10 @@ class _PassiveHarness(unittest.IsolatedAsyncioTestCase):
             "_settle": MagicMock(
                 side_effect=lambda res, outcome, reason: calls["settle"].append((outcome, reason))
             ),
-            "_push_self_heal_note": MagicMock(
-                side_effect=lambda key, decision: calls["heal"].append(
-                    decision.get("_self_heal_hint")
-                )
-            ),
+            "_schedule_reconcile": MagicMock(),
             "_delivery_identity": MagicMock(
                 side_effect=lambda res: (tracker, getattr(res, "run_id", None))
             ),
-            "_schedule_reconcile": MagicMock(),
             "_finish_history": MagicMock(
                 side_effect=lambda *a, **kw: calls["history"].append(kw.get("component_id"))
             ),
@@ -639,9 +574,7 @@ class PassiveBatchDeliveryTests(_PassiveHarness):
     async def test_passive_multi_decisions_send_in_order(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
-        decisions = structured_batch_from_terminal(
-            decode_terminal_batch(batch(({"reply_to": "m:1"}, "私聊一"), ({}, "私聊二")))
-        )
+        decisions = decisions_from_text(batch(({}, "私聊一"), ({}, "私聊二")))
         result = ChatResult(raw_text="x", structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-e2-p"
@@ -651,70 +584,59 @@ class PassiveBatchDeliveryTests(_PassiveHarness):
 
 
 class PassiveMultiControlTests(_PassiveHarness):
-    """R5：私聊 passive 连续多份终态必须按份顺序消费仍存在的控制，空 body 只免发送。"""
+    """R5：私聊 passive 连续多份终态必须按份顺序消费仍存在的控制（submit_control FIFO）。"""
+
+    def _register(self, *controls) -> None:
+        from nonebot_plugin_hermes_adapter.core import control_intent
+
+        key = ("onebotv11", "private:u1")
+        self.addCleanup(control_intent.CONTROL_QUEUE.discard, key)
+        for control in controls:
+            control_intent.CONTROL_QUEUE.register(key, control)
 
     async def test_second_unit_control_kept(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_hermes_adapter.core import control_intent
 
-        output = batch(({}, "先回应"), ({"answer_anchor": "all"}, "任务已登记"))
-        decisions = structured_batch_from_terminal(decode_terminal_batch(output))
+        self._register({"reply_to": "m:1"}, {"answer_anchor": "all"})
+        output = batch(({}, "先回应"), ({}, "任务已登记"))
+        decisions = decisions_from_text(output)
         result = ChatResult(raw_text=output, structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-e2-p"
         calls = await self._run(result, tracker=self._tracker())
-        self.assertEqual(decisions[1]["answer_anchor"], "all")
+        self.assertEqual(control_intent.resolve_control(decisions[0])["reply_to"], "m:1")
+        self.assertEqual(
+            control_intent.resolve_control(decisions[1])["answer_anchor"], "all"
+        )
         self.assertEqual([c["text"] for c in calls["send"]], ["先回应", "任务已登记"])
-        self.assertEqual(calls["heal"], [None, None])
 
-    async def test_silent_second_unit_keeps_control(self) -> None:
+    async def test_unpaired_control_dropped_at_turn_end(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_hermes_adapter.core import control_intent
 
-        output = batch(({}, "先回应"), ({"answer_anchor": "all"}, ""))
-        decisions = structured_batch_from_terminal(decode_terminal_batch(output))
-        result = ChatResult(raw_text=output, structured=decisions[0])
-        result.terminal_decisions = decisions
+        # 静默轮不消费控制：登记了 but 没有正文 → 轮末丢弃，也不发空消息。
+        self._register({"answer_anchor": "all"})
+        result = ChatResult(raw_text="", structured={"should_reply": False})
+        result.terminal_decisions = []
         result.run_id = "run-e2-p"
         calls = await self._run(result, tracker=self._tracker())
-        self.assertEqual(decisions[1]["answer_anchor"], "all")
-        self.assertEqual([c["text"] for c in calls["send"]], ["先回应"])
-        self.assertEqual(calls["settle"], [])
-
-    async def test_all_silent_batch_decodes_control(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
-
-        output = unit({"answer_anchor": "all"}, "")
-        decisions = structured_batch_from_terminal(decode_terminal_batch(output))
-        result = ChatResult(raw_text=output, structured=decisions[0])
-        result.terminal_decisions = decisions
-        result.run_id = "run-e2-p"
-        calls = await self._run(result, tracker=self._tracker())
-        self.assertEqual(decisions[0]["answer_anchor"], "all")
         self.assertEqual(calls["send"], [])
-        self.assertEqual(calls["settle"], [("silent", "should_reply_false")])
+        self.assertEqual(calls["settle"], [("silent", "empty_output")])
+        self.assertEqual(control_intent.CONTROL_QUEUE.pending(("onebotv11", "private:u1")), 1)
 
-    async def test_every_unit_self_heal_hint_consumed_in_order(self) -> None:
+    async def test_single_completions_text_unit_gets_control(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_hermes_adapter.core import control_intent
 
-        first = {"body": "一", "should_reply": True, "reply_to": "",
-                 "_self_heal_hint": "第一份提示"}
-        second = {"body": "二", "should_reply": True, "reply_to": "",
-                  "_self_heal_hint": "第二份提示"}
-        result = ChatResult(raw_text="x", structured=first)
-        result.terminal_decisions = [first, second]
+        self._register({"reply_to": "m:3"})
+        output = "单份正文"
+        decisions = decisions_from_text(output)
+        result = ChatResult(raw_text=output, structured=decisions[0])
+        result.terminal_decisions = decisions
         result.run_id = "run-e2-p"
         calls = await self._run(result, tracker=self._tracker())
-        self.assertEqual([c["text"] for c in calls["send"]], ["一", "二"])
-        self.assertEqual(calls["heal"], ["第一份提示", "第二份提示"])
-
-    async def test_single_completions_decodes_control(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
-
-        output = '{"answer_anchor":"all"}\n{"body":"单份正文"}'
-        decision = structured_from_terminal(decode_terminal(output))
-        result = ChatResult(raw_text=output, structured=decision)
-        result.run_id = "run-e2-p"
-        calls = await self._run(result, tracker=self._tracker())
-        self.assertEqual(decision["answer_anchor"], "all")
+        self.assertEqual(control_intent.resolve_control(decisions[0])["reply_to"], "m:3")
         self.assertEqual([c["text"] for c in calls["send"]], ["单份正文"])
 
 
@@ -735,15 +657,9 @@ class NakedMediaRunsTests(_ReactiveHarness):
                 output = mw.inline_local_media_images("生成图片 MEDIA:" + str(path))
         self.assertGreater(len(output), MAX_BODY_CHARS)
         self.assertIn("data:image/png;base64,", output)
-        # E1 单份解码保持原样；Runs 批量解码必须复用同一份媒体计量与回填。
-        self.assertEqual(decode_terminal(output).body, output)
-        decisions = decode_terminal_batch(output)
-        self.assertEqual(len(decisions), 1)
-        self.assertEqual(decisions[0].body, output)
-        # 同样覆盖带信封的单份：内联图片在信封路径也不得撑爆行/长度计量。
-        enveloped = decode_terminal_batch(unit({}, output))
-        self.assertEqual(len(enveloped), 1)
-        self.assertEqual(enveloped[0].body, output)
+        # 纯文本切分复用计划器的媒体清洗：内联图片不能撑爆长度计量。
+        self.assertEqual(units_from_output(output)[0]["body"], "生成图片")
+        self.assertEqual(len(units_from_output(output)[0]["media_urls"]), 1)
 
         previous = plugin_config.hermes_api_interface
         object.__setattr__(plugin_config, "hermes_api_interface", "runs")
@@ -778,12 +694,12 @@ class NakedMediaRunsTests(_ReactiveHarness):
             object.__setattr__(plugin_config, "hermes_api_interface", previous)
 
     def test_plain_overlong_naked_text_still_rejected(self) -> None:
-        with self.assertRaises(TerminalFormatError) as ctx:
-            decode_terminal_batch("正" * (MAX_BODY_CHARS + 1))
-        self.assertEqual(ctx.exception.reason, "naked_overflow")
-        with self.assertRaises(TerminalFormatError) as ctx:
-            decode_terminal_batch(("正" * MAX_BODY_CHARS) + "\n" + "正")
-        self.assertEqual(ctx.exception.reason, "naked_overflow")
+        with self.assertRaises(TextUnitsError) as ctx:
+            split_text_units("正" * (MAX_BODY_CHARS + 1))
+        self.assertEqual(ctx.exception.reason, "body_overflow")
+        with self.assertRaises(TextUnitsError) as ctx:
+            split_text_units(("正" * MAX_BODY_CHARS) + "\n" + "正")
+        self.assertEqual(ctx.exception.reason, "body_overflow")
 
 
 class CompletionsSinglePathRegressionTests(_ReactiveHarness):
@@ -816,63 +732,50 @@ def _resume_build_units():
 
 
 class SilentControlSideEffectTests(_ReactiveHarness):
-    """R1：过滤空 body 只能跳过发送，不得丢掉仍存在的收窗控制。"""
+    """纯文本协议：没有正文就是静默——不合成空决策、不消费控制、不收窗。"""
 
-    def _silent_decision(self):
-        return {
-            "body": "",
-            "should_reply": False,
-            "should_exit_active": True,
-        }
-
-    async def test_completions_silent_keeps_controls(self) -> None:
+    async def test_completions_silent_leaves_controls_alone(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
-        result = ChatResult(
-            raw_text='{"should_exit_active":true,"legacy_unknown":"收尾"}\n{"body":""}',
-            structured=self._silent_decision(),
-        )
+        result = ChatResult(raw_text="", structured={"should_reply": False})
         result.run_id = "run-e2-h"
         calls = await self._run(result, tracker=self._tracker())
         self.assertEqual(calls["send"], [])
-        self.assertEqual(calls["control"], {"end_window": 1})
-        self.assertNotIn("update_topic", calls["control"])
-        self.assertNotIn("background_note", calls["control"])
-        self.assertEqual(calls["settle"], [("silent", "should_reply_false")])
+        self.assertEqual(calls["control"], {"end_window": 0})
+        self.assertEqual(calls["settle"], [("silent", "empty_output")])
 
-    async def test_runs_silent_unit_keeps_controls(self) -> None:
+    async def test_runs_silent_unit_leaves_controls_alone(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
-        decision = self._silent_decision()
-        result = ChatResult(raw_text="x", structured=decision)
-        result.terminal_decisions = [decision]
+        result = ChatResult(raw_text="", structured={"should_reply": False})
+        result.terminal_decisions = []
         result.run_id = "run-e2-h"
         calls = await self._run(result, tracker=self._tracker())
         self.assertEqual(calls["send"], [])
-        self.assertEqual(calls["control"], {"end_window": 1})
-        self.assertNotIn("update_topic", calls["control"])
-        self.assertNotIn("background_note", calls["control"])
-        self.assertEqual(calls["settle"], [("silent", "should_reply_false")])
+        self.assertEqual(calls["control"], {"end_window": 0})
+        self.assertEqual(calls["settle"], [("silent", "empty_output")])
 
-    async def test_mixed_batch_runs_controls_and_skips_only_send(self) -> None:
+    async def test_batch_exit_control_closes_window_after_group(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_hermes_adapter.core import control_intent
 
-        silent = self._silent_decision()
-        spoken = {"body": "第二份", "should_reply": True, "reply_to": ""}
-        result = ChatResult(raw_text="x", structured=silent)
-        result.terminal_decisions = [silent, spoken]
+        key = ("onebotv11", "group:g1")
+        self.addCleanup(control_intent.CONTROL_QUEUE.discard, key)
+        control_intent.CONTROL_QUEUE.register(key, {"should_exit_active": True})
+
+        decisions = decisions_from_text(batch(({}, "第一份"), ({}, "第二份")))
+        result = ChatResult(raw_text="x", structured=decisions[0])
+        result.terminal_decisions = decisions
         result.run_id = "run-e2-h"
         tracker = self._tracker()
         calls = await self._run(result, tracker=tracker)
-        self.assertEqual([c["text"] for c in calls["send"]], ["第二份"])
-        # 空份不占发送序号：唯一发出的份仍是 primary:0
-        self.assertEqual([c["component"] for c in calls["send"]], ["primary:0"])
+        self.assertEqual([c["text"] for c in calls["send"]], ["第一份", "第二份"])
+        self.assertEqual([c["component"] for c in calls["send"]], ["primary:0", "primary:1"])
         self.assertEqual(calls["settle"], [])
+        # 整组末条之后才收窗一次（退窗是轮级控制，不逐份执行）。
         self.assertEqual(calls["control"], {"end_window": 1})
-        self.assertNotIn("update_topic", calls["control"])
-        self.assertNotIn("background_note", calls["control"])
         plan = json.loads(tracker.get_delivery("run-e2-h")["plan_json"])
-        self.assertEqual([u["cleaned_text"] for u in plan["units"]], ["第二份"])
+        self.assertEqual([u["cleaned_text"] for u in plan["units"]], ["第一份", "第二份"])
 
 
 class ResumePlanConsistencyTests(_ReactiveHarness):
@@ -882,7 +785,7 @@ class ResumePlanConsistencyTests(_ReactiveHarness):
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
         output = batch(({}, "第一份"), ({"reply_to": "m:7"}, "第二份"))
-        decisions = structured_batch_from_terminal(decode_terminal_batch(output))
+        decisions = decisions_from_text(output)
         result = ChatResult(raw_text=output, structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-e2-h"
@@ -941,7 +844,7 @@ class BatchBounceAccountingTests(_ReactiveHarness):
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
         output = batch(({}, "被拦截的正文"), ({}, "正常正文"))
-        decisions = structured_batch_from_terminal(decode_terminal_batch(output))
+        decisions = decisions_from_text(output)
         result = ChatResult(raw_text=output, structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-e2-h"
@@ -961,7 +864,7 @@ class BatchBounceAccountingTests(_ReactiveHarness):
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
         output = unit({}, "唯一一份")
-        decisions = structured_batch_from_terminal(decode_terminal_batch(output))
+        decisions = decisions_from_text(output)
         result = ChatResult(raw_text=output, structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-e2-h"
@@ -982,7 +885,7 @@ class BatchBounceAccountingTests(_ReactiveHarness):
             keywords=("bounce",),
         )
         output = unit({}, "bounce 这条应被真实规则打回")
-        decisions = structured_batch_from_terminal(decode_terminal_batch(output))
+        decisions = decisions_from_text(output)
         result = ChatResult(raw_text=output, structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-e2-h"
@@ -1006,7 +909,7 @@ class PassiveBounceAccountingTests(_PassiveHarness):
         from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
 
         output = unit({}, "私聊被拦截")
-        decisions = structured_batch_from_terminal(decode_terminal_batch(output))
+        decisions = decisions_from_text(output)
         result = ChatResult(raw_text=output, structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-e2-p"

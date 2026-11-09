@@ -104,7 +104,7 @@ class RestartRouteHarness(unittest.IsolatedAsyncioTestCase):
         # 每个用例显式覆盖自己那条 run 的 gateway 终态,避免用例间载荷串味。
         _GatewayHandler.payload = {
             "status": "completed",
-            "output": '{}\n{"body":"重启恢复正文"}',
+            "output": '重启恢复正文',
             "updated_at": time.time(),
         }
 
@@ -198,7 +198,7 @@ class RestartRouteHarness(unittest.IsolatedAsyncioTestCase):
             user_id="u1", group_id=group_id,
         )
         self.tracker.record_expected_delivery(
-            run_id=run_id, output=f'{{}}\n{{"body":"{body}"}}', expect_structured=True,
+            run_id=run_id, output=body, expect_structured=True,
         )
         prepare_terminal_batch(
             tracker=self.tracker, run_id=run_id,
@@ -268,7 +268,7 @@ class RestartRouteRecoveryTests(RestartRouteHarness):
                    user_id="u1", group_id="g1")
         _GatewayHandler.payload = {
             "status": "completed",
-            "output": '{}\n{"body":"停机期间完成的回复"}',
+            "output": '停机期间完成的回复',
             "updated_at": time.time(),
         }
         self.assertEqual(self.registry.known(), [])
@@ -316,7 +316,7 @@ class RestartRouteRecoveryTests(RestartRouteHarness):
                    user_id="u1", group_id="g2")
         _GatewayHandler.payload = {
             "status": "completed",
-            "output": '{}\n{"body":"停机期间完成的回复"}',
+            "output": '停机期间完成的回复',
             "updated_at": time.time(),
         }
         with patch.object(run_resume, "_RESUME_RETRY_SEC", 0.01), \
@@ -358,7 +358,7 @@ class RestartRouteRecoveryTests(RestartRouteHarness):
         # 注意:这里刻意不 finish —— active_runs 与 ready 交付并存,恢复与对账会同时被唤醒。
         _GatewayHandler.payload = {
             "status": "completed",
-            "output": '{}\n{"body":"崩溃窗口补投"}',
+            "output": '崩溃窗口补投',
             "updated_at": time.time(),
         }
 
@@ -379,7 +379,7 @@ class RestartRouteRecoveryTests(RestartRouteHarness):
         self._bind(run_id="run-private", scope="onebotv11:private:u1",
                    is_private=True, user_id="u1", group_id=None)
         self.tracker.record_expected_delivery(
-            run_id="run-private", output='{}\n{"body":"私聊补投"}', expect_structured=True,
+            run_id="run-private", output='私聊补投', expect_structured=True,
         )
         prepare_terminal_batch(
             tracker=self.tracker, run_id="run-private",

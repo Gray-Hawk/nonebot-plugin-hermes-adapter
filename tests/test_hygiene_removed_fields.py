@@ -23,7 +23,6 @@ from tests import _bootstrap  # noqa: E402,F401
 
 from nonebot_plugin_hermes_adapter.core import decision_contract, prompt_builder  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import task_notes  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.npha_terminal import decode_terminal  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.storage.window_store import (  # noqa: E402
     session_from_payload,
     session_to_payload,
@@ -69,15 +68,20 @@ class RemovedFieldHygieneTests(unittest.TestCase):
         # 离场提示改为指向真实登记查询，而不是让模型自报。
         self.assertIn("get_background_tasks", message_feedback._DEPARTURE_CONFIRM_PROMPT)
 
-    def test_legacy_control_line_unknown_field_is_ignored(self) -> None:
-        decision = decode_terminal('{"legacy_unknown":"收尾"}\n{"body":"正文"}')
-        self.assertEqual(decision.body, "正文")
-        self.assertNotIn("legacy_unknown", decision.control)
+    def test_legacy_control_line_is_plain_text(self) -> None:
+        # 旧信封控制行不再有语义：整段按纯文本原样发送，未知/退役字段同样只是正文。
+        from nonebot_plugin_hermes_adapter.core.runs_text import units_from_text
 
-    def test_retired_background_task_field_is_ignored(self) -> None:
-        decision = decode_terminal('{"background_task":"旧便签"}\n{"body":"正文"}')
-        self.assertEqual(decision.body, "正文")
-        self.assertNotIn("background_task", decision.control)
+        legacy = '{"legacy_unknown":"收尾"}\n{"body":"正文"}'
+        self.assertEqual([u["body"] for u in units_from_text(legacy)], [legacy])
+
+    def test_retired_background_task_field_is_gone_from_control(self) -> None:
+        from nonebot_plugin_hermes_adapter.core import control_intent
+
+        decision = {"background_task": "旧便签", "_control": {"reply_to": "m:1"}}
+        effective = control_intent.resolve_control(decision)
+        self.assertNotIn("background_task", effective)
+        self.assertEqual(effective["reply_to"], "m:1")
 
     def test_old_window_payload_unknown_field_is_ignored(self) -> None:
         session = session_from_payload(

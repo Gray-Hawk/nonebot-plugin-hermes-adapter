@@ -67,6 +67,11 @@ from .tools.control import (
     SubmitControlResult,
     submit_control_impl,
 )
+from .tools.continuation import (
+    RequestContinuationInput,
+    RequestContinuationResult,
+    request_continuation_impl,
+)
 from .tools.list_active_sessions import (
     ListActiveSessionsInput,
     ListActiveSessionsResult,
@@ -658,6 +663,36 @@ def build_mcp_app(
             "submit_control",
             f"adapter={adapter} group={group_id} user={user_id} fields={','.join(result.fields)}",
             f"ok={result.ok} registered={result.registered} pending={result.pending}"
+            + (f" error={_clip(result.error)!r}" if result.error else ""),
+        )
+        return result
+
+    @mcp.tool()
+    async def request_continuation(
+        adapter: str,
+        group_id: str | None = None,
+        user_id: str | None = None,
+    ) -> RequestContinuationResult:
+        """Ask the plugin to end this turn and append one continuation turn (completions only).
+
+        Use it only when you have decided to take the task but cannot finish it inside this
+        turn: say the receipt as normal body text, then call this before starting the long
+        work. It is the replacement for the old `not_final` JSON field. It registers only —
+        it never sends a message, never writes body text, and an ordinary final answer needs
+        no call at all. Exactly one of group_id / user_id must be given.
+        """
+        inp = RequestContinuationInput(
+            adapter=adapter, user_id=user_id, group_id=group_id,
+        )
+        result = request_continuation_impl(
+            inp,
+            scope=caller_scope_from_request(),
+            interface=str(getattr(plugin_config, "hermes_api_interface", "")),
+        )
+        _log_tool_call(
+            "request_continuation",
+            f"adapter={adapter} group={group_id} user={user_id}",
+            f"ok={result.ok} registered={result.registered}"
             + (f" error={_clip(result.error)!r}" if result.error else ""),
         )
         return result

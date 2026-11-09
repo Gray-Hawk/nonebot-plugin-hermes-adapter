@@ -24,8 +24,9 @@ from tests import _bootstrap  # noqa: F401
 
 from tests import test_runs_terminal as e2
 from tests.test_background_report_chain import build_board
-from tests.test_runs_stream import ReactiveControlParityTests, RunsEventParser, sse_lines
+from tests.test_runs_stream import RunsEventParser, sse_lines
 
+from nonebot_plugin_hermes_adapter.config import plugin_config
 from nonebot_plugin_hermes_adapter.core import control_intent
 from nonebot_plugin_hermes_adapter.core.active_session import (
     ActiveSessionManager,
@@ -37,10 +38,6 @@ from nonebot_plugin_hermes_adapter.core.inflight import make_inflight_key
 from nonebot_plugin_hermes_adapter.core.kanban_report_source import KanbanReportSource, ingest_into
 from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage
 from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin
-from nonebot_plugin_hermes_adapter.core.npha_terminal import (
-    decode_terminal_batch,
-    structured_batch_from_terminal,
-)
 from nonebot_plugin_hermes_adapter.core.routing import CallerScope
 from nonebot_plugin_hermes_adapter.core.running_tasks import (
     DelegationRunningSource,
@@ -58,6 +55,27 @@ from nonebot_plugin_hermes_adapter.mcp.tools.control import (
 
 GROUP_KEY = make_inflight_key("onebotv11", False, "u1", "g1")
 PRIVATE_KEY = make_inflight_key("onebotv11", True, "u1", None)
+
+
+def _body_of(text: str) -> str:
+    """测试便利：把旧夹具里的 ``{"body": ...}`` 行摊平成纯文本正文（§ 连发）。
+
+    生产端已不识别旧信封；这里只让既有夹具继续可读，控制一律走 submit_control。
+    """
+    bodies: list[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            bodies.append(line)
+            continue
+        if isinstance(obj, dict) and isinstance(obj.get("body"), str):
+            if obj["body"].strip():
+                bodies.append(obj["body"])
+    return "\n§\n".join(bodies) if bodies else text
 
 
 class ControlIntentQueueTests(unittest.TestCase):
@@ -109,9 +127,11 @@ class ControlIntentQueueTests(unittest.TestCase):
         self.assertEqual(effective["answer_anchor"], "")
         self.assertEqual(effective["anchor_merge"], "")
 
-    def test_legacy_control_line_wins_over_tool_value(self) -> None:
+    def test_legacy_control_field_is_ignored(self) -> None:
+        """旧控制行退役：决策上的裸字段不再生效，只有 submit_control 登记值算控制。"""
         decision = {"reply_to": "m:9", "_control": {"reply_to": "m:1"}}
-        self.assertEqual(control_intent.resolve_control(decision)["reply_to"], "m:9")
+        self.assertEqual(control_intent.resolve_control(decision)["reply_to"], "m:1")
+        self.assertEqual(control_intent.resolve_control({"reply_to": "m:9"})["reply_to"], "")
 
     def test_invalid_reply_to_is_rejected(self) -> None:
         for bad in ("123", "m:0", "M:1", "[m:1]", "m: 1", 123):
@@ -177,12 +197,20 @@ class SubmitControlToolTests(unittest.TestCase):
             },
         )
 
-    def test_rejected_outside_runs_without_touching_queue(self) -> None:
-        result = self._call(interface="completions", reply_to="m:1")
+    def test_rejected_outside_text_interfaces_without_touching_queue(self) -> None:
+        # completions 已放开；astrbot 等没有正文决策通道的接口直接拒。
+        result = self._call(interface="astrbot", reply_to="m:1")
         self.assertFalse(result.ok)
         self.assertFalse(result.registered)
-        self.assertIn("Runs-only", result.error or "")
+        self.assertIn("text-body decision channel", result.error or "")
         self.assertEqual(control_intent.CONTROL_QUEUE.pending(GROUP_KEY), 0)
+
+    def test_completions_interface_is_allowed(self) -> None:
+        result = self._call(interface="completions", reply_to="m:1")
+        self.assertTrue(result.ok)
+        self.assertTrue(result.registered)
+        self.assertEqual(control_intent.CONTROL_QUEUE.pending(GROUP_KEY), 1)
+        control_intent.CONTROL_QUEUE.discard(GROUP_KEY)
 
     def test_invalid_value_is_a_soft_failure(self) -> None:
         result = self._call(reply_to="12345")
@@ -449,54 +477,44 @@ class BackgroundStatusToolTests(unittest.TestCase):
 
 
 class ControlToolBatchBoundaryTests(unittest.TestCase):
-    """控制工具不是普通工作工具的封批边界：不切批、不吐旁白。"""
+    """控制帧只封段、不切批；工作工具另起新批。"""
 
-    def test_control_tool_does_not_bump_decision_batch(self) -> None:
+    def test_control_tool_seals_without_bumping_batch(self) -> None:
         parser = RunsEventParser()
         for line in sse_lines([
-            {"event": "message.delta", "delta": '{"body":"甲"}', "seq": 0},
+            {"event": "message.delta", "delta": "甲", "seq": 0},
             {"event": "tool.started", "tool": "submit_control", "seq": 1},
             {"event": "tool.completed", "tool": "submit_control", "seq": 2},
-            {"event": "message.delta", "delta": '\n{"body":"乙"}', "seq": 3},
+            {"event": "message.delta", "delta": "乙", "seq": 3},
         ]):
             parser.feed(line)
         self.assertEqual(parser.decision_batch, 0)
-        self.assertEqual([d.body for d in parser.drain_stream_decisions()], ["甲", "乙"])
+        # 控制帧封段：控制前的正文立刻发出；控制只配给之后的正文。
+        self.assertEqual([d["body"] for d in parser.drain_stream_decisions()], ["甲"])
 
     def test_work_tool_still_bumps_decision_batch(self) -> None:
         parser = RunsEventParser()
         for line in sse_lines([
-            {"event": "message.delta", "delta": '{"body":"甲"}', "seq": 0},
+            {"event": "message.delta", "delta": "甲", "seq": 0},
             {"event": "tool.started", "tool": "lookup", "seq": 1},
             {"event": "tool.completed", "tool": "lookup", "seq": 2},
-            {"event": "message.delta", "delta": '\n{"body":"乙"}', "seq": 3},
+            {"event": "message.delta", "delta": "乙", "seq": 3},
         ]):
             parser.feed(line)
         self.assertEqual(parser.decision_batch, 1)
+        self.assertEqual([d["body"] for d in parser.drain_stream_decisions()], ["甲"])
 
-    def test_body_only_decision_is_stripped_from_narration(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.npha_terminal import strip_complete_decisions
-
-        stripped = strip_complete_decisions('{"body":"甲"}\n这句是旁白\n')
-        self.assertNotIn('"body"', stripped)
-        self.assertIn("这句是旁白", stripped)
-
-    def test_control_tool_does_not_flush_pending_narration(self) -> None:
+    def test_json_literal_progress_is_not_stripped(self) -> None:
         parser = RunsEventParser()
         for line in sse_lines([
-            {"event": "message.delta", "delta": "我先看看", "seq": 0},
-            {"event": "tool.started", "tool": "submit_control", "seq": 1},
+            {"event": "message.interim", "text": '{"body":"甲"}', "seq": 0},
+            {"event": "tool.started", "tool": "lookup", "seq": 1},
         ]):
-            self.assertIsNone(parser.feed(line))
-        for line in sse_lines([
-            {"event": "tool.completed", "tool": "submit_control", "seq": 2},
-        ]):
-            self.assertIsNone(parser.feed(line))
-        # 工作工具才是旁白边界：之前攒的旁白在这里一次定性发出，没有被控制工具切碎。
-        segment = None
-        for line in sse_lines([{"event": "tool.started", "tool": "lookup", "seq": 3}]):
-            segment = parser.feed(line)
-        self.assertEqual(segment, "我先看看")
+            parser.feed(line)
+        # 旧 JSON 片段按正文原样发：不做行级消毒、不摘「决策」。
+        self.assertEqual(
+            [d["body"] for d in parser.drain_stream_decisions()], ['{"body":"甲"}']
+        )
 
 
 class _ControlTurnHarness(e2._ReactiveHarness):
@@ -511,8 +529,13 @@ class _ControlTurnHarness(e2._ReactiveHarness):
         control_intent.CONTROL_QUEUE.register(GROUP_KEY, control)
 
     def _result(self, output: str):
-        decisions = structured_batch_from_terminal(decode_terminal_batch(output))
-        result = ChatResult(raw_text=output, structured=decisions[0])
+        from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text
+
+        decisions = decisions_from_text(_body_of(output))
+        result = ChatResult(
+            raw_text=_body_of(output),
+            structured=decisions[0] if decisions else {"should_reply": False},
+        )
         result.terminal_decisions = decisions
         result.run_id = "run-e2-h"
         return result
@@ -667,8 +690,8 @@ class ControlPrivateTurnTests(e2._PassiveHarness):
 
     async def test_private_control_consumed_by_next_body(self) -> None:
         control_intent.CONTROL_QUEUE.register(PRIVATE_KEY, {"reply_to": "m:1"})
-        decisions = structured_batch_from_terminal(decode_terminal_batch('{"body":"私聊回复"}'))
-        result = ChatResult(raw_text="x", structured=decisions[0])
+        decisions = [{"body": "私聊回复", "should_reply": True}]
+        result = ChatResult(raw_text="私聊回复", structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-e2-p"
         calls = await self._run(result, tracker=self._tracker())
@@ -676,40 +699,35 @@ class ControlPrivateTurnTests(e2._PassiveHarness):
         self.assertEqual(control_intent.CONTROL_QUEUE.pending(PRIVATE_KEY), 0)
 
     async def test_private_body_without_control_still_sends(self) -> None:
-        decisions = structured_batch_from_terminal(decode_terminal_batch('{"body":"照发"}'))
-        result = ChatResult(raw_text="x", structured=decisions[0])
+        decisions = [{"body": "照发", "should_reply": True}]
+        result = ChatResult(raw_text="照发", structured=decisions[0])
         result.terminal_decisions = decisions
         result.run_id = "run-e2-p"
         calls = await self._run(result, tracker=self._tracker())
         self.assertEqual([c["text"] for c in calls["send"]], ["照发"])
 
 
-class ControlLiveChainTests(ReactiveControlParityTests):
-    """即时发送路径：绑上的控制不能破坏流式/终态折叠（不能重发正文）。"""
+class ControlLiveChainTests(_ControlTurnHarness):
+    """即时发送路径：绑上的控制只配一份正文，不因为流式而重发正文。"""
 
     def setUp(self) -> None:  # noqa: D401 - 复用真实 manager harness 的接口约定
         super().setUp()
-        control_intent.CONTROL_QUEUE.discard(GROUP_KEY)
-        self.addCleanup(control_intent.CONTROL_QUEUE.discard, GROUP_KEY)
+        previous = plugin_config.hermes_api_interface
+        object.__setattr__(plugin_config, "hermes_api_interface", "runs")
+        self.addCleanup(object.__setattr__, plugin_config, "hermes_api_interface", previous)
 
     async def test_streamed_body_with_control_is_sent_once(self) -> None:
         control_intent.CONTROL_QUEUE.register(GROUP_KEY, {"reply_to": "m:1"})
-        manager, calls = await self._run_with_manager(
-            manager=self._manager_with_commission(int(time.time() * 1000)),
-            output='{"body":"正文"}', live=True, ephemeral=False,
-        )
+        calls = await self._run(self._result("正文"), tracker=self._tracker())
         self.assertEqual([c["text"] for c in calls["send"]], ["正文"])
         self.assertEqual(control_intent.CONTROL_QUEUE.pending(GROUP_KEY), 0)
 
-    async def test_streamed_empty_body_consumes_control_without_send(self) -> None:
+    async def test_silent_turn_leaves_control_unconsumed(self) -> None:
         control_intent.CONTROL_QUEUE.register(GROUP_KEY, {"should_exit_active": True})
-        manager, calls = await self._run_with_manager(
-            manager=self._manager_with_commission(int(time.time() * 1000)),
-            output='{"body":""}', live=True, ephemeral=False,
-        )
+        calls = await self._run(self._result(""), tracker=self._tracker())
         self.assertEqual(calls["send"], [])
-        self.assertIsNone(manager.get("onebotv11", "g1"))
-        self.assertEqual(control_intent.CONTROL_QUEUE.pending(GROUP_KEY), 0)
+        # 静默轮不消费控制：不造空单元、不收窗；未配对控制由轮末统一丢弃。
+        self.assertEqual(control_intent.CONTROL_QUEUE.pending(GROUP_KEY), 1)
 
 
 if __name__ == "__main__":
