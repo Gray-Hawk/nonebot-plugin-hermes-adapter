@@ -342,6 +342,85 @@ class BackgroundStatusToolTests(unittest.TestCase):
         # 有可读运行源：空 running 是真实「没有在跑任务」。
         self.assertFalse(result.running_unknown)
 
+    def test_other_sessions_cannot_crowd_out_this_session(self) -> None:
+        """会话归属必须先过滤再限额：其他会话堆积大量在跑任务时本会话不得假空。
+
+        旧实现先取全局 ``limit*5`` 条 running/registered 再按会话过滤，别的会话
+        100 条记录即可把本会话唯一一条真在跑的任务挤出窗口，工具还报
+        ``running_unknown=false`` 的「确实没有任务」。
+        """
+        other = "hermes-onebotv11+group+other"
+        with sqlite3.connect(self.board) as con:
+            con.executemany(
+                "INSERT INTO tasks (id, title, status, assignee, result, session_id)"
+                " VALUES (?,?,?,?,?,?)",
+                [(f"other{i}", f"卡片 other{i}", "running", "coder", None, other)
+                 for i in range(100)],
+            )
+        with sqlite3.connect(self.registry) as con:
+            con.executemany(
+                "INSERT INTO bg_completions VALUES (?,?,?,?,?,?,?,?,?,?)",
+                [(f"other{i}", other, "", "registered", 0, 100.0 + i, None, None,
+                  10.0 + i, 10.0 + i) for i in range(100)],
+            )
+        expected = {"kanban": "t_run", "delegation": "deleg_run"}
+        for source in self.sources:
+            result = self._query(outbox=self.outbox, running_sources=[source])
+            self.assertTrue(result.ok)
+            # 有可读运行源且真的读到了本会话那条，不是「未知」，也不是假空。
+            self.assertFalse(result.running_unknown)
+            self.assertEqual([item.task_id for item in result.running], [expected[source.name]])
+
+    def test_session_generation_variants_match_but_sibling_group_does_not(self) -> None:
+        """`-g<代际>` 变体仍算本会话；形近的兄弟群（g1 与 g10）不许误配。"""
+        sibling = self.SESSION + "0"          # hermes-onebotv11+group+g10（形近的兄弟群）
+        decoy = "hermes-onebotv11+group+g2"
+        with sqlite3.connect(self.board) as con:
+            con.executemany(
+                "INSERT INTO tasks (id, title, status, assignee, result, session_id)"
+                " VALUES (?,?,?,?,?,?)",
+                [
+                    ("t_gen2", "代际卡片", "running", "coder", None, self.SESSION + "-g2"),
+                    ("t_sibling", "兄弟群卡片", "running", "coder", None, sibling),
+                    ("t_decoy", "别群卡片", "running", "coder", None, decoy),
+                ],
+            )
+        with sqlite3.connect(self.registry) as con:
+            con.executemany(
+                "INSERT INTO bg_completions VALUES (?,?,?,?,?,?,?,?,?,?)",
+                [
+                    ("deleg_gen2", self.SESSION + "-g2", "", "registered", 0, 200.0, None,
+                     None, 20.0, 20.0),
+                    ("deleg_sibling", sibling, "", "registered", 0, 201.0, None,
+                     None, 21.0, 21.0),
+                    ("deleg_decoy", decoy, "", "registered", 0, 202.0, None, None, 22.0, 22.0),
+                ],
+            )
+        kanban = KanbanRunningSource(self.board).running(session_prefix=self.SESSION, limit=20)
+        delegation = DelegationRunningSource(self.registry).running(
+            session_prefix=self.SESSION, limit=20,
+        )
+        self.assertEqual(
+            sorted(item["task_id"] for item in kanban), ["t_gen2", "t_run"],
+        )
+        self.assertEqual(
+            sorted(item["task_id"] for item in delegation), ["deleg_gen2", "deleg_run"],
+        )
+
+    def test_limit_applies_after_session_filter(self) -> None:
+        """限额作用在本会话结果上：本会话超限时按最近截断，不被别的会话挤掉。"""
+        with sqlite3.connect(self.board) as con:
+            con.executemany(
+                "INSERT INTO tasks (id, title, status, assignee, result, session_id)"
+                " VALUES (?,?,?,?,?,?)",
+                [(f"mine{i}", f"我的卡片{i}", "running", "coder", None, self.SESSION)
+                 for i in range(5)],
+            )
+        source = KanbanRunningSource(self.board)
+        found = source.running(session_prefix=self.SESSION, limit=3)
+        self.assertEqual(len(found), 3)
+        self.assertTrue(all(item["task_id"].startswith(("t_run", "mine")) for item in found))
+
     def test_no_running_source_is_unknown_not_empty(self) -> None:
         result = self._query(outbox=self.outbox, running_sources=None)
         self.assertTrue(result.ok)

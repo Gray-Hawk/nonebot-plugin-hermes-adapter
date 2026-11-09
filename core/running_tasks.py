@@ -43,6 +43,22 @@ def belongs(origin_session_id: str, prefix: str) -> bool:
     )
 
 
+def _belongs_clause(column: str) -> str:
+    """SQL 版 ``belongs()``：``x = 前缀 OR x 以 '<前缀>-g' 开头``。
+
+    会话归属必须在 SQL 侧先过滤、再限额：两个源都在别的会话里堆着活跃记录时，
+    先取全局 ``LIMIT`` 再把不属于本会话的行丢掉，会把本会话真在跑的任务挤出窗口，
+    返回「ok、没有在跑任务」的假空。``substr`` 而不是 ``LIKE``：前缀里可能有
+    ``%``/``_``，LIKE 需要转义，前缀匹配用长度截取语义更贴 startswith。
+    """
+    return f"({column} = ? OR substr({column}, 1, ?) = ?)"
+
+
+def _belongs_params(prefix: str) -> tuple[str, int, str]:
+    """配合 :func:`_belongs_clause` 的三个占位参数。"""
+    return prefix, len(prefix) + 2, prefix + "-g"
+
+
 def _connect_ro(db_path: str | Path) -> sqlite3.Connection:
     path = str(db_path)
     if not Path(path).is_file():
@@ -67,13 +83,16 @@ class KanbanRunningSource:
         self.db_path = str(db_path)
 
     def running(self, *, session_prefix: str, limit: int = 20) -> list[dict[str, Any]]:
+        if not session_prefix:  # 与 belongs() 同口径:空前缀不归属任何会话
+            return []
         conn = _connect_ro(self.db_path)
         try:
-            # 只按真实运行状态筛，会话归属在 Python 侧按同一份 `-g` 变体规则比对。
+            # 只按真实运行状态筛；会话归属（含 `-g` 变体）下推到 SQL 再限额。
             # 排序用 rowid（tasks 必有）而不是 started_at：老库/夹具可能没有该列。
             rows = conn.execute(
-                "SELECT * FROM tasks WHERE status=? ORDER BY rowid DESC LIMIT ?",
-                (KANBAN_RUNNING_STATUS, max(limit, 1) * 5),
+                f"SELECT * FROM tasks WHERE status=? AND {_belongs_clause('session_id')}"
+                " ORDER BY rowid DESC LIMIT ?",
+                (KANBAN_RUNNING_STATUS, *_belongs_params(session_prefix), max(limit, 1)),
             ).fetchall()
         except sqlite3.Error as exc:
             raise RunningSourceError(f"kanban read failed: {exc}") from exc
@@ -82,7 +101,13 @@ class KanbanRunningSource:
         items: list[dict[str, Any]] = []
         for row in rows:
             data = dict(row)
-            if not belongs(str(data.get("session_id") or ""), session_prefix):
+            session_key = str(data.get("session_id") or "")
+            if not belongs(session_key, session_prefix):
+                # 理论上不可达（SQL/Python 判定同构）；真出现就留痕，且绝不静默丢行。
+                logger.warning(
+                    f"[HERMES running] kanban session mismatch: {session_key!r} "
+                    f"prefix={session_prefix!r}"
+                )
                 continue
             items.append({
                 "task_id": str(data.get("id") or ""),
@@ -107,13 +132,17 @@ class DelegationRunningSource:
         self.db_path = str(db_path)
 
     def running(self, *, session_prefix: str, limit: int = 20) -> list[dict[str, Any]]:
+        if not session_prefix:  # 与 belongs() 同口径:空前缀不归属任何会话
+            return []
         conn = _connect_ro(self.db_path)
         try:
+            # 会话归属（含 `-g` 变体）与已派发未终态一起下推到 SQL 再限额。
             rows = conn.execute(
                 "SELECT delegation_id, origin_session_id, dispatched_at"
                 " FROM bg_completions WHERE state=? AND acked=0"
+                f" AND {_belongs_clause('origin_session_id')}"
                 " ORDER BY created_at DESC LIMIT ?",
-                (DELEGATION_RUNNING_STATE, max(limit, 1) * 5),
+                (DELEGATION_RUNNING_STATE, *_belongs_params(session_prefix), max(limit, 1)),
             ).fetchall()
         except sqlite3.Error as exc:
             raise RunningSourceError(f"delegation registry read failed: {exc}") from exc
@@ -122,7 +151,13 @@ class DelegationRunningSource:
         items: list[dict[str, Any]] = []
         for row in rows:
             data = dict(row)
-            if not belongs(str(data.get("origin_session_id") or ""), session_prefix):
+            session_key = str(data.get("origin_session_id") or "")
+            if not belongs(session_key, session_prefix):
+                # 理论上不可达（SQL/Python 判定同构）；真出现就留痕，且绝不静默丢行。
+                logger.warning(
+                    f"[HERMES running] delegation session mismatch: {session_key!r} "
+                    f"prefix={session_prefix!r}"
+                )
                 continue
             items.append({
                 "task_id": str(data.get("delegation_id") or ""),

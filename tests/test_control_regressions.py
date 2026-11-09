@@ -420,5 +420,81 @@ class ControlGroupScopeTests(e2._ReactiveHarness):
         self.assertIsNone(manager.get("onebotv11", "g1"))
 
 
+class LegacyCompletionEarlyExitTests(e2._ReactiveHarness):
+    """旧 completions 单份早退分支：should_exit_active 不得因提前 return 丢失。
+
+    父版本把收窗放在每份进循环时执行，bounce／空正文这类早退分支同样会收窗；
+    候选改成整组末条之后统一收窗后，这些 ``return result`` 必须显式走同一个
+    收窗点，否则旧协议下「说要走却没走」。正常 Runs 连发仍在末条之后收窗
+    （见 :class:`ControlGroupScopeTests`）。
+    """
+
+    def setUp(self) -> None:
+        previous = plugin_config.hermes_api_interface
+        object.__setattr__(plugin_config, "hermes_api_interface", "completions")
+        self.addCleanup(object.__setattr__, plugin_config, "hermes_api_interface", previous)
+        self.now = int(time.time() * 1000)
+
+    def _manager(self):
+        manager = ActiveSessionManager()
+        manager.trigger("onebotv11", "g1", "u1", now_ms=self.now)
+        real_end = manager.end_if_current_generation
+        manager.end_if_current_generation = MagicMock(side_effect=real_end)
+        return manager
+
+    def _legacy_exit_result(self, text: str = "再见") -> ChatResult:
+        # 合法旧 completions 信封：没有 terminal_decisions，控制行随正文一起给。
+        result = ChatResult(raw_text="legacy", structured={
+            "should_reply": True, "should_exit_active": True,
+            "reply_text": text, "reply_to": "",
+        })
+        result.run_id = "run-e2-h"
+        return result
+
+    async def test_bounce_early_exit_closes_window(self) -> None:
+        manager = self._manager()
+        calls = await self._run(
+            self._legacy_exit_result(), tracker=self._tracker(),
+            bounce=[True], sessions=manager, now_ms=self.now,
+        )
+        # 正文被业务拦截：零发送、按既有语义销账。
+        self.assertEqual(calls["send"], [])
+        self.assertEqual(calls["settle"], [("suppressed", "bounce")])
+        # 收窗与父版本等价：恰好一次，且窗口真的关了。
+        self.assertEqual(manager.end_if_current_generation.call_count, 1)
+        self.assertIsNone(manager.get("onebotv11", "g1"))
+
+    async def test_empty_content_early_exit_closes_window(self) -> None:
+        manager = self._manager()
+        calls = await self._run(
+            self._legacy_exit_result(""), tracker=self._tracker(),
+            sessions=manager, now_ms=self.now,
+        )
+        self.assertEqual(calls["send"], [])
+        self.assertEqual(calls["settle"], [("silent", "empty_content")])
+        self.assertEqual(manager.end_if_current_generation.call_count, 1)
+        self.assertIsNone(manager.get("onebotv11", "g1"))
+
+    async def test_normal_single_reply_still_closes_after_send(self) -> None:
+        manager = self._manager()
+        calls = await self._run(
+            self._legacy_exit_result(), tracker=self._tracker(),
+            sessions=manager, now_ms=self.now,
+        )
+        self.assertEqual([call["text"] for call in calls["send"]], ["再见"])
+        self.assertEqual(calls["settle"], [])
+        self.assertEqual(manager.end_if_current_generation.call_count, 1)
+        self.assertIsNone(manager.get("onebotv11", "g1"))
+
+    async def test_exit_close_is_idempotent_per_turn(self) -> None:
+        """尾部与早退共用同一个收窗点：本 turn 只尝试一次，不重复 end。"""
+        manager = self._manager()
+        await self._run(
+            self._legacy_exit_result(), tracker=self._tracker(),
+            bounce=[True], sessions=manager, now_ms=self.now,
+        )
+        self.assertEqual(manager.end_if_current_generation.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

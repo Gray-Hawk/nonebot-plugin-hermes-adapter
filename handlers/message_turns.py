@@ -2233,6 +2233,28 @@ async def _run_reactive_turn(
         control_intent.control_value(decision, "should_exit_active")
         for decision in decisions
     )
+    exit_window_closed = False
+
+    def _close_group_exit_window(branch: str) -> None:
+        """轮级退窗的唯一执行点：整组末条之后，或早退分支收口时。
+
+        世代保护不变：只对本 turn 入口快照的那个世代生效；期间若有别人 @bot
+        续期过窗口，世代号已 +1，旧世代的收窗请求不再匹配，新窗口留给自己的
+        pending/refire。幂等：同一 turn 只尝试一次，早退分支与正常尾部共用。
+        """
+        nonlocal exit_window_closed
+        if exit_window_closed or not group_exit_requested:
+            return
+        exit_window_closed = True
+        manager = _mcp.active_sessions
+        if manager is None:  # 活跃窗管理器未就绪:没有可收的窗
+            return
+        if not manager.end_if_current_generation(session, turn_generation):
+            logger.info(
+                f"[HERMES reactive] should_exit_active not applied ({branch}): window was "
+                f"re-triggered or already gone (group={group_id})"
+            )
+
     # R1:控制副作用与正文发送分离——所有有效决策都先做锚/收窗等轮级控制，
     # 空 body 只跳过发送；不得因过滤空份把本来在发送判断前执行的控制一起丢掉。
     unit_of: dict[int, dict] = {}
@@ -2571,6 +2593,9 @@ async def _run_reactive_turn(
             if batch_mode:
                 _cancel_batch_unit(result, unit_index, reason="empty_content")
                 continue
+            # 旧 completions 单份早退也要收窗:父版本本份进循环即收,
+            # 若这里直接 return,should_exit_active 会静默丢失。
+            _close_group_exit_window("empty_content")
             _settle(result, "silent", "empty_content")
             return result
 
@@ -2635,6 +2660,8 @@ async def _run_reactive_turn(
                 else:
                     suppressed_any = True
                 continue
+            # 单份早退同样要收窗(见 empty_content 分支)。
+            _close_group_exit_window("mid_turn_push")
             return result
 
         # 正文内联 @ 保持原顺序；Reply 另从同一条 m:id 记录取平台 ID 和真实发送者，
@@ -2660,6 +2687,8 @@ async def _run_reactive_turn(
                 _cancel_batch_unit(result, unit_index, reason="bounce")
                 suppressed_any = True
                 continue
+            # 旧 completions 单份 bounce 早退:收窗语义同父版本(不可丢 should_exit_active)。
+            _close_group_exit_window("bounce")
             _settle(result, "suppressed", "bounce")
             return result
 
@@ -2675,6 +2704,7 @@ async def _run_reactive_turn(
                 f"[HERMES reactive] 第{unit_index}份缺少交付上下文,停止本批剩余发送 "
                 f"(run={getattr(result, 'run_id', None)})"
             )
+            _close_group_exit_window("delivery_context_missing")
             return result
         sent_any = True
         await _await_order_gate(result)
@@ -2728,13 +2758,8 @@ async def _run_reactive_turn(
                 component_id=_history_component(unit_index) if batch_mode else "history",
             )
     # 轮级退窗的统一收尾：整组所有份都发完（含 live 已发份与空 body 份）之后才收。
-    # 世代保护不变：期间若有别人 @bot 续期过窗口，世代号已 +1，本 turn 的收窗请求
-    # 不匹配新窗口，仍留给新窗口自己的 pending/refire。
-    if group_exit_requested and not _mcp.active_sessions.end_if_current_generation(session, turn_generation):
-        logger.info(
-            f"[HERMES reactive] should_exit_active not applied: window was re-triggered "
-            f"or already gone (group={group_id})"
-        )
+    # 早退分支已在各自出口调用同一收窗点；世代保护见 _close_group_exit_window。
+    _close_group_exit_window("group_done")
     if not sent_any:
         # 全部份都没有发送(静默／全部被业务拦截)：按既有销账语义收口，禁止对账补投。
         _settle(
