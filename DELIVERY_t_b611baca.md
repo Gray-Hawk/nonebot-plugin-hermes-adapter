@@ -42,19 +42,23 @@ Runs 同一 assistant 段的 interim／delta 完整单元全文匹配被吞（`s
 
 ```
 $ python -B -m unittest discover -s tests -t . -q
-Ran 474 tests in 32.420s
+Ran 487 tests in 32.424s
 OK
 
 $ python -B -m unittest discover -s turn_tests -p 'test_*.py' -q
-Ran 6 tests in 0.054s
+Ran 6 tests in 0.053s
 OK
 
-$ python -B -m unittest tests.test_segment_duplicate_emoji
-Ran 18 tests in 0.080s
+$ python -B -m unittest tests.test_segment_duplicate_emoji -q
+Ran 18 tests in 0.076s
 OK
+
+$ python -B verify.py
+HEAD=177b625 feat(runs): 段内重复吞掉时给群聊触发消息贴一次表情观察
+ALL PASS: 19/19 项通过
 ```
 
-`verify.py` 输出见提交后的运行记录（干净工作树、清缓存后复跑）。
+（交付树清掉并发测试跑出的 `__pycache__` 后复跑；提交前后各跑一次，均为 19/19。）
 
 ## 未做
 
