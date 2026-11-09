@@ -1,7 +1,8 @@
 """FastMCP app 工厂。
 
 把 mcp/tools/ 下的工具(push_message / recall_message / wake_turn /
-list_active_sessions / get_recent_messages / get_message_images)装配进一个 FastMCP 实例,
+list_active_sessions / get_recent_messages / get_message_images /
+get_background_tasks,以及 Runs 控制工具 submit_control)装配进一个 FastMCP 实例,
 供 mcp/__init__.py 启动 uvicorn 时使用。
 """
 
@@ -19,6 +20,7 @@ from ..core.active_session import ActiveSessionManager
 from ..core.bot_registry import BotRegistry
 from ..core.message_buffer import MessageBuffer
 from ..core.routing import resolve_caller_scope
+from ..config import plugin_config
 from ..core.storage.image_cache import ImageCache
 from ..core.storage.file_cache import FileCache, default_file_cache_dir
 from ..core.storage.file_downloader import FileDownloader
@@ -54,6 +56,16 @@ from .tools.get_recent_messages import (
     GetRecentMessagesInput,
     GetRecentMessagesResult,
     get_recent_messages_impl,
+)
+from .tools.background_status import (
+    GetBackgroundTasksInput,
+    GetBackgroundTasksResult,
+    get_background_tasks_impl,
+)
+from .tools.control import (
+    SubmitControlInput,
+    SubmitControlResult,
+    submit_control_impl,
 )
 from .tools.list_active_sessions import (
     ListActiveSessionsInput,
@@ -217,6 +229,7 @@ def build_mcp_app(
     bot_registry: BotRegistry,
     message_store: MessageStore,
     image_cache: ImageCache,
+    background_outbox: Any = None,
 ) -> Any:
     """构造 FastMCP 实例并返回 http_app(),由调用者交给 uvicorn。
 
@@ -593,6 +606,86 @@ def build_mcp_app(
             "wake_turn",
             f"adapter={adapter} user={user_id} group={group_id} text_len={len(text)} src={source}",
             f"ok={result.ok}" + (f" error={_clip(result.error)!r}" if result.error else ""),
+        )
+        return result
+
+    @mcp.tool()
+    async def submit_control(
+        adapter: str,
+        reply_to: str | None = None,
+        should_exit_active: bool | None = None,
+        pin_anchor: bool | None = None,
+        release_anchor: str | None = None,
+        answer_anchor: str | None = None,
+        anchor_merge: str | None = None,
+        group_id: str | None = None,
+        user_id: str | None = None,
+    ) -> SubmitControlResult:
+        """Register ONE control for the NEXT body decision of this conversation (Runs only).
+
+        Ordinary replies need no control call at all: just emit {"body":"..."} and the
+        defaults apply. Call this only when you actually need one of these:
+          - reply_to: quote a message by its plugin m:id (only "m:<positive int>" is accepted)
+          - should_exit_active: true = leave the active window once your reply is sent
+          - pin_anchor: commission judgement turns only; true pins the current request
+          - release_anchor / answer_anchor: commissioner user_id or "all" (unpin / mark answered)
+          - anchor_merge: starter user_id of a pinned task this message belongs to
+
+        One call registers one control, consumed by the next explicit body (an empty body
+        counts as a decision). Several calls are consumed in registration order. This tool
+        only registers: it never sends a message, never leaves the window and never pins by
+        itself — the body decision still does the sending and the existing post-send step
+        still applies the controls. Exactly one of group_id / user_id must be given.
+        """
+        inp = SubmitControlInput(
+            adapter=adapter,
+            user_id=user_id,
+            group_id=group_id,
+            reply_to=reply_to,
+            should_exit_active=should_exit_active,
+            pin_anchor=pin_anchor,
+            release_anchor=release_anchor,
+            answer_anchor=answer_anchor,
+            anchor_merge=anchor_merge,
+        )
+        result = submit_control_impl(
+            inp,
+            scope=caller_scope_from_request(),
+            interface=str(getattr(plugin_config, "hermes_api_interface", "")),
+        )
+        _log_tool_call(
+            "submit_control",
+            f"adapter={adapter} group={group_id} user={user_id} fields={','.join(result.fields)}",
+            f"ok={result.ok} registered={result.registered} pending={result.pending}"
+            + (f" error={_clip(result.error)!r}" if result.error else ""),
+        )
+        return result
+
+    @mcp.tool()
+    async def get_background_tasks(
+        adapter: str,
+        group_id: str | None = None,
+        user_id: str | None = None,
+    ) -> GetBackgroundTasksResult:
+        """List background tasks really registered for this conversation (read-only).
+
+        Reads the plugin's background-completion registry: subagent/Kanban work whose
+        result still has to be reported into this chat. task_state is the upstream task
+        state, report_state the plugin's own delivery progress. An empty list means
+        nothing is registered — never claim a background task from memory. Exactly one
+        of group_id / user_id must be given.
+        """
+        inp = GetBackgroundTasksInput(adapter=adapter, user_id=user_id, group_id=group_id)
+        result = get_background_tasks_impl(
+            inp,
+            outbox=background_outbox,
+            scope=caller_scope_from_request(),
+        )
+        _log_tool_call(
+            "get_background_tasks",
+            f"adapter={adapter} group={group_id} user={user_id}",
+            f"ok={result.ok} count={result.count}"
+            + (f" error={_clip(result.error)!r}" if result.error else ""),
         )
         return result
 

@@ -64,6 +64,7 @@ from ..core.message_buffer import (
 from ..core.message_origin import MessageOrigin
 from ..core import task_notes
 from ..core import user_lists
+from ..core import control_intent
 from ..core.chat_config import load_chat_config
 from ..core.misc_config import load_misc_config
 from ..core.outbound import (
@@ -880,6 +881,9 @@ def _make_runs_live_decisions(
     async def deliver(decision: dict, run_id: str) -> None:
         from ..core.runs_terminal import append_stream_unit, units_from_decisions
 
+        # 控制队列：一份决策消费一份登记控制（空 body 也占一份）。控制只登记不执行，
+        # 这一份照旧走原 delivery/outbound；工具失败/断流/重启导致控制缺失时就是缺省。
+        control_intent.bind_control(decision, key)
         pairs = units_from_decisions([decision])
         if not pairs:
             return  # 空 body/静默份：只占决策序，不占发送序，控制留给终态
@@ -906,7 +910,7 @@ def _make_runs_live_decisions(
             adapter=adapter_name,
             group_id=None if is_private else group_id,
             owner_user_id=user_id if is_private else None,
-            reply_to=decision.get("reply_to"),
+            reply_to=control_intent.control_value(decision, "reply_to"),
             log_tag="HERMES live",
         )
         state["sent_any"] = True  # 与 E2 同口径：尝试过发送就不在收口时记 silent
@@ -1362,6 +1366,10 @@ async def _run_passive_turn(
         # 私聊 passive 原本适用的控制只有自愈提示，
         # 不在这里新增群窗／锚语义；completions 单份行为与顺序不变。
         # E3: 已即时发送的份同样按到达顺序走控制，只是不再重复发送。
+        # 控制队列：每份决策（含空 body）消费一份 submit_control 登记的控制；
+        # 已被即时发送器消费的份不会重弹第二份（bind_control 幂等）。
+        for _passive_decision in passive_decisions:
+            control_intent.bind_control(_passive_decision, _fb_key)
         for _passive_control in passive_decisions:
             _push_self_heal_note(_fb_key, _passive_control)
         passive_deliverable = [
@@ -1501,7 +1509,9 @@ async def _run_passive_turn(
             _settle(result, "silent", "empty_content")
             return
         passive_attempted = True
-        reply_to = decision.get("reply_to") if decision is not None else None
+        reply_to = (
+            control_intent.control_value(decision, "reply_to") if decision is not None else None
+        )
         resolved_reply = resolve_reply(
             _mcp.message_buffer,
             adapter=adapter_name,
@@ -2205,6 +2215,11 @@ async def _run_reactive_turn(
         batch_mode = terminal_decisions is not None
     if not decisions:
         decisions = [{}]
+    # 控制队列：终态/无即时发送器时在这里按份补齐绑定（即时发送过的份已在发送器里
+    # 按同一顺序消费过，bind_control 幂等，不会重弹）。一份决策弹一份控制。
+    _control_key = make_inflight_key(adapter_name, False, user_id, group_id)
+    for _decision in decisions:
+        control_intent.bind_control(_decision, _control_key)
     # R1:控制副作用与正文发送分离——所有有效决策都先做锚/收窗等轮级控制，
     # 空 body 只跳过发送；不得因过滤空份把本来在发送判断前执行的控制一起丢掉。
     unit_of: dict[int, dict] = {}
@@ -2266,10 +2281,12 @@ async def _run_reactive_turn(
         """
         if not sent or _mcp.message_buffer is None:
             return
+        # 生效控制：submit_control 登记值兜底，旧信封控制行原样优先。
+        ctl = control_intent.resolve_control(decision)
         # 发言即开窗(窗口生命周期定案):隐式激活的临时 turn 真说了话 → 开启活跃
         # 窗口,群内跟帖可被听见。should_exit_active 优先——LLM 明说了「这轮谈完了」,
         # 不得借发言把窗又顶开。开窗后 touch / mark_bot_replied 都有了落点。
-        if ephemeral and not decision.get("should_exit_active"):
+        if ephemeral and not ctl["should_exit_active"]:
             _mcp.active_sessions.trigger(adapter_name, group_id, user_id, now_ms=reply_now_ms)
             logger.info(f"[HERMES reactive] ephemeral turn spoke; active window opened (group={group_id})")
         if write_history:
@@ -2306,7 +2323,7 @@ async def _run_reactive_turn(
             media_count=len(media_urls) + send_result_sticker_count(sent),
             text=cleaned_reply_text,
         )
-        if not marked and not decision.get("should_exit_active"):
+        if not marked and not ctl["should_exit_active"]:
             # 排除 should_exit_active:那是本 turn 自己刚 end() 掉窗口,mark 落空是预期的。
             # 剩下的只能是别人的 turn 在本 turn 期间 end() 掉了这个 key(跨用户场景),
             # 日志里 last_bot_reply_at 会一直是 0,同 turn 防重也失去依据 —— 没有这条就查不出为什么。
@@ -2328,8 +2345,8 @@ async def _run_reactive_turn(
         # 闲聊引用不归并(没报 pin/merge 就不评估)。refire 接力出的委托没有
         # replied_msg_id(队列不存引用 id),只能靠信封通道——已知边界(§5.1)。
         merge_starter: str | None = None
-        anchor_merge_raw = decision.get("anchor_merge")
-        if anchor_merge_raw and not decision.get("should_exit_active"):
+        anchor_merge_raw = ctl["anchor_merge"]
+        if anchor_merge_raw and not ctl["should_exit_active"]:
             candidate = str(anchor_merge_raw)
             if candidate in _mcp.active_sessions.pinned_commissioners(adapter_name, group_id):
                 merge_starter = candidate
@@ -2346,8 +2363,8 @@ async def _run_reactive_turn(
                 )
         if (
             merge_starter is None
-            and decision.get("pin_anchor") is True
-            and not decision.get("should_exit_active")
+            and ctl["pin_anchor"] is True
+            and not ctl["should_exit_active"]
             and replied_msg_id is not None
         ):
             merge_starter = _mcp.active_sessions.find_anchor_starter_by_msg_id(
@@ -2363,7 +2380,7 @@ async def _run_reactive_turn(
                 f"[HERMES reactive] anchor merge {'merged' if merged else 'failed'} "
                 f"(group={group_id} starter={merge_starter} user={user_id})"
             )
-        elif decision.get("pin_anchor") is True and not decision.get("should_exit_active"):
+        elif ctl["pin_anchor"] is True and not ctl["should_exit_active"]:
             # 本部署补丁: known_bots 挡钉——bot 账号的委托轮不许起任务锚
             # (bot 派的活不是真人任务,双 bot 互 @ 下 bot 钉锚会占住双槽)。
             # 门控放调用点不放 pin_anchor 内部:manager 是纯状态机,「谁配钉」
@@ -2424,8 +2441,8 @@ async def _run_reactive_turn(
         # 信封 answer_anchor=委托人 id|"all",回复真发出才标记(与 pin 同门槛,
         # 收窗轮不标记)。错填不静默丢:值校验在钉锚委托人集合,非法值走插件
         # 便签反馈通道,下一轮贴回模型自修正(解挂不差一轮聊天)。
-        answer_anchor = decision.get("answer_anchor")
-        if answer_anchor and not decision.get("should_exit_active"):
+        answer_anchor = ctl["answer_anchor"]
+        if answer_anchor and not ctl["should_exit_active"]:
             who = "all" if answer_anchor is True else str(answer_anchor)
             valid_ids = _mcp.active_sessions.pinned_commissioners(adapter_name, group_id)
             if who != "all" and who not in valid_ids:
@@ -2451,7 +2468,7 @@ async def _run_reactive_turn(
         # user_id 或 "all"(bool true 宽容视同 all)。ephemeral 无注册窗口,
         # release 按 key 查管理器,自然 no-op。位置在 answer 之后(alive/103):
         # 同轮 answer+release 是「标记完结并松锚」的合法组合,不可颠倒。
-        release_anchor = decision.get("release_anchor")
+        release_anchor = ctl["release_anchor"]
         if release_anchor:
             who = "all" if release_anchor is True else str(release_anchor)
             released = _mcp.active_sessions.release_anchor(adapter_name, group_id, who)
@@ -2468,7 +2485,7 @@ async def _run_reactive_turn(
         # release_anchor 处理移在 answer_anchor 之后(alive/103):同轮 answer+release
         # 必须先让合法 answer 标记生效再松锚,否则锚被提前 release 后 answer 校验
         # 落空,模型反收「非法值」便签。见 turn 尾部。
-        if decision.get("should_exit_active") and not _mcp.active_sessions.end_if_current_generation(session, turn_generation):
+        if control_intent.control_value(decision, "should_exit_active") and not _mcp.active_sessions.end_if_current_generation(session, turn_generation):
             # 收窗只对本 turn 入口快照的那个世代生效:期间若有别人 @bot 续期过窗口,
             # 世代号已 +1,旧世代的收窗请求不再匹配,新窗口留在字典里等它的 refire。
             logger.info(
@@ -2583,7 +2600,7 @@ async def _run_reactive_turn(
             ),
             prepare_delivery=lambda: _terminal_delivery(
                 result, unit_index, cleaned_text="", media_urls=media_urls,
-                file_paths=[], reply_to=decision.get("reply_to"),
+                file_paths=[], reply_to=control_intent.control_value(decision, "reply_to"),
             ),
             mark_replied=lambda: _mcp.active_sessions.mark_bot_replied(
                 adapter_name, group_id, now_ms=_now_ms(), media_count=len(media_urls), text=""
@@ -2616,7 +2633,7 @@ async def _run_reactive_turn(
             adapter=adapter_name,
             group_id=group_id,
             owner_user_id=None,
-            reply_to=decision.get("reply_to"),
+            reply_to=control_intent.control_value(decision, "reply_to"),
             log_tag="HERMES reactive",
         )
         reply_qq_message_id = resolved_reply.qq_message_id if resolved_reply else None
@@ -2638,7 +2655,7 @@ async def _run_reactive_turn(
         delivery = _terminal_delivery(
             result, unit_index,
             cleaned_text=cleaned_reply_text, media_urls=media_urls, file_paths=file_paths,
-            reply_to=decision.get("reply_to"), reply_qq_message_id=reply_qq_message_id,
+            reply_to=control_intent.control_value(decision, "reply_to"), reply_qq_message_id=reply_qq_message_id,
             reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
         )
         if batch_mode and delivery is None:

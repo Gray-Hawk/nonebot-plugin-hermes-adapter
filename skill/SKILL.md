@@ -102,6 +102,14 @@ Each returned message carries:
   the full media picture.
 - `text`, `user`, `ts`, `is_bot` — as before
 
+### `get_background_tasks(adapter, group_id? | user_id?)`
+
+Read-only view of the background work really registered for this conversation: subagent /
+Kanban results the plugin still has to report back here. `task_state` is the upstream task
+state, `report_state` the plugin's own delivery progress, `summary` a one-line result
+excerpt. An empty list means nothing is registered — never claim a background task from
+memory, and never invent a task note; the plugin wakes you when the result is ready.
+
 ### `get_message_images(message_ids, adapter?, group_id?)`
 
 Fetch image bytes for up to 4 message ids in a single call. Returns a content array
@@ -128,28 +136,40 @@ Each per-image result has `available: true|false`. When unavailable, `reason` is
 Oversized images are compressed automatically (fetch ladder); animated images return
 multiple frames (up to the configured fetch frame cap) with per-frame markers.
 
-## Output contract (reactive)
+## Output contract (Runs)
 
-In reactive mode, your final reply MUST be a two-line JSON envelope:
+On Runs your final reply is a one-line JSON body object:
 
 ```
-{"reply_to": "m:123"}                  // control line — only the fields you need; {} is valid
-{"body": "reply text"}                 // body line — exactly one string field
+{"body": "reply text"}
 ```
 
-The control line may carry `reply_to`, `should_exit_active`, `pin_anchor`,
-`release_anchor`, `answer_anchor`, `anchor_merge`, `background_task`. Omitted fields take
-their defaults; unknown fields are ignored.
+A non-empty body is sent to the chat as-is; an empty body means silence. You may emit
+several of these back-to-back (a blank line between them is allowed); each one is judged
+and sent on its own. Ordinary replies need no control call at all — do not spend a turn
+just to express control.
 
-The body line is always `{"body":"..."}`. A non-empty body is sent to the chat as-is; an
-empty body means silence. On Runs you may emit several envelopes back-to-back (a blank
-line between them is allowed).
+When a reply actually needs a control, register it with the `submit_control` tool first
+and then emit the body decision:
 
-On completions only, `not_final: true` means this reply is NOT your final result but a task acknowledgement —
-the plugin resends it as-is and immediately fires a continue turn so you can actually do
-the work. Use it only when a concrete task is still pending; omit it for chit-chat and
-wrapped-up turns. Runs continues tool work in the same run instead of requesting a
-plugin continuation turn.
+- `reply_to` — quote one message of this conversation by its plugin `m:id` (`m:123`); only
+  that shape is accepted, never a NapCat id or a Hermes transcript id
+- `should_exit_active` — `true` = leave the active window once this reply is sent
+- `pin_anchor` — commission judgement turns only; `true` pins the current request
+- `release_anchor` / `answer_anchor` — commissioner user_id or `"all"` (unpin / mark answered)
+- `anchor_merge` — starter user_id of a pinned task this message belongs to
+
+One tool call registers one control, consumed by the next explicit body (an empty body
+counts as a decision); several registrations are consumed in order, and with none
+registered the defaults apply. The tool only registers: it never sends a message and never
+leaves the window or pins by itself — the body still does the sending and the existing
+post-send step still applies the controls. If the control is lost (tool failure, broken
+stream, restart) the body is still sent with default controls.
+
+On completions the input is still the two-line envelope (control line + body line) and
+`not_final: true` is available there: it means this reply is NOT your final result but a
+task acknowledgement — the plugin resends it as-is and immediately fires a continue turn.
+Runs continues tool work in the same run instead of requesting a plugin continuation turn.
 
 Mentions live inside `body`: write `[CQ:at,qq=12345]` exactly where each strong
 notification belongs. Multiple people and arbitrary positions are supported; the plugin
@@ -213,8 +233,9 @@ above apply.
 
 ### Exit threshold (`should_exit_active`)
 
-This flag closes the active window. Once closed, non-@ messages are dropped before you
-ever see them. Set the bar **high**:
+Registering `should_exit_active: true` with `submit_control` closes the active window after
+that reply is sent (on completions the same flag lives in the envelope control line). Once
+closed, non-@ messages are dropped before you ever see them. Set the bar **high**:
 
 - Set `true` only when:
   - User explicitly says goodbye / thanks that's enough / never mind / 不用了.
@@ -335,9 +356,10 @@ are transcript snapshots of a "merged forward" message the user shared:
 - Don't call `push_message` to "ping" or "say hi" to inactive groups. The reactive guard
   will return 422 and your message will be discarded.
 - Don't try to set user profiles / facts via this skill. M1 has no user profile support.
-- Use `reply_to="m:123"` to quote a message already visible in this chat's history. It is
-  resolved through the plugin mapping; unknown, legacy or cross-chat ids degrade to an
-  ordinary unquoted message. Never pass a NapCat message id.
+- Use `submit_control(reply_to="m:123")` to quote a message already visible in this chat's
+  history; it applies to the very next body decision. It is resolved through the plugin
+  mapping; unknown, legacy or cross-chat ids degrade to an ordinary unquoted message.
+  Never pass a NapCat message id.
 - Don't call `get_message_images` speculatively for every reactive turn — only when the
   user's text actually references a past image. Each call costs bytes + an extra LLM turn.
 - Don't call `get_message_images` against `[语音] [视频] [文件:...]` placeholders inside a

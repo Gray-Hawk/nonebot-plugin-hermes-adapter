@@ -291,6 +291,7 @@ async def start_mcp_server() -> None:
         bot_registry=bot_registry,
         message_store=message_store,
         image_cache=image_cache,
+        background_outbox=background_report_outbox,
     )
 
     config = uvicorn.Config(

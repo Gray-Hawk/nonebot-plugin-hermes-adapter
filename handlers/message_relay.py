@@ -18,6 +18,7 @@ from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..adapter_norm import normalize_adapter_name
 from ..config import plugin_config, steer_reply_push_active
 from ..core import rate_bucket, user_lists
+from ..core import control_intent
 from ..core.chat_config import load_chat_config
 from ..core.hermes_client import (
     hermes_client,
@@ -268,6 +269,8 @@ async def _handle_passive_path(
         should_refire = False
         raise
     finally:
+        # 控制是进程内增强：本轮结束丢弃未消费的登记，绝不跨轮误配给下一份正文。
+        control_intent.CONTROL_QUEUE.discard(key)
         if not should_refire:
             _release_slot_and_retry(key, adapter_name, is_private, user_id, group_id)
         else:
@@ -1041,6 +1044,8 @@ async def _handle_reactive_path(
         logger.exception(f"[HERMES] reactive turn raised; dropping pending for {key}")
         raise
     finally:
+        # 控制是进程内增强：本轮结束丢弃未消费的登记，绝不跨轮误配给下一份正文。
+        control_intent.CONTROL_QUEUE.discard(key)
         # 先还租约(剩余窗口不足时在这里垫到下限),再决定要不要接力 —— 顺序反了
         # 就等于让 refire 去撞一个刚死的窗口。
         _mcp.active_sessions.end_turn(lease, now_ms=_now_ms())

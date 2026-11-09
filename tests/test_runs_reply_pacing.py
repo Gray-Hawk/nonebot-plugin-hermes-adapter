@@ -47,6 +47,70 @@ class RunsReplyPacingTests(unittest.IsolatedAsyncioTestCase):
                 target=SimpleNamespace(base_url='http://test', api_key='', timeout=5, label='test'),
             )
 
+    async def test_control_tool_keeps_batch_pacing_and_input_gate(self):
+        """submit_control 不是工作工具的封批边界：批号不变，3 秒节奏与输入暂存照旧。"""
+        now = [0.0]
+        sleeps, sends, busy, drained = [], [], [], []
+
+        async def sleep(delay):
+            sleeps.append(delay)
+            now[0] += delay
+            await asyncio.sleep(0)
+
+        async def deliver(decision, run_id):
+            if decision['body']:
+                sends.append((decision['body'], now[0]))
+
+        async def on_drained():
+            drained.append([body for body, _at in sends])
+
+        deliver.set_busy = busy.append
+        deliver.on_drained = on_drained
+        output = '{"body":"甲"}\n{"body":"乙"}'
+        with patch.object(hc, '_runs_reply_sleep', sleep, create=True), \
+                patch.object(hc, '_runs_reply_clock', lambda: now[0], create=True):
+            await self.chat([
+                {'event': 'message.delta', 'delta': '{"body":"甲"}', 'seq': 0},
+                {'event': 'tool.started', 'tool': 'submit_control', 'seq': 1},
+                {'event': 'tool.completed', 'tool': 'submit_control', 'seq': 2},
+                {'event': 'message.delta', 'delta': '\n{"body":"乙"}', 'seq': 3},
+                {'event': 'run.completed', 'output': output, 'seq': 4},
+            ], deliver)
+        # 同一批：第二条仍等满 3 秒；输入暂存只在整批排空后释放一次。
+        self.assertEqual(sends, [('甲', 0.0), ('乙', 3.0)])
+        self.assertEqual(sleeps, [3.0])
+        self.assertEqual(busy[0], True)
+        self.assertEqual(busy[-1], False)
+        self.assertEqual(drained, [['甲', '乙']])
+
+    async def test_work_tool_between_units_skips_interval(self):
+        """对照组：普通工具仍切批（既有语义不退化）。"""
+        now = [0.0]
+        sleeps, sends = [], []
+
+        async def sleep(delay):
+            sleeps.append(delay)
+            now[0] += delay
+            await asyncio.sleep(0)
+
+        async def deliver(decision, run_id):
+            if decision['body']:
+                sends.append((decision['body'], now[0]))
+
+        deliver.set_busy = lambda value: None
+        output = '{"body":"甲"}\n{"body":"乙"}'
+        with patch.object(hc, '_runs_reply_sleep', sleep, create=True), \
+                patch.object(hc, '_runs_reply_clock', lambda: now[0], create=True):
+            await self.chat([
+                {'event': 'message.delta', 'delta': '{"body":"甲"}', 'seq': 0},
+                {'event': 'tool.started', 'tool': 'lookup', 'seq': 1},
+                {'event': 'tool.completed', 'tool': 'lookup', 'seq': 2},
+                {'event': 'message.delta', 'delta': '\n{"body":"乙"}', 'seq': 3},
+                {'event': 'run.completed', 'output': output, 'seq': 4},
+            ], deliver)
+        self.assertEqual(sends, [('甲', 0.0), ('乙', 0.0)])
+        self.assertEqual(sleeps, [])
+
     async def test_three_consecutive_units_first_immediate_then_three_seconds(self):
         now = [0.0]
         sleeps, sends, busy, drained = [], [], [], []

@@ -1,9 +1,11 @@
 """completions／Runs 终态与 Runs delta 的单行 JSON 解码。
 
-协议（completions 只接受一份终态决策，Runs 终态允许连续多份）：
+协议（completions 只接受一份终态决策；Runs 的普通回复就是一行正文对象，
+需要控制时由 submit_control 工具登记，控制行旧形态保留作在途兼容）：
 
-    {"reply_to":"m:123","not_final":false}
-    {"body":"正文\\n第二行"}
+    {"body":"正文"}                                   # Runs 普通回复（当前写法）
+    {"reply_to":"m:123"}                              # 旧控制行（在途兼容）
+    {"body":"正文"}
 
 `decode_terminal` 的真实口径（与下面的实现逐条对应）：
 
@@ -34,13 +36,14 @@ from typing import Any
 
 MAX_BODY_CHARS = 4000
 
-# 新协议控制字段：should_reply / reply_text / reply_context / reply_seq / topic_hint 全部退出。
+# 现行控制字段（旧信封控制行在途兼容，也承载 submit_control 登记的同名字段）。
+# 其它旧协议字段（should_reply / reply_text / reply_context / reply_seq 等）一律退出，
+# 未知键按 json 语义忽略。
 CONTROL_STR_FIELDS = (
     "reply_to",
     "release_anchor",
     "answer_anchor",
     "anchor_merge",
-    "background_task",
 )
 CONTROL_BOOL_FIELDS = ("not_final", "should_exit_active", "pin_anchor")
 
@@ -228,7 +231,11 @@ def _control_shaped(line: str) -> bool:
 
 
 def _body_only_decision(line: str, body: str, max_body_chars: int) -> TerminalDecision:
-    """缺失控制行、只有正文对象的单元：控制全缺省，正文交付。"""
+    """只有正文对象的单元（Runs 普通回复的当前写法）：控制全缺省，正文交付。
+
+    这里不再挂「缺信封」自愈提示：单行 {"body":"..."} 就是现行 Runs 协议，
+    需要控制时由 submit_control 工具登记，不是模型写错。
+    """
     from .media_payload import _detach_data_urls, _reattach_data_urls
 
     shrunk, detached = _detach_data_urls(body)
@@ -236,16 +243,17 @@ def _body_only_decision(line: str, body: str, max_body_chars: int) -> TerminalDe
         raise TerminalFormatError("body_overflow")
     real = _reattach_data_urls(shrunk, detached) if detached else body
     return TerminalDecision(
-        body=real, control=_control_defaults(), raw=line, reminder=ENVELOPE_MISSING_HINT,
+        body=real, control=_control_defaults(), raw=line, reminder="",
     )
 
 
 def decode_terminal_batch(
     text: str, *, max_body_chars: int = MAX_BODY_CHARS
 ) -> list[TerminalDecision]:
-    """Runs 终态：连续两行一份决策，允许一份或多份；必须恰好完整消费。
+    """Runs 终态：每行一份决策（正文对象行），也接受旧两行信封；允许一份或多份。
 
-    - 每份：控制对象行 + 正文行（正文对象，或控制行后紧跟的一行纯文本正文）。
+    - 每份：正文对象行 ``{"body":"..."}``（现行写法，控制由 submit_control 登记），
+      或旧形态「控制对象行 + 正文行」在途兼容。
     - 缺控制（只有 `{"body":"..."}` 行）→ 该份控制缺省、正文交付。
     - 空行只作份间分隔，不参与内容。
     - 首行不是对象 → A 类无信封，整段按唯一一份正文处理（与 completions 同口径）。

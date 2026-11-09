@@ -30,7 +30,11 @@ class EnvelopePromptTests(unittest.TestCase):
                     self.assertIn('用户只能看到决策信封中的 body 或 push_message 工具推送的消息。', prompt)
                     self.assertIn('想对用户说的话都写进 body，不要写在信封外', prompt)
                     self.assertIn('不要假设普通旁白会被转发', prompt)
-                    self.assertIn('每份决策固定两行', prompt)
+                    if interface == 'runs':
+                        self.assertIn('每份决策就是一行 JSON', prompt)
+                        self.assertIn('submit_control', prompt)
+                    else:
+                        self.assertIn('每份决策固定两行', prompt)
 
     def test_noninstant_tasks_receive_ack_before_lengthy_work(self):
         for interface in ('runs', 'completions'):
@@ -58,12 +62,13 @@ class EnvelopePromptTests(unittest.TestCase):
                 with self.subTest(interface=interface, path=path):
                     self.assertIn('只有确实存在后续执行路径时才可承诺处理', prompt)
                     self.assertIn('已成功启动并且有完成通知的后台任务', prompt)
-                    self.assertIn('background_task 便签本身不会启动任务', prompt)
+                    self.assertNotIn('background_task 便签', prompt)
                     self.assertIn('没有可执行路径时，必须如实说明阻碍', prompt)
                     self.assertIn('禁止只说“稍等”“我去处理”后静默结束', prompt)
                     if interface == 'runs':
                         self.assertNotIn('not_final', prompt)
                         self.assertIn('同一 run 的实际后续工具调用', prompt)
+                        self.assertIn('get_background_tasks', prompt)
                     else:
                         self.assertIn('not_final=true', prompt)
 

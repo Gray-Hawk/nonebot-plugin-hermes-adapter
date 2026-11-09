@@ -943,7 +943,8 @@ def build_reactive_user_content(
         reminder = "\n\n请用双单行 JSON 信封回复：控制 JSON 行 + {\"body\":\"正文\"} 行，不要直接说话或扮演动作。"
     elif mode == "runs":
         reminder = (
-            "\n\n请用双单行 JSON 信封回复：控制 JSON 行 + {\"body\":\"正文\"} 行（可连续多份）。"
+            "\n\n请用单行 JSON 回复：{\"body\":\"正文\"}（可连续多份）；"
+            "需要引用／退窗／锚控制时先调 submit_control 登记，普通回复不要调控制工具。"
             + _RUNS_VISIBLE_REPLY_REMINDER
         )
     else:

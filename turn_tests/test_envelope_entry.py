@@ -157,8 +157,8 @@ class PassiveTurnEnvelopeTests(unittest.IsolatedAsyncioTestCase):
         from nonebot_plugin_hermes_adapter.core.npha_terminal import (
             decode_terminal, structured_from_terminal,
         )
-        ctrl = ('｛"reply_to"："m:1"，"topic_hint"："t"，"release_anchor"：""，"answer_anchor"：""，'
-                '"anchor_merge"：""，"background_task"：""，"not_final"：false，'
+        ctrl = ('｛"reply_to"："m:1"，"release_anchor"：""，"answer_anchor"：""，'
+                '"anchor_merge"：""，"not_final"：false，'
                 '"should_exit_active"：false，"pin_anchor"：false｝')
         text = ctrl + "\n" + '｛"body"："正文A"｝'
         result = ChatResult(raw_text=text, structured=structured_from_terminal(decode_terminal(text)))
@@ -197,8 +197,8 @@ class PassiveTurnEnvelopeTests(unittest.IsolatedAsyncioTestCase):
         from nonebot_plugin_hermes_adapter.core.npha_terminal import (
             decode_terminal, structured_from_terminal,
         )
-        ctrl = '｛"reply_to"："m:1"，"topic_hint"："t"，"release_anchor"：""，"answer_anchor"：""，' \
-               '"anchor_merge"：""，"background_task"：""，"not_final"：false，' \
+        ctrl = '｛"reply_to"："m:1"，"release_anchor"：""，"answer_anchor"：""，' \
+               '"anchor_merge"：""，"not_final"：false，' \
                '"should_exit_active"：false，"pin_anchor"：false｝'
         text = ctrl + "\n" + '｛"body"："他说：\\"你好\\"，然后走了"｝'
         result = ChatResult(raw_text=text, structured=structured_from_terminal(decode_terminal(text)))
