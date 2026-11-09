@@ -516,10 +516,11 @@ class _FailedSendRetry:
         with patch.object(hc, '_runs_reply_sleep', AsyncMock(), create=True):
             calls = await self._run(None, tracker=tracker, chat=chat)
         self.assertEqual(failed, ['甲'])
-        # 即时发送失败的那一份不被当成已发：终态重试该份（同一 primary:0）。
-        # 第一次 甲 由测试自己的 send 拦下（不进 harness 记录），记录里是 乙 → 甲(重试)。
-        self.assertEqual([call['text'] for call in calls['send']], ['乙', '甲'])
-        self.assertEqual(len(tracker.list_components(self.RUN_ID)), 4)
+        # 即时发送失败的那一份仍由终态重试补投；同时终态 output 里的 甲 是上一段的
+        # 重复文本，按纯文本协议不再折叠——记录里是 甲(终态)→乙(终态)→甲(重试)。
+        self.assertEqual([call['text'] for call in calls['send']], ['甲', '乙', '甲'])
+        # 终态两份正文各自建组件（甲的重复文本也照发），再加失败即时份的重试记录。
+        self.assertEqual(len(tracker.list_components(self.RUN_ID)), 6)
 
 
     async def test_terminal_only_uses_existing_ready_delivery_order_gate(self):

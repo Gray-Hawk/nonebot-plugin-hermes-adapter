@@ -22,9 +22,6 @@ max_length: 4000
 # 内部日志与既定重试仍保留，不被兜底文本开关吞掉。
 transport_error_fallback_text: ''
 
-# 是否实时转发长任务中工具调用间的旁白，默认关闭。
-interim_echo_enabled: false
-
 # /help 菜单头尾自定义文件路径；中间命令清单仍由插件动态生成。空 = 使用内置动态菜单。
 help_menu_file: ''
 

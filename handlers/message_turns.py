@@ -373,7 +373,11 @@ _RESTATEMENT_NOISE = str.maketrans(
 )
 
 def _decision_body(decision: dict) -> str:
-    """决策正文：纯文本协议下正文就是 ``body``。"""
+    """决策正文：纯文本协议下正文就是 ``body``。
+
+    AstrBot 旧信封的 ``reply_text`` 已在 client 解析分支归一为 ``body``，
+    这里不按接口分叉。
+    """
     return str((decision or {}).get("body") or "")
 
 
@@ -1257,6 +1261,12 @@ async def _run_passive_turn(
         if not passive_deliverable and not streamed_decisions:
             logger.info(f"[HERMES passive] 终态没有正文 (user={user_id})")
             _settle(result, "silent", "empty_output")
+            # 只登记了续跑、没输出正文：仍按工具语义追加继续执行轮（reactive 同口径）。
+            if continuation.take_continuation(_fb_key):
+                await _fire_continuation(
+                    key=_fb_key, bot=bot, target=target, adapter_name=adapter_name,
+                    user_id=user_id, group_id=group_id, is_private=is_private,
+                )
             return result
         if getattr(result, "run_id", None):
             # E2/E3:runs 计划先落库;失败本轮零发送,不回落 legacy。
@@ -1272,6 +1282,12 @@ async def _run_passive_turn(
             if not passive_pairs:
                 logger.info(f"[HERMES passive] 终态所有份内容为空 (user={user_id})")
                 _settle(result, "silent", "empty_content")
+                # 零正文轮同样消费续跑请求（reactive 同口径），否则任务静默停住。
+                if continuation.take_continuation(_fb_key):
+                    await _fire_continuation(
+                        key=_fb_key, bot=bot, target=target, adapter_name=adapter_name,
+                        user_id=user_id, group_id=group_id, is_private=is_private,
+                    )
                 return result
             all_units = [unit for _, unit in passive_pairs]
             try:

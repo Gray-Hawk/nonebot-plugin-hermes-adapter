@@ -47,27 +47,27 @@ check("新 Config 仅 8 个启动键", len(config_fields) == 8, f"got {len(confi
 from collections import Counter  # noqa: E402
 
 kinds = Counter(kind for kind, _t, _r in ct.OLD_KEYS.values())
-check("删除 20 键(含旧防抖三键)", kinds.get("deleted") == 20, str(kinds))
+check("删除 21 键(含旧防抖三键与退役旁白开关)", kinds.get("deleted") == 21, str(kinds))
 check("固定行为 8 键", kinds.get("fixed") == 8, str(kinds))
 check("合并 3+1 键", kinds.get("merge_history") == 3 and kinds.get("merge_text") == 1, str(kinds))
 # 直接迁移键数：按旧键映射计数；新统一防抖键使用缺省 3.0，不继承旧分键值。
 direct = kinds["env"] + kinds["chat"] + kinds["misc"] + kinds["media"] + kinds["user_lists"]
-check("直接迁移 50 键", direct == 50, f"direct={direct}")
+check("直接迁移 49 键", direct == 49, f"direct={direct}")
 
 # --------------------------------------------------------------------------- #
-# 2. 54 目标键对账
+# 2. 目标键对账
 # --------------------------------------------------------------------------- #
 
-check("目标键总数 54", len(ct.TARGET_KEYS) == 54, f"got {len(ct.TARGET_KEYS)}")
+check("目标键总数 53", len(ct.TARGET_KEYS) == 53, f"got {len(ct.TARGET_KEYS)}")
 by_file = Counter(v["file"] for v in ct.TARGET_KEYS.values())
 expect_files = {
     ".env": 8,
     "chat_config.yaml": 21,
-    "misc_config.yaml": 15,
+    "misc_config.yaml": 14,
     "media_config.yaml": 7,
     "user_lists.yaml": 3,
 }
-check("54 键按文件分布", dict(by_file) == expect_files, str(by_file))
+check("53 键按文件分布", dict(by_file) == expect_files, str(by_file))
 check(".env 规格 8 键", len(ct.ENV_SPEC) == 8, f"got {len(ct.ENV_SPEC)}")
 
 # 每份 YAML 模板可解析，且目标键默认值一致

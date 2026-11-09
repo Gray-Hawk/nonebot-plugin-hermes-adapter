@@ -55,11 +55,9 @@ def hermes_control_plane_enabled() -> bool:
 
 
 def steer_reply_push_active() -> bool:
-    """steer 回应实时推送：runs 接口开启，且旁白推送未占用同一输出通道。"""
+    """steer 回应实时推送：runs 接口恒开启（旁白通道已退役，无输出通道争用）。"""
 
-    from .core.misc_config import load_misc_config
-
-    return plugin_config.hermes_api_interface == "runs" and not load_misc_config().interim_echo_enabled
+    return plugin_config.hermes_api_interface == "runs"
 
 
 # resolve_custom_dir 的兜底 WARN 按形态每进程去重：调用方高频读取，不能逐次刷屏。

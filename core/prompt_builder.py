@@ -316,6 +316,14 @@ def _build_json_lines_protocol(base: str, *, runs: bool = False) -> str:
         .replace("should_reply=true", "输出正文")
         .replace("should_reply", "是否输出正文")
         .replace("reply_text", "正文")
+        # 插话原则的旧布尔箭头：纯文本协议只说「发不发」，不写 true/false 字段值。
+        .replace("→ true", "→ 输出正文")
+        .replace("→ false", "→ 不输出正文")
+        .replace("决定 正文 范围", "决定正文范围")
+        # 退窗只经 submit_control 登记：正文协议里不再教模型的输出字段名。
+        .replace("但保持 should_exit_active=false（沉默观察，不退场）", "但保持不退场（沉默观察）")
+        .replace("退出门槛（决定 should_exit_active）", "退出门槛（决定这轮是否退窗）")
+        .replace("一律保持 should_exit_active=false。", "一律不退窗。")
     )
     # 顺序：先把 should_reply 换成正文口径，再替换标题，避免锚不到原文
     for source in ("插话原则（决定 是否输出正文）：", "插话原则（决定是否输出正文）："):

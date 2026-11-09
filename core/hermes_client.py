@@ -478,6 +478,30 @@ def _try_parse_first_json_block(text: str) -> dict[str, Any] | None:
     return parsed
 
 
+def _normalize_astrbot_decision(decision: dict[str, Any]) -> dict[str, Any]:
+    """AstrBot 旧信封 → 统一投递口径：reply_text 当正文，控制字段挂私有键。
+
+    只有 AstrBot 的 JSON 解析分支调用（Runs/completions 在纯文本分支就已返回），
+    所以这不是给新协议加兼容分叉，而是把未迁移后端的既有形态接到同一条投递链上：
+    正文只认 `body`，控制只认 `_control`（见 handlers._decision_body /
+    control_intent.resolve_control）。
+    """
+    from .control_intent import CONTROL_FIELDS
+
+    normalized = dict(decision)
+    if not str(normalized.get("body") or "").strip():
+        normalized["body"] = str(normalized.get("reply_text") or "")
+    legacy = {
+        name: normalized[name]
+        for name in CONTROL_FIELDS
+        if normalized.get(name) not in (None, "", False)
+    }
+    if legacy:
+        # 显式挂上的 _control 优先（本函数幂等：重复归一化不会互相覆盖）。
+        normalized["_control"] = {**legacy, **(normalized.get("_control") or {})}
+    return normalized
+
+
 def maybe_extract_decision_reply_text(text: str) -> str | None:
     """passive 路径的防御:如果 raw_text 是 submit_decision 形 JSON,抠出 reply_text。
 
@@ -710,13 +734,20 @@ class RunsEventParser:
         # 工具／控制帧封段即清空，跨段同文是两条独立消息——不做任何后缀折叠。
         self._seg_text = ""
         self._seg_sent: list[str] = []
-        self.last_sealed: list[str] = []
-        self.final_segment_pending = False
         self._stream_pending: list[dict] = []
         self.decision_batch = 0
         self.interim_count = 0
+        # 可选观察口：正文被去重／丢弃时回调 (reason, text, source)。
+        # 生产默认 None 且全仓不接线；只给测试断言「吞掉了什么、原文是什么」。
+        self.on_suppressed: Callable[[str, str, str], None] | None = None
         # 单位超长等协议失败：置位后本轮不再发送任何单元，由终态链 fail-closed。
         self.text_error = ""
+
+    def _note_suppressed(self, reason: str, text: str, source: str) -> None:
+        """正文被去重／丢弃时通知观察口；未接线时零开销。"""
+        hook = self.on_suppressed
+        if hook is not None:
+            hook(reason, text, source)
 
     def _emit_text(self, text: str) -> None:
         """把一段正文按纯文本协议切分，段内已发过的完整单元跳过。"""
@@ -732,6 +763,7 @@ class RunsEventParser:
             return
         for unit in units:
             if unit in self._seg_sent:
+                self._note_suppressed("segment_duplicate", unit, "segment")
                 continue
             self._seg_sent.append(unit)
             # 封段发生在批号自增之前：带上封段时的批号，发送节奏按原批计算。
@@ -742,7 +774,6 @@ class RunsEventParser:
     def _seal_segment(self) -> None:
         """封段：补发当前段 delta 里尚未发出的单元，然后开新段（段内去重清零）。"""
         self._emit_text(self._seg_text)
-        self.last_sealed = list(self._seg_sent)
         self._seg_text = ""
         self._seg_sent = []
 
@@ -828,9 +859,11 @@ class RunsEventParser:
             # steer 进 result.pending_steer,api_server_runs 透到 completed 帧)
             pending = payload.get("pending_steer")
             self.pending_steer = str(pending) if pending else ""
-            # 最后一段只认 output：delta 里未封口的尾部丢弃。记下「最后一段是否
-            # 真的产出过新文本」——没有就是上一段被 output 重复带来，不是新消息。
-            self.final_segment_pending = bool(self._seg_text.strip())
+            # 最后一段只认 output：delta 里未封口的尾部丢弃。终态 output 一律按
+            # 正文发送——哪怕它与上一段同文，也不按文本折叠（用户看到的重发就是
+            # 重发，不做猜测性吞掉）。
+            if self._seg_text:
+                self._note_suppressed("unsealed_delta_tail", self._seg_text, "terminal")
             self._seg_text = ""
             self.terminal = True
             return
@@ -1290,7 +1323,9 @@ class HermesClient:
                     notice = f"AstrBot 后端不支持这种内容：{exc}"
                     refusal = ChatResult(raw_text=notice, is_local_refusal=True)
                     if expect_structured:
-                        refusal.structured = {"should_reply": True, "reply_text": notice}
+                        refusal.structured = _normalize_astrbot_decision(
+                            {"should_reply": True, "reply_text": notice}
+                        )
                     return notice, None, refusal, ""
                 try:
                     # 外层 429 重进这里时只续传没有 ID 的后缀；chat 始终引用同批 ID。
@@ -1553,6 +1588,7 @@ class HermesClient:
             return _out(result)
 
         # 路径 B:从 raw_text 提取首个 {...} JSON5 块（astrbot 旧协议，未迁移）
+        # 归一化到统一投递口径：reply_text→正文，旧控制字段→_control。
         if expect_structured and structured_tool_name == "submit_decision":
             structured = _try_parse_first_json_block(raw_text)
             if structured is None:
@@ -1561,7 +1597,9 @@ class HermesClient:
                     f"[HERMES] 路径 B 未能从回复中解析出 JSON 块 (raw_len={len(raw_text)} preview={preview!r})"
                 )
                 return _out(ChatResult(raw_text=raw_text, parse_failed=True))
-            return _out(ChatResult(raw_text=raw_text, structured=structured))
+            return _out(ChatResult(
+                raw_text=raw_text, structured=_normalize_astrbot_decision(structured)
+            ))
 
         # 普通文本路径(passive 或未要求结构化)
         cleaned, media_urls, file_paths = extract_response_media(raw_text)
@@ -1946,13 +1984,6 @@ class HermesClient:
                                     f"[HERMES] runs 终态正文单位不合法,本轮 fail-closed "
                                     f"reason={exc.reason} run_id={run_id}"
                                 )
-                            if not parser.final_segment_pending and parser.last_sealed:
-                                # 最后一段没有新文本：output 只是上一段被终态重复带来，
-                                # 已发过的同一单元不再追加（同文新段不受影响）。
-                                terminal = [
-                                    item for item in terminal
-                                    if item["body"] not in parser.last_sealed
-                                ]
                         terminal_only = not reply_queue.observed
                         if terminal and terminal_only and registered and submission_tracked:
                             # 终态-only 的发送仍须经过原 ready 台账／前序顺序门。

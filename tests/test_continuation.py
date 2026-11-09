@@ -9,12 +9,15 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
+from tests import test_runs_terminal as e2  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import continuation  # noqa: E402
+from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.inflight import make_inflight_key  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.routing import CallerScope  # noqa: E402
 from nonebot_plugin_hermes_adapter.mcp.tools.continuation import (  # noqa: E402
@@ -134,6 +137,51 @@ class ContinuationConsumptionTests(unittest.TestCase):
         self.assertTrue(continuation.pending_continuation(GROUP_KEY))
         self.assertTrue(continuation.take_continuation(GROUP_KEY))
         self.assertFalse(continuation.take_continuation(GROUP_KEY))
+
+
+class PassiveContinuationConsumptionTests(e2._PassiveHarness):
+    """真实 _run_passive_turn：零正文轮也要消费 request_continuation。
+
+    completions 私聊先用 push_message 发回执、最终正文为空时，若这两个早退
+    分支不消费续跑请求，任务会静默停住（与 reactive 口径不一致）。
+    """
+
+    def setUp(self) -> None:
+        continuation.CONTINUATION_QUEUE.discard(PRIVATE_KEY)
+        self.addCleanup(continuation.CONTINUATION_QUEUE.discard, PRIVATE_KEY)
+
+    async def _run_with_continuation(self, result, *, tracker):
+        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+
+        async def chat(*args, **kwargs):
+            continuation.request_continuation(PRIVATE_KEY)
+            return result
+
+        fired = AsyncMock()
+        with patch.object(mt, "_fire_continuation", fired):
+            calls = await self._run(result, tracker=tracker, chat=chat)
+        return calls, fired
+
+    async def test_passive_zero_body_still_fires_continuation(self) -> None:
+        result = ChatResult(raw_text="", structured={"should_reply": False})
+        calls, fired = await self._run_with_continuation(
+            result, tracker=self._tracker(record_delivery=False)
+        )
+        self.assertEqual(calls["send"], [])
+        self.assertEqual(calls["settle"], [("silent", "empty_output")])
+        fired.assert_awaited_once()
+        self.assertFalse(continuation.pending_continuation(PRIVATE_KEY))
+
+    async def test_passive_empty_content_still_fires_continuation(self) -> None:
+        result = ChatResult(raw_text="", structured={"should_reply": True, "body": ""})
+        result.run_id = "run-e2-p"
+        calls, fired = await self._run_with_continuation(
+            result, tracker=self._tracker(record_delivery=False)
+        )
+        self.assertEqual(calls["send"], [])
+        self.assertEqual(calls["settle"], [("silent", "empty_content")])
+        fired.assert_awaited_once()
+        self.assertFalse(continuation.pending_continuation(PRIVATE_KEY))
 
 
 if __name__ == "__main__":

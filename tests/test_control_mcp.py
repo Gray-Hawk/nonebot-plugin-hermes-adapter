@@ -4,7 +4,7 @@
 - 普通 body 零控制工具；
 - 每种真实控制（reply_to / should_exit_active / pin_anchor / release_anchor /
   answer_anchor / anchor_merge）都能经工具登记后在原时机生效；
-- 控制 → 正文、空 body 也算一份决策；
+- 控制 → 正文；静默轮不消费控制，未配对控制在轮末丢弃；
 - 多控制 FIFO、同文两份；
 - 控制丢失（未登记／工具拒收）仍按缺省控制发正文；
 - 控制工具不是工作工具的封批边界（3 秒条间节奏与输入暂存不退化）。
@@ -654,14 +654,14 @@ class ControlToolTurnTests(_ControlTurnHarness):
         self.assertEqual(recorded, ["m:1", "m:2"])
         self.assertEqual(control_intent.CONTROL_QUEUE.pending(GROUP_KEY), 0)
 
-    async def test_empty_body_still_consumes_one_control(self) -> None:
+    async def test_silent_round_does_not_consume_control(self) -> None:
+        # 纯文本协议不造隐式空单元：零正文轮不消费控制，未配对控制在轮末丢弃。
         self._register(should_exit_active=True)
-        calls = await self._run(
-            self._result('{"body":""}\n{"body":"随后"}'), tracker=self._tracker(),
-        )
-        self.assertEqual([c["text"] for c in calls["send"]], ["随后"])
-        self.assertEqual(calls["control"]["end_window"], 1)
-        self.assertEqual(control_intent.CONTROL_QUEUE.pending(GROUP_KEY), 0)
+        calls = await self._run(self._result(""), tracker=self._tracker())
+        self.assertEqual(calls["send"], [])
+        self.assertEqual(calls["settle"], [("silent", "empty_output")])
+        self.assertEqual(calls["control"]["end_window"], 0)
+        self.assertEqual(control_intent.CONTROL_QUEUE.pending(GROUP_KEY), 1)
 
     async def test_lost_control_still_sends_body_with_defaults(self) -> None:
         # 没有登记（工具失败／断流／重启都长这样）：正文照发，控制全缺省。
