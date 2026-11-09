@@ -478,6 +478,30 @@ def _try_parse_first_json_block(text: str) -> dict[str, Any] | None:
     return parsed
 
 
+def _normalize_astrbot_decision(decision: dict[str, Any]) -> dict[str, Any]:
+    """AstrBot 旧信封 → 统一投递口径：reply_text 当正文，控制字段挂私有键。
+
+    只有 AstrBot 的 JSON 解析分支调用（Runs/completions 在纯文本分支就已返回），
+    所以这不是给新协议加兼容分叉，而是把未迁移后端的既有形态接到同一条投递链上：
+    正文只认 `body`，控制只认 `_control`（见 handlers._decision_body /
+    control_intent.resolve_control）。
+    """
+    from .control_intent import CONTROL_FIELDS
+
+    normalized = dict(decision)
+    if not str(normalized.get("body") or "").strip():
+        normalized["body"] = str(normalized.get("reply_text") or "")
+    legacy = {
+        name: normalized[name]
+        for name in CONTROL_FIELDS
+        if normalized.get(name) not in (None, "", False)
+    }
+    if legacy:
+        # 显式挂上的 _control 优先（本函数幂等：重复归一化不会互相覆盖）。
+        normalized["_control"] = {**legacy, **(normalized.get("_control") or {})}
+    return normalized
+
+
 def maybe_extract_decision_reply_text(text: str) -> str | None:
     """passive 路径的防御:如果 raw_text 是 submit_decision 形 JSON,抠出 reply_text。
 
@@ -1299,7 +1323,9 @@ class HermesClient:
                     notice = f"AstrBot 后端不支持这种内容：{exc}"
                     refusal = ChatResult(raw_text=notice, is_local_refusal=True)
                     if expect_structured:
-                        refusal.structured = {"should_reply": True, "reply_text": notice}
+                        refusal.structured = _normalize_astrbot_decision(
+                            {"should_reply": True, "reply_text": notice}
+                        )
                     return notice, None, refusal, ""
                 try:
                     # 外层 429 重进这里时只续传没有 ID 的后缀；chat 始终引用同批 ID。
@@ -1562,6 +1588,7 @@ class HermesClient:
             return _out(result)
 
         # 路径 B:从 raw_text 提取首个 {...} JSON5 块（astrbot 旧协议，未迁移）
+        # 归一化到统一投递口径：reply_text→正文，旧控制字段→_control。
         if expect_structured and structured_tool_name == "submit_decision":
             structured = _try_parse_first_json_block(raw_text)
             if structured is None:
@@ -1570,7 +1597,9 @@ class HermesClient:
                     f"[HERMES] 路径 B 未能从回复中解析出 JSON 块 (raw_len={len(raw_text)} preview={preview!r})"
                 )
                 return _out(ChatResult(raw_text=raw_text, parse_failed=True))
-            return _out(ChatResult(raw_text=raw_text, structured=structured))
+            return _out(ChatResult(
+                raw_text=raw_text, structured=_normalize_astrbot_decision(structured)
+            ))
 
         # 普通文本路径(passive 或未要求结构化)
         cleaned, media_urls, file_paths = extract_response_media(raw_text)

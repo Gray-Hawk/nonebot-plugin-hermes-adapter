@@ -23,7 +23,6 @@ class MiscConfig:
     sticker_enabled: bool = False  # 本地表情库总开关，重启生效
     max_length: int = 4000
     transport_error_fallback_text: str = ""
-    interim_echo_enabled: bool = False
     help_menu_file: str = ""
     prompt_dump_enabled: bool = False
     approval_expiry_sec: int = 300
@@ -42,7 +41,6 @@ def parse_misc_config(doc: dict) -> MiscConfig:
         sticker_enabled=bool_field(doc, "sticker_enabled", False),
         max_length=int_field(doc, "max_length", 4000, min_v=1),
         transport_error_fallback_text=str_field(doc, "transport_error_fallback_text", ""),
-        interim_echo_enabled=bool_field(doc, "interim_echo_enabled", False),
         help_menu_file=str_field(doc, "help_menu_file", ""),
         prompt_dump_enabled=bool_field(doc, "prompt_dump_enabled", False),
         approval_expiry_sec=int_field(doc, "approval_expiry_sec", 300, min_v=1),

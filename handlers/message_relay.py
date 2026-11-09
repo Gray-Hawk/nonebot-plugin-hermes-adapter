@@ -69,19 +69,17 @@ _chain_touched: dict[tuple[tuple[str, str], str], float] = {}
 _QUEUE_AGGREGATE_WINDOW_SEC = 4.0
 
 # 本部署补丁: steer 注入文本尾部挂的一次性约定行(运行时文本)——模型侧协议:
-# 本条为对话中途插入的消息; 若之后要回应它, 就在当下那份决策里给, 即把回应
-# 写进两行 JSON 的 body 行。回应不占用正文、不挂任何标记段。
-# 挂接条件 = steer_reply_push_active()(runs 接口且旁白关, 注入时现读):
+# 本条为对话中途插入的消息; 若之后要回应它, 就在当下那一轮直接输出正文,
+# 不需要为此调用任何工具(控制工具只在真要引用/退窗/锚时用)。
+# 挂接条件 = steer_reply_push_active()(runs 接口, 注入时现读):
 # 这正是 runs 轮内 push_message 被闸门硬拒的场合, 约定行不能再把模型引向
 # push_message(D-9), 否则模型每次照做都会拿到一次被拒的工具调用。
 # completions 不挂本行(该函数对 completions 恒 False), 原 push 语义不变;
-# 旁白开启时也不挂(流式全推送生效, 模型写在旁白位的回应自然透出,
-# 不留协议噪音)。
+# 纯文本协议下没有旁白通道, 这条约定只剩 runs 一种生效面。
 # 全角字符按转义写法, 防写入管道把全角字面量规范化回半角。
 _STEER_REPLY_CONVENTION_LINE = (
-    "\uff08系统提示\uff1a本条为对话中途插入的消息\u3002若你之后回应它\uff0c"
-    "请当下就用一组两行 JSON\uff08控制 JSON 行 + 正文 JSON 行\uff09"
-    "把回应写进 body\uff0c其余内容照常\u3002\uff09"
+    "\uff08系统提示\uff1a本条为对话中途插入的消息\u3002"
+    "若你之后回应它\uff0c当下直接输出正文即可\uff0c无需调用任何工具\u3002\uff09"
 )
 
 

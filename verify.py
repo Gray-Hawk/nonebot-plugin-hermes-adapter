@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""E3 统一验收入口（只读，不改交付树）。
+"""纯文本正文协议的只读验收入口。
 
 跑法：python3 verify.py    （需要 nonebot 环境，例如生产 venv 的 python）
 逐项打印 PASS/FAIL，退出码 0 = 全过。
+
+本脚本早期是 E3 信封时代的验收清单。`JSON 决策信封退役`（Runs 与 completions
+统一纯文本）之后，旧的 `core/npha_terminal.py`、`decode_terminal_batch`、
+`fold_stream_decisions`、`strip_complete_decisions`、`scan_stream_decisions`
+与两个 replay 脚本都已删除，且它引用的基线提交不在本仓库——本版改为断言当前
+事实：只有一份纯文本解析器、协议块里没有信封字段、控制与续跑各只有一条链路。
 """
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import subprocess
@@ -16,86 +21,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.dont_write_bytecode = True  # verify 自身 import 不得在交付树留下 __pycache__
-BASELINE = "498e7a60ff45737a75814a668813d9d37473e9cd"
-ALLOWED_CHANGED = {
-    "core/hermes_client.py",
-    "core/npha_terminal.py",
-    "core/prompt_builder.py",
-    "core/run_tracker.py",
-    "core/runs_terminal.py",
-    "handlers/message_turns.py",
-    "mcp/tools/push_message.py",
-    "tasks/run_resume.py",
-    "scripts/replay_runs_stream.py",
-    "tests/test_runs_terminal.py",
-    "tests/test_runs_stream.py",
-    # 卫生批（t_65479fd7）：误导性测试名修正（断言与输入不变）
-    "tests/test_completions_regression.py",
-    "SAMPLES/runs_terminal_single_b4.json",
-    "SAMPLES/runs_terminal_multi_b5.json",
-    # 交付文档与验收入口（不是代码改动，随交付入库）
-    "REPORT.md",
-    "DIFF_STAT.md",
-    "TEST_LOG.txt",
-    "SHA256SUMS.txt",
-    "verify.py",
-    "PATCHES/01-modified.patch",
-    "PATCHES/02-new-files.patch",
-    # E3 验收运行证据（真实输出）
-    "EVIDENCE/e3_chain_tests.txt",
-    "EVIDENCE/e3_replay.txt",
-    "EVIDENCE/e3_verify.txt",
-    "EVIDENCE/e3_baseline_tests.txt",
-    "EVIDENCE/e3_round1_fixes.txt",
-    "EVIDENCE/e3_round1_reproduce_pass.txt",
-    "EVIDENCE/e3_round2_fixes.txt",
-    "EVIDENCE/e3_round2_probes_pass.txt",
-    "EVIDENCE/e3_round2_patch_rebuild.txt",
-    # E3 评审证据原样归档（评审新增；脚本以 .py.txt 归档，内容未改）
-    "REVIEW_EVIDENCE/E3_ROUND1_REVIEW.md",
-    "REVIEW_EVIDENCE/e3_round1_output.txt",
-    "REVIEW_EVIDENCE/e3_round1_reproduce.py.txt",
-    "REVIEW_EVIDENCE/e3_round1_patch_check.py.txt",
-    "REVIEW_EVIDENCE/e3_round1_patch_output.txt",
-    "REVIEW_EVIDENCE/E3_ROUND2_REVIEW.md",
-    "REVIEW_EVIDENCE/e3_round2_output.txt",
-    "REVIEW_EVIDENCE/e3_round2_probes.py.txt",
-    "REVIEW_EVIDENCE/e3_round2_prior_probes.txt",
-    "REVIEW_EVIDENCE/e3_round2_patch_check.txt",
-    # E3 评审证据原样归档（评审新增，未改内容）
-    "REVIEW_EVIDENCE/ROUND1_REVIEW.md",
-    "REVIEW_EVIDENCE/regression_output.txt",
-    "REVIEW_EVIDENCE/replay_output.txt",
-    "REVIEW_EVIDENCE/round1_output.txt",
-    "REVIEW_EVIDENCE/round1_reproduce.py",
-    "REVIEW_EVIDENCE/ROUND2_REVIEW.md",
-    "REVIEW_EVIDENCE/round2_output.txt",
-    "REVIEW_EVIDENCE/round2_regression_output.txt",
-    "REVIEW_EVIDENCE/round2_replay_output.txt",
-    "REVIEW_EVIDENCE/round2_reproduce.py",
-    "REVIEW_EVIDENCE/ROUND3_REVIEW.md",
-    "REVIEW_EVIDENCE/round3_output.txt",
-    "REVIEW_EVIDENCE/round3_regression_output.txt",
-    "REVIEW_EVIDENCE/round3_replay_output.txt",
-    "REVIEW_EVIDENCE/round3_verify.py",
-    "REVIEW_EVIDENCE/E3_ROUND1_OUTPUT.txt",
-    # 卫生批（t_65479fd7）：归档探针改为自行收集 drain 结果（断言未变）
-    "REVIEW_EVIDENCE/e3_live_offline_verify.py",
-}
-MUST_NOT_CHANGE = (
-    "config.py",
-    "core/runs_companion.py",
-    "core/reply_recovery.py",
-    "core/steer_reconcile.py",
-    "core/companion_runtime.py",
-    "tasks/proactive_activation.py",
-    "mcp/server.py",
-    "backends/astrbot/client.py",
-)
-# 基线 852de61 上算出的 E1 定版协议块哈希（completions 行为不得回退）
-BASELINE_COMPLETIONS_BLOCK_SHA = "a39c76d954276e8530c8e19b62f8774f753e9f6f205c5c63e92f87a2b6243246"
-BASELINE_COMPLETIONS_PRIVATE_SHA = "43a06ad2d6339514160a9824b8880b888ec4dc2acc28c6bd8dd90fffa793da94"
-BASELINE_OLD_BLOCK_SHA = "61bc0269262556713340e890c2d620857d1d8f4d360c45d15b1486c32a54b8d5"
 
 RESULTS: list[tuple[str, bool, str]] = []
 
@@ -133,142 +58,166 @@ def check_cache() -> None:
 def check_tests() -> None:
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     proc = subprocess.run(
-        [sys.executable, "-B", "-m", "unittest", "discover", "-s", "tests", "-q"],
+        [sys.executable, "-B", "-m", "unittest", "discover",
+         "-s", "tests", "-t", ".", "-q"],
         cwd=ROOT, capture_output=True, text=True, env=env,
     )
     tail = (proc.stdout + proc.stderr).strip().splitlines()[-3:]
     match = re.search(r"Ran (\d+) tests", proc.stderr + proc.stdout)
     ran = int(match.group(1)) if match else 0
-    ok = proc.returncode == 0 and ran >= 152
+    ok = proc.returncode == 0 and ran >= 400
     check("全量既有＋新增测试通过", ok, f"exit={proc.returncode} ran={ran} {' / '.join(tail)}")
 
 
-def check_replay() -> None:
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
-    for script, label in (
-        ("scripts/replay_runs_terminal.py", "真实 Runs 终态样本回放一致"),
-        ("scripts/replay_runs_stream.py", "真实 Runs SSE 流式多决策回放一致"),
-    ):
-        proc = subprocess.run(
-            [sys.executable, "-B", script],
-            cwd=ROOT, capture_output=True, text=True, env=env,
-        )
-        ok = proc.returncode == 0 and "ALL PASS" in proc.stdout
-        detail = "exit=%d" % proc.returncode
-        if not ok:
-            detail += " " + (proc.stdout + proc.stderr).strip()[-300:]
-        check(label, ok, detail)
-
-
-def check_completions_prompt() -> None:
-    sys.path.insert(0, str(ROOT))
-    from tests import _bootstrap  # noqa: F401
-
-    from nonebot_plugin_hermes_adapter.core import prompt_builder as pb
-
-    def sha(text: str) -> str:
-        return hashlib.sha256(text.encode()).hexdigest()
-
+def check_no_deleted_modules() -> None:
+    """信封时代的模块与符号必须真的消失：删了文件却留引用比留着更糟。"""
+    gone_files = (
+        "core/npha_terminal.py",
+        "scripts/replay_runs_terminal.py",
+        "scripts/replay_runs_stream.py",
+    )
+    still_there = [path for path in gone_files if (ROOT / path).exists()]
+    tokens = (
+        "npha_terminal",
+        "decode_terminal_batch",
+        "decode_terminal(",
+        "fold_stream_decisions",
+        "strip_complete_decisions",
+        "scan_stream_decisions",
+        "_pop_gap_segment",
+    )
+    sources = (
+        "core/hermes_client.py",
+        "core/runs_terminal.py",
+        "core/run_delivery_monitor.py",
+        "handlers/message_turns.py",
+        "tasks/run_resume.py",
+    )
+    refs = [
+        f"{path}:{token}"
+        for path in sources
+        for token in tokens
+        if token in read(path)
+    ]
     check(
-        "completions 协议块字节未变（E1 定版）",
-        sha(pb._DECISION_PROTOCOL_BLOCK_COMPLETIONS) == BASELINE_COMPLETIONS_BLOCK_SHA
-        and sha(pb._JSON_LINES_PRIVATE_BLOCK) == BASELINE_COMPLETIONS_PRIVATE_SHA
-        and sha(pb._DECISION_PROTOCOL_BLOCK) == BASELINE_OLD_BLOCK_SHA,
-        "",
-    )
-    runs_prompt = pb._DECISION_PROTOCOL_BLOCK_RUNS
-    check(
-        "runs 协议块允许即时连续多份（工具前后均可）",
-        "若干份两行 JSON" in runs_prompt and "工具间隙" in runs_prompt
-        and "不要攒到整轮结束" in runs_prompt
-        and "工具调用可以夹在任意两份之间" in runs_prompt
-        and "submit_decision" not in runs_prompt and "should_reply" not in runs_prompt,
-        "",
-    )
-    private_runs = pb._JSON_LINES_PRIVATE_BLOCK_RUNS
-    check(
-        "runs 私聊协议块同步即时多份",
-        "不要攒到整轮结束" in private_runs and "工具调用可以夹在任意两份之间" in private_runs,
-        "",
+        "已删除的信封模块／符号零引用",
+        not still_there and not refs,
+        f"文件仍在={still_there} 引用={refs[:5]}",
     )
 
 
-def check_scope() -> None:
-    proc = git("diff", "--name-only", BASELINE, "HEAD")
-    changed = {line.strip() for line in proc.stdout.splitlines() if line.strip()}
-    extra = sorted(changed - ALLOWED_CHANGED)
-    check("改动范围只在允许清单内", not extra, f"越界={extra}")
-    dirty = sorted(
-        path for path in MUST_NOT_CHANGE
-        if git("diff", "--quiet", BASELINE, "HEAD", "--", path).returncode != 0
-    )
-    check("禁止改动文件未变", not dirty, f"被改={dirty}")
-    staged = git("diff", "--cached", "--name-only").stdout.strip()
-    check("验收不依赖暂存区", not staged, f"staged={staged.split() if staged else []}")
-    worktree = git("status", "--porcelain").stdout.strip()
-    check("交付树干净（无未提交改动）", not worktree, worktree.splitlines()[:5])
-
-
-def check_shared_decoder() -> None:
+def check_single_text_parser() -> None:
+    """正常链／流式链／恢复链／对账链共用同一份纯文本切分。"""
     client = read("core/hermes_client.py")
     resume = read("tasks/run_resume.py")
     monitor = read("core/run_delivery_monitor.py")
     runs_terminal = read("core/runs_terminal.py")
-    terminal = read("core/npha_terminal.py")
+    runs_text = read("core/runs_text.py")
     turns = read("handlers/message_turns.py")
     ok = (
-        "decode_terminal_batch(raw_text)" in client
+        "def split_text_units" in runs_text
+        and "def decisions_from_text" in runs_text
+        and "_FENCE" not in runs_text  # 代码围栏不是分隔规则的例外
+        and "decisions_from_text(raw_text)" in client
         and "def units_from_output" in runs_terminal
-        and "units_from_output(output, expect_structured)" in resume
+        and "units_from_output(output)" in resume
         and "_build_units" in monitor
         and "units_from_decisions" in turns
         and "def decode_" not in runs_terminal  # 交付计划模块不另起解码器
-        # E3:clientside 决策候选检测复用同一 decode_terminal，且只有一份 scanner
-        and "def scan_stream_decisions" in terminal
-        and bool(re.search(r"decode_terminal\(\s*stripped", terminal))
-        and bool(re.search(r"scan_stream_decisions\(\s*self\.stream_text", client))
-        and terminal.count("def scan_stream_decisions") == 1
         and client.count("class RunsEventParser") == 1
     )
-    check("Runs 终态／流式复用同一解码器（无第二套）", ok, "")
+    check("Runs 终态／流式／恢复／对账共用同一纯文本解析器", ok, "")
 
 
-def check_stream_fold_and_growth() -> None:
+def check_prompt_protocol() -> None:
+    sys.path.insert(0, str(ROOT))
+    from tests import _bootstrap  # noqa: F401
+
+    from nonebot_plugin_hermes_adapter.core import prompt_builder as pb
+    from nonebot_plugin_hermes_adapter.core import prompt_protocol as pp
+
+    for attr in ("_DECISION_PROTOCOL_BLOCK_COMPLETIONS", "_DECISION_PROTOCOL_BLOCK_RUNS"):
+        block = getattr(pb, attr)
+        ok = (
+            "submit_decision" not in block
+            and "should_reply" not in block
+            and "reply_text" not in block
+            # 反例保留：教模型「这种 JSON 信封是错的」，而不是要求它写。
+            and '错误：{"body"' in block
+        )
+        check(f"{attr} 纯文本（无信封字段）", ok, "")
+
+    runs = pb._DECISION_PROTOCOL_BLOCK_RUNS
+    private_runs = pb._JSON_LINES_PRIVATE_BLOCK_RUNS
+    completions = pb._DECISION_PROTOCOL_BLOCK_COMPLETIONS
+    check(
+        "runs 协议块：§ 整行分隔、无 push_message、无布尔箭头",
+        "单独写一行 §" in runs
+        and "push_message" not in runs
+        and "→ true" not in runs
+        and "→ false" not in runs
+        and "should_exit_active=false" not in runs
+        and "决定 正文 范围" not in runs,
+        "",
+    )
+    check("runs 私聊协议块无 push_message", "push_message" not in private_runs, "")
+    check(
+        "completions 协议块保留 push_message 进度口径",
+        "push_message" in completions and "request_continuation" in completions,
+        "",
+    )
+    check(
+        "completions 私聊块无信封",
+        "submit_decision" not in pb._JSON_LINES_PRIVATE_BLOCK,
+        "",
+    )
+    # 模式标记行只在对应模式出现：runs 渲染文本里不得残留 completions 专有指令。
+    check(
+        "协议渲染：runs/completions 互不串味",
+        "push_message" not in pp.render_mode_text(pp._PROTOCOL, runs=True)
+        and "push_message" in pp.render_mode_text(pp._PROTOCOL, runs=False),
+        "",
+    )
+
+
+def check_plan_and_stream() -> None:
     runs_terminal = read("core/runs_terminal.py")
     tracker = read("core/run_tracker.py")
     turns = read("handlers/message_turns.py")
     ok = (
-        "def fold_stream_decisions" in runs_terminal
-        and "def fold_plan_units" in runs_terminal
+        "def fold_plan_units" in runs_terminal
         and "allow_prefix_growth=True" in runs_terminal
         and "def _is_plan_prefix_growth" in tracker
         and "def open_stream_delivery" in tracker
         and "append_stream_unit" in turns
         and "streamed_decisions" in turns
+        and "def _text_unit" in runs_terminal
+        and "def _decision_unit" in runs_terminal
     )
-    check("E3 流式折叠／只追加计划／复用终态恢复", ok, "")
+    check("流式只追加计划／终态与恢复共用计划适配器", ok, "")
 
 
-def check_round1_fixes() -> None:
-    """首轮评审 R1/R2/R3 的修复面必须留在交付代码里，而不是只靠测试。"""
+def check_control_and_continuation() -> None:
     client = read("core/hermes_client.py")
-    terminal = read("core/npha_terminal.py")
-    resume = read("tasks/run_resume.py")
-    runs_terminal = read("core/runs_terminal.py")
+    turns = read("handlers/message_turns.py")
+    control = read("core/control_intent.py")
+    continuation = read("core/continuation.py")
+    server = read("mcp/server.py")
+    protocol = read("core/prompt_protocol.py")
     ok = (
-        # R1: 两个旁白出口都用同一份扫描区间摘除已消费的决策信封
-        "def strip_complete_decisions" in terminal
-        and client.count("strip_complete_decisions(") >= 2
-        and "_pop_gap_segment" in client
-        # R2: 比较用规范表示复用计划器的清洗/媒体摘取
-        and runs_terminal.count("def normalize_decision") == 1
-        and "_media_identity(" in runs_terminal
-        and "_decision_unit(decision)" in runs_terminal
-        # R3: 恢复链先看既有计划里允许补发的 pending 份
-        and "def _pending_plan_indexes" in resume
-        and "pending_existing" in resume
+        "def bind_control" in control
+        and "def resolve_control" in control
+        and "def request_continuation" in continuation
+        and "def take_continuation" in continuation
+        and "def submit_control" in server
+        and "def request_continuation" in server
+        and "submit_control" in protocol
+        and "request_continuation" in protocol
+        # 控制封段固定在控制工具 tool.started：此时控制尚未登记。
+        and "_is_control_tool_payload" in client
+        and turns.count("take_continuation(") >= 3
     )
-    check("R1/R2/R3 修复面在位（旁白隔离／媒体规范表示／恢复尊重既有计划）", ok, "")
+    check("控制 FIFO 与续跑登记各只有一条链路", ok, "")
 
 
 def check_push_gate() -> None:
@@ -306,91 +255,82 @@ def check_plan_before_send() -> None:
 
 
 ACCEPTANCE_CASES = {
-    "single": "test_single_unit",
-    "multi": "test_multiple_units_in_order",
-    "empty_control": "test_empty_control_object",
-    "missing_control": "test_missing_control_body_only",
-    "bad_control": "test_bad_control_still_delivers_body",
-    "empty_body": "test_empty_body_is_silent",
-    "same_twice": "test_same_body_twice_is_two_decisions",
-    "long_body": "test_long_body_delivers_intact",
-    "quotes_emoji": "test_quotes_backslash_emoji_preserved",
-    "naked": "test_naked_body_is_single_decision",
-    "illegal_tail": "test_illegal_trailing_plain_line_rejected",
-    "residue": "test_complete_unit_plus_residue_rejected",
+    # 纯文本切分
+    "single_sentence": "test_single_sentence_is_one_unit",
+    "multiline_no_split": "test_multiline_without_separator_stays_one",
+    "three_units": "test_three_units_in_order",
+    "strict_separator": "test_separator_with_spaces_is_literal",
+    "fenced_separator_splits": "test_fenced_separator_still_splits",
+    "legacy_json_verbatim": "test_units_from_output_keeps_legacy_json_verbatim",
+    "decisions_raw_body": "test_decisions_from_text_keeps_raw_body",
+    "overlong_fail_closed": "test_over_limit_fails_closed",
+    # 流式解析器
+    "stream_single": "test_single_sentence_is_one_verbatim_unit",
+    "stream_separator_cross_frame": "test_separator_split_across_delta_frames",
+    "stream_spaced_separator": "test_separator_with_spaces_does_not_split",
+    "stream_interim_one_char": "test_interim_one_char_progress_is_sent",
+    "stream_interim_dedupe": "test_interim_and_delta_same_text_sent_once_per_segment",
+    "stream_cross_segment_twice": "test_same_text_across_segments_sends_twice",
+    "stream_control_seals": "test_control_tool_frame_seals_segment_without_new_batch",
+    "stream_unsealed_tail": "test_terminal_ignores_unsealed_delta_tail",
+    "stream_suppression_observable": "test_segment_duplicate_suppression_is_observable",
+    "stream_repeat_terminal": "test_terminal_repeating_last_segment_reports_no_suppression",
+    "stream_real_samples": "test_real_retained_samples",
+    "stream_regression_scenarios": "test_regression_scenarios",
+    # 真实 client 链
+    "client_single_zero_calls": "test_single_sentence_zero_extra_calls",
+    "client_multi_terminal": "test_three_units_from_terminal_in_order",
+    "client_legacy_once": "test_legacy_json_sent_exactly_once_verbatim",
+    "client_silent": "test_silent_output_sends_nothing",
+    "client_progress_then_final": "test_interim_progress_then_final",
+    "client_control_seal": "test_control_frame_seals_segment_before_registration",
+    "client_terminal_repeat_resent": "test_terminal_repeating_last_segment_is_resent",
+    "client_overflow_fail_closed": "test_overflow_terminal_fails_closed",
+    "client_stream_break": "test_stream_break_sends_no_half_content",
+    # 计划／恢复／控制
+    "plan_persists": "test_plan_persists_all_components",
     "plan_reject": "test_changed_plan_is_rejected",
-    "sent_not_reset": "test_repeated_prepare_keeps_plan_and_sent_state",
-    "registration_zero_send": "test_plan_failure_means_zero_sends",
-    "resume_no_dup": "test_already_sent_component_not_resent",
-    # 首轮评审 R1-R4 反例转成的正式行为断言
-    "silent_control_completions": "test_completions_silent_keeps_controls",
-    "silent_control_runs": "test_runs_silent_unit_keeps_controls",
-    "mixed_batch_control": "test_mixed_batch_runs_controls_and_skips_only_send",
-    "resume_plan_same": "test_normal_plan_matches_resume_adapter",
-    "empty_reply_to_same_plan": "test_empty_reply_to_normalized_in_plan",
+    "plan_failure_zero_send": "test_plan_failure_means_zero_sends",
+    "already_sent_not_resent": "test_already_sent_component_not_resent",
+    "resume_same_plan": "test_normal_plan_matches_resume_adapter",
+    "empty_reply_to_plan": "test_empty_reply_to_normalized_in_plan",
+    "passive_second_control": "test_second_unit_control_kept",
+    "unpaired_control_dropped": "test_unpaired_control_dropped_at_turn_end",
+    "completions_control": "test_single_completions_text_unit_gets_control",
+    "completions_silent": "test_completions_silent_leaves_controls_alone",
+    "runs_silent": "test_runs_silent_unit_leaves_controls_alone",
+    "exit_window_group": "test_batch_exit_control_closes_window_after_group",
     "bounce_no_repair": "test_reactive_bounced_unit_not_repaired",
     "bounce_all_suppressed": "test_reactive_all_bounced_settles_suppressed",
     "bounce_real_rule": "test_real_bounce_rule_marks_unit_not_required",
-    "passive_bounce_no_repair": "test_passive_bounced_unit_not_repaired",
-    "legacy_component_names": "test_completions_file_and_history_use_legacy_names",
-    "group_passive_legacy_file": "test_group_passive_file_claim_uses_legacy_component",
-    # 第二轮评审 R5-R6 反例转成的正式行为断言
-    "passive_second_control": "test_second_unit_control_kept",
-    "passive_silent_second_control": "test_silent_second_unit_keeps_control",
-    "passive_all_silent_control": "test_all_silent_batch_decodes_control",
-    "passive_self_heal_order": "test_every_unit_self_heal_hint_consumed_in_order",
-    "passive_single_control": "test_single_completions_decodes_control",
-    "runs_naked_inline_image": "test_runs_naked_image_survives_chat_and_handler",
-    "plain_naked_overflow": "test_plain_overlong_naked_text_still_rejected",
-    # E3 验收：真实 delta 分段、即时多份、折叠、steer、重连恢复
-    "stream_b4_tool_before_after": "test_b4_two_units_with_tool_between",
-    "stream_b5_multi": "test_b5_two_units_no_tools",
-    "stream_split_body": "test_body_with_brace_survives_split",
-    "stream_no_premature": "test_no_decision_before_body_complete",
-    "stream_fold_suffix": "test_terminal_is_suffix_of_stream",
-    "stream_same_text_segments": "test_same_text_different_segment_not_collapsed",
-    "stream_plan_growth": "test_append_grows_plan_by_suffix",
-    "stream_plan_prefix_locked": "test_changed_prefix_rejected_even_with_growth",
-    "stream_client_wiring": "test_chat_wires_immediate_callback_and_streamed_result",
-    "stream_terminal_parse_fail_no_dup": "test_terminal_parse_failure_after_stream_does_not_duplicate",
-    "stream_tool_before_after_send": "test_tool_before_and_after_both_sent_immediately",
-    "stream_multi_send": "test_normal_multi_decision_immediate_and_folded",
-    "stream_same_text_send_once": "test_same_text_in_two_segments_sends_both_once",
-    "stream_silent_control": "test_silent_empty_body_control_kept_and_next_unit_sent",
-    "stream_terminal_only_unit": "test_terminal_only_unit_appended_and_sent",
-    "stream_steer_immediate": "test_steer_midway_gets_immediate_reply",
-    "stream_terminal_replay": "test_terminal_replay_does_not_resend",
-    "stream_push_gate": "test_in_turn_group_push_rejected",
-    "stream_push_completions": "test_completions_push_unchanged",
-    "stream_retry_guard": "test_persistence_retry_skipped_after_live_send",
-    "stream_resume_fold": "test_resume_sends_only_pending_unit",
-    # 第 1 轮评审 R1-R3 反例转成的正式行为断言
-    "interim_no_decision_echo": "test_interim_enabled_does_not_resend_decision_envelope",
-    "interim_keeps_narration": "test_interim_enabled_keeps_ordinary_narration",
-    "interim_bounce_isolation": "test_interim_cannot_bypass_bounce",
-    "gap_segment_no_envelope": "test_real_b4_gap_segment_excludes_sent_decision",
-    "interim_frame_no_envelope": "test_interim_frame_decision_envelope_not_echoed",
-    "media_fold_canonical": "test_local_image_delta_and_terminal_fold_to_one",
-    "media_reactive_once": "test_local_image_sent_once_reactive",
-    "media_passive_once": "test_private_passive_local_image_sent_once",
-    "resume_silent_pending": "test_silent_terminal_keeps_pending_stream_unit",
-    "resume_silent_partial": "test_silent_terminal_only_resends_pending_not_sent",
-    "resume_reconcile_no_dup": "test_followup_reconcile_does_not_resend_or_strand",
+    "passive_bounce": "test_passive_bounced_unit_not_repaired",
+    # 本轮审查修复面
+    "astrbot_normalize": "test_reply_text_becomes_body_and_control_fields_private",
+    "astrbot_private_text": "test_astrbot_private_reply_text_delivered",
+    "astrbot_group_text": "test_astrbot_group_reply_text_delivered",
+    "passive_continuation_zero_body": "test_passive_zero_body_still_fires_continuation",
+    "passive_continuation_empty_content": "test_passive_empty_content_still_fires_continuation",
 }
 
 
 def check_acceptance_cases() -> None:
-    source = read("tests/test_runs_terminal.py")
-    missing = [
-        name for name in ACCEPTANCE_CASES.values()
-        if f"def {name}" not in source and f"def {name}" not in read("tests/test_runs_stream.py")
-    ]
-    check("E2/E3 验收用例齐全", not missing, f"缺={missing}")
+    haystack = "\n".join(
+        read(path) for path in (
+            "tests/test_runs_terminal.py",
+            "tests/test_runs_stream.py",
+            "tests/test_astrbot_text_compat.py",
+            "tests/test_continuation.py",
+        )
+    )
+    missing = [name for name in ACCEPTANCE_CASES.values() if f"def {name}" not in haystack]
+    check("关键验收用例齐全", not missing, f"缺={missing}")
 
 
-def check_no_new_switch() -> None:
-    proc = git("diff", "--name-only", BASELINE, "HEAD", "--", "config.py", "core/config_fields.py")
-    check("无新增配置开关", not proc.stdout.strip(), proc.stdout.strip())
+def check_worktree() -> None:
+    staged = git("diff", "--cached", "--name-only").stdout.strip()
+    check("验收不依赖暂存区", not staged, f"staged={staged.split() if staged else []}")
+    worktree = git("status", "--porcelain").stdout.strip()
+    check("交付树干净（无未提交改动）", not worktree, worktree.splitlines()[:5])
 
 
 def main() -> int:
@@ -400,16 +340,15 @@ def main() -> int:
     print(f"HEAD={hr}")
     check_cache()
     check_tests()
-    check_replay()
-    check_completions_prompt()
-    check_scope()
-    check_shared_decoder()
-    check_stream_fold_and_growth()
-    check_round1_fixes()
+    check_no_deleted_modules()
+    check_single_text_parser()
+    check_prompt_protocol()
+    check_plan_and_stream()
+    check_control_and_continuation()
     check_push_gate()
     check_plan_before_send()
     check_acceptance_cases()
-    check_no_new_switch()
+    check_worktree()
     check_cache()  # 复跑后仍无缓存
     failed = [name for name, ok, _ in RESULTS if not ok]
     print()

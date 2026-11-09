@@ -2,12 +2,12 @@
 
 走真实注入入口（`_maybe_steer_direct` / `_try_steer_followup`），只在平台/HTTP
 边界截获最终注入文本，因此断言的是「模型实际看到的那段话」。矩阵覆盖
-接口(runs/completions) × 旁白开关(开/关) × 群/私。
+接口（runs/completions）× 群/私。
 
 契约：
-  - runs 且旁白关（`steer_reply_push_active()` 成立）：追加的约定行指向当前
-    两行 JSON 决策的 body 行——因为此刻 push_message 正被闸门硬拒；
-  - 其余组合（runs+旁白开、completions 全部）：不追加约定行，原文不动。
+  - runs（`steer_reply_push_active()` 成立）：追加的约定行指向纯文本正文——
+    直接输出正文即可，不指向 push_message（此刻它正被闸门硬拒）；
+  - completions：不追加约定行，原文不动。
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -24,7 +24,6 @@ sys.path.insert(0, str(ROOT))
 from tests import _bootstrap  # noqa: E402,F401
 
 from nonebot_plugin_hermes_adapter import config as plugin_config_module  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import misc_config as misc_module  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import steer_reconcile  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.run_tracker import (  # noqa: E402
@@ -60,7 +59,7 @@ class SteerReplyConventionTests(unittest.TestCase):
                 session_key="s", mode="reactive", expect_structured=True,
             )
 
-    def _inject_direct(self, *, interface: str, interim_echo: bool, is_private: bool) -> str:
+    def _inject_direct(self, *, interface: str, is_private: bool) -> str:
         """真实 `_maybe_steer_direct` 入口，返回实际注入模型的文本。"""
         captured: list[str] = []
 
@@ -75,9 +74,6 @@ class SteerReplyConventionTests(unittest.TestCase):
         )
         with patch.object(
             plugin_config_module.plugin_config, "hermes_api_interface", interface
-        ), patch.object(
-            misc_module, "load_misc_config",
-            lambda: SimpleNamespace(interim_echo_enabled=interim_echo),
         ), patch.object(relay, "_mcp", runtime), patch.object(
             relay, "hermes_client", SimpleNamespace(steer_run=fake_steer_run)
         ), patch.object(relay, "_peek_event_db_id", lambda *a, **k: None), patch.object(
@@ -102,7 +98,7 @@ class SteerReplyConventionTests(unittest.TestCase):
         self.assertEqual(len(captured), 1)
         return captured[0]
 
-    def _inject_followup(self, *, interface: str, interim_echo: bool) -> str:
+    def _inject_followup(self, *, interface: str) -> str:
         """真实 `_try_steer_followup` 入口（群聊跟帖路径），返回注入文本。"""
         import asyncio
 
@@ -134,9 +130,6 @@ class SteerReplyConventionTests(unittest.TestCase):
         key = make_inflight_key("onebotv11", False, USER_ID, GROUP_ID)
         with patch.object(
             plugin_config_module.plugin_config, "hermes_api_interface", interface
-        ), patch.object(
-            misc_module, "load_misc_config",
-            lambda: SimpleNamespace(interim_echo_enabled=interim_echo),
         ), patch.object(relay, "_mcp", runtime), patch.object(
             relay, "hermes_client", SimpleNamespace(steer_run=fake_steer_run)
         ), patch.object(relay, "resolve_target", lambda *a, **k: object()):
@@ -145,64 +138,43 @@ class SteerReplyConventionTests(unittest.TestCase):
         self.assertEqual(len(captured), 1)
         return captured[0]
 
-    # --- runs：约定行指向决策 body，不指向 push_message ---------------------
+    # --- runs：约定行指向纯文本正文，不指向 push_message ---------------------
 
-    def test_runs_without_interim_echo_guides_decision_body(self) -> None:
+    def test_runs_guides_plain_text_body(self) -> None:
         for is_private in (False, True):
             with self.subTest(scope="private" if is_private else "group"):
-                text = self._inject_direct(
-                    interface="runs", interim_echo=False, is_private=is_private
-                )
+                text = self._inject_direct(interface="runs", is_private=is_private)
                 self.assertTrue(text.startswith(RAWS["private"]))
                 self.assertTrue(text.endswith(relay._STEER_REPLY_CONVENTION_LINE))
                 self.assertNotIn("push_message", text)
-                self.assertIn("两行 JSON", text)
-                self.assertIn("body", text)
+                self.assertNotIn("JSON", text)
+                self.assertIn("正文", text)
 
-    def test_runs_without_interim_echo_followup_guides_decision_body(self) -> None:
-        text = self._inject_followup(interface="runs", interim_echo=False)
+    def test_runs_followup_guides_plain_text_body(self) -> None:
+        text = self._inject_followup(interface="runs")
         self.assertTrue(text.endswith(relay._STEER_REPLY_CONVENTION_LINE))
         self.assertNotIn("push_message", text)
-        self.assertIn("两行 JSON", text)
+        self.assertNotIn("JSON", text)
+        self.assertIn("正文", text)
 
     def test_runs_convention_line_is_stripped_on_replay(self) -> None:
         """补投是正常消息：台账里存的注入文本要能剥掉新约定行。"""
-        text = self._inject_direct(interface="runs", interim_echo=False, is_private=False)
+        text = self._inject_direct(interface="runs", is_private=False)
         self.assertEqual(steer_reconcile.strip_steer_presentation(text), "你怎么看这个")
-
-    def test_runs_with_interim_echo_keeps_steer_text_verbatim(self) -> None:
-        for is_private in (False, True):
-            with self.subTest(scope="private" if is_private else "group"):
-                text = self._inject_direct(
-                    interface="runs", interim_echo=True, is_private=is_private
-                )
-                self.assertEqual(text, RAWS["private"])
-                self.assertNotIn("push_message", text)
 
     # --- completions：原语义不变，不追加任何约定行 -------------------------
 
     def test_completions_keeps_steer_text_verbatim(self) -> None:
-        for interim_echo in (False, True):
-            for is_private in (False, True):
-                with self.subTest(
-                    echo=interim_echo, scope="private" if is_private else "group"
-                ):
-                    text = self._inject_direct(
-                        interface="completions",
-                        interim_echo=interim_echo,
-                        is_private=is_private,
-                    )
-                    self.assertEqual(text, RAWS["private"])
-                    self.assertNotIn("push_message", text)
-
-    def test_completions_followup_keeps_steer_text_verbatim(self) -> None:
-        for interim_echo in (False, True):
-            with self.subTest(echo=interim_echo):
-                text = self._inject_followup(
-                    interface="completions", interim_echo=interim_echo
-                )
+        for is_private in (False, True):
+            with self.subTest(scope="private" if is_private else "group"):
+                text = self._inject_direct(interface="completions", is_private=is_private)
                 self.assertEqual(text, RAWS["private"])
                 self.assertNotIn("push_message", text)
+
+    def test_completions_followup_keeps_steer_text_verbatim(self) -> None:
+        text = self._inject_followup(interface="completions")
+        self.assertEqual(text, RAWS["private"])
+        self.assertNotIn("push_message", text)
 
 
 if __name__ == "__main__":

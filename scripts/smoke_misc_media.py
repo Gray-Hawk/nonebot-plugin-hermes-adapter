@@ -84,10 +84,10 @@ def src_has(relpath: str, token: str) -> bool:
 # --------------------------------------------------------------------------- #
 
 misc_names = {f.name for f in _fields(MiscConfig)}
-check("MiscConfig 共 15 键", len(misc_names) == 15, f"实际 {len(misc_names)} 键")
+check("MiscConfig 共 14 键", len(misc_names) == 14, f"实际 {len(misc_names)} 键")
 for k in (
     "history_text_max_chars", "group_profile_enabled", "max_length",
-    "transport_error_fallback_text", "interim_echo_enabled", "help_menu_file",
+    "transport_error_fallback_text", "help_menu_file",
     "prompt_dump_enabled", "approval_expiry_sec", "prompt_timezone",
     "delivery_poll_interval_sec", "bot_name", "storage_db_path",
     "storage_message_retention_days", "storage_message_max_rows", "sticker_enabled",
@@ -99,7 +99,6 @@ check("默认 history_text_max_chars=800", mc.history_text_max_chars == 800)
 check("默认 group_profile_enabled=True", mc.group_profile_enabled is True)
 check("默认 max_length=4000", mc.max_length == 4000)
 check("默认 transport_error_fallback_text 空串", mc.transport_error_fallback_text == "")
-check("默认 interim_echo_enabled=False", mc.interim_echo_enabled is False)
 check("默认 prompt_dump_enabled=False", mc.prompt_dump_enabled is False)
 check("默认 approval_expiry_sec=300", mc.approval_expiry_sec == 300)
 check("默认 prompt_timezone 空串", mc.prompt_timezone == "")
@@ -252,8 +251,8 @@ check("approval_expiry_sec 被 approvals 消费", src_has("core/approvals.py", "
 check("旧键零读点: approvals 无 hermes_approval_expiry_sec", src_has_no("core/approvals.py", "plugin_config.hermes_approval_expiry_sec"))
 check("prompt_timezone 被 prompt_builder 消费", src_has("core/prompt_builder.py", "load_misc_config().prompt_timezone"))
 check("旧键零读点: prompt_builder 无 hermes_prompt_timezone", src_has_no("core/prompt_builder.py", "plugin_config.hermes_prompt_timezone"))
-check("interim_echo_enabled 被 message_turns 消费", src_has("handlers/message_turns.py", "misc_cfg.interim_echo_enabled"))
-check("interim_echo_enabled 被 run_resume 消费", src_has("tasks/run_resume.py", "load_misc_config().interim_echo_enabled"))
+check("旧旁白开关已退役: 全仓零 interim_echo_enabled", src_has_no("handlers/message_turns.py", "interim_echo_enabled"))
+check("旧旁白开关已退役: run_resume 零 interim_echo_enabled", src_has_no("tasks/run_resume.py", "interim_echo_enabled"))
 check("旧键零读点: run_resume 无 hermes_interim_echo_enabled", src_has_no("tasks/run_resume.py", "plugin_config.hermes_interim_echo_enabled"))
 check("prompt_dump_enabled 被 prompt_dump 消费", src_has("core/prompt_dump.py", "load_misc_config().prompt_dump_enabled"))
 check("旧键零读点: prompt_dump 无 hermes_prompt_dump_enabled", src_has_no("core/prompt_dump.py", "hermes_prompt_dump_enabled"))

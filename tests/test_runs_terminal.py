@@ -69,9 +69,14 @@ class TextUnitTests(unittest.TestCase):
             self.assertEqual(split_text_units(f"甲\n{line}\n乙"), [f"甲\n{line}\n乙"])
             self.assertEqual(split_text_units(line), [line.strip()])
 
-    def test_fenced_separator_is_literal(self) -> None:
-        text = "```\n§\n```"
-        self.assertEqual(split_text_units(text), [text])
+    def test_fenced_separator_still_splits(self) -> None:
+        # 唯一规则：整行严格等于 § 就分隔；代码围栏不是例外，也不设转义／豁免。
+        self.assertEqual(split_text_units("```\n§\n```"), ["```", "```"])
+        self.assertEqual(split_text_units("~~~\n§\n~~~"), ["~~~", "~~~"])
+        self.assertEqual(
+            split_text_units("说明\n```\n甲\n§\n乙\n```"),
+            ["说明\n```\n甲", "乙\n```"],
+        )
 
     def test_backslash_separator_line_is_plain_text(self) -> None:
         # 不设转义协议：`\§` 就是普通正文原样发送。
@@ -226,7 +231,7 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
         return tracker
 
     async def _run(self, result, *, tracker, bounce=None, real_bounce: bool = False, chat=None,
-                   interim_echo: bool = False, sessions=None, current_buffered=None,
+                   sessions=None, current_buffered=None,
                    replied_msg_id=None, now_ms: int = 1, resolve_reply=None):
         from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
         from nonebot_plugin_hermes_adapter.handlers import message_feedback as fb
@@ -237,7 +242,6 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
         cfg.group_profile_enabled = False
         cfg.sticker_vision_enabled = False
         cfg.history_message_limit = 5
-        cfg.interim_echo_enabled = interim_echo
         # 锚控制路径要拿真实数值算超龄；MagicMock 参与 `>` 比较会直接 TypeError。
         cfg.anchor_max_age_sec = 3600
         bot = MagicMock(self_id=1)
@@ -279,7 +283,7 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
                 generation=1, last_bot_reply_at=0, session_id="sess",
                 last_bot_reply_text="", last_bot_reply_media=0,
                 triggered_by="u1", participants=set(),
-                should_exit_active=False, interim_echo_enabled=False,
+                should_exit_active=False,
             )),
             "_chat_with_overflow_recovery": (
                 chat if chat is not None else AsyncMock(return_value=result)
@@ -470,7 +474,7 @@ class _PassiveHarness(unittest.IsolatedAsyncioTestCase):
         return tracker
 
     async def _run(self, result, *, tracker, is_private: bool = True, group_id: str | None = None,
-                   real_files: bool = False, bounce=None, chat=None):
+                   real_files: bool = False, bounce=None, chat=None, resolve_reply=None):
         from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
 
         calls = {"send": [], "settle": [], "history": [], "files": [], "heal": []}
@@ -539,7 +543,10 @@ class _PassiveHarness(unittest.IsolatedAsyncioTestCase):
             ),
             "send_text_with_media": fake_send,
             "send_local_files": files_mock,
-            "resolve_reply": MagicMock(return_value=None),
+            "resolve_reply": (
+                resolve_reply if resolve_reply is not None
+                else MagicMock(return_value=None)
+            ),
             "_maybe_intercept_bounce": (
                 AsyncMock(side_effect=list(bounce)) if bounce is not None
                 else AsyncMock(return_value=False)

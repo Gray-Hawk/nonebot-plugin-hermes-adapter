@@ -513,7 +513,6 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
         cfg.group_profile_enabled = False
         cfg.sticker_vision_enabled = False
         cfg.history_message_limit = 5
-        cfg.interim_echo_enabled = False
         bot = MagicMock(self_id=1)
         target = SimpleNamespace(private=False, id=GROUP_ID)
         runtime = MagicMock(
@@ -542,7 +541,7 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
                 generation=1, last_bot_reply_at=0, session_id="sess",
                 last_bot_reply_text="", last_bot_reply_media=0,
                 triggered_by="u1", participants=set(),
-                should_exit_active=False, interim_echo_enabled=False,
+                should_exit_active=False,
             )),
             "_chat_with_overflow_recovery": AsyncMock(return_value=result),
             "_settle": MagicMock(),

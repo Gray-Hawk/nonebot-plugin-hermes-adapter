@@ -2,8 +2,8 @@
 
 规则（对应设计 t_306c4938 v5）：
 
-- 只有「整行内容严格等于 `§`、且不在代码围栏内」才是单位边界；` §`、`§ `、` § `
-  都只是普通正文（不做 strip 后的宽松识别）；不按行、不按空行切；
+- 只有「整行内容严格等于 `§`」才是单位边界（任何位置，含代码围栏内都一样）；
+  ` §`、`§ `、` § ` 都只是普通正文（不做 strip 后的宽松识别）；不按行、不按空行切；
 - 首／尾／连续 `§` 不产生空消息，空单位直接丢弃；
 - 单个单位超 `MAX_BODY_CHARS` 一律 fail-closed（``TextUnitsError``），绝不发半截；
 - 解析是纯函数：同一段文本永远得到同一串单位，正常链／恢复链／对账链共用这一份。
@@ -14,13 +14,8 @@
 
 from __future__ import annotations
 
-import re
-
 SEPARATOR = "§"
 MAX_BODY_CHARS = 4000
-
-# 代码围栏：行首（允许缩进）连续三个以上反引号或波浪号。
-_FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 
 class TextUnitsError(ValueError):
@@ -46,16 +41,10 @@ def split_text_units(text: str, *, max_body_chars: int = MAX_BODY_CHARS) -> list
         return []
     units: list[str] = []
     current: list[str] = []
-    fence: str | None = None
     for line in raw.split("\n"):
-        fence_match = _FENCE.match(line)
-        if fence_match:
-            marker = fence_match.group(1)[0]
-            fence = None if fence == marker else (fence or marker)
-            current.append(line)
-            continue
         # 严格整行匹配：前后带空格（` §`、`§ `、` § `）都是普通正文，不切分。
-        if fence is None and line == SEPARATOR:
+        # 不设第二套规则：代码围栏内的整行 § 同样分隔，没有转义/豁免。
+        if line == SEPARATOR:
             units.append("\n".join(current))
             current = []
             continue

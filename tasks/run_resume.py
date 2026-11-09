@@ -3,16 +3,18 @@
 旧路 nb 重启 = 在跑 turn 全灭(SSE 断连 interrupt,最终回复必丢);runs 的 turn
 活在 gateway,插件重启后按 run_tracker 的行 reattach:
 
-- run 仍在跑 → 按 last_seq 续订事件流,新旁白照发,终态后走极简送达补发回复;
+- run 仍在跑 → 按 last_seq 续订事件流，等终态后走极简送达补发回复
+  （纯文本协议下没有旁白通道，订阅期间不发送任何正文，重放帧只读）；
 - 重启期间已 completed → 直接补发 output(回复不丢,这是本补丁的核心收益);
 - failed/cancelled/interrupted → 记 WARN 删行不补发(与现网失败静默语义一致)。
 
 极简送达与正常 turn 的差异(刻意收窄,防半个状态机):
-- reactive/结构化: output 按 submit_decision JSON 解析,失败即静默;reply_to=m:id
-  通过消息库解析成当前会话的平台 message_id,内联 @ 由统一出站构造消息段;
+- 正文: output 按纯文本协议切分（``units_from_output``，与正常链/对账链共用）；
+  reply_to=m:id 通过消息库解析成当前会话的平台 message_id，内联 @ 由统一出站
+  构造消息段；
 - pin/release anchor、should_exit_active、防抖合并这些 turn 生命周期
   特性在续跑轮一律跳过(记 INFO);mark_bot_replied 照打(窗口若还活着);
-- 续跑期间到达的旁白帧按 interim_echo 同款转发(受 hermes_interim_echo_enabled 控制)。
+- 订阅期间不转发任何进度：正文只在终态按 output 补发一次。
 
 送达窗口:BotRegistry 重启即清、scope 内可能已有新 turn 在跑——等 entry 出现且
 scope 空闲才送,15s 一拍共 40 拍(10 分钟);超时保留行。保留行两条出路
@@ -37,15 +39,11 @@ from .. import mcp as _mcp
 from ..adapter_norm import normalize_adapter_name
 from ..config import plugin_config
 from ..core.bg_tasks import spawn_bg_task
-from ..core.hermes_client import (
-    RunsEventParser,
-    extract_response_media,
-)
+from ..core.hermes_client import RunsEventParser
 from ..core.inflight import make_inflight_key
 from ..core.message_buffer import BufferedMessage
 from ..core.message_origin import MessageOrigin
 from ..core.companion_runtime import deliver_companion_run_output
-from ..core.misc_config import load_misc_config
 from ..core.outbound import (
     DeliveryContext,
     get_bot_nickname,
@@ -491,19 +489,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
                     if ev.status_code != 200:
                         raise RuntimeError(f"events HTTP {ev.status_code}")
                     async for line in ev.aiter_lines():
-                        interim = parser.feed(line)
-                        if (
-                            interim
-                            and load_misc_config().interim_echo_enabled
-                        ):
-                            cleaned, _, _ = extract_response_media(interim)
-                            if cleaned:
-                                await send_text_with_media(
-                                    bot=bot, target=entry.target, text=cleaned,
-                                    media_urls=[], adapter_name=row.adapter,
-                                )
-                        if tracker and parser.last_seq >= 0 and (interim or parser.terminal):
-                            tracker.update_seq(row.run_id, parser.last_seq)
+                        parser.feed(line)
                         if parser.terminal:
                             break
     except Exception as exc:
