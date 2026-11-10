@@ -108,8 +108,7 @@ def render(mode: str, enabled: bool) -> dict[str, str]:
                 private_decision=True,
             ),
             "group_user": pb.build_reactive_user_content(
-                addressed_to_bot=True, triggered_by="主人", triggered_by_nickname=None,
-                recent_messages=[], rows=[row()], current_image_urls=[],
+                addressed_to_bot=True, recent_messages=[], rows=[row()], current_image_urls=[],
                 pinned_anchors=[anchor()], now_ms=NOW, self_id="2968545011",
                 adapter=ADAPTER,
             ),
@@ -252,8 +251,7 @@ check("钉入存量锚", manager.pin_anchor(
     session, record, master_ids=set(), max_age_ms=60_000, now_ms=NOW,
 ))
 hidden = pb.build_reactive_user_content(
-    addressed_to_bot=True, triggered_by="主人", triggered_by_nickname=None,
-    recent_messages=[], rows=[row()], current_image_urls=[],
+    addressed_to_bot=True, recent_messages=[], rows=[row()], current_image_urls=[],
     pinned_anchors=[record], now_ms=NOW, self_id="2968545011", adapter=ADAPTER,
 )
 check("关闭时提示词不渲染 pinned 块", "<pinned_tasks>" not in hidden)
@@ -262,8 +260,7 @@ commit(True)
 restored = manager.get_anchors(ADAPTER, GROUP, NOW, max_age_ms=60_000)
 check("重开后读回同一锚", [a.text for a in restored] == ["存量委托任务"] and restored[0].m_id == 88)
 shown = pb.build_reactive_user_content(
-    addressed_to_bot=True, triggered_by="主人", triggered_by_nickname=None,
-    recent_messages=[], rows=[row()], current_image_urls=[],
+    addressed_to_bot=True, recent_messages=[], rows=[row()], current_image_urls=[],
     pinned_anchors=restored, now_ms=NOW, self_id="2968545011", adapter=ADAPTER,
 )
 check("重开后提示词重新渲染 pinned 块", "<pinned_tasks>" in shown and "存量委托任务" in shown)

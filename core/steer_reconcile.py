@@ -26,7 +26,7 @@ from ..core.bg_tasks import spawn_bg_task
 from ..core.hermes_client import _try_parse_first_json_block
 from ..core.message_origin import MessageOrigin, MessageSource
 from ..core.routing import resolve_target
-from ..core.run_tracker import TrackedRun
+from ..core.run_tracker import TrackedRun, is_virtual_ledger_mid
 
 _QUERY_LIMIT = 500
 _QUERY_TIMEOUT = 10
@@ -55,6 +55,20 @@ async def reconcile_run_finished(tracked) -> None:
         return
     if not pending:
         return  # 常态零开销路径到此为止: 该 run 没有已接受待对账的 steer。
+    # 无号行的虚拟锚只承载原文供 native 回收,没有可搜的转录锚:按 m:id 搜必然落空,
+    # 会被误判成「被吞」而重复补投,所以不做转录核验——run 已正常收尾即结算。
+    # 真被吞的时候,回收点(pending_steer 上浮)已经先按原文把这些账项核销成
+    # recovered;剩下的虚拟锚留在 live 只会被后来的 run 按 scope 拉走(旧原文污染)。
+    virtual = [p for p in pending if is_virtual_ledger_mid(p.get("m_id"))]
+    if virtual:
+        _mark_status(tracked, [p["m_id"] for p in virtual], "reconciled")
+        logger.info(
+            f"[HERMES steer对账] 无号行虚拟锚 {len(virtual)} 条随 run 收尾结算 "
+            f"(run_id={tracked.run_id})"
+        )
+        pending = [p for p in pending if not is_virtual_ledger_mid(p.get("m_id"))]
+    if not pending:
+        return
     logger.info(
         f"[HERMES steer对账] 触发: run_id={tracked.run_id} pending={len(pending)}"
     )
@@ -270,12 +284,21 @@ async def _replay_case_a(tracked, rows, missing, now_ms) -> None:
 async def _replay_direct(tracked, row, now_ms) -> None:
     """原文直插补投(情形 B 与情形 A 降级共用)。成功置 replayed, 失败置 replay_failed。
 
-    台账 steer_text 剥尾部约定行与 speaker／m:id 呈递外壳后作为正常消息重投；
-    原始 m:id 仍留在台账供对账追溯，不回填成新消息的可寻址身份。
+    用户正文只从既有原始来源取:台账 raw_text(发送时随行入账),或按 m:id 回查
+    messages 表的原始 content。两者都拿不到就置 replay_failed 留待人工——**不从
+    渲染后的文本反向剥壳**:壳与正文按字面不可区分,剥错就是吞用户原文。
+    原始 m:id 仍留在台账供对账追溯,不回填成新消息的可寻址身份。
     """
     m_id = row["m_id"]
     try:
-        text = strip_steer_presentation(row["steer_text"])
+        text = original_text_of(row)
+        if text is None:
+            logger.warning(
+                f"[HERMES steer对账] 取不到原始正文,置 replay_failed 不补投 "
+                f"(run_id={tracked.run_id} m_id={m_id})"
+            )
+            _mark_status(tracked, [m_id], "replay_failed")
+            return
         # 私聊 sender 恒为本人; 群聊按原 sender 归因(昵称不可得, 回落 sender_id)。
         user_id = tracked.user_id if tracked.is_private else row["sender_id"]
         # 情形 B 是真人原文回投：作者是真人，通道与平台入站分开记录，不生成系统署名。
@@ -400,7 +423,12 @@ def _build_case_a_text(rows, missing) -> tuple[str | None, bool]:
     for t in reversed(delivered_steers):
         parts.append(f"[已送达的中途插话] {t}")
     for p in missing:  # 已按 accepted_at 升序
-        parts.append(f"[★被吞的插话，本应在这里生效] {_strip_convention(p['steer_text'])}")
+        # 空串是合法原文(用户发了一条空行消息):只有 None 才算取不到,
+        # 用 `or` 会把它当成缺失,把渲染壳 `[m:302]:` 当正文补投。
+        text = original_text_of(p)
+        if text is None:
+            text = _strip_convention(p["steer_text"])
+        parts.append(f"[★被吞的插话，本应在这里生效] {text}")
     parts.append(f"[我的最终回复] {final_reply[:500] if final_reply else '（空）'}")
     if tool_count:
         parts.append(f"（其间我还调用了 {tool_count} 次工具）")
@@ -442,16 +470,94 @@ def _extract_push_texts(tool_calls) -> list[str]:
 
 
 def _strip_convention(text: str) -> str:
-    """剥掉 steer 注入文本尾部的一次性约定行(补投是正常消息, 不该带)。"""
+    """剥掉 steer 注入文本尾部的一次性约定行(补投是正常消息, 不该带)。
+
+    发送原语挂的是 `text + "\\n" + 约定行`:只还原它插入的那一个分隔换行,正文
+    自己的尾随换行(用户原文可能以空行结尾)逐字节保留。旧实现 rstrip("\\n")
+    把正文尾空白一起吃掉,「全路径逐字节保全」就不成立。
+    """
     from ..handlers.message_relay import _STEER_REPLY_CONVENTION_LINE
 
     line = _STEER_REPLY_CONVENTION_LINE
     if text.endswith(line):
         text = text[: -len(line)]
-    return text.rstrip("\n")
+        if text.endswith("\n"):
+            text = text[:-1]
+    return text
+
+
+def original_text_of(row: dict) -> str | None:
+    """台账行 → 原始正文(恢复/对账改投唯一正文来源)。
+
+    先看台账 raw_text(发送时与渲染行一并入账),再按 m:id 回查 messages 表的原始
+    content——都是既有数据源,不新建表、不做第二套恢复通道。两样都拿不到返回
+    None,由调用方置 replay_failed 留待人工:**不会**退回去从渲染文本反向剥壳,
+    壳与正文按字面不可区分,剥错就是吞用户原文。
+    """
+    raw = row.get("raw_text")
+    if raw is not None:
+        # 本列随行入账(新账项):正文就是原始 content,哪怕空串也不再往别处找。
+        return str(raw)
+    m_id = row.get("m_id")
+    buffer = getattr(_mcp, "message_buffer", None)
+    if m_id is not None and buffer is not None:
+        try:
+            found = buffer.get_content(int(m_id))
+        except Exception:
+            found = None
+            logger.warning(
+                f"[HERMES steer] 按 m:id 回查原始正文失败 (m_id={m_id})", exc_info=True
+            )
+        if found is not None:
+            return found
+    # 旧账项(raw_text 列引入前落库,该列为 NULL):按既有兼容边界处理——旧行没有
+    # 任何原文来源,剥壳是唯一可用的还原方式。新账项永不走到这里。
+    legacy = row.get("steer_text")
+    if legacy:
+        return strip_steer_presentation(legacy)
+    return None
 
 
 _STEER_STRIP_RE = None
+
+
+def _steer_strip_pattern() -> re.Pattern:
+    """旧账项的呈递外壳剥壳正则(只服务 raw_text 为 NULL 的历史行)。
+
+    新账项一律直接读原始正文(台账 raw_text / messages.content),不经过本正则;
+    这里保留升级前落库的老行兼容边界,不再为新文法扩充规则——新版消息头是单独
+    一行 `[m:id] [身份] [id=…]:`,本正则认不出它,也就不可能误吞新正文。
+    """
+    global _STEER_STRIP_RE
+    if _STEER_STRIP_RE is None:
+        from ..core.prompt_builder import _AT_ME_MARK, _IDENTITY_LABELS
+
+        labels = "|".join(re.escape(x) for x in _IDENTITY_LABELS)
+        at = rf"(?:{re.escape(_AT_ME_MARK.strip())}[ \t]+)?"
+        idb = rf"(?:\[(?:{labels})\][ \t]+)?"
+        tag = r"\[id=[^\]\n]+\]"
+        mid = r"\[m:\d+\]"
+        _STEER_STRIP_RE = re.compile(
+            rf"^{at}(?:"
+            # 旧 speaker 形:`[m:id]? [身份]? [id=…]( [m:id])?: `
+            rf"(?:{mid}[ \t]+)?{idb}{tag}(?:[ \t]+{mid})?[ \t]*:[ \t]*"
+            rf"|"
+            # 旧无 speaker 形:`[m:id]: 正文`(身份栏可选)
+            rf"{idb}{mid}[ \t]*:[ \t]*"
+            rf")",
+            flags=re.MULTILINE,
+        )
+    return _STEER_STRIP_RE
+
+
+def strip_steer_presentation(text: str) -> str:
+    """旧账项还原:剥掉升级前的 steer 呈递外壳。
+
+    只给 `original_text_of` 的旧行兼容分支用(台账 raw_text 为 NULL 的历史账项),
+    新账项一律读原始正文。正文里同样字样的文本不受影响(只锚行首)。
+    """
+    text = _strip_convention(text)
+    return _steer_strip_pattern().sub("", text)
 
 
 def _steer_line_hit_pattern(m_id) -> re.Pattern:
@@ -471,55 +577,6 @@ def _steer_line_hit_pattern(m_id) -> re.Pattern:
         rf"(?:\[id=[^\]\n]+\][ \t]+)?{mid}",
         flags=re.MULTILINE,
     )
-
-
-def _steer_strip_pattern() -> re.Pattern:
-    """steer 呈递外壳的剥壳正则,档位字面量与强提醒标记都取自渲染端常量。
-
-    渲染文法(与 current/recent 逐字节同源):
-      `[有人@我] [m:id] [主人] [id=…]: 正文`      群聊/多人批
-      `[有人@我] [m:id] [主人] 正文`              私聊单人行(speaker 省略)
-    另外继续认旧 steer 文法 `[身份] [id=…] [m:id]: 正文`——升级前落库的
-    steer_ledger 行不迁移正文,剥壳要能一起处理,否则回收时旧壳会残留在正文里。
-
-    每行只剥行首这些固定标记 + 紧随的分隔符(冒号或空格);`[m:id]` / `[id=…]` /
-    `[有人@我]` 至少出现一个才判定为呈递外壳——只有身份栏一行(`[主人] 你好`)
-    可能是用户原文,按「宁可保留、不吞正文」不剥。
-    正文里同样字样的文本不受影响(只锚行首)。
-    """
-    global _STEER_STRIP_RE
-    if _STEER_STRIP_RE is None:
-        from ..core.prompt_builder import _AT_ME_MARK, _IDENTITY_LABELS
-
-        labels = "|".join(re.escape(x) for x in _IDENTITY_LABELS)
-        at = rf"(?:{re.escape(_AT_ME_MARK.strip())}[ \t]+)?"
-        idb = rf"(?:\[(?:{labels})\][ \t]+)?"
-        tag = r"\[id=[^\]\n]+\]"
-        mid = r"\[m:\d+\]"
-        _STEER_STRIP_RE = re.compile(
-            rf"^{at}(?:"
-            # 统一文法 + 旧 speaker 形:`[m:id]? [身份]? [id=…]( [m:id])?: `
-            rf"(?:{mid}[ \t]+)?{idb}{tag}(?:[ \t]+{mid})?[ \t]*:[ \t]*"
-            rf"|"
-            # 旧无 speaker 形:`[m:id]: 正文`(身份栏可选)
-            rf"{idb}{mid}[ \t]*:[ \t]*"
-            rf"|"
-            # 统一私聊形:speaker 省略,`[m:id] [身份]? 正文`
-            rf"{mid}[ \t]+{idb}"
-            rf")",
-            flags=re.MULTILINE,
-        )
-    return _STEER_STRIP_RE
-
-
-def strip_steer_presentation(text: str) -> str:
-    """真人原文回投前剥掉 steer 呈递外壳，避免与当前行渲染重复叠加。
-
-    身份栏与 [有人@我] 属于呈递装饰,和 speaker/m:id 一起剥净:否则原文回投后
-    新一轮渲染会在正文里留下旧身份字面量(叠壳)。
-    """
-    text = _strip_convention(text)
-    return _steer_strip_pattern().sub("", text)
 
 
 def _strip_out_of_band(content: str) -> str:

@@ -84,7 +84,7 @@ def _render(mode: str, enabled: bool) -> dict[str, str]:
                 private_decision=True,
             ),
             "group_user": pb.build_reactive_user_content(
-                addressed_to_bot=True, triggered_by="主人", triggered_by_nickname=None,
+                addressed_to_bot=True,
                 recent_messages=[], rows=[_row_obj()], current_image_urls=[],
                 pinned_anchors=[_anchor()], now_ms=NOW, self_id="999",
                 adapter="onebotv11",
@@ -236,8 +236,7 @@ class TaskAnchorRestoreTests(unittest.TestCase):
         _commit(False)
         # 关闭时 handler 不读锚 → 提示词里没有 pinned 块。
         off_prompt = pb.build_reactive_user_content(
-            addressed_to_bot=True, triggered_by="u1", triggered_by_nickname=None,
-            recent_messages=[], rows=[_row_obj()], current_image_urls=[],
+            addressed_to_bot=True, recent_messages=[], rows=[_row_obj()], current_image_urls=[],
             pinned_anchors=[self.record], now_ms=NOW, self_id="999", adapter="onebotv11",
         )
         self.assertNotIn("<pinned_tasks>", off_prompt)
@@ -249,8 +248,7 @@ class TaskAnchorRestoreTests(unittest.TestCase):
         self.assertEqual([a.text for a in anchors], ["原始委托"])
         self.assertEqual(anchors[0].m_id, 42)
         on_prompt = pb.build_reactive_user_content(
-            addressed_to_bot=True, triggered_by="u1", triggered_by_nickname=None,
-            recent_messages=[], rows=[_row_obj()], current_image_urls=[],
+            addressed_to_bot=True, recent_messages=[], rows=[_row_obj()], current_image_urls=[],
             pinned_anchors=anchors, now_ms=NOW, self_id="999", adapter="onebotv11",
         )
         self.assertIn("<pinned_tasks>", on_prompt)

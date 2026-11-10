@@ -434,6 +434,36 @@ class MessageStore:
             if r["route_user_id"] is not None
         }
 
+    def get_content(self, message_id: int) -> str | None:
+        """m:id → 原始正文(steer 恢复/对账改投读原文用,查不到返回 None)。
+
+        只读 messages 表已有列,不新建表:恢复侧拿不到台账原文时按号回查原始
+        消息,避免从渲染后的文本反向剥壳。
+        """
+        row = self._conn.execute(
+            "SELECT content FROM messages WHERE id = ?", (int(message_id),)
+        ).fetchone()
+        return row["content"] if row is not None else None
+
+    def get_message_facts(self, message_id: int) -> dict[str, Any] | None:
+        """m:id → 恢复呈递所需的原始身份事实(库里那一行,查不到返回 None)。
+
+        steer 原文恢复只拿得到台账 sender_id 与正文;昵称、结构化 At 是「这条原始
+        消息」在库里既有的事实,恢复出的 fragment 必须按它们水合,否则下一轮普通
+        handler 会把真实 @ 与原昵称丢掉。只读 messages 表,不从旧渲染标签反推。
+        """
+        row = self._conn.execute(
+            "SELECT user_id, nickname, at_ids FROM messages WHERE id = ?",
+            (int(message_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "user_id": row["user_id"],
+            "nickname": row["nickname"],
+            "at_user_ids": _decode_at_ids(row["at_ids"]),
+        }
+
     def get_qq_message_id(
         self,
         adapter: str,

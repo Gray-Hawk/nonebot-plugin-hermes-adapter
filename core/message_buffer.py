@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .message_origin import MessageOrigin
+from .message_origin import MessageOrigin, MessageSource
 
 if TYPE_CHECKING:
     from .storage.image_fetcher import ImageFetcher
@@ -82,7 +82,10 @@ class BufferedMessage:
         if not isinstance(self.origin, MessageOrigin):
             raise TypeError("origin 必须是 MessageOrigin")
         if self.id is not None and not self.origin.allows_store:
-            raise ValueError("不可入库来源不得持有可寻址消息 ID")
+            # 真人原文回投是唯一例外:它不重复入库(allows_store=False),回投的却是
+            # 库里那一行,原始 m:id 是既有寻址事实(取图/引用/对账),不是新造 ID。
+            if self.origin.source is not MessageSource.HUMAN_REPLAY:
+                raise ValueError("不可入库来源不得持有可寻址消息 ID")
         if self.origin.id_required_none and (self.id is not None or self.qq_message_id is not None):
             raise ValueError("合成或混合聚合消息不得持有可寻址消息 ID")
 
@@ -201,6 +204,38 @@ class MessageBuffer:
         """回填指定消息的 content(perception 拿真实 db id 后对含文件消息补
         m:id#fN 标签)。只改 content 列,不动 ts/媒体行。"""
         self._store.update_content(message_id, content)
+
+    def get_content(self, message_id: int) -> str | None:
+        """m:id → 原始正文(门面透传;steer 恢复改投读原文用,查不到返回 None)。"""
+        return self._store.get_content(message_id)
+
+    def get_message_facts(self, message_id: int) -> dict | None:
+        """m:id → 恢复呈递所需的原始身份事实(昵称/发送者/结构化 At)。
+
+        门面透传 MessageStore.get_message_facts:恢复出的 fragment 按库里那一行
+        水合,真实 @ 与原昵称不因经过 steer 通道而消失;查不到返回 None(不猜)。
+        """
+        return self._store.get_message_facts(message_id)
+
+    def get_media_urls(self, message_id: int) -> dict[str, list[str]]:
+        """m:id → 已入库的原始媒体清单(按枚举序分组),恢复呈递时恢复寻址用。
+
+        只读既有 message_images 事实:媒体标签/取图入口仍指向库里那一行,
+        不从渲染文本里反推。未入库的 id 返回空桶。
+        """
+        buckets: dict[str, list[str]] = {
+            "image": [], "sticker": [], "quote": [], "forward_image": [],
+        }
+        try:
+            meta = self._store.get_message_images_meta([int(message_id)])
+        except Exception:
+            return buckets
+        for item in meta.get(int(message_id), []):
+            kind = str(item.get("kind") or "image")
+            url = item.get("url")
+            if url:
+                buckets.setdefault(kind, []).append(str(url))
+        return buckets
 
     def get_qq_message_id(
         self,

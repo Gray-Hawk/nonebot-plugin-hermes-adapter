@@ -149,21 +149,21 @@ class SteerRowPresentationTests(_TrackerCase):
 
         self.assertTrue(ok)
         self.assertEqual(len(captured), 1)
-        lines = captured[0].split("\n")
-        self.assertEqual(len(lines), 2, captured[0])
-        self.assertTrue(lines[0].startswith("[m:101] [普通用户] [id=u1 user=小光]: "), lines[0])
-        self.assertTrue(lines[1].startswith("[m:102] [普通用户] [id=u2 user=小李]: "), lines[1])
         # 媒体寻址只贴本行自己的号与自己的 idx
-        self.assertIn("[图 m:101#0]", lines[0])
-        self.assertIn("[引用图 m:101#1]", lines[0])
-        self.assertNotIn("m:102", lines[0])
-        self.assertIn("[转发图 m:102#0]", lines[1])
-        self.assertNotIn("m:101", lines[1])
+        blocks = captured[0].split("\n\n")
+        self.assertEqual(len(blocks), 2, captured[0])
+        self.assertTrue(blocks[0].startswith("[m:101] [普通用户] [id=u1 user=小光]:\n"), blocks[0])
+        self.assertTrue(blocks[1].startswith("[m:102] [普通用户] [id=u2 user=小李]:\n"), blocks[1])
+        self.assertIn("[图 m:101#0]", blocks[0])
+        self.assertIn("[引用图 m:101#1]", blocks[0])
+        self.assertNotIn("m:102", blocks[0])
+        self.assertIn("[转发图 m:102#0]", blocks[1])
+        self.assertNotIn("m:101", blocks[1])
         # 台账逐行,发送人/正文与实发文本逐字对齐
         ledger = self.ledger()
         self.assertEqual([(r["m_id"], r["sender_id"]) for r in ledger],
                          [("101", "u1"), ("102", "u2")])
-        self.assertEqual([r["steer_text"] for r in ledger], lines)
+        self.assertEqual([r["steer_text"] for r in ledger], blocks)
         # 呈现去重名单同样从这份呈递派生
         self.assertEqual(self.seen_ids(), {101, 102})
 
@@ -195,7 +195,8 @@ class SteerRowPresentationTests(_TrackerCase):
         row = msg(user="u1", nickname="小光", content="同一行", m_id=101)
         ok, captured = self._direct([row, row])
         self.assertTrue(ok)
-        self.assertEqual(captured[0].split("\n"), ["[m:101] [普通用户] [id=u1 user=小光]: 同一行"])
+        self.assertEqual(captured[0].split("\n\n"),
+                         ["[m:101] [普通用户] [id=u1 user=小光]:\n同一行"])
         self.assertEqual(len(self.ledger()), 1)
         self.assertEqual(self.seen_ids(), {101})
 
@@ -308,7 +309,7 @@ class FollowupSteerGateTests(_TrackerCase):
         )
         ok, captured = self._try()
         self.assertTrue(ok)
-        self.assertEqual(captured, ["[m:103] [普通用户] [id=u3 user=小周]: 你怎么看"])
+        self.assertEqual(captured, ["[m:103] [普通用户] [id=u3 user=小周]:\n你怎么看"])
         self.assertIsNone(self.registry.peek_followup(KEY), "纯文本注入成功后应摘槽")
         self.assertEqual(
             [(r["m_id"], r["sender_id"]) for r in self.ledger()], [("103", "u3")]
@@ -329,11 +330,16 @@ class FollowupSteerGateTests(_TrackerCase):
         )
         ok, captured = self._try()
         self.assertTrue(ok)
-        self.assertEqual(captured, ["[普通用户] [id=u3 user=小周]: 没有行号的跟帖"])
+        self.assertEqual(captured, ["[普通用户] [id=u3 user=小周]:\n没有行号的跟帖"])
         self.assertIsNone(
             self.registry.peek_followup(KEY), "已呈现的无号行必须结算,留槽会重复呈递"
         )
-        self.assertEqual(self.ledger(), [], "无号行不入账(对账无锚点)")
+        # 无号行没有转录对账锚点,但仍以虚拟锚入账承载原文(native 回收唯一的
+        # 原文来源);虚拟锚不参与转录对账。
+        ledger = self.ledger()
+        self.assertEqual(len(ledger), 1)
+        self.assertTrue(ledger[0]["m_id"].startswith("noid:"))
+        self.assertEqual(ledger[0]["raw_text"], "没有行号的跟帖")
 
     # --- P-19:quote／forward 媒体不得随摘槽丢失 ---
 
@@ -462,7 +468,7 @@ class FollowupSteerGateTests(_TrackerCase):
         ok, captured = self._try(during_await=merge_notice)
         # 冻结集在 await 前已定:injected 只含真人那一行(系统事件行不冒充 steer 输入);
         # 结算按对象身份发现新 fragment → 槽保留,系统行留给接力轮呈递
-        self.assertEqual(captured, ["[m:114] [普通用户] [id=u3 user=小周]: 我再补一句"])
+        self.assertEqual(captured, ["[m:114] [普通用户] [id=u3 user=小周]:\n我再补一句"])
         self.assertTrue(ok)
         # 槽里只剩系统事件行(未呈现,交由接力轮呈递);已 steer 的真人行已摘。
         self.assertEqual(len(entry.fragments), 1)
@@ -594,8 +600,8 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
             [(row.user_id, row.content) for row in entry.fragments],
             [("u2", "先别开枪"), ("u3", "等等我")],
         )
-        # 回收行是 human_replay:无号、不重复入库,台账供追溯
-        self.assertTrue(all(row.id is None for row in entry.fragments))
+        # 回收行是 human_replay:不重复入库,但带号行保留原始 m:id(既有寻址事实)
+        self.assertEqual([row.id for row in entry.fragments], [201, 202])
         self.assertTrue(all(row.origin.is_pure_human for row in entry.fragments))
         self.assertEqual(self.ledger(), [], "native 上浮即核销台账,防双重投递")
 
@@ -684,6 +690,65 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
                     pending_text, adapter_name=ADAPTER, is_private=False,
                     user_id=TRIGGER, group_id=GROUP_ID, now_ms=1,
                 ))
+
+
+class RecoveryTextSourceTests(unittest.TestCase):
+    """R2:恢复用原文的边界——约定行、尾空白、空串。
+
+    这里只测「文本来源」的纯函数边界:约定行是发送侧装饰,不是正文;正文里引用
+    同一行字面量必须逐字节保留;正文自己的尾随换行不能被吞。
+    """
+
+    @staticmethod
+    def _conv() -> str:
+        from nonebot_plugin_hermes_adapter.handlers.message_relay import (
+            _STEER_REPLY_CONVENTION_LINE,
+        )
+
+        return _STEER_REPLY_CONVENTION_LINE
+
+    def test_body_quoting_convention_line_is_not_stripped(self) -> None:
+        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+
+        conv = self._conv()
+        body = "用户正在引用：\n" + conv + "\n请解释这行，不要删除。"
+        rendered = "[m:1] [普通用户] [id=u1 user=甲]:\n" + body
+        pending = rendered + "\n" + conv
+        rows = [{"m_id": "1", "steer_text": rendered, "raw_text": body}]
+        matched = mt._match_pending_steer_rows(pending, rows, convention_line=conv)
+        self.assertIsNotNone(matched)
+        self.assertEqual([m["m_id"] for m in matched], ["1"])
+
+    def test_matcher_skips_convention_line_only_between_batches(self) -> None:
+        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+
+        conv = self._conv()
+        first = "[m:1] [普通用户] [id=u1 user=甲]:\n甲"
+        second = "[m:2] [普通用户] [id=u2 user=乙]:\n乙"
+        pending = first + "\n" + conv + "\n" + second + "\n" + conv
+        rows = [
+            {"m_id": "1", "steer_text": first, "raw_text": "甲"},
+            {"m_id": "2", "steer_text": second, "raw_text": "乙"},
+        ]
+        matched = mt._match_pending_steer_rows(pending, rows, convention_line=conv)
+        self.assertEqual([m["m_id"] for m in matched], ["1", "2"])
+
+    def test_strip_convention_keeps_body_trailing_newlines(self) -> None:
+        from nonebot_plugin_hermes_adapter.core.steer_reconcile import _strip_convention
+
+        conv = self._conv()
+        body = "原文尾部有两个换行\n\n"
+        self.assertEqual(_strip_convention(body + "\n" + conv), body)
+        self.assertEqual(_strip_convention(body), body, "没有约定行时原样返回")
+
+    def test_empty_raw_text_is_original_not_missing(self) -> None:
+        from nonebot_plugin_hermes_adapter.core.steer_reconcile import original_text_of
+
+        self.assertEqual(
+            original_text_of({"m_id": "9", "raw_text": "", "steer_text": "[m:9]:\n"}),
+            "",
+            "空串是合法原文,不能被当成缺失再退回渲染壳",
+        )
 
 
 if __name__ == "__main__":

@@ -121,8 +121,41 @@ def _observe_silence(path: str, adapter_name: str, group_id: str | None, is_priv
         f"[HERMES {path}] 403/暂不可用硬静默观测 (group={group_id} is_private={is_private})",
     )
 
+def _speaker_name_resolver(adapter_name: str):
+    """发言者正主名 resolver(普通/历史/steer 行唯一接线)。
+
+    身份事实只有一份:custom_dir 下的 memory/<adapter>/identities.csv。配置目录
+    优先,而且只要配置目录里的这张表**已经有条目**,它就是唯一权威源——表里缺某个
+    用户就是「没有这条事实」,返回 None,绝不拿别的目录里同名账号的旧名字补上
+    (那会把上一个目录/上一个配置的身份带进当前呈递)。
+
+    只有整张表都还不存在/没有条目时(定制目录搬迁、预览环境未重新初始化配置),
+    才沿用本进程刚加载过的同一适配器身份表:身份事实仍是同一份表,不新建档案、
+    不猜身份。steer 入口(直注/跟帖)与普通/历史行共用这一份接线,避免同一个用户
+    在不同呈递通道里一段有正主名、一段没有。
+    """
+    custom_dir = resolve_custom_dir()
+
+    def resolve(user_id: str) -> str | None:
+        name = identity.resolve_display_name(custom_dir, adapter_name, user_id)
+        if name:
+            return name
+        if identity.has_identity_entries(custom_dir, adapter_name):
+            # 当前权威表已经有条目:缺这一行就是没有事实,不跨目录借。
+            return None
+        for alt in identity.loaded_identity_dirs(adapter_name):
+            if custom_dir is not None and str(alt) == str(custom_dir):
+                continue
+            name = identity.resolve_display_name(alt, adapter_name, user_id)
+            if name:
+                return name
+        return None
+
+    return resolve
+
+
 def _match_pending_steer_rows(
-    pending_steer: str, candidates: list[dict],
+    pending_steer: str, candidates: list[dict], *, convention_line: str = "",
 ) -> list[dict] | None:
     """按 pending 原文的出现位置与次数匹配台账行(台账只提供身份,不提供顺序)。
 
@@ -132,29 +165,62 @@ def _match_pending_steer_rows(
     正好被某条台账 steer_text 覆盖;同一文本出现几次就还原几行(旧版本在生产库里
     留下的重复账项,也照原文次数还原——既不会凭空多一行,也不会少还原被吞的行)。
 
+    **先按原位置精确匹配,匹配不到才把空白当分隔符跳过**:私聊无号行的呈递就是正文
+    本身,正文完全可能以空白/换行开头(用户原文逐字节保全)。先跳空白再 startswith
+    会让这类账项永远匹配不上,整批退回渲染文本,把多条合成一条、丢掉尾换行。
+
+    空串正文(用户发了一条空行消息)在原文里没有任何字符可锚定:它在「当前位置没有
+    任何非空账项命中」时就地按台账批次顺序取出,条数与相对顺序同样保留;整批以空行
+    结尾时,尾部剩余的空串账项一次补齐。
+
     返回 None = 原文里存在台账覆盖不到的正文(部分命中/台账缺失):调用方整段
     fallback,宁可作者信息回退,也不让未命中正文从呈递里消失。同一起点能匹配多条
     时取最长:更长账项完整覆盖后续行,避免把一条多行账项拆成「前缀 + 残段」。
+
+    convention_line 是发送原语在整批末尾追加一次的系统约定行(不属于任何账项
+    正文,多条各自成批时会出现多次):只有在**当前位置没有任何账项命中**时才把它
+    当分隔符跳过一次。绝不能先对整段文本做全局删除——用户正文里引用同一行字面量
+    时会被删掉,匹配随之失败,原文被永久改写。
     """
     remaining = list(candidates)
     matched: list[dict] = []
     pos = 0
     total = len(pending_steer)
     while pos < total:
-        while pos < total and pending_steer[pos] in " \t\r\n":
-            pos += 1
-        if pos >= total:
-            break
+        # 1) 当前位置精确命中的账项优先(正文可以以空白开头,不能先跳空白)。
         hits = [
             c for c in remaining
-            if c.get("steer_text") and pending_steer.startswith(c["steer_text"], pos)
+            if c.get("steer_text") is not None
+            and c["steer_text"] != ""
+            and pending_steer.startswith(c["steer_text"], pos)
         ]
-        if not hits:
-            return None
-        hit = max(hits, key=lambda c: len(c["steer_text"]))
-        matched.append(hit)
-        remaining.remove(hit)
-        pos += len(hit["steer_text"])
+        if hits:
+            hit = max(hits, key=lambda c: len(c["steer_text"]))
+            matched.append(hit)
+            remaining.remove(hit)
+            pos += len(hit["steer_text"])
+            continue
+        # 2) 发送侧装饰/批次分隔:只在没有账项命中时跳过(先于空串账项,约定行本身
+        #    是整行字面量,不能被当成"这里可以插一条空行消息"的位置)。
+        if convention_line and pending_steer.startswith(convention_line, pos):
+            pos += len(convention_line)
+            continue
+        # 3) 空串账项:原文里没有可锚定的字符,只能在「此处没有非空账项」时就地取出。
+        empty = next(
+            (c for c in remaining if c.get("steer_text") == ""), None
+        )
+        if empty is not None:
+            matched.append(empty)
+            remaining.remove(empty)
+            continue
+        # 4) 批次内分隔空白。
+        if pending_steer[pos] in " \t\r\n":
+            pos += 1
+            continue
+        return None
+    # 批次以空行结尾(空串行在末尾):尾部剩余的全是空串账项时一次补齐。
+    if all(c.get("steer_text") == "" for c in remaining):
+        matched.extend(remaining)
     return matched or None
 
 
@@ -170,15 +236,16 @@ def _pending_steer_recovery_rows(
     逐行存了 scope+m_id+sender+rendered_line:按 scope 拉候选台账,**顺序与出现
     次数只认 pending 原文的实际位置**(`_match_pending_steer_rows`),台账仅提供
     每行的 sender/正文身份,不按 ACK／SQLite 插入序重排。命中行构造独立
-    human_replay fragments,各 sender 与原文顺序原样保留。旧 m:id 只留在台账供
-    媒体引用/对账追溯,不回填成新当前行 id(fragments 全部无号);返回值的 m_id
-    与 fragment 并排,只给「原行是否还在接力槽」的交接判断用(见
-    `InflightRegistry.add_recovered_followup`),不进呈递。
+    human_replay fragments,各 sender 与原文顺序原样保留。带号行的 m:id 是既有
+    原始行(库里那一行),随 fragments 一起带上:正文逐字节取自原文,媒体/引用
+    寻址按既有 message_images 事实单独恢复(空媒体表就不贴标签,不伪造)。
+    返回值的 m_id 与 fragment 并排,给「原行是否还在接力槽」的交接判断用
+    (见 `InflightRegistry.add_recovered_followup`),不用于新造身份。
     human_replay 的 allows_store=False 保证原行不重复入库。原文有台账覆盖不到的
     正文(部分命中/无台账)返回 None,调用方走原文整段回收 fallback 并记明确
     日志——不为修作者另造脆弱的模型文本解析侧链。
     """
-    from ..core.steer_reconcile import strip_steer_presentation
+    from ..core.steer_reconcile import original_text_of
     tracker = _mcp.run_tracker
     if tracker is None:
         return None
@@ -191,13 +258,13 @@ def _pending_steer_recovery_rows(
             exc_info=True,
         )
         return None
-    # 约定行是发送侧装饰(每批一次),不属于任何账项正文:多条 steer 各自成批时
-    # 拼接文本里会留下多个,必须先全部剔除再按位置匹配,否则多作者回收会被误判成
-    # 「部分命中」而整段降级。
+    # 约定行是发送侧装饰(每批一次),不属于任何账项正文:只在「当前位置没有任何
+    # 账项命中」时当分隔符跳过。绝不先做全局删除——用户正文引用同一行字面量时会被
+    # 删掉,匹配失败后整批退回渲染文本,原文就被永久改写了。
     from .message_relay import _STEER_REPLY_CONVENTION_LINE
 
     matched = _match_pending_steer_rows(
-        pending_steer.replace(_STEER_REPLY_CONVENTION_LINE, ""), candidates
+        pending_steer, candidates, convention_line=_STEER_REPLY_CONVENTION_LINE,
     )
     if matched is None:
         if candidates:
@@ -206,20 +273,61 @@ def _pending_steer_recovery_rows(
                 "为避免漏呈递改走原文整段 fallback"
             )
         return None
-    return [
-        (
-            str(c["m_id"]),
+    buffer = getattr(_mcp, "message_buffer", None)
+    rows = []
+    for c in matched:
+        # 正文只取原始来源(台账 raw_text / 按 m:id 回查 messages / 旧账项兼容还原),
+        # 新账项不从渲染行剥壳。
+        content = original_text_of(c)
+        if content is None:
+            logger.warning(
+                f"[HERMES steer回收] 台账行取不到原始正文,改走原文整段 fallback "
+                f"(m_id={c.get('m_id')})"
+            )
+            return None
+        m_id = str(c["m_id"])
+        # 真实带号行:按既有 messages/message_images 事实恢复 m:id、发送者昵称与
+        # 结构化 @(下一轮普通 handler 的 [有人@我]/user= 就靠这些原始事实),媒体
+        # 寻址同样回查既有表。正文仍逐字节取自原文,不把旧渲染尾缀塞回正文,也
+        # 不从标签反推 At;库里没有这一行(或无该列事实)就保持未知,不猜。
+        fragment_id = int(m_id) if m_id.isdigit() else None
+        media: dict[str, list[str]] = {}
+        facts: dict = {}
+        if fragment_id is not None and buffer is not None:
+            try:
+                media = buffer.get_media_urls(fragment_id)
+            except Exception:
+                logger.warning(
+                    f"[HERMES steer回收] 媒体寻址回查失败 (m_id={m_id})", exc_info=True
+                )
+                media = {}
+            try:
+                facts = buffer.get_message_facts(fragment_id) or {}
+            except Exception:
+                logger.warning(
+                    f"[HERMES steer回收] 身份事实回查失败 (m_id={m_id})", exc_info=True
+                )
+                facts = {}
+            if not isinstance(facts, dict):
+                facts = {}
+        rows.append((
+            m_id,
             BufferedMessage(
                 ts=now_ms, adapter=adapter_name, group_id=group_id,
-                user_id=str(c["sender_id"]), nickname=str(c["sender_id"]),
-                content=strip_steer_presentation(c["steer_text"]),
+                user_id=str(facts.get("user_id") or c["sender_id"]),
+                nickname=str(facts.get("nickname") or c["sender_id"]),
+                content=content,
                 origin=MessageOrigin.human_replay(),
-                image_urls=[], sticker_urls=[],
+                image_urls=list(media.get("image", [])),
+                sticker_urls=list(media.get("sticker", [])),
+                quote_image_urls=list(media.get("quote", [])),
+                forward_image_urls=list(media.get("forward_image", [])),
+                id=fragment_id,
+                at_user_ids=tuple(facts.get("at_user_ids") or ()),
                 reply_to_ts=None, is_bot=False,
             ),
-        )
-        for c in matched
-    ]
+        ))
+    return rows
 
 
 def _pending_steer_recovery_fragments(
@@ -1012,10 +1120,7 @@ async def _run_passive_turn(
     _custom_dir = resolve_custom_dir()
     _memory_root = str(_custom_dir / "memory" / adapter_name) if _custom_dir else None
     # 身份表：发言者标签正主名注释，custom_dir 不可用/查不到都静默 None
-    _name_resolver = (
-        (lambda uid, _cd=_custom_dir, _ad=adapter_name: identity.resolve_display_name(_cd, _ad, uid))
-        if _custom_dir else None
-    )
+    _name_resolver = _speaker_name_resolver(adapter_name)
     system_prompt = build_passive_system_prompt(
         adapter=adapter_name,
         is_private=is_private,
@@ -1173,7 +1278,7 @@ async def _run_passive_turn(
     # 传入队列(各 sender 与顺序保留);无可靠台账时保留原文整段回收 fallback 并记
     # 明确日志。
     if result is not None and result.pending_steer:
-        from ..core.steer_reconcile import strip_steer_presentation
+        from ..core.steer_reconcile import _strip_convention
         _scope_key = make_inflight_key(adapter_name, is_private, user_id, group_id)
         _recovered_frags = _pending_steer_recovery_fragments(
             result.pending_steer, adapter_name=adapter_name, is_private=is_private,
@@ -1189,7 +1294,7 @@ async def _run_passive_turn(
             BufferedMessage(
                 ts=_now_ms(), adapter=adapter_name, group_id=group_id,
                 user_id=user_id, nickname=(current_buffered.nickname if current_buffered is not None else user_id),
-                content=strip_steer_presentation(result.pending_steer), origin=MessageOrigin.human_replay(),
+                content=_strip_convention(result.pending_steer), origin=MessageOrigin.human_replay(),
                 image_urls=[], sticker_urls=[],
                 reply_to_ts=None, is_bot=False,
             ),
@@ -1204,10 +1309,14 @@ async def _run_passive_turn(
             f"(key={_scope_key} len={len(result.pending_steer)})"
         )
         # 排回队列成功后按文本子串核销 pending 台账(见上方注记)。核销失败只 WARN,
-        # 不影响回收主流程——对账仍以转录 m:id 搜索为最终判据双保险。
+        # 不影响回收主流程——对账仍以转录 m:id 搜索为最终判据双保险。限定本会话
+        # scope:子串(尤其空串正文的 %%)不得核销别的会话里还等着回收的账项。
         if _mcp.run_tracker is not None:
             try:
-                _mcp.run_tracker.recover_by_text(result.pending_steer)
+                _mcp.run_tracker.recover_by_text(
+                    result.pending_steer,
+                    scope_key=make_scope_key(adapter_name, is_private, user_id, group_id),
+                )
             except Exception:
                 logger.warning("[HERMES steer对账] 回收核销失败(不影响回收)", exc_info=True)
 
@@ -1632,10 +1741,7 @@ async def _run_reactive_turn(
     _custom_dir = resolve_custom_dir()
     _memory_root = str(_custom_dir / "memory" / adapter_name) if _custom_dir else None
     # 身份表：发言者标签正主名注释，custom_dir 不可用/查不到都静默 None
-    _name_resolver = (
-        (lambda uid, _cd=_custom_dir, _ad=adapter_name: identity.resolve_display_name(_cd, _ad, uid))
-        if _custom_dir else None
-    )
+    _name_resolver = _speaker_name_resolver(adapter_name)
     system_prompt = build_reactive_system_prompt(
         # 群记忆外挂:群档案注入块(私聊/无档案返回 None,函数内静默跳过)
         profile_block=build_group_profile_block(adapter_name, group_id),
@@ -1727,11 +1833,8 @@ async def _run_reactive_turn(
         )
     user_content = build_reactive_user_content(
         addressed_to_bot=addressed_to_bot,
-        triggered_by=session.triggered_by,
-        triggered_by_nickname=None,
         recent_messages=recent,
         rows=render_rows,
-        current_origin=current_buffered.origin if current_buffered is not None else None,
         current_image_urls=_label_groups(label_index, inlined_frames),
         current_sticker_urls=_label_groups(label_index, sticker_inlined),
         sender_blacklisted=sender_blacklisted,
@@ -1880,7 +1983,7 @@ async def _run_reactive_turn(
     # HTTP 还没回来)。这时回收副本和原行都会进下一轮 → 同一原行两次。按台账
     # m_id 把仍在槽里的原行认出来(见 add_recovered_followup),不追加副本。
     if result is not None and result.pending_steer:
-        from ..core.steer_reconcile import strip_steer_presentation
+        from ..core.steer_reconcile import _strip_convention
         _recovered_rows = _pending_steer_recovery_rows(
             result.pending_steer, adapter_name=adapter_name, is_private=False,
             user_id=user_id, group_id=group_id, now_ms=_now_ms(),
@@ -1900,7 +2003,7 @@ async def _run_reactive_turn(
                 msg=BufferedMessage(
                     ts=_now_ms(), adapter=adapter_name, group_id=group_id,
                     user_id=user_id, nickname=nickname or user_id,
-                    content=strip_steer_presentation(result.pending_steer), origin=MessageOrigin.human_replay(),
+                    content=_strip_convention(result.pending_steer), origin=MessageOrigin.human_replay(),
                     image_urls=[], sticker_urls=[],
                     reply_to_ts=None, is_bot=False,
                 ),
@@ -1922,10 +2025,14 @@ async def _run_reactive_turn(
             f"(group={group_id} len={len(result.pending_steer)})"
         )
         # 排回队列成功后按文本子串核销 pending 台账(见上方注记)。核销失败只 WARN,
-        # 不影响回收主流程——对账仍以转录 m:id 搜索为最终判据双保险。
+        # 不影响回收主流程——对账仍以转录 m:id 搜索为最终判据双保险。限定本会话
+        # scope:子串(尤其空串正文的 %%)不得核销别的会话里还等着回收的账项。
         if _mcp.run_tracker is not None:
             try:
-                _mcp.run_tracker.recover_by_text(result.pending_steer)
+                _mcp.run_tracker.recover_by_text(
+                    result.pending_steer,
+                    scope_key=make_scope_key(adapter_name, False, user_id, group_id),
+                )
             except Exception:
                 logger.warning("[HERMES steer对账] 回收核销失败(不影响回收)", exc_info=True)
 

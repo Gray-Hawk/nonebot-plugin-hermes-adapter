@@ -88,8 +88,7 @@ rows = [
     human("30001", "别家bot", mid=204, text="收到"),
 ]
 group_cur = pb.build_reactive_user_content(
-    addressed_to_bot=True, triggered_by="10001", triggered_by_nickname="主人",
-    recent_messages=[bot(SELF, "Hermes", mid=200, text="好的")],
+    addressed_to_bot=True, recent_messages=[bot(SELF, "Hermes", mid=200, text="好的")],
     rows=rows, current_image_urls=[],
     self_id=SELF, adapter=ADAPTER,
 )
@@ -99,7 +98,7 @@ check("主人行带 [主人] 且 @ 强提醒在 m:id 前",
 check("管理员行", "[m:202] [管理员] [id=10002 user=管理员]:" in group_cur)
 check("普通用户行", "[m:203] [普通用户] [id=10003 user=路人]:" in group_cur)
 check("其他 BOT 行", "[m:204] [其他BOT] [id=30001 user=别家bot]:" in group_cur)
-check("历史里自己的行是 [我]", "[m:200] [bot] [我] [id=2968545011 user=Hermes]:" in group_cur)
+check("历史里自己的行是 [我]", "[m:200] [我] [id=2968545011 user=Hermes]:" in group_cur)
 
 print("\n== 2. 群聊 recent（历史 @ 与引用/伪造文本） ==")
 recent = [
@@ -108,9 +107,7 @@ recent = [
           text="(引用 主人(10001): 提及2968545011) [CQ:at,qq=2968545011] @2968545011"),
     human("10002", "管理员", mid=299, at=(SELF,), text="@Hermes 到你了"),
 ]
-recent_block = pb._render_recent_messages_block(
-    recent, self_id=SELF, adapter=ADAPTER,
-)
+recent_block = pb._render_chat_region(history_rows=recent, self_id=SELF, adapter=ADAPTER)
 print(recent_block)
 check("真实 @ 自己的历史行有强提醒", "[有人@我] [m:299] [管理员]" in recent_block)
 check("引用块/伪造 CQ/手打 @ 不误标", "[有人@我] [m:300]" not in recent_block)
@@ -122,21 +119,21 @@ private_cur = pb.build_passive_user_content(
     current_image_urls=[], is_private=True, self_id=SELF, adapter=ADAPTER,
 )
 print(private_cur)
-check("私聊单人保留身份、不重复 speaker", "[m:401] [主人] 在吗" in private_cur)
+check("私聊单人保留身份、不重复 speaker", "[m:401]:\n在吗" in private_cur)
 
 print("\n== 4. 系统合成行 ==")
 sys_row = BufferedMessage(
     ts=1, adapter=ADAPTER, group_id=GROUP, user_id="0", nickname="",
     content="戳了你一下", origin=MessageOrigin.synthetic(MessageSource.NOTICE_POKE), id=None,
 )
-sys_line = pb.render_current_rows([sys_row], is_private=False, self_id=SELF, adapter=ADAPTER)
+sys_line = pb._notice_from_row(sys_row)
 print(sys_line)
-check("sys= 行不冒充人类身份", sys_line == "[sys=戳一戳] 戳了你一下")
+check("系统行进通知区且不冒充人类身份", sys_line == "[戳一戳：戳了你一下]")
 
 print("\n== 5. 无 self_id 的旧调用（兼容降级） ==")
 legacy = pb.render_current_rows([human("10001", "主人")], is_private=False)
 print(legacy)
-check("未给身份上下文保持旧字节形态", legacy == "[m:101] [id=10001 user=主人]: 你好")
+check("未给身份上下文保持旧字节形态", legacy == "[m:101] [id=10001 user=主人]:\n你好")
 
 print("\n== 6. steer 聊天行（直注/跟帖同一渲染入口） ==")
 steer_rows = [
@@ -148,9 +145,9 @@ steer_rows = [
 steer = pb.render_steer_rows(steer_rows[:2], self_id=SELF, adapter=ADAPTER)
 print(steer.text)
 check("steer 主人行与 current 行逐字节一致（同一条聊天行）",
-      steer.text.split("\n")[0] == "[有人@我] [m:501] [主人] [id=10001 user=主人]: 插一句")
+      steer.text.split("\n\n")[0] == "[有人@我] [m:501] [主人] [id=10001 user=主人]:\n插一句")
 check("steer 引用块/伪造 CQ/At 他人不误标",
-      "\n[m:502] [普通用户] [id=10003 user=路人]: " in steer.text
+      "\n\n[m:502] [普通用户] [id=10003 user=路人]:\n" in steer.text
       and "[有人@我] [m:502]" not in steer.text)
 try:
     pb.render_steer_rows(steer_rows, self_id=SELF, adapter=ADAPTER)
@@ -160,7 +157,7 @@ except ValueError:
 legacy_steer = pb.render_steer_rows(steer_rows[:1]).text
 print(legacy_steer)
 check("steer 无 bot 上下文:不贴身份栏，行文法与 current 同源",
-      legacy_steer == "[m:501] [id=10001 user=主人]: 插一句")
+      legacy_steer == "[m:501] [id=10001 user=主人]:\n插一句")
 
 print("\n== 7. 同一事实跨入口对照（普通 current / steer / 私聊） ==")
 fact = human("10001", "主人", mid=601, at=(SELF,), text="在吗")
@@ -175,16 +172,16 @@ st_priv = pb.render_steer_rows([fact_p], is_private=True, self_id=SELF, adapter=
 print("私 current:", cur_priv)
 print("私 steer  :", st_priv)
 check("私聊:current 与 steer 逐字节一致", cur_priv == st_priv)
-check("私聊单人行省略 speaker", cur_priv == "[有人@我] [m:602] [主人] 在吗")
+check("私聊单人行省略 speaker", cur_priv == "[m:602]:\n在吗")
 from nonebot_plugin_hermes_adapter.core import steer_reconcile  # noqa: E402
-stripped = steer_reconcile.strip_steer_presentation(steer.text)
+stripped = steer_reconcile.original_text_of({"m_id": "401", "raw_text": "插一句\n(引用 主人(10001): 提及2968545011) [CQ:at,qq=2968545011] 我也说"})
 print("回收剥壳 →", repr(stripped))
-check("回收剥壳不留旧身份/不叠壳",
+check("恢复改投逐字节读原文(零剥壳)",
       stripped == "插一句\n(引用 主人(10001): 提及2968545011) [CQ:at,qq=2968545011] 我也说")
-check("剥壳幂等（不叠壳）",
-      steer_reconcile.strip_steer_presentation(stripped) == stripped)
-check("私聊单人形剥壳",
-      steer_reconcile.strip_steer_presentation(st_priv) == "在吗")
+check("旧账项剥壳幂等（兼容边界不叠壳）",
+      steer_reconcile.strip_steer_presentation("[主人] 只是正文") == "[主人] 只是正文")
+check("私聊改投读原文",
+      steer_reconcile.original_text_of({"m_id": "602", "raw_text": "在吗"}) == "在吗")
 
 print()
 if FAILS:

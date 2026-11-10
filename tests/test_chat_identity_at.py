@@ -97,24 +97,24 @@ class ChatIdentityAtTests(unittest.TestCase):
     def test_ordinary_master_admin_other_bot_self(self) -> None:
         self.assertEqual(
             self._current(human("10001")),
-            "[m:7] [普通用户] [id=10001 user=小光]: 你好",
+            "[m:7] [普通用户] [id=10001 user=小光]:\n你好",
         )
         self.assertEqual(
             self._current(human("20001", "主人号")),
-            "[m:7] [主人] [id=20001 user=主人号]: 你好",
+            "[m:7] [主人] [id=20001 user=主人号]:\n你好",
         )
         self.assertEqual(
             self._current(human("20002", "管理号")),
-            "[m:7] [管理员] [id=20002 user=管理号]: 你好",
+            "[m:7] [管理员] [id=20002 user=管理号]:\n你好",
         )
         self.assertEqual(
             self._current(human("30001", "别家bot")),
-            "[m:7] [其他BOT] [id=30001 user=别家bot]: 你好",
+            "[m:7] [其他BOT] [id=30001 user=别家bot]:\n你好",
         )
-        history = pb._render_recent_messages_block(
+        history = pb._render_chat_region(history_rows=
             [bot_row()], self_id=SELF_ID, adapter=ADAPTER,
         )
-        self.assertIn("[m:8] [bot] [我] [id=999 user=Hermes]: 我在", history)
+        self.assertIn("[m:8] [我] [id=999 user=Hermes]:\n我在", history)
 
     def test_master_falls_back_to_admin_set_when_not_split(self) -> None:
         """缺 master_users = 沿用 active_session 的 master_ids=admin_users 口径。"""
@@ -125,7 +125,7 @@ class ChatIdentityAtTests(unittest.TestCase):
         )
         self.assertEqual(
             self._current(human("20002", "管理号")),
-            "[m:7] [主人] [id=20002 user=管理号]: 你好",
+            "[m:7] [主人] [id=20002 user=管理号]:\n你好",
         )
 
     def test_explicit_empty_master_users_marks_all_admins_as_admin(self) -> None:
@@ -138,7 +138,7 @@ class ChatIdentityAtTests(unittest.TestCase):
             admin_users={"onebotv11:999"}, master_users={"onebotv11:999"},
             known_bots=(SELF_ID,),
         )
-        history = pb._render_recent_messages_block(
+        history = pb._render_chat_region(history_rows=
             [bot_row()], self_id=SELF_ID, adapter=ADAPTER,
         )
         self.assertIn("[我] [id=999", history)
@@ -152,7 +152,7 @@ class ChatIdentityAtTests(unittest.TestCase):
         )
         self.assertEqual(
             self._current(human("30001", "别家bot")),
-            "[m:7] [其他BOT] [id=30001 user=别家bot]: 你好",
+            "[m:7] [其他BOT] [id=30001 user=别家bot]:\n你好",
         )
 
     def test_unknown_authority_degrades_to_ordinary(self) -> None:
@@ -161,10 +161,10 @@ class ChatIdentityAtTests(unittest.TestCase):
 
     def test_other_bot_output_history_is_other_bot(self) -> None:
         """非当前 self 的 bot 行(换号/别实例)按其他 BOT，不冒充我。"""
-        block = pb._render_recent_messages_block(
+        block = pb._render_chat_region(history_rows=
             [bot_row(uid="777", nick="旧号")], self_id=SELF_ID, adapter=ADAPTER,
         )
-        self.assertIn("[m:8] [bot] [其他BOT] [id=777 user=旧号]: 我在", block)
+        self.assertIn("[m:8] [其他BOT] [id=777 user=旧号]:\n我在", block)
 
     def test_master_users_parse_semantics(self) -> None:
         absent = user_lists.parse_user_lists(
@@ -183,7 +183,7 @@ class ChatIdentityAtTests(unittest.TestCase):
     # --- 真实 @ ---
     def test_at_me_mark_sits_before_m_id(self) -> None:
         line = self._current(human("10001", at=(SELF_ID,)))
-        self.assertTrue(line.startswith("[有人@我] [m:7] [普通用户] [id=10001 user=小光]: "), line)
+        self.assertTrue(line.startswith("[有人@我] [m:7] [普通用户] [id=10001 user=小光]:\n"), line)
         self.assertEqual(line.count("[有人@我]"), 1)
 
     def test_at_other_user_does_not_mark(self) -> None:
@@ -212,8 +212,8 @@ class ChatIdentityAtTests(unittest.TestCase):
             bot_row(mid=9),
             human("10001", mid=8, at=(SELF_ID,), content="@Hermes 在吗"),
         ]
-        block = pb._render_recent_messages_block(recent, self_id=SELF_ID, adapter=ADAPTER)
-        self.assertIn("[有人@我] [m:8] [普通用户] [id=10001 user=小光]: @Hermes 在吗", block)
+        block = pb._render_chat_region(history_rows=recent, self_id=SELF_ID, adapter=ADAPTER)
+        self.assertIn("[有人@我] [m:8] [普通用户] [id=10001 user=小光]:\n@Hermes 在吗", block)
         self.assertNotIn("[有人@我] [m:9]", block)
 
     def test_old_rows_without_at_facts_are_not_marked(self) -> None:
@@ -224,7 +224,7 @@ class ChatIdentityAtTests(unittest.TestCase):
     # --- 群 / 私 / current / recent 一致 ---
     def test_private_single_human_keeps_identity_without_speaker(self) -> None:
         line = self._current(human("20001", group=None, at=(SELF_ID,)), is_private=True)
-        self.assertEqual(line, "[有人@我] [m:7] [主人] 你好")
+        self.assertEqual(line, "[m:7]:\n你好")
 
     def test_passive_private_and_reactive_group_share_identity(self) -> None:
         row = human("20002", "管理号")
@@ -232,28 +232,36 @@ class ChatIdentityAtTests(unittest.TestCase):
             recent_messages=[], rows=[row], current_image_urls=[],
             is_private=True, self_id=SELF_ID, adapter=ADAPTER,
         )
-        self.assertIn("[m:7] [管理员] 你好", private)
+        self.assertIn("[m:7]:\n你好", private)
         group = pb.build_reactive_user_content(
-            addressed_to_bot=False, triggered_by="u", triggered_by_nickname=None,
-            recent_messages=[], rows=[row], current_image_urls=[],
+            addressed_to_bot=False, recent_messages=[], rows=[row], current_image_urls=[],
             self_id=SELF_ID, adapter=ADAPTER,
         )
-        self.assertIn("[m:7] [管理员] [id=20002 user=管理号]: 你好", group)
+        self.assertIn("[m:7] [管理员] [id=20002 user=管理号]:\n你好", group)
 
-    def test_system_row_has_no_human_identity_or_at_mark(self) -> None:
+    def test_system_row_goes_to_notice_region_not_chat(self) -> None:
+        """系统合成行不进聊天区,固定以 `[通知类型：摘要]` 出现在系统通知区。"""
         row = system_row()
-        line = self._current(row)
-        self.assertEqual(line, "[sys=戳一戳] 戳了你一下")
+        line = pb._notice_from_row(row)
+        self.assertEqual(line, "[戳一戳：戳了你一下]")
         self.assertNotIn("[有人@我]", line)
+        built = pb.build_passive_user_content(
+            recent_messages=[], rows=[row], current_image_urls=[],
+            is_private=False, self_id=SELF_ID, adapter=ADAPTER,
+        )
+        self.assertIn("<系统通知区域起始>", built)
+        self.assertNotIn("<聊天消息区域起始>", built, "没有聊天时聊天区整段省略")
+        with self.assertRaises(ValueError):
+            pb.render_current_rows([row], is_private=False, self_id=SELF_ID, adapter=ADAPTER)
 
     def test_without_context_keeps_legacy_bytes(self) -> None:
         self.assertEqual(
             pb.render_current_rows([human("10001")], is_private=False),
-            "[m:7] [id=10001 user=小光]: 你好",
+            "[m:7] [id=10001 user=小光]:\n你好",
         )
         self.assertEqual(
             pb.render_current_rows([human("10001", group=None)], is_private=True),
-            "[m:7] 你好",
+            "[m:7]:\n你好",
         )
 
     # --- 结构化 At 收集（含 adapter 剥 @ 的兜底） ---
