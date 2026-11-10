@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS steer_ledger (
     session_key TEXT NOT NULL,
     sender_id   TEXT NOT NULL,
     steer_text  TEXT NOT NULL,          -- 实际发送的逐行投影(不含批次约定行)
+    raw_text    TEXT,                   -- 原始消息正文(恢复/对账改投直接用它,不剥渲染壳)
     accepted_at REAL NOT NULL,
     status      TEXT NOT NULL DEFAULT 'pending'  -- sending/pending/reconciling/reconciled/recovered/replayed
 )
@@ -325,6 +326,11 @@ class RunTracker:
         }
         if "claim_token" not in existing:
             self._conn.execute("ALTER TABLE delivery_components ADD COLUMN claim_token TEXT")
+        # 台账原文列:恢复/对账改投直接读原始正文,不再从渲染后的文本反向剥壳。
+        # 旧库补列(幂等);历史行 raw_text=NULL 时由恢复侧按 m:id 回查 messages 表。
+        existing = {r[1] for r in self._conn.execute("PRAGMA table_info(steer_ledger)")}
+        if "raw_text" not in existing:
+            self._conn.execute("ALTER TABLE steer_ledger ADD COLUMN raw_text TEXT")
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_run_submissions_source_event"
             " ON run_submissions(source_event_id, submission_seq)"
@@ -486,12 +492,12 @@ class RunTracker:
         for it in items:
             self._conn.execute(
                 "INSERT INTO steer_ledger "
-                "(run_id, m_id, scope_key, session_key, sender_id, steer_text, accepted_at, status)"
-                " SELECT ?,?,?,?,?,?,?,'pending'"
+                "(run_id, m_id, scope_key, session_key, sender_id, steer_text, raw_text, accepted_at, status)"
+                " SELECT ?,?,?,?,?,?,?,?,'pending'"
                 " WHERE NOT EXISTS (SELECT 1 FROM steer_ledger WHERE run_id=? AND m_id=?)",
                 (
                     run_id, str(it["m_id"]), scope_key, session_key,
-                    str(it["sender_id"]), it["steer_text"], accepted_at,
+                    str(it["sender_id"]), it["steer_text"], it.get("raw_text"), accepted_at,
                     run_id, str(it["m_id"]),
                 ),
             )
@@ -539,11 +545,11 @@ class RunTracker:
                 continue
             self._conn.execute(
                 "INSERT INTO steer_ledger "
-                "(run_id, m_id, scope_key, session_key, sender_id, steer_text, accepted_at, status)"
-                " VALUES (?,?,?,?,?,?,?,'sending')",
+                "(run_id, m_id, scope_key, session_key, sender_id, steer_text, raw_text, accepted_at, status)"
+                " VALUES (?,?,?,?,?,?,?,?,'sending')",
                 (
                     run_id, mid, scope_key, session_key,
-                    str(it["sender_id"]), it["steer_text"], accepted_at,
+                    str(it["sender_id"]), it["steer_text"], it.get("raw_text"), accepted_at,
                 ),
             )
             existing[mid] = (str(it["sender_id"]), "sending")
@@ -602,7 +608,7 @@ class RunTracker:
         补投(第 2 轮评审 R3)。
         """
         rows = self._conn.execute(
-            "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text,"
+            "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text, raw_text,"
             f" accepted_at, status FROM steer_ledger WHERE run_id=?"
             f" AND status IN ({_STEER_LIVE_STATUSES})"
             " ORDER BY id",
@@ -617,8 +623,9 @@ class RunTracker:
                 "session_key": r[4],
                 "sender_id": r[5],
                 "steer_text": r[6],
-                "accepted_at": r[7],
-                "status": r[8],
+                "raw_text": r[7],
+                "accepted_at": r[8],
+                "status": r[9],
             }
             for r in rows
         ]
@@ -634,7 +641,7 @@ class RunTracker:
         SELECT 与 UPDATE 之间没有 await, 单事件循环内即原子。
         """
         rows = self._conn.execute(
-            "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text,"
+            "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text, raw_text,"
             " accepted_at, status FROM steer_ledger WHERE run_id=?"
             f" AND status IN ({_STEER_ACCEPTED_STATUSES})"
             " ORDER BY id",
@@ -659,7 +666,8 @@ class RunTracker:
                 "session_key": r[4],
                 "sender_id": r[5],
                 "steer_text": r[6],
-                "accepted_at": r[7],
+                "raw_text": r[7],
+                "accepted_at": r[8],
                 "status": "reconciling",
             }
             for r in rows
@@ -679,7 +687,7 @@ class RunTracker:
         不提供顺序),精确找回这批被回收行的 sender 与逐行正文。返回按台账 id 升序。
         """
         rows = self._conn.execute(
-            "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text,"
+            "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text, raw_text,"
             f" accepted_at, status FROM steer_ledger WHERE scope_key=?"
             f" AND status IN ({_STEER_LIVE_STATUSES})"
             " ORDER BY id",
@@ -694,8 +702,9 @@ class RunTracker:
                 "session_key": r[4],
                 "sender_id": r[5],
                 "steer_text": r[6],
-                "accepted_at": r[7],
-                "status": r[8],
+                "raw_text": r[7],
+                "accepted_at": r[8],
+                "status": r[9],
             }
             for r in rows
         ]

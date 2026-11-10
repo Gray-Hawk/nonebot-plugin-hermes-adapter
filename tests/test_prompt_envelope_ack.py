@@ -84,8 +84,7 @@ class PlainTextPromptTests(unittest.TestCase):
                               nickname='小光', content='请核对这个项目', origin=MessageOrigin.human())
         with patch.object(plugin_config, 'hermes_api_interface', 'runs'):
             prompts['reactive_reminder'] = pb.build_reactive_user_content(
-                addressed_to_bot=True, triggered_by='u1', triggered_by_nickname='小光',
-                recent_messages=[], rows=[row], current_image_urls=[],
+                addressed_to_bot=True, recent_messages=[], rows=[row], current_image_urls=[],
             )
         for path in ('group_reactive', 'private_passive'):
             prompt = prompts[path]

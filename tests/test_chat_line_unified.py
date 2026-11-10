@@ -1,15 +1,13 @@
-"""聊天行呈递统一回归:current / recent / steer 三个入口同一构造函数。
+"""区域化呈递回归:普通 / 历史 / steer 三个入口同一消息行构造函数。
 
-本项目标:同一消息事实无论经普通 current、recent 历史行、direct steer 还是
-followup steer 进入 prompt,模型可见的聊天行(身份栏、真实 @、m:id、speaker、
-正文顺序与标点)必须逐字节一致。保留的真实差异只有两处,且都由参数表达:
-  - steer 走文本通道、媒体不内联 → 行尾是完整寻址标签 + 随条提示,
-    current/recent 是紧凑清单;
-  - 历史行对自己发出的 bot 消息多贴一个 `[bot] `。
+本项目标(取代「按文本剥壳」方向):模型收到的 user content 只有三段——
+当前时间、可选系统通知区、可选聊天区。同一消息事实无论经普通输入、历史行、
+direct steer 还是 followup steer 进入 prompt,模型可见的聊天行(消息头一行 +
+正文另起一行)必须逐字节一致。保留的真实差异只有一处:steer 走文本通道、
+媒体不内联,行尾是完整寻址标签 + 随条提示。
 
-测试刻意用公开入口(render_current_rows / _render_recent_messages_block /
-render_steer_rows)对照,并在最后用调用计数证明三条入口确实共用一个构造函数,
-防止「再包一层」变成第三套拼装。
+测试刻意用公开入口(render_current_rows / _render_chat_region / render_steer_rows)
+对照,并用调用计数证明三条入口确实共用一个构造函数,防止「再包一层」变成第三套拼装。
 """
 
 from __future__ import annotations
@@ -25,7 +23,6 @@ sys.path.insert(0, str(ROOT))
 from tests import _bootstrap  # noqa: E402,F401
 
 from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import steer_reconcile  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import user_lists  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.message_origin import (  # noqa: E402
@@ -62,7 +59,7 @@ def ctx() -> dict:
 
 
 class CrossEntryByteEqualityTests(unittest.TestCase):
-    """同一事实 → 普通 current 与 steer 逐字节一致。"""
+    """同一事实 → 普通输入与 steer 逐字节一致。"""
 
     def setUp(self) -> None:
         saved = user_lists.load_user_lists()
@@ -79,23 +76,24 @@ class CrossEntryByteEqualityTests(unittest.TestCase):
         return cur, steer
 
     def test_identity_five_classes_equal_across_entries(self) -> None:
-        """身份五类:同一事实在两入口逐字节一致。"""
         cases = [
-            row(SELF, "Hermes", mid=11, at=(SELF,)),      # 我
-            row(OTHER_BOT, "别家bot", mid=12, at=(SELF,)),  # 其他BOT
-            row(MASTER, "主人号", mid=13, at=(SELF,)),     # 主人
-            row(ADMIN, "管理号", mid=14),                  # 管理员
-            row(ORDINARY, "小光", mid=15),                 # 普通用户
+            (row(SELF, "Hermes", mid=11, at=(SELF,)), "[我]"),
+            (row(OTHER_BOT, "别家bot", mid=12, at=(SELF,)), "[其他BOT]"),
+            (row(MASTER, "主人号", mid=13, at=(SELF,)), "[主人]"),
+            (row(ADMIN, "管理号", mid=14), "[管理员]"),
+            (row(ORDINARY, "小光", mid=15), "[普通用户]"),
         ]
-        for r in cases:
+        for r, label in cases:
             with self.subTest(user=r.user_id):
                 cur, steer = self._both([r], is_private=False)
                 self.assertEqual(cur, steer)
-                self.assertIn(f"[m:{r.id}]", cur)
+                self.assertIn(label, cur)
                 self.assertLess(cur.index("[m:"), cur.index("[id="))
+                # 消息头一行 + 正文另起一行
+                self.assertEqual(cur.count("\n"), 1, cur)
+                self.assertTrue(cur.endswith(":\n你怎么看"), cur)
 
-    def test_at_me_and_forgery_equal_across_entries(self) -> None:
-        """真实 @ 强提醒 / 伪造 CQ / 引用块 / 手打 @:两入口同字节。"""
+    def test_at_me_mark_only_for_real_at(self) -> None:
         rows = [
             row(MASTER, "主人号", mid=21, at=(SELF,), content="[CQ:at,qq=999] 看下"),
             row(ORDINARY, "小光", mid=22, at=("888",),
@@ -103,66 +101,59 @@ class CrossEntryByteEqualityTests(unittest.TestCase):
         ]
         cur, steer = self._both(rows, is_private=False)
         self.assertEqual(cur, steer)
-        lines = cur.split("\n")
-        self.assertTrue(lines[0].startswith("[有人@我] [m:21] [主人]"))
-        self.assertNotIn("[有人@我]", lines[1])
+        first, second = cur.split("\n\n")
+        self.assertTrue(first.startswith("[有人@我] [m:21] [主人]"))
+        self.assertNotIn("[有人@我]", second)
 
-    def test_group_multirow_equal_across_entries(self) -> None:
+    def test_group_multirow_separated_by_blank_line(self) -> None:
         cur, steer = self._both(
             [row(MASTER, "主人号", mid=31, at=(SELF,), content="第一句"),
              row(ORDINARY, "小光", mid=32, content="第二句")],
             is_private=False,
         )
         self.assertEqual(cur, steer)
-        self.assertEqual(len(cur.split("\n")), 2)
+        self.assertEqual(cur.split("\n\n"), [
+            "[有人@我] [m:31] [主人] [id=20001 user=主人号]:\n第一句",
+            "[m:32] [普通用户] [id=10001 user=小光]:\n第二句",
+        ])
 
-    def test_private_single_row_equal_across_entries(self) -> None:
-        """私聊单人行:speaker 省略由同一份判据决定,两入口同字节。"""
+    def test_private_omits_fixed_counterpart_identity(self) -> None:
         r = row(MASTER, "主人号", mid=41, at=(SELF,), group=None)
         cur, steer = self._both([r], is_private=True)
         self.assertEqual(cur, steer)
-        self.assertEqual(cur, "[有人@我] [m:41] [主人] 你怎么看")
+        # 私聊:对方身份、id/user、speaker、强提醒全部省略,只剩 m:id
+        self.assertEqual(cur, "[m:41]:\n你怎么看")
         self.assertNotIn("[id=", cur)
 
-    def test_private_multirow_equal_across_entries(self) -> None:
-        """私聊多人批:与 current 多人批一样带 speaker,两入口同字节。"""
-        rows = [
-            row(MASTER, "主人号", mid=51, group=None),
-            row(ORDINARY, "小光", mid=52, group=None, content="再来"),
-        ]
-        cur, steer = self._both(rows, is_private=True)
-        self.assertEqual(cur, steer)
-        self.assertIn("[id=20001 user=主人号]", cur)
+    def test_private_self_row_keeps_me_mark(self) -> None:
+        r = row(SELF, "Hermes", mid=42, group=None, content="我回的", is_bot=True)
+        # 自己的历史行:保留 [我] 以区分双方,但不重复 id/user。
+        block = pb._render_chat_region(
+            history_rows=[r], is_private=True, **ctx(),
+        )
+        self.assertIn("[m:42] [我]:\n我回的", block)
 
-    def test_without_bot_context_equal_across_entries(self) -> None:
-        """无 bot 上下文降级:两入口同样不贴身份栏,行字节仍一致。"""
+    def test_without_bot_context_degrades(self) -> None:
         r = row(MASTER, "主人号", mid=61)
         cur = pb.render_current_rows([r], is_private=False)
         steer = pb.render_steer_rows([r]).text
         self.assertEqual(cur, steer)
-        self.assertEqual(cur, "[m:61] [id=20001 user=主人号]: 你怎么看")
+        self.assertEqual(cur, "[m:61] [id=20001 user=主人号]:\n你怎么看")
 
     def test_no_mid_rows_equal_across_entries(self) -> None:
-        """无 m:id 行(拿不到插件号):两入口同样省略号段,不伪造 id。"""
         r = row(MASTER, "主人号", mid=None, at=(SELF,))
         cur, steer = self._both([r], is_private=False)
         self.assertEqual(cur, steer)
-        self.assertEqual(cur, "[有人@我] [主人] [id=20001 user=主人号]: 你怎么看")
+        self.assertEqual(cur, "[有人@我] [主人] [id=20001 user=主人号]:\n你怎么看")
 
-    def test_recent_human_row_equals_current_row(self) -> None:
-        """history 行与 current 行对同一真人事实逐字节一致(recent 只多 [bot])。"""
+    def test_history_row_equals_current_row(self) -> None:
+        """历史行与普通行对同一真人事实逐字节一致(都在同一聊天区里)。"""
         r = row(MASTER, "主人号", mid=71, at=(SELF,))
         cur = pb.render_current_rows([r], is_private=False, **ctx())
-        recent = pb._render_recent_messages_block([r], **ctx()).splitlines()[1]
-        self.assertEqual(recent, cur)
-
-    def test_recent_bot_row_differs_only_by_bot_mark(self) -> None:
-        r = row(SELF, "Hermes", mid=72, is_bot=True)
-        cur = pb.render_current_rows([row(SELF, "Hermes", mid=72, is_bot=False, content="自我记录")],
-                                     is_private=False, **ctx())
-        recent = pb._render_recent_messages_block([r], **ctx()).splitlines()[1]
-        self.assertEqual(recent, "[m:72] [bot] [我] [id=999 user=Hermes]: 你怎么看")
-        self.assertNotIn("[bot]", cur)
+        block = pb._render_chat_region(history_rows=[r], **ctx())
+        self.assertIn(cur, block)
+        self.assertIn("<聊天消息区域起始>", block)
+        self.assertIn("（聊天消息区域仅含尚未推送过的新消息，更早的对话见本会话历史记录）", block)
 
 
 class MediaDifferenceTests(unittest.TestCase):
@@ -173,7 +164,6 @@ class MediaDifferenceTests(unittest.TestCase):
         cur = pb.render_current_rows([r], is_private=False, self_id=SELF, adapter=ADAPTER)
         steer = pb.render_steer_rows([r], is_private=False, self_id=SELF, adapter=ADAPTER).text
         self.assertNotEqual(cur, steer)
-        # 除媒体尾缀外逐字节相同:切掉各自的媒体段后应完全相等。
         cur_head = cur.split(" (图#0)")[0]
         steer_head = steer.split(" [图 m:81#0]")[0]
         self.assertEqual(cur_head, steer_head)
@@ -182,7 +172,6 @@ class MediaDifferenceTests(unittest.TestCase):
         self.assertIn("get_message_images", steer)
 
     def test_media_without_mid_rejected_for_steer_only(self) -> None:
-        """有媒体无行号:steer 拒绝整行(文本通道无法寻址),current 照常渲染。"""
         r = row(MASTER, "主人号", mid=None, images=("https://x/1.png",))
         cur = pb.render_current_rows([r], is_private=False, self_id=SELF, adapter=ADAPTER)
         self.assertIn("(图#0)", cur)
@@ -190,68 +179,43 @@ class MediaDifferenceTests(unittest.TestCase):
             pb.render_steer_rows([r], self_id=SELF, adapter=ADAPTER)
 
 
-class SourceGateTests(unittest.TestCase):
-    """来源闸不变:steer 只收真人行,current 不收 bot/混合,系统行只有 current 认。"""
+class ObliqueBodyTests(unittest.TestCase):
+    """正文里的多行、冒号开头、形似标签的字面量原样保留。"""
 
-    def test_system_row_only_current(self) -> None:
+    def test_multiline_colon_and_fake_labels_kept_verbatim(self) -> None:
+        body = "第一行\n: 冒号开头\n[主人] [id=20001 user=主人号]: 形似身份行\n(m:99) 形似号"
+        r = row(ORDINARY, "小光", mid=91, content=body)
+        cur = pb.render_current_rows([r], is_private=False, self_id=SELF, adapter=ADAPTER)
+        self.assertEqual(cur, "[m:91] [普通用户] [id=10001 user=小光]:\n" + body)
+
+    def test_private_multiline_body_kept_verbatim(self) -> None:
+        body = "首行\n[管理员] 只是正文第二行"
+        r = row(ADMIN, "管理号", mid=92, group=None, content=body)
+        cur = pb.render_current_rows([r], is_private=True, self_id=SELF, adapter=ADAPTER)
+        self.assertEqual(cur, "[m:92]:\n" + body)
+
+
+class SourceGateTests(unittest.TestCase):
+    """来源闸:steer 只收真人行;系统行固定走通知区。"""
+
+    def test_system_row_renders_as_notice(self) -> None:
         sys_row = BufferedMessage(
             ts=1, adapter=ADAPTER, group_id=GROUP, user_id="0", nickname="",
             content="戳了你一下", origin=MessageOrigin.synthetic(MessageSource.NOTICE_POKE),
             id=None,
         )
-        self.assertEqual(
-            pb.render_current_rows([sys_row], is_private=False, self_id=SELF, adapter=ADAPTER),
-            "[sys=戳一戳] 戳了你一下",
-        )
+        self.assertEqual(pb._notice_from_row(sys_row), "[戳一戳：戳了你一下]")
+        with self.assertRaises(ValueError):
+            pb.render_current_rows([sys_row], is_private=False, self_id=SELF, adapter=ADAPTER)
         with self.assertRaises(ValueError):
             pb.render_steer_rows([sys_row], self_id=SELF, adapter=ADAPTER)
 
     def test_bot_row_rejected_by_both(self) -> None:
-        bot_row = row(OTHER_BOT, "别家bot", mid=91, is_bot=True)
+        bot_row = row(OTHER_BOT, "别家bot", mid=93, is_bot=True)
         with self.assertRaises(ValueError):
             pb.render_current_rows([bot_row], is_private=False, self_id=SELF, adapter=ADAPTER)
         with self.assertRaises(ValueError):
             pb.render_steer_rows([bot_row], self_id=SELF, adapter=ADAPTER)
-
-
-class StripAndHitSemanticsTests(unittest.TestCase):
-    """回收侧:剥壳不叠壳、命中判据语义不变、无机器锚点时不吞正文。"""
-
-    def test_strip_new_and_legacy_forms(self) -> None:
-        for text in (
-            "[有人@我] [m:101] [主人] [id=20001 user=主人号]: 你怎么看",
-            "[m:102] [主人] 你怎么看",
-            "[m:103] [id=20001 user=主人号]: 你怎么看",
-            "[主人] [id=20001 user=主人号] [m:104]: 你怎么看",
-            "[m:105]: 你怎么看",
-        ):
-            with self.subTest(text=text):
-                self.assertEqual(steer_reconcile.strip_steer_presentation(text), "你怎么看")
-
-    def test_strip_does_not_eat_body_opening_with_identity(self) -> None:
-        """无机器锚点时身份栏与用户正文无法区分:按「不吞正文」保留(已声明残留)。"""
-        self.assertEqual(
-            steer_reconcile.strip_steer_presentation("[主人] 只是普通正文"),
-            "[主人] 只是普通正文",
-        )
-
-    def test_strip_is_idempotent_no_double_shell(self) -> None:
-        once = steer_reconcile.strip_steer_presentation(
-            "[有人@我] [m:111] [主人] [id=20001 user=主人号]: 正文"
-        )
-        twice = steer_reconcile.strip_steer_presentation(once)
-        self.assertEqual(once, "正文")
-        self.assertEqual(twice, "正文")
-
-    def test_hit_pattern_matches_new_and_legacy_lines(self) -> None:
-        pat = steer_reconcile._steer_line_hit_pattern(121)
-        self.assertTrue(pat.search("[m:121] [主人] [id=1 user=甲]: 在吗"))
-        self.assertTrue(pat.search("[有人@我] [m:121] [主人]: 在吗"))
-        self.assertTrue(pat.search("[主人] [id=1 user=甲] [m:121]: 老形态"))
-        self.assertTrue(pat.search("[m:121]: 老无 speaker 形态"))
-        # 只出现在正文/引用里、行首不是该行号 → 不算该行已呈递
-        self.assertFalse(pat.search("(引用 甲(1): [m:121] 历史引用)"))
-        self.assertFalse(pat.search("[m:1210] [主人]: 别的行"))
 
 
 class SingleConstructorTests(unittest.TestCase):
@@ -262,7 +226,7 @@ class SingleConstructorTests(unittest.TestCase):
         calls = []
 
         def spy(row, **kwargs):
-            calls.append((row.id, kwargs.get("media"), kwargs.get("bot_prefix")))
+            calls.append((row.id, kwargs.get("media")))
             return original(row, **kwargs)
 
         with patch.object(pb, "_render_chat_line", side_effect=spy):
@@ -270,17 +234,13 @@ class SingleConstructorTests(unittest.TestCase):
                 [row(MASTER, "主人号", mid=1), row(ORDINARY, "小光", mid=2)],
                 is_private=False, self_id=SELF, adapter=ADAPTER,
             )
-            pb._render_recent_messages_block(
-                [row(MASTER, "主人号", mid=3)], self_id=SELF, adapter=ADAPTER,
-            )
+            pb._render_chat_region(history_rows=[row(MASTER, "主人号", mid=3)], **ctx())
             pb.render_steer_rows(
                 [row(MASTER, "主人号", mid=4)], is_private=False,
                 self_id=SELF, adapter=ADAPTER,
             )
         self.assertEqual([c[0] for c in calls], [1, 2, 3, 4])
-        # current/recent 用紧凑清单(默认参数),steer 用可寻址形态;只有 recent 带 [bot] 位。
         self.assertEqual([c[1] for c in calls], [None, None, None, "steer"])
-        self.assertEqual([c[2] for c in calls], [None, None, True, None])
 
 
 if __name__ == "__main__":

@@ -178,7 +178,7 @@ def _pending_steer_recovery_rows(
     正文(部分命中/无台账)返回 None,调用方走原文整段回收 fallback 并记明确
     日志——不为修作者另造脆弱的模型文本解析侧链。
     """
-    from ..core.steer_reconcile import strip_steer_presentation
+    from ..core.steer_reconcile import original_text_of
     tracker = _mcp.run_tracker
     if tracker is None:
         return None
@@ -206,20 +206,29 @@ def _pending_steer_recovery_rows(
                 "为避免漏呈递改走原文整段 fallback"
             )
         return None
-    return [
-        (
+    rows = []
+    for c in matched:
+        # 正文只取原始来源(台账 raw_text / 按 m:id 回查 messages / 旧账项兼容还原),
+        # 新账项不从渲染行剥壳。
+        content = original_text_of(c)
+        if content is None:
+            logger.warning(
+                f"[HERMES steer回收] 台账行取不到原始正文,改走原文整段 fallback "
+                f"(m_id={c.get('m_id')})"
+            )
+            return None
+        rows.append((
             str(c["m_id"]),
             BufferedMessage(
                 ts=now_ms, adapter=adapter_name, group_id=group_id,
                 user_id=str(c["sender_id"]), nickname=str(c["sender_id"]),
-                content=strip_steer_presentation(c["steer_text"]),
+                content=content,
                 origin=MessageOrigin.human_replay(),
                 image_urls=[], sticker_urls=[],
                 reply_to_ts=None, is_bot=False,
             ),
-        )
-        for c in matched
-    ]
+        ))
+    return rows
 
 
 def _pending_steer_recovery_fragments(
@@ -1173,7 +1182,7 @@ async def _run_passive_turn(
     # 传入队列(各 sender 与顺序保留);无可靠台账时保留原文整段回收 fallback 并记
     # 明确日志。
     if result is not None and result.pending_steer:
-        from ..core.steer_reconcile import strip_steer_presentation
+        from ..core.steer_reconcile import _strip_convention
         _scope_key = make_inflight_key(adapter_name, is_private, user_id, group_id)
         _recovered_frags = _pending_steer_recovery_fragments(
             result.pending_steer, adapter_name=adapter_name, is_private=is_private,
@@ -1189,7 +1198,7 @@ async def _run_passive_turn(
             BufferedMessage(
                 ts=_now_ms(), adapter=adapter_name, group_id=group_id,
                 user_id=user_id, nickname=(current_buffered.nickname if current_buffered is not None else user_id),
-                content=strip_steer_presentation(result.pending_steer), origin=MessageOrigin.human_replay(),
+                content=_strip_convention(result.pending_steer), origin=MessageOrigin.human_replay(),
                 image_urls=[], sticker_urls=[],
                 reply_to_ts=None, is_bot=False,
             ),
@@ -1727,11 +1736,8 @@ async def _run_reactive_turn(
         )
     user_content = build_reactive_user_content(
         addressed_to_bot=addressed_to_bot,
-        triggered_by=session.triggered_by,
-        triggered_by_nickname=None,
         recent_messages=recent,
         rows=render_rows,
-        current_origin=current_buffered.origin if current_buffered is not None else None,
         current_image_urls=_label_groups(label_index, inlined_frames),
         current_sticker_urls=_label_groups(label_index, sticker_inlined),
         sender_blacklisted=sender_blacklisted,
@@ -1880,7 +1886,7 @@ async def _run_reactive_turn(
     # HTTP 还没回来)。这时回收副本和原行都会进下一轮 → 同一原行两次。按台账
     # m_id 把仍在槽里的原行认出来(见 add_recovered_followup),不追加副本。
     if result is not None and result.pending_steer:
-        from ..core.steer_reconcile import strip_steer_presentation
+        from ..core.steer_reconcile import _strip_convention
         _recovered_rows = _pending_steer_recovery_rows(
             result.pending_steer, adapter_name=adapter_name, is_private=False,
             user_id=user_id, group_id=group_id, now_ms=_now_ms(),
@@ -1900,7 +1906,7 @@ async def _run_reactive_turn(
                 msg=BufferedMessage(
                     ts=_now_ms(), adapter=adapter_name, group_id=group_id,
                     user_id=user_id, nickname=nickname or user_id,
-                    content=strip_steer_presentation(result.pending_steer), origin=MessageOrigin.human_replay(),
+                    content=_strip_convention(result.pending_steer), origin=MessageOrigin.human_replay(),
                     image_urls=[], sticker_urls=[],
                     reply_to_ts=None, is_bot=False,
                 ),

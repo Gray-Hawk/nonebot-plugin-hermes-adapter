@@ -71,9 +71,9 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         name='reply_to',
         required=False,
         en_note='string, optional',
-        en_desc='quote one message of this conversation by its ref `m:<id>` — the number in front of a recent_messages / current_message line, e.g. "m:123". Only that exact form is accepted: bare numbers, QQ message ids and any other shape are ignored, refs outside this conversation are rejected. Omit when not quoting. In groups, a resolved Reply automatically mentions the quoted sender immediately after it; do not manually repeat that person at the start. Private replies never auto-mention. Additional people or other positions use [CQ:at,qq=<qq id>] inside reply_text',
+        en_desc='quote one message of this conversation by its ref `m:<id>` — the number in the chat-message header line, e.g. "m:123". Only that exact form is accepted: bare numbers, QQ message ids and any other shape are ignored, refs outside this conversation are rejected. Omit when not quoting. In groups, a resolved Reply automatically mentions the quoted sender immediately after it; do not manually repeat that person at the start. Private replies never auto-mention. Additional people or other positions use [CQ:at,qq=<qq id>] inside reply_text',
         cn_note='string',
-        cn_desc='引用本会话里的一条消息：值写成 `m:<id>`（如 "m:123"），即 recent_messages\n    / current_message 行首的 m: 号。只认这一种写法：裸数字、QQ 消息 id、别的形态\n    一律当没给，不属于本会话的号会被拒；不确定号就不要引用。\n    群聊成功解析 Reply 会自动 @ 被引用者，私聊不自动 @；\n    额外的人或其它位置用 reply_text 正文内联 @',
+        cn_desc='引用本会话里的一条消息：值写成 `m:<id>`（如 "m:123"），即<聊天消息区域>里每条消息头一行的 m: 号。只认这一种写法：裸数字、QQ 消息 id、别的形态\n    一律当没给，不属于本会话的号会被拒；不确定号就不要引用。\n    群聊成功解析 Reply 会自动 @ 被引用者，私聊不自动 @；\n    额外的人或其它位置用 reply_text 正文内联 @',
         cn_desc_short='引用某条消息时填它行首的 m 号，如 "m:123"',
     ),
     DecisionFieldSpec(
@@ -140,9 +140,8 @@ NON_ANCHOR_FIELD_NAMES: tuple[str, ...] = tuple(
 )
 
 
-# 引用槽(reply_to)唯一合法形态:`m:<正整数>`,号 = 消息库自增主键,与
-# recent_messages / current_message 行首的 m 号同源。QQ 的 message_id 与 Hermes
-# 转录行 id 只作内部映射,不接受。
+# 引用槽(reply_to)唯一合法形态:`m:<正整数>`,号 = 消息库自增主键,与聊天消息头
+# 行首的 m 号同源。QQ 的 message_id 与 Hermes 转录行 id 只作内部映射,不接受。
 REPLY_TO_PATTERN = re.compile(r"m:([1-9][0-9]*)")
 
 

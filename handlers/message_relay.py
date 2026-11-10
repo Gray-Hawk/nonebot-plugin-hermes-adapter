@@ -420,6 +420,8 @@ async def _steer_text_into_live_run(
             "m_id": key,
             "sender_id": str(item.source_row.user_id),
             "steer_text": item.rendered_line,
+            # 原始正文随行入账:恢复/对账改投直接用它,绝不从渲染后的行反推。
+            "raw_text": item.source_row.content or "",
         }
         by_mid[key] = entry
         items.append(entry)
@@ -456,7 +458,8 @@ async def _steer_text_into_live_run(
         return SteerInjection(
             True, accepted_m_ids=accepted_ids, in_flight_m_ids=in_flight_ids
         )
-    text = "\n".join(item.rendered_line for item in send_rows)
+    # 行与行之间空一行:与聊天区同一文法,模型看到的多条消息结构一致。
+    text = "\n\n".join(item.rendered_line for item in send_rows)
     if steer_reply_push_active():
         text = _with_steer_reply_convention(text)
     try:

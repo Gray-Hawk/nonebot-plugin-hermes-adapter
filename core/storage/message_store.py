@@ -434,6 +434,17 @@ class MessageStore:
             if r["route_user_id"] is not None
         }
 
+    def get_content(self, message_id: int) -> str | None:
+        """m:id → 原始正文(steer 恢复/对账改投读原文用,查不到返回 None)。
+
+        只读 messages 表已有列,不新建表:恢复侧拿不到台账原文时按号回查原始
+        消息,避免从渲染后的文本反向剥壳。
+        """
+        row = self._conn.execute(
+            "SELECT content FROM messages WHERE id = ?", (int(message_id),)
+        ).fetchone()
+        return row["content"] if row is not None else None
+
     def get_qq_message_id(
         self,
         adapter: str,

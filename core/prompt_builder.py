@@ -3,16 +3,12 @@
 缓存友好的分层约定:
 - system 只放跨 turn 字节稳定的内容(decision_protocol / Message Context 头),
   让前缀缓存能延伸到 system 之后的会话历史。
-- per-turn 变化的字段(runtime_state.triggered_by、<recent_messages>
-  会话上下文)全部放进 user content。
+- per-turn 变化的字段(当前时间、待处理新消息、系统通知)全部放进 user content。
 
-reactive 模式:
-- system: 纯 decision_protocol 协议块(byte-stable)
-- user: <runtime_state>...<recent_messages>...<current_message>...
-
-passive 模式:
-- system: 纯 Message Context 头(byte-stable per session)
-- user: 可选 <recent_messages> + 当前文本(多图时降级为多模态 parts)
+user content 只有三段(后两段按需出现):
+- 当前时间独立置顶;
+- 可选系统通知区 `<系统通知区域起始>…<系统通知区域结束>`:系统合成输入;
+- 可选聊天区 `<聊天消息区域起始>…<聊天消息区域结束>`:全部待处理新消息。
 """
 
 from __future__ import annotations
@@ -41,7 +37,7 @@ from .message_buffer import (
     render_media_summary,
 )
 from .message_context import render_message_context_head
-from .message_origin import AuthorKind, MessageOrigin
+from .message_origin import AuthorKind
 from .misc_config import load_misc_config
 from .sticker_library import default_sticker_library, sticker_feature_enabled
 from .prompt_protocol import (
@@ -56,9 +52,9 @@ _tz_warned = False  # 无效时区名 WARN 每进程一次
 
 def _current_time_str() -> str:
     """给模型准确的时间概念
-    (判断消息新鲜度/锚龄/早晚安语境)。位置不限定尾部——reactive 进
-    runtime_state 块(per-turn 字段的天然归属,开头同样是注意力强位),
-    passive 在 user content 开头单行。两处都是每轮必变内容,不影响缓存。
+    (判断消息新鲜度/锚龄/早晚安语境)。位置固定在 user content 第一行——每条
+    user content 都从它开始(通知区/聊天区在前或在后都不影响),这是每轮必变
+    内容,放在 tops 不改缓存。
 
     时区可经 hermes_prompt_timezone 覆盖(IANA 名);
     缺省空串=部署机本地时区(datetime.now(tz=None) 与裸 now() 同义,现状不变)。
@@ -194,14 +190,17 @@ def _at_me_mark(row: BufferedMessage, ctx: tuple[str, str] | None) -> str:
 _DECISION_PROTOCOL_BLOCK = (
     "<decision_protocol>\n"
     "你处于群活跃态。每条新消息都需要决定是否要插话。\n"
-    "消息来源标签：[sys=来源] 表示插件生成的系统指令或事件，不是该会话真人发言，"
-    "没有 m:id，不可 reply_to 或钉锚；多行 current_message 按各自来源分别理解，"
+    "两块输入：<系统通知区域起始>…<系统通知区域结束> 里是插件生成的系统指令或"
+    "事件（行首写成 [通知类型：摘要]），不是该会话真人发言，"
+    "没有 m:id，不可 reply_to 或钉锚；<聊天消息区域起始>…<聊天消息区域结束> 里是"
+    "真人/bot 的聊天消息，每条一行 [m:id] [身份] [id=… user=…]: 消息头 + 下一行起的正文，"
+    "按各自消息头分别理解，"
     "不得把整批归给某一行真人。\n"
     "把决策提交为名为 submit_decision 的 JSON 对象，字段：\n"
     + render_cn_field_lines()
     + "\n"
     "对象归属（先决定这条是不是冲你说的，再走插话原则；命中一条“归你”就停，不再下挪）：\n"
-    "  - runtime_state 里有 `addressed_to_you: true` → 平台层面已经确认这条是冲你说的\n"
+    "  - 系统通知区出现“[寻址：…]”或聊天行前有 [有人@我] → 平台层面已经确认这条是冲你说的\n"
     "    （真 @ 了你 / 私聊），归属判断到此为止，直接走插话原则——不得再以\n"
     "    “可能在叫别人”“不确定是否针对你”“归属模糊”为理由 should_reply=false。\n"
     "    但注意：addressed 只确认归属，不构成回复义务——消息无实质内容\n"
@@ -209,21 +208,21 @@ _DECISION_PROTOCOL_BLOCK = (
     "  - 开头的“(引用 昵称(id): …)”块是被引用的历史消息：冒号前是被引消息的发送者，\n"
     "    块内“提及<id>”是那条消息当时 @ 过谁的记录（真实 @ 段与字面手打的 @id\n"
     "    都已一并改写），不算当前消息 @ 你；当前消息自己 @ 了谁，只看引用块之外的 @<id>\n"
-    "  - 当前消息明确 @ 你（引用块之外，@ 后面跟 runtime_state.you 的 id 就是 @ 你；\n"
+    "  - 当前消息明确 @ 你（引用块之外，@ 后面跟你在本平台账号的 id 就是 @ 你；\n"
     "    即使同时 @ 了别人，只要 @ 列表里有你就算） → 归你，继续走后面的插话原则\n"
-    "  - 当前消息 reply/quote 指向 recent_messages 里 [bot] 你自己的一条 → 归你\n"
+    "  - 当前消息 reply/quote 指向聊天消息区域/会话历史里 [我] 你自己的一条 → 归你\n"
     "  - 当前消息**只** @ 了别人（包括另一个 bot）且没同时 @ 你 → 不归你，should_reply=false\n"
-    "  - 当前消息 reply/quote 指向别人（普通 user 或另一个 [bot]）且没同时 @ 你 → 不归你\n"
-    "  - 既没 @ 也没 reply 时，看 recent_messages 末尾几条：\n"
-    "    · 末尾是 [bot] 你自己，且当前消息明显接你的话 → 归你\n"
-    "    · 同一窗口里存在另一个 [bot] 发过言，或上一轮被同时 @ 了多方：\n"
+    "  - 当前消息 reply/quote 指向别人（普通 user 或另一个 [其他BOT]）且没同时 @ 你 → 不归你\n"
+    "  - 既没 @ 也没 reply 时，看聊天消息区域末尾几条：\n"
+    "    · 末尾是 [我] 你自己，且当前消息明显接你的话 → 归你\n"
+    "    · 同一窗口里存在另一个 [其他BOT] 发过言，或上一轮被同时 @ 了多方：\n"
     "      当前消息只是泛指（“你这”“这个”“翻得不好”“不够深入”之类\n"
     "      无锚代词）→ 默认不归你，代词归属模糊时不要抢答\n"
     "    · 其它情况（窗口里只有你一个 bot，泛指代词大概率冲你来的）\n"
     "      → 走插话原则正常判断\n"
     "  - 模糊归属下宁可静默观察，也不要抢答别人收到的评价\n"
     "\n"
-    "黑名单（runtime_state 有 `sender_blacklisted: true` 时生效）：\n"
+    "黑名单（系统通知区出现“[黑名单：…]”时生效）：\n"
     "  - 当前发言者在黑名单里：默认 should_reply=false，即使它 @ 了你。\n"
     "  - 唯一例外：当前 <pinned_tasks> 锚或近期人类消息明确委托了你与该账号互动\n"
     "    （如“你去跟它说 X”）——委托存续期间正常接续，委托完结后即恢复默认。\n"
@@ -251,7 +250,7 @@ _DECISION_PROTOCOL_BLOCK = (
     "  - 有人明显在问你刚说的内容 → true\n"
     "  - 群里闲聊与你无关 → false\n"
     "  - 不确定是否针对你 → false，但保持 should_exit_active=false（沉默观察，不退场）\n"
-    "  - 若 recent_messages 末尾是 [bot] 你自己，且当前消息没有明显新指向你的疑问/反对 → false\n"
+    "  - 若聊天消息区域末尾是 [我] 你自己，且当前消息没有明显新指向你的疑问/反对 → false\n"
     "    （避免“我刚说完别人接话→我又凑一句”的连发凑话）\n"
     "  - 若同一问题你刚回复过，后续消息只是别人在补充/同意/继续讨论且没向你提新问题 → false\n"
     "    （重复回答会显得话痨，不要重复凑话）\n"
@@ -278,18 +277,18 @@ _DECISION_PROTOCOL_BLOCK = (
     "    reply_text 就只回那个点。不要顺手把上下文已讲过的内容重复一遍，\n"
     "    也不要扩散到当前消息没点到的对象（另一张图、另一段话、另一个话题）\n"
     "    （避免“先帮你把背景重讲一遍，顺便再扩几条”式的发散凑字数）\n"
-    "  - 不脑补归因：在 recent_messages 里直接读不到“X: ...Y...”原话时，\n"
+    "  - 不脑补归因：在聊天消息区域/会话历史里直接读不到“X: ...Y...”原话时，\n"
     "    禁止在 reply_text 里写“X 让我做 Y”“X 问了 Y”这种叙述，\n"
     "    宁可只就当前消息字面回应，不要给原始请求脑补来源\n"
     "    （有 <pinned_tasks> 锚时，锚行本身就是可引用的委托原话）\n"
     "  - 自我归因校验：当前消息是对“你做过的事”的评价（批评/感谢/纠正/追问/\n"
-    "    求解释）时，必须能在 recent_messages 里 [bot] 你自己的行里定位到\n"
+    "    求解释）时，必须能在聊天消息区域/会话历史里 [我] 你自己的行里定位到\n"
     "    被评价的具体内容（字面或语义上能对应到你说过的某句/某个动作），\n"
     "    才能回应认领。找不到对应 → 禁止认错、禁止道歉、禁止解释、\n"
     "    禁止“那我改一下”，宁可只问一句“你说的是哪条？是我说的吗？”，\n"
     "    或直接 should_reply=false。宁可错过一次该认的错，也不要把别人的\n"
     "    内容/输出揽到自己头上\n"
-    "  - recent_messages 里的图是上下文，不是工单：出现 [图片] 占位或\n"
+    "  - 聊天消息区域/会话历史里的图是上下文，不是工单：出现 [图片] 占位或\n"
     "    [m:X] 历史项不代表“在等你解读”，只在以下三种情况才去看/拉那张图——\n"
     "    （1） 当前消息字面指代它（“这张图”“刚那张”“第N张”+ 上下文锁定）；\n"
     "    （2） 当前消息 reply/quote 到了 [m:X] 这一项；\n"
@@ -317,10 +316,10 @@ _DECISION_PROTOCOL_BLOCK = (
     "    才用正文内联 @，正文手写 @ 仍遵守上面的提醒纪律。\n"
     "  - 不需要 @ 时正文里不要出现任何 CQ 码，正常文字即可。\n"
     "\n"
-    "你自己的身份：runtime_state.you 是你在本平台的账号（格式同 speaker 标签）。\n"
+    "你自己的身份：系统提示 <session_context> 里的 you 是你在本平台的账号（格式同 speaker 标签）。\n"
     "  - 消息里出现 `@<你的 id>` 就是在 @ 你 —— 那串数字看着陌生也是你，\n"
     "    不要当成另一个人或另一个 bot。\n"
-    "  - recent_messages 里 `[bot]` 且 `id=` 你那个 id 的行就是你自己说过的话；\n"
+    "  - 聊天消息里标 `[我]` 的行就是你自己说过的话；\n"
     "    那行的昵称是平台账号名，可能和你的角色名不一样，不代表另一个 bot 在说话。\n"
     "\n"
     "称呼与身份：speaker 标签格式 `[id=用户ID user=昵称]`；\n"
@@ -341,13 +340,16 @@ _DECISION_PROTOCOL_BLOCK = (
     "\n"
     "格式示范（只看 JSON 形状；reply_text 风格按你自己的角色设定走）：\n"
     "  例 A — 该回：\n"
-    "    输入末尾： <current_message>[id=u1 user=小光]: 你怎么看这个？</current_message>\n"
+    "    输入末尾（聊天消息区域）： [m:55] [普通用户] [id=u1 user=小光]:\n"
+    "    你怎么看这个？\n"
     '    输出： {"should_reply": true, "reply_text": "我觉得这个想法挺有意思的"}\n'
     "  例 B — 不归你：\n"
-    "    输入末尾： <current_message>[id=u1 user=小光]: @阿强 帮我看下</current_message>\n"
+    "    输入末尾（聊天消息区域）： [m:56] [普通用户] [id=u1 user=小光]:\n"
+    "    @阿强 帮我看下\n"
     '    输出： {"should_reply": false}\n'
     "  例 C — 引用 + 正文内联 @（看字段与标记位置，不是措辞模板）：\n"
-    "    输入末尾： <current_message>[m:57] [id=10002 user=小光]: 那事怎么样了</current_message>\n"
+    "    输入末尾（聊天消息区域）： [m:57] [普通用户] [id=10002 user=小光]:\n"
+    "    那事怎么样了\n"
     '    输出： {"should_reply": true, "reply_to": "m:57", "reply_text": "都办完了，[CQ:at,qq=10003] 你那边也同步一下"}\n'
     "</decision_protocol>"
 )
@@ -359,8 +361,10 @@ _DECISION_PROTOCOL_BLOCK = (
 _PRIVATE_DECISION_PROTOCOL_BLOCK = (
     "<decision_protocol>\n"
     "你处于私聊对话。是否回复由你自决：\n"
-    "消息来源标签：[sys=来源] 表示插件生成的系统指令或事件，不是该会话真人发言，"
-    "没有 m:id，不可 reply_to；多行当前消息按各自来源分别理解。\n"
+    "两块输入：<系统通知区域起始>…<系统通知区域结束> 里是插件生成的系统指令或"
+    "事件（行首写成 [通知类型：摘要]），不是对方发言，没有 m:id，不可 reply_to；"
+    "<聊天消息区域起始>…<聊天消息区域结束> 里是对方的聊天消息（消息头 + 下一行起的"
+    "正文），按各自消息头分别理解。\n"
     "有实质内容的消息正常回应；纯表情轰炸、无意义刷屏、或你判断\n"
     "无需回应的场合，可以 should_reply=false 沉默。\n"
     "把决策提交为名为 submit_decision 的 JSON 对象，字段：\n"
@@ -595,8 +599,8 @@ def _render_session_context(
 ) -> str:
     """会话上下文块:会话级稳定信息,放系统提示吃缓存。
 
-    adapter/group_id/self 从 per-turn 的 runtime_state
-    挪到系统提示,user content 只保留真正每轮变化的字段。
+    adapter/group_id/self 等会话级稳定信息在系统提示的 <session_context> 里,
+    user content 只保留真正每轮变化的字段。
     私聊 group_id=None 时省略该行。
     """
     lines = ["<session_context>", f"adapter: {adapter}"]
@@ -620,8 +624,8 @@ def build_reactive_system_prompt(
 ) -> str:
     """reactive 路径的 system prompt:decision_protocol + 会话上下文 + 路由提示 + 群档案。
 
-    runtime_state(triggered_by 等 per-turn 变化字段)已搬到 user content
-    顶端(见 build_reactive_user_content),system 在 turn 间字节稳定,有利于 LLM
+    per-turn 变化的事实(当前时间、待处理新消息、系统通知)走 user content
+    顶端与两个可选区域(见 build_reactive_user_content),system 在 turn 间字节稳定,有利于 LLM
     前缀缓存延伸到后续的会话历史段。
 
     profile_block(群记忆外挂 定稿):群档案注入块,拼在协议块末尾。
@@ -660,37 +664,134 @@ def build_reactive_system_prompt(
     return "\n\n".join(parts)
 
 
-def _render_runtime_state(
-    *,
-    addressed_to_bot: bool,
-    triggered_by: str,
-    triggered_by_nickname: str | None,
-    sender_blacklisted: bool = False,
-) -> str:
-    """渲染 <runtime_state> 块:只保留每轮变化的字段。
+# --- 系统通知区域 ------------------------------------------------------------
+# 跨会话递纸条、Kanban／子代理汇报、插件便签、补投重构等所有「不是该会话真人
+# 发言」的合成输入共用一种外观与一个区域:
+#
+#   <系统通知区域起始>
+#   [通知类型：摘要]
+#   详细正文从下一行开始
+#
+#   [通知类型：摘要]
+#   详细正文从下一行开始
+#   <系统通知区域结束>
+#
+# 通知类型取来源模型里那一个业务事实标签(MessageOrigin.display_label):
+# 主动唤起用调用来源、Kanban/子代理用生产方标签、补投/定时巡查/戳一戳各用自己
+# 的名字——审计时一眼分得出真实用户、合成系统输入与跨会话通知,不把 source
+# 套成用户昵称。没有通知时整个区域省略,不留空壳。
+_NOTICE_REGION_OPEN = "<系统通知区域起始>"
+_NOTICE_REGION_CLOSE = "<系统通知区域结束>"
+_CHAT_REGION_OPEN = "<聊天消息区域起始>"
+_CHAT_REGION_CLOSE = "<聊天消息区域结束>"
+# 聊天区固定说明:模型据此知道块变短不是历史被截断。
+_CHAT_REGION_NOTE = "（聊天消息区域仅含尚未推送过的新消息，更早的对话见本会话历史记录）"
+# 标题只取首行的前若干字,够认出是哪件事即可;完整正文仍在下面。
+_NOTICE_SUMMARY_MAX_CHARS = 60
+# 生产方已把长文压过一次的上游通知(Kanban／子代理):提示区只留任务、状态、
+# 关键结果摘要,完整长文仍在卡片/任务记录里可查,不把多行原始长文全塞进提示区。
+_NOTICE_LONG_KINDS = ("Kanban通知", "后台任务完成")
+_NOTICE_BODY_MAX_CHARS = 400
+_NOTICE_BODY_TRUNCATED = "…（完整内容见任务卡片／任务记录）"
 
-    adapter/group_id/self 等会话级稳定信息已挪到系统提示
-    (见 _render_session_context),这里只保留 per-turn 变化的字段。
+
+def _sanitize_notice_text(text: str) -> str:
+    """标题槽位防伪:压掉换行/连续空白,把方括号全角化,免得正文伪造标签边界。"""
+    flat = " ".join(str(text).split())
+    return flat.replace("[", "\uff3b").replace("]", "\uff3d")
+
+
+def _notice_summary(text: str, *, kind: str = "") -> tuple[str, str]:
+    """通知正文 → (标题摘要, 明细正文)。
+
+    标题只取一行:先跳过开头的纯标签行(`[系统内部通知·Kanban]` 这类生产方抬头,
+    它和通知类型重复)与空行;Kanban／子代理这类长通知优先取「事件类型/任务状态」
+    行当摘要(任务+状态),其余取第一条实质内容。明细正文保留原文(只摘掉抬头行),
+    长通知再由 `_render_notice` 按类型截断,完整长文仍留在卡片里可查。
     """
-    nick = f" ({triggered_by_nickname})" if triggered_by_nickname else ""
-    lines = [
-        "<runtime_state>",
-        "mode: reactive",
-    ]
-    # 寻址是插件手里的事实(真 @ / 唤起词 / 私聊),不该让模型从裸 `@<id>` 去猜。
-    # 只在为真时渲染:缺这行 = 「归属未知,自己判」,不是「确定不是冲你说的」。
-    if addressed_to_bot:
-        lines.append("addressed_to_you: true")
-    # 本部署补丁: 黑名单标记。名单账号的 @
-    # 在入口层已降级(不置 addressed),这行告诉模型「当前发言者在名单里」,
-    # 按协议条款默认静默、有委托例外。
+    lines = str(text).splitlines()
+    body_lines = list(lines)
+    while body_lines and (
+        not body_lines[0].strip()
+        or (body_lines[0].strip().startswith("[") and body_lines[0].strip().endswith("]"))
+    ):
+        body_lines.pop(0)
+    substantive = [ln.strip() for ln in body_lines if ln.strip()]
+    summary = ""
+    if kind in _NOTICE_LONG_KINDS:
+        for prefix in ("事件类型：", "事件类型:", "任务状态：", "任务状态:"):
+            summary = next((ln for ln in substantive if ln.startswith(prefix)), "")
+            if summary:
+                break
+    if not summary:
+        summary = substantive[0] if substantive else ""
+    summary_line = summary
+    # 生产方常在正文首行重复一遍通知类型(Kanban 通知：…) —— 标题已经写明,去掉重复前缀。
+    if kind:
+        kind_pat = r"\s*".join(re.escape(ch) for ch in kind)
+        summary = re.sub(rf"^{kind_pat}\s*[：:]\s*", "", summary)
+    flat = " ".join(summary.split())
+    if len(flat) > _NOTICE_SUMMARY_MAX_CHARS:
+        return flat[:_NOTICE_SUMMARY_MAX_CHARS] + "…", "\n".join(body_lines).strip()
+    # 摘要那行不再在正文里重复一遍:标题已经写清楚了,正文只放其余内容。
+    for idx, line in enumerate(body_lines):
+        if line.strip() in (summary_line, summary):
+            body_lines.pop(idx)
+            break
+    return flat, "\n".join(body_lines).strip()
+
+
+def _render_notice(kind: str, summary: str, body: str = "") -> str:
+    """一条系统通知:`[通知类型：摘要]` 标题行 + 详细正文从下一行开始。"""
+    kind_text = _sanitize_notice_text(kind) or "系统"
+    summary_text = _sanitize_notice_text(summary) or "（无摘要）"
+    if kind_text in _NOTICE_LONG_KINDS and len(body) > _NOTICE_BODY_MAX_CHARS:
+        body = body[:_NOTICE_BODY_MAX_CHARS].rstrip() + _NOTICE_BODY_TRUNCATED
+    return f"[{kind_text}：{summary_text}]\n{body}" if body else f"[{kind_text}：{summary_text}]"
+
+
+def _notice_from_row(row: BufferedMessage) -> str:
+    """系统来源行 → 一条通知。类型/来源只取来源模型,不从正文或昵称反推。"""
+    kind = row.origin.display_label or "系统"
+    summary, body = _notice_summary(row.content or "", kind=kind)
+    return _render_notice(kind, summary, body)
+
+
+def _render_notice_region(notices: Sequence[str]) -> str:
+    """通知区;没有通知时整段省略(不输出空区域标签)。"""
+    if not notices:
+        return ""
+    return "\n".join(
+        [_NOTICE_REGION_OPEN, "\n\n".join(notices), _NOTICE_REGION_CLOSE]
+    )
+
+
+def _turn_fact_notices(
+    *, addressed_to_bot: bool, sender_blacklisted: bool,
+    chat_rows: Sequence[BufferedMessage], identity_ctx: tuple[str, str] | None,
+) -> list[str]:
+    """本轮寻址/黑名单事实 → 通知。
+
+    真 @ 当前 BOT 由聊天行的 `[有人@我]` 表达;这里只补它表达不了的两种事实:
+    平台确认「这条冲你说的」但没有结构化 @ 段(引用/被适配器剥掉的 @),以及
+    发言者在黑名单里。都固定为系统通知,不套用户昵称、不伪造成用户发言。
+    """
+    notices: list[str] = []
     if sender_blacklisted:
-        lines.append("sender_blacklisted: true")
-    lines.append(f"triggered_by: {triggered_by}{nick}")
-    # 时间提示器压块尾:块头字段保持字节稳定。
-    lines.append(f"current_time: {_current_time_str()}")
-    lines.append("</runtime_state>")
-    return "\n".join(lines)
+        notices.append(_render_notice(
+            "黑名单",
+            "当前发言者在黑名单名单里",
+            "默认不回应，即使它 @ 了你；只有明确委托你与它互动时才接续。",
+        ))
+    if addressed_to_bot and chat_rows and not any(
+        _at_me_mark(row, identity_ctx) for row in chat_rows
+    ):
+        notices.append(_render_notice(
+            "寻址",
+            "平台已确认聊天消息区域末条是冲你说的",
+            "（本条没有结构化 @ 段：来自引用你说的话，或 @ 已被适配器剥离。）",
+        ))
+    return notices
 
 
 # 历史行渲染上限不再有独立常量:与入库截断共用 misc_config.history_text_max_chars
@@ -752,58 +853,62 @@ def _expand_forward_preview(content: str, forward_content: str) -> str:
     return f"{content}\n{forward_content}"
 
 
-def _render_recent_messages_block(
-    recent_messages: Sequence[BufferedMessage],
+def _render_chat_region(
     *,
-    incremental: bool = False,
+    history_rows: Sequence[BufferedMessage] = (),
+    current_rows: Sequence[BufferedMessage] = (),
+    is_private: bool = False,
     name_resolver: "Callable[[str], str | None] | None" = None,
     self_id: str | None = None,
     adapter: str | None = None,
 ) -> str:
-    """渲染 <recent_messages> 块。recent_messages: 新→旧顺序;在 prompt 内反转为旧→新。
+    """聊天消息区域:全部待处理新消息,最新一条自然在末位。
 
-    每条历史行用 `[m:<id>] ` 前缀标识 DB 主键 — 跨 turn 稳定,Hermes 调
-    get_message_images 时按此 id 召回。id=None(未入库 transient 消息)时
-    跳过前缀,避免 prompt 出现 `[m:None]` 噪音。
+    history_rows 是本轮尚未推送过的新消息(新→旧序),current_rows 是本轮触发批;
+    两者按「旧 → 新」拼成一段连续聊天流,不再分 current/recent 两区。行号
+    (`[m:id]`)跨 turn 稳定,Hermes 调 get_message_images 时按此 id 召回;
+    id=None(未入库 transient 消息)时跳过号段,不写 `[m:None]`。
 
-    每行内容都过 _sanitize_history_content:渲染端是最后一道闸,DB 里存了什么
-    都不能让单行无上限地进 prompt。
+    历史行内容过 `_sanitize_history_content`(渲染端是最后一道闸,DB 里存了什么
+    都不能让单行无上限地进 prompt);当前行原样呈递,调用方已完成自己的投影。
+    窗口内最新一条带 forward_content 的折叠行把 preview 原位替换为全文块。
+    消息之间空一行,正文里的多行/冒号/形似标签的字面量原样保留。
 
-    折叠消息展开:窗口内最新一条带 forward_content 的行,preview 标签原位替换为
-    全文块(截断上限放宽到 _MAX_EXPANDED_FORWARD_LINE_CHARS);更旧的保持 preview。
-
-    incremental=True(增量推送,reactive 路径):块头加一行说明本块只含未推过的
-    新消息——否则模型会把块变短误读成历史被截断/群冷了。
-
-    self_id/adapter 给定时历史行也带身份栏与真实 @ 强提醒(与 current 行同一套
-    判定);缺省保持旧形态。
+    行头判据(私聊省略对方身份与 speaker、真实 @ 强提醒、身份栏)与普通/steer
+    行同源(`_row_marks` + `_render_chat_line`),不存在第二套外观。
     """
-    msgs = list(recent_messages)
-    identity_ctx = _identity_context(self_id, adapter)
+    ctx = _identity_context(self_id, adapter)
     # 单轮一致快照:历史行截断上限一次取出复用,循环内不反复读 misc_config。
     history_cap = load_misc_config().history_text_max_chars
+    msgs = list(history_rows)
     # 新→旧序里第一条带全文的折叠 = 窗口内最新一条;只展开它,更旧的保持 preview——
     # 展开成本按 turn 支付,预算只给最可能被追问的那条。
     expand_target = next((m for m in msgs if m.forward_content), None)
-    lines = ["<recent_messages>"]
-    if incremental:
-        lines.append("（本块仅含尚未推送过的新消息；更早的对话见本会话历史记录）")
+    lines: list[str] = []
     for m in reversed(msgs):
         if m.origin.author_kind not in (AuthorKind.HUMAN, AuthorKind.BOT):
-            raise ValueError("历史消息块只接受可入库的真人或 bot 来源")
+            raise ValueError("聊天区历史行只接受可入库的真人或 bot 来源")
         if m is expand_target:
             content = _expand_forward_preview(m.content, m.forward_content or "")
             rendered = _sanitize_history_content(content, max_chars=_MAX_EXPANDED_FORWARD_LINE_CHARS)
         else:
             rendered = _sanitize_history_content(m.content, max_chars=history_cap)
-        # 行尾追加紧凑媒体清单(带全局连续 idx,号即 message_images 地址,
-        # 供按号拉图/指认)。占位带号不代表该图已内联——豁免/未内联行同样带号。
+        with_speaker, show_identity, show_at = _row_marks(m, ctx, is_private=is_private)
         lines.append(_render_chat_line(
             m, content=rendered, name_resolver=name_resolver,
-            identity_ctx=identity_ctx, bot_prefix=True,
+            identity_ctx=ctx, with_speaker=with_speaker, show_identity=show_identity,
+            show_at=show_at,
         ))
-    lines.append("</recent_messages>")
-    return "\n".join(lines)
+    if current_rows:
+        lines.extend(_render_current_row_lines(
+            current_rows, is_private=is_private, name_resolver=name_resolver,
+            self_id=self_id, adapter=adapter,
+        ))
+    if not lines:
+        return ""
+    return "\n".join([
+        _CHAT_REGION_OPEN, _CHAT_REGION_NOTE, "\n\n".join(lines), _CHAT_REGION_CLOSE,
+    ])
 
 
 def split_unpushed_messages(
@@ -884,7 +989,7 @@ def _render_pinned_tasks_block(anchors: Sequence[Any], *, now_ms: int) -> str:
     每行:📌 [m:插件id] [id=QQ user=昵称] (年龄): 委托文本摘要。m:id 是原委托
     消息的插件编号(alive/103),模型可据此 reply_to 引用;旧迁移/合成来源的锚
     无 m_id=无号降级,绝不拿内部平台 quote ID 顶替。年龄给模型「新鲜度」
-    直读量,自行降权;块与 <recent_messages> 正文视觉隔开,防止锚被误读成
+    直读量,自行降权;块放在当前时间与系统通知区之间,与聊天区正文视觉隔开,防止锚被误读成
     最新消息。输入记录只需有 commissioner_id/commissioner_nickname/text/ts
     四个属性(AnchorRecord),用 Any 标注避免 prompt_builder 反向依赖
     active_session。
@@ -905,19 +1010,22 @@ def _render_pinned_tasks_block(anchors: Sequence[Any], *, now_ms: int) -> str:
     return "\n".join(lines)
 
 
-def _private_single_human(
-    rows: Sequence[BufferedMessage], *, is_private: bool,
-) -> bool:
-    """私聊单人真人行的 speaker 省略判据。
+def _row_marks(
+    row: BufferedMessage, ctx: tuple[str, str] | None, *, is_private: bool,
+) -> tuple[bool, bool, bool]:
+    """行头判据(只此一份):返回 (是否带 speaker, 是否带身份栏, 是否带 @ 强提醒)。
 
-    current 行与 steer 行共用这一份判据:同一消息事实不管从哪个入口呈递,
-    「私聊要不要 speaker」都由这里决定,不在两个入口各写一条分支。
+    私聊只有对方与「我」两方:对方的身份栏与 `id/user` 是每轮固定的重复信息,
+    一律省略;自己发出的行保留 `[我]` 以区分双方,但不重复 `id/user`;私聊不存在
+    「@ 到没 @ 到」的归属问题,`[有人@我]` 一律不贴。群聊三者都带。没有 bot 上下文
+    (ctx=None)时判不出「我」,私聊同样省略身份栏——不猜身份。
+
+    普通行 / 历史行 / steer 行共用这一份判据,不在入口各写分支。
     """
-    return (
-        is_private
-        and len(rows) == 1
-        and rows[0].origin.author_kind is AuthorKind.HUMAN
-    )
+    if not is_private:
+        return True, True, True
+    is_self = ctx is not None and str(row.user_id) == ctx[0]
+    return False, is_self, False
 
 
 def _render_chat_line(
@@ -927,47 +1035,49 @@ def _render_chat_line(
     name_resolver=None,
     identity_ctx: tuple[str, str] | None = None,
     with_speaker: bool = True,
-    bot_prefix: bool = False,
+    show_identity: bool = True,
+    show_at: bool = True,
     media: str = "summary",
 ) -> str:
-    """模型可见聊天行的唯一构造函数(current / recent / steer 共用)。
+    """模型可见聊天行的唯一构造函数(普通 / 历史 / steer 共用)。
+
+    行文法固定为「消息头一行 + 正文从下一行开始」:
+
+      `[有人@我] [m:id] [身份] [id=… user=…]:`\\n`正文`   群聊
+      `[m:id] [我]:`\\n`正文`                           私聊里自己发出的行
+      `[m:id]:`\\n`正文`                                私聊里对方(惟一对谈人)
 
     身份事实只有一份来源:``row``(作者、is_bot、at_user_ids、m:id)与
-    ``identity_ctx``(当前 BOT 的 self_id + adapter)。三个入口的真实差异只经参数
-    表达,不各自维护一套前缀拼装:
+    ``identity_ctx``(当前 BOT 的 self_id + adapter)。入口差异只经参数表达:
 
-    - ``with_speaker``:私聊单人行省略 speaker 标签(判据只有
-      ``_private_single_human`` 一份);
-    - ``bot_prefix``:历史行在 m:id 之后带 ``[bot] ``,当前消息与 steer 不带;
-    - ``media``:``summary`` = 行尾紧凑清单 ``(图#0)``(current/recent);
-      ``steer`` = 完整寻址标签 ``[图 m:id#idx]`` + 随条读图提示(steer 走文本
-      通道、媒体不内联,必须给出可寻址的号);
-    - ``content``:调用方自己的数据投影(历史截断/折叠展开/回收剥壳)已完成,
-      本函数只负责呈递,不再改写正文。
+    - ``with_speaker`` / ``show_identity``:由 `_row_marks` 一份判据给出,私聊
+      省略对方身份与 speaker,自己的行只留 `[我]`;
+    - ``media``:``summary`` = 行尾紧凑清单 ``(图#0)``;``steer`` = 完整寻址标签
+      ``[图 m:id#idx]`` + 随条读图提示(steer 走文本通道、媒体不内联,必须给出
+      可寻址的号);
+    - ``content``:调用方自己的数据投影(历史截断/折叠展开)已完成,本函数只负责
+      呈递,不再改写正文——正文里的多行、冒号、形似标签的字面量都原样保留。
 
-    系统合成行只保留 ``[sys=来源] 正文``:没有人类/bot 身份,也没有 m:id。
+    `[有人@我]` 只在结构化 At 段真的 @ 了当前 BOT 时出现。系统合成行不走聊天区
+    (由系统通知区呈递),混合聚合体必须先展开 fragments——两种错线都响亮失败。
     """
     if row.origin.author_kind is AuthorKind.SYSTEM:
-        line = f"[sys={_sanitize_tag_text(row.origin.display_label or '系统')}] {content}"
-    else:
-        at_mark = _at_me_mark(row, identity_ctx)
-        mid = (
-            f"[m:{row.id}] "
-            if row.id is not None and row.origin.author_kind is not AuthorKind.MIXED
-            else ""
-        )
-        identity = _identity_label(row, identity_ctx)
-        identity_prefix = f"[{identity}] " if identity else ""
-        bot_mark = "[bot] " if bot_prefix and row.is_bot else ""
-        tag = (
-            _format_speaker_tag(
-                row.nickname, row.user_id,
-                canonical=name_resolver(row.user_id) if name_resolver else None)
-            if with_speaker
-            else ""
-        )
-        head = f"{at_mark}{mid}{bot_mark}{identity_prefix}"
-        line = f"{head}{tag}: {content}" if tag else f"{head}{content}"
+        raise ValueError("系统来源行由系统通知区呈递,不得作为聊天行")
+    if row.origin.author_kind is AuthorKind.MIXED:
+        raise ValueError("混合聚合消息必须先展开 fragments 再呈递")
+    at_mark = _at_me_mark(row, identity_ctx) if show_at else ""
+    mid = f"[m:{row.id}] " if row.id is not None else ""
+    identity = _identity_label(row, identity_ctx) if show_identity else None
+    identity_prefix = f"[{identity}] " if identity else ""
+    tag = (
+        _format_speaker_tag(
+            row.nickname, row.user_id,
+            canonical=name_resolver(row.user_id) if name_resolver else None)
+        if with_speaker
+        else ""
+    )
+    head = f"{at_mark}{mid}{identity_prefix}{tag}".strip()
+    body = content
     if media == "steer":
         items = iter_message_media(row)
         if items:
@@ -976,40 +1086,49 @@ def _render_chat_line(
             labels = " ".join(
                 media_label(kind, row.id, idx) for idx, (kind, _u) in enumerate(items)
             )
-            line = f"{line} {labels}{_STEER_MEDIA_HINT.format(m_id=row.id)}"
+            body = f"{body} {labels}{_STEER_MEDIA_HINT.format(m_id=row.id)}"
     else:
         summary = render_media_summary(row)
         if summary:
-            line += f" {summary}"
-    return line
+            body = f"{body} {summary}"
+    return f"{head}:\n{body}" if head else f"{body}"
 
 
-def render_current_rows(
+def _render_current_row_lines(
     rows: Sequence[BufferedMessage], *, is_private: bool, name_resolver=None,
     self_id: str | None = None, adapter: str | None = None,
-) -> str:
-    """当前消息唯一呈递入口；单元素只是多元素序列的特例。
+) -> list[str]:
+    """当前输入行的逐行呈递(单条只是多元素序列的特例)。
 
-    混合聚合体必须先由调用方展开成 fragments，bot 行只能走历史渲染；
-    两种错线都响亮失败，避免借首条真人身份给整批内容背书。
-
-    self_id/adapter 是身份栏与 [有人@我] 的事实输入;不传则保持旧形态。
+    bot 行与系统行在这里响亮失败:当前输入只能是真人/混合展开后的碎片。
     """
-    if not rows:
-        raise ValueError("当前消息序列不得为空")
     ctx = _identity_context(self_id, adapter)
-    single_human = _private_single_human(rows, is_private=is_private)
     lines = []
     for row in rows:
         if row.origin.author_kind is AuthorKind.MIXED:
             raise ValueError("混合聚合消息必须先展开 fragments 再呈递")
         if row.origin.author_kind is AuthorKind.BOT:
             raise ValueError("bot 消息不得作为当前输入呈递")
+        with_speaker, show_identity, show_at = _row_marks(row, ctx, is_private=is_private)
         lines.append(_render_chat_line(
             row, content=row.content, name_resolver=name_resolver,
-            identity_ctx=ctx, with_speaker=not single_human,
+            identity_ctx=ctx, with_speaker=with_speaker, show_identity=show_identity,
+            show_at=show_at,
         ))
-    return "\n".join(lines)
+    return lines
+
+
+def render_current_rows(
+    rows: Sequence[BufferedMessage], *, is_private: bool, name_resolver=None,
+    self_id: str | None = None, adapter: str | None = None,
+) -> str:
+    """当前消息唯一呈递入口;消息之间空一行(与聊天区同一文法)。"""
+    if not rows:
+        raise ValueError("当前消息序列不得为空")
+    return "\n\n".join(_render_current_row_lines(
+        rows, is_private=is_private, name_resolver=name_resolver,
+        self_id=self_id, adapter=adapter,
+    ))
 
 
 # --- steer 行呈递(P-07 + 呈递统一):与 current/recent 走同一个消息行构造函数
@@ -1053,16 +1172,18 @@ def _render_steer_message_line(
     row: BufferedMessage, *, name_resolver=None,
     identity_ctx: tuple[str, str] | None = None,
     with_speaker: bool = True,
+    show_identity: bool = True,
+    show_at: bool = True,
 ) -> str:
     """渲染一条 steer 行;不合法时抛 ValueError,由 relay 边界转成安全回退。
 
     来源闸(混合/系统/bot)留在这里——steer 通道只接受真人行;通过闸后直接调用
-    `_render_chat_line`,与 current/recent 共用身份栏、真实 @、speaker、m:id 与
+    `_render_chat_line`,与普通/历史行共用身份栏、真实 @、speaker、m:id 与
     正文拼接的全部逻辑,只有媒体形态走 steer 参数。
 
     identity_ctx 非空时在 `[id=…]` 前加身份栏、在 `[m:id]` 前加真实 @ 强提醒
-    (与 current/recent 行同一套判定与同一优先级);None 时不贴身份栏(低层调用
-    拿不到 bot 上下文,不猜身份),行文法仍与 current 无 ctx 时一致。
+    (与普通行同一套判定与同一优先级);None 时不贴身份栏(低层调用拿不到 bot
+    上下文,不猜身份),行文法仍与普通行无 ctx 时一致。
     """
     if row.origin.author_kind is AuthorKind.MIXED:
         raise ValueError("混合聚合消息必须先展开 fragments 再呈递")
@@ -1072,7 +1193,8 @@ def _render_steer_message_line(
         raise ValueError("系统来源行不得作为 steer 输入")
     return _render_chat_line(
         row, content=row.content or "", name_resolver=name_resolver,
-        identity_ctx=identity_ctx, with_speaker=with_speaker, media="steer",
+        identity_ctx=identity_ctx, with_speaker=with_speaker,
+        show_identity=show_identity, show_at=show_at, media="steer",
     )
 
 
@@ -1088,41 +1210,38 @@ def render_steer_rows(
     不改写原始消息。
 
     self_id/adapter 是身份栏与 [有人@我] 的事实输入,取自本 scope 在跑 run 的
-    bot_self_id 与当前 adapter(与 current/recent 同一事实源);不传则不贴身份栏。
+    bot_self_id 与当前 adapter(与普通/历史行同一事实源);不传则不贴身份栏。
 
-    is_private 只用于 speaker 省略判据 `_private_single_human`——私聊单人行与
-    current 行一样不重复 speaker;群聊/多人批仍带 `[id=…]`。
+    is_private 用与普通行同一份判据 `_row_marks`:私聊省略对方身份与 speaker,
+    自己的行只留 `[我]`;群聊全带。行与行之间空一行,与聊天区一致。
     """
     if not rows:
         raise ValueError("steer 行序列不得为空")
     ctx = _identity_context(self_id, adapter)
-    single_human = _private_single_human(rows, is_private=is_private)
-    items = tuple(
-        SteerRowPresentation(
+    items = []
+    for row in rows:
+        with_speaker, show_identity, show_at = _row_marks(row, ctx, is_private=is_private)
+        items.append(SteerRowPresentation(
             source_row=row,
             rendered_line=_render_steer_message_line(
                 row, name_resolver=name_resolver, identity_ctx=ctx,
-                with_speaker=not single_human,
+                with_speaker=with_speaker, show_identity=show_identity, show_at=show_at,
             ),
-        )
-        for row in rows
-    )
+        ))
+    items = tuple(items)
     return SteerPresentation(
         rows=items,
-        text="\n".join(item.rendered_line for item in items),
+        text="\n\n".join(item.rendered_line for item in items),
     )
 
 
 def build_reactive_user_content(
     *,
     addressed_to_bot: bool,
-    triggered_by: str,
-    triggered_by_nickname: str | None,
     recent_messages: Sequence[BufferedMessage],
     rows: Sequence[BufferedMessage],
     current_image_urls: Sequence[Any],
     current_sticker_urls: Sequence[Any] = (),
-    current_origin=None,
     sender_blacklisted: bool = False,
     pinned_anchors: Sequence[Any] = (),
     plugin_note: str | None = None,
@@ -1131,54 +1250,52 @@ def build_reactive_user_content(
     self_id: str | None = None,
     adapter: str | None = None,
 ) -> UserContent:
-    """reactive user content: <runtime_state> + [pinned_tasks] + <recent_messages> + <current_message>。
+    """reactive user content:当前时间 + 可选 <pinned_tasks> + 可选系统通知区 + 可选聊天区。
 
-    runtime_state 只保留 per-turn 变化字段(triggered_by/addressed_to_bot等);
-    会话级稳定信息(adapter/group_id/self)已挪到系统提示(见 _render_session_context)。
-    pinned_anchors:在钉的委托锚,非空时渲染独立 <pinned_tasks> 块,
-    不参与 recent_messages 的裁剪。
+    结构只有三层(不是每轮都出现):
+      1. 当前时间独立置顶;
+      2. `<系统通知区域起始>` … `<系统通知区域结束>`:系统合成输入(跨会话递纸条、
+         Kanban／子代理汇报、补投重构、插件便签、本轮寻址/黑名单事实);
+      3. `<聊天消息区域起始>` … `<聊天消息区域结束>`:全部待处理新消息(历史未推送
+         段 + 本轮触发批),最新一条在末位。
+    没有通知/没有聊天时对应区域整段省略。不再有 <runtime_state> / <recent_messages>
+    / <current_message> 三块:每轮必变的时间提到顶上,寻址由聊天行 `[有人@我]`
+    与本轮通知表达,触发者身份由聊天区末条的作者行表达。
 
-    rows 是当前输入的有序碎片，身份、正文、m:id 与媒体清单只从这里读取；
-    current_origin 在混合批时传聚合来源，用于 runtime_state 的触发来源说明。
-    pinned_anchors 只在任务锚总开关开启时渲染（关闭时整块不出现）。
-    current_image_urls / current_sticker_urls: 内联帧组,每项为 (寻址三元组, 帧列表) 或
-    裸帧列表;三元组 (kind, mid, idx) 用于给 parts 打全称标签 [图 m:ID#idx]。
+    rows 是当前输入的有序碎片,身份、正文、m:id 与媒体清单只从这里读取;系统来源
+    的碎片进通知区,真人/bot 碎片进聊天区,不互相冒充。pinned_anchors 只在任务锚
+    总开关开启时渲染(关闭时整块不出现),位置在时间与通知区之间。
+    current_image_urls / current_sticker_urls: 内联帧组,每项为 (寻址三元组, 帧列表)
+    或裸帧列表;三元组 (kind, mid, idx) 用于给 parts 打全称标签 [图 m:ID#idx]。
     """
-    if current_origin is None and rows:
-        current_origin = rows[0].origin
-        for row in rows[1:]:
-            current_origin = MessageOrigin.merge(current_origin, row.origin)
-    if current_origin is not None and current_origin.author_kind is AuthorKind.SYSTEM:
-        triggered_by = current_origin.display_label or "系统"
-    elif current_origin is not None and current_origin.author_kind is AuthorKind.MIXED:
-        triggered_by = "混合消息"
-    runtime_block = _render_runtime_state(
-        addressed_to_bot=addressed_to_bot,
-        triggered_by=triggered_by,
-        triggered_by_nickname=triggered_by_nickname,
-        sender_blacklisted=sender_blacklisted,
-    )
-    history_block = _render_recent_messages_block(
-        recent_messages, incremental=True, name_resolver=name_resolver,
-        self_id=self_id, adapter=adapter,
-    )
+    ctx = _identity_context(self_id, adapter)
+    notice_rows = [r for r in rows if r.origin.author_kind is AuthorKind.SYSTEM]
+    chat_rows = [r for r in rows if r.origin.author_kind is not AuthorKind.SYSTEM]
+    notices = [_notice_from_row(r) for r in notice_rows]
+    notices.extend(_turn_fact_notices(
+        addressed_to_bot=addressed_to_bot, sender_blacklisted=sender_blacklisted,
+        chat_rows=chat_rows, identity_ctx=ctx,
+    ))
+    if plugin_note:
+        summary, body = _notice_summary(plugin_note)
+        notices.append(_render_notice("插件提示", summary, body))
+
+    notice_block = _render_notice_region(notices)
     pinned_block = (
         _render_pinned_tasks_block(pinned_anchors, now_ms=now_ms)
         if pinned_anchors and task_anchor_enabled()
         else ""
     )
-
-    cur_line = render_current_rows(
-        rows, is_private=False, name_resolver=name_resolver,
-        self_id=self_id, adapter=adapter,
+    chat_block = _render_chat_region(
+        history_rows=recent_messages, current_rows=chat_rows, is_private=False,
+        name_resolver=name_resolver, self_id=self_id, adapter=adapter,
     )
-    current_block_text = f"<current_message>\n{cur_line}\n</current_message>"
     if current_sticker_urls:
-        current_block_text += _STICKER_MOOD_NOTE
+        chat_block += _STICKER_MOOD_NOTE
 
     # 近因 reminder:小模型容易在长 protocol + 角色 core 双重 system 下忘掉正文协议,
     # 又把回复写回 JSON 信封。把契约提示放到 user content 最末,LLM 近因效应让它最难忘
-    # ——这一行不能改成 byte-stable system 的一部分,必须紧贴 current_message。
+    # ——这一行不能改成 byte-stable system 的一部分,必须紧贴聊天区。
     mode = _json_lines_mode()
     anchor_on = task_anchor_enabled()
     if mode == "completions":
@@ -1209,14 +1326,16 @@ def build_reactive_user_content(
             + (render_field_name_list() if anchor_on else _FIELD_NAME_LIST_NO_ANCHOR)
             + "），不要直接说话或扮演动作。"
         )
-    # 分级反馈:插件提示便签贴 reminder 尾(近因位置,下轮即见即焚)
-    if plugin_note:
-        reminder += f"\n（插件小提示：{plugin_note}）"
+    # message_origin 的旧签名参数:triggered_by 已由聊天区末条作者行表达,
+    # current_origin 不再参与任何文案(保留形参会变成第二套来源叙事,故一并删除)。
 
-    text_block = runtime_block + "\n\n"
-    if pinned_block:
-        text_block += pinned_block + "\n\n"
-    text_block += history_block + "\n\n" + current_block_text + reminder
+    blocks = [
+        f"（当前时间：{_current_time_str()}）",
+        pinned_block,
+        notice_block,
+        chat_block,
+    ]
+    text_block = "\n\n".join(b for b in blocks if b) + reminder
 
     if not current_image_urls and not current_sticker_urls:
         return text_block
@@ -1236,24 +1355,29 @@ def build_passive_user_content(
     self_id: str | None = None,
     adapter: str | None = None,
 ) -> UserContent:
-    """passive user content:可选 <recent_messages> + 统一当前行(图片走多模态 parts)。"""
-    cur_line = render_current_rows(
-        rows, is_private=is_private, name_resolver=name_resolver,
-        self_id=self_id, adapter=adapter,
-    )
-    if recent_messages:
-        text_block = _render_recent_messages_block(
-            recent_messages, name_resolver=name_resolver,
-            self_id=self_id, adapter=adapter,
-        ) + "\n\n" + cur_line
-    else:
-        text_block = cur_line
-    if current_sticker_urls:
-        text_block += _STICKER_MOOD_NOTE
-    # 分级反馈:插件提示便签贴文本尾
+    """passive user content:当前时间 + 可选系统通知区 + 可选聊天区(图片走多模态 parts)。
+
+    与 reactive 同一套区域文法,差别只有 is_private(私聊省略固定对方的身份与
+    speaker)和没有本轮寻址/黑名单事实(私聊不存在归属歧义)。
+    """
+    notice_rows = [r for r in rows if r.origin.author_kind is AuthorKind.SYSTEM]
+    chat_rows = [r for r in rows if r.origin.author_kind is not AuthorKind.SYSTEM]
+    notices = [_notice_from_row(r) for r in notice_rows]
     if plugin_note:
-        text_block += f"\n（插件小提示：{plugin_note}）"
-    text_block = f"（当前时间：{_current_time_str()}）\n\n" + text_block
+        summary, body = _notice_summary(plugin_note)
+        notices.append(_render_notice("插件提示", summary, body))
+    chat_block = _render_chat_region(
+        history_rows=recent_messages, current_rows=chat_rows, is_private=is_private,
+        name_resolver=name_resolver, self_id=self_id, adapter=adapter,
+    )
+    if current_sticker_urls:
+        chat_block += _STICKER_MOOD_NOTE
+    blocks = [
+        f"（当前时间：{_current_time_str()}）",
+        _render_notice_region(notices),
+        chat_block,
+    ]
+    text_block = "\n\n".join(b for b in blocks if b)
 
     if not current_image_urls and not current_sticker_urls:
         return text_block

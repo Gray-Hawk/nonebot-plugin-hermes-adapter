@@ -33,10 +33,10 @@ from nonebot_plugin_hermes_adapter.core.run_tracker import (  # noqa: E402
 from nonebot_plugin_hermes_adapter.handlers import message_relay as relay  # noqa: E402
 
 RAWS = {
-    # 群聊:身份栏 + speaker(与 current/recent 同一文法,无 m:id 行)
-    "group": "[普通用户] [id=u1 user=小光]: 你怎么看这个",
-    # 私聊单人行:speaker 省略,与 current 私聊行完全一致
-    "private": "[普通用户] 你怎么看这个",
+    # 群聊:身份栏 + speaker(与普通/历史行同一文法,无 m:id 行)
+    "group": "[普通用户] [id=u1 user=小光]:\n你怎么看这个",
+    # 私聊:对方身份与 speaker 均省略,没有 m:id 时整条就是正文本身
+    "private": "你怎么看这个",
 }
 GROUP_ID = "g1"
 USER_ID = "u1"
@@ -159,10 +159,14 @@ class SteerReplyConventionTests(unittest.TestCase):
         self.assertNotIn("JSON", text)
         self.assertIn("正文", text)
 
-    def test_runs_convention_line_is_stripped_on_replay(self) -> None:
-        """补投是正常消息：台账里存的注入文本要能剥掉新约定行。"""
+    def test_replay_reads_original_text_not_rendered(self) -> None:
+        """补投是正常消息:改投直接读原始正文,渲染行只在转录里。"""
         text = self._inject_direct(interface="runs", is_private=False)
-        self.assertEqual(steer_reconcile.strip_steer_presentation(text), "你怎么看这个")
+        self.assertTrue(text.endswith(relay._STEER_REPLY_CONVENTION_LINE))
+        self.assertEqual(
+            steer_reconcile.original_text_of({"m_id": "1", "raw_text": "你怎么看这个"}),
+            "你怎么看这个",
+        )
 
     # --- completions：原语义不变，不追加任何约定行 -------------------------
 

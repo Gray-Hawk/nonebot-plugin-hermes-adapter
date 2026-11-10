@@ -202,6 +202,10 @@ class MessageBuffer:
         m:id#fN 标签)。只改 content 列,不动 ts/媒体行。"""
         self._store.update_content(message_id, content)
 
+    def get_content(self, message_id: int) -> str | None:
+        """m:id → 原始正文(门面透传;steer 恢复改投读原文用,查不到返回 None)。"""
+        return self._store.get_content(message_id)
+
     def get_qq_message_id(
         self,
         adapter: str,

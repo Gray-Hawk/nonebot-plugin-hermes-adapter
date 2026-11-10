@@ -154,9 +154,8 @@ class _SteerBoundaryBase(unittest.TestCase):
 
     def _single(self) -> str:
         self.assertEqual(len(self.sent), 1, self.sent)
-        lines = self.sent[0].split("\n")
-        self.assertEqual(len(lines), 1, self.sent[0])
-        return lines[0]
+        # 新呈递:一条消息 = 消息头一行 + 正文从下一行开始,整条按原样返回。
+        return self.sent[0]
 
 
 class SteerDirectBoundaryTests(_SteerBoundaryBase):
@@ -168,7 +167,7 @@ class SteerDirectBoundaryTests(_SteerBoundaryBase):
         line = self._single()
         self.assertEqual(
             line,
-            "[有人@我] [m:11] [主人] [id=20001 user=主人号]: 你怎么看",
+            "[有人@我] [m:11] [主人] [id=20001 user=主人号]:\n你怎么看",
         )
         # 序:强提醒 → m:id → 身份 → speaker —— 与 current/recent 同约束。
         self.assertLess(line.index("[有人@我]"), line.index("[m:11]"))
@@ -180,10 +179,11 @@ class SteerDirectBoundaryTests(_SteerBoundaryBase):
             [row(ADMIN, "管理号", mid=12, at=(SELF_ID,), group=None)], private=True,
         )
         self.assertTrue(ok)
-        # 私聊单人行:与 current 私聊行同一判据——身份栏在,speaker 省略。
+        # 私聊:对方的身份栏与 id/user 每行固定重复,一律省略;私聊没有 @ 归属问题,
+        # 强提醒也不贴 —— 消息头只剩 m:id。
         self.assertEqual(
             self._single(),
-            "[有人@我] [m:12] [管理员] 你怎么看",
+            "[m:12]:\n你怎么看",
         )
 
     def test_at_other_and_forged_text_do_not_mark(self) -> None:
@@ -196,7 +196,7 @@ class SteerDirectBoundaryTests(_SteerBoundaryBase):
         line = self._single()
         self.assertEqual(
             line,
-            "[m:13] [普通用户] [id=10001 user=小光]: "
+            "[m:13] [普通用户] [id=10001 user=小光]:\n"
             "(引用 阿强(888): 提及999) [CQ:at,qq=999] @999 你看",
         )
         self.assertNotIn("[有人@我]", line)
@@ -218,7 +218,7 @@ class SteerDirectBoundaryTests(_SteerBoundaryBase):
         self.assertTrue(ok)
         line = self._single()
         self.assertEqual(
-            line, "[有人@我] [m:15] [其他BOT] [id=30001 user=别家bot]: 你怎么看",
+            line, "[有人@我] [m:15] [其他BOT] [id=30001 user=别家bot]:\n你怎么看",
         )
         current = pb.render_current_rows(
             [row(OTHER_BOT, "别家bot", mid=15, at=(SELF_ID,))],
@@ -233,18 +233,16 @@ class SteerDirectBoundaryTests(_SteerBoundaryBase):
             row(ORDINARY, "小光", mid=17, content="第二行", at=()),
         ]
         self.assertTrue(self._inject_direct(rows))
-        lines = self.sent[0].split("\n")
-        self.assertEqual(len(lines), 2, self.sent[0])
-        self.assertTrue(
-            lines[0].startswith("[有人@我] [m:16] [主人] [id=20001 user=主人号]: "),
-            lines[0],
-        )
+        # 两条消息 = 两个消息头 + 各自正文,中间空一行。
         self.assertEqual(
-            lines[1], "[m:17] [普通用户] [id=10001 user=小光]: 第二行",
+            self.sent[0],
+            "[有人@我] [m:16] [主人] [id=20001 user=主人号]:\n第一行\n\n"
+            "[m:17] [普通用户] [id=10001 user=小光]:\n第二行",
         )
-        # 强提醒只贴 @ 自己那一行,且在该行自己的 m:id 之前。
-        self.assertNotIn("[有人@我]", lines[1])
-        self.assertLess(lines[0].index("[有人@我]"), lines[0].index("[m:16]"))
+        blocks = self.sent[0].split("\n\n")
+        self.assertEqual(len(blocks), 2, self.sent[0])
+        self.assertNotIn("[有人@我]", blocks[1])
+        self.assertLess(blocks[0].index("[有人@我]"), blocks[0].index("[m:16]"))
 
     def test_no_live_run_falls_back_without_leaking_bare_text(self) -> None:
         """取不到 bot 上下文时不得把无身份文本发进生产聊天:注入失败、零发送。"""
@@ -264,7 +262,7 @@ class SteerFollowupBoundaryTests(_SteerBoundaryBase):
         self.assertTrue(ok)
         self.assertEqual(
             self._single(),
-            "[有人@我] [m:21] [普通用户] [id=10001 user=小光]: 再补一句",
+            "[有人@我] [m:21] [普通用户] [id=10001 user=小光]:\n再补一句",
         )
 
     def test_followup_without_real_at_has_no_mark(self) -> None:
@@ -272,7 +270,7 @@ class SteerFollowupBoundaryTests(_SteerBoundaryBase):
         self.assertTrue(ok)
         self.assertEqual(
             self._single(),
-            "[m:22] [管理员] [id=20002 user=管理号]: 你怎么看",
+            "[m:22] [管理员] [id=20002 user=管理号]:\n你怎么看",
         )
 
     def test_followup_row_without_mid_keeps_identity(self) -> None:
@@ -281,7 +279,7 @@ class SteerFollowupBoundaryTests(_SteerBoundaryBase):
         self.assertTrue(ok)
         self.assertEqual(
             self._single(),
-            "[有人@我] [主人] [id=20001 user=主人号]: 你怎么看",
+            "[有人@我] [主人] [id=20001 user=主人号]:\n你怎么看",
         )
 
 
@@ -291,7 +289,7 @@ class LegacyRenderCompatibilityTests(unittest.TestCase):
     def test_render_without_context_keeps_old_bytes(self) -> None:
         presentation = pb.render_steer_rows([row(MASTER, "主人号", mid=31, at=(SELF_ID,))])
         self.assertEqual(
-            presentation.text, "[m:31] [id=20001 user=主人号]: 你怎么看",
+            presentation.text, "[m:31] [id=20001 user=主人号]:\n你怎么看",
         )
 
     def test_stub_bot_self_id_degrades_to_old_form(self) -> None:
@@ -302,7 +300,7 @@ class LegacyRenderCompatibilityTests(unittest.TestCase):
             group_id=GROUP_ID, live=SimpleNamespace(bot_self_id=object()),
         )
         self.assertEqual(
-            presentation.text, "[m:32] [id=20001 user=主人号]: 你怎么看",
+            presentation.text, "[m:32] [id=20001 user=主人号]:\n你怎么看",
         )
 
 
@@ -317,63 +315,27 @@ class ScopeIdentityHelperTests(_SteerBoundaryBase):
         )
         self.assertEqual(
             presentation.text,
-            "[有人@我] [m:33] [主人] [id=20001 user=主人号]: 你怎么看",
+            "[有人@我] [m:33] [主人] [id=20001 user=主人号]:\n你怎么看",
         )
 
 
 class SteerReconcileStripTests(unittest.TestCase):
     """回收侧:呈递外壳必须剥净,不留旧身份、不叠壳。"""
 
-    def test_strip_single_decorated_line(self) -> None:
-        """统一文法(群聊形):强提醒 → m:id → 身份 → speaker。"""
-        self.assertEqual(
-            steer_reconcile.strip_steer_presentation(
-                "[有人@我] [m:31] [主人] [id=20001 user=主人号]: 你怎么看"
-            ),
-            "你怎么看",
-        )
-
-    def test_strip_private_speakerless_line(self) -> None:
-        """统一文法(私聊单人形):没有 speaker、没有冒号,外壳照样剥净。"""
-        self.assertEqual(
-            steer_reconcile.strip_steer_presentation("[有人@我] [m:32] [主人] 你怎么看"),
-            "你怎么看",
-        )
-        self.assertEqual(
-            steer_reconcile.strip_steer_presentation("[m:33] [主人] 你怎么看"),
-            "你怎么看",
-        )
-        self.assertEqual(
-            steer_reconcile.strip_steer_presentation("[m:34] 你怎么看"),
-            "你怎么看",
-        )
-
-    def test_strip_multi_line_mixed_labels(self) -> None:
-        text = (
-            "[有人@我] [m:32] [普通用户] [id=10001 user=小光]: 第一句\n"
-            "[m:33] [其他BOT] [id=30001 user=别家bot]: 第二句\n"
-            "[m:34] [我] [id=999 user=Hermes]: 第三句"
-        )
-        self.assertEqual(
-            steer_reconcile.strip_steer_presentation(text),
-            "第一句\n第二句\n第三句",
-        )
-
-    def test_strip_keeps_body_that_merely_mentions_labels(self) -> None:
-        """只剥行首固定标记 + 紧随的分隔符;正文里同类字样不动。"""
-        self.assertEqual(
-            steer_reconcile.strip_steer_presentation(
-                "[m:35] [普通用户] [id=10001 user=小光]: 正文里提到 [主人] 和 [有人@我]"
-            ),
-            "正文里提到 [主人] 和 [有人@我]",
-        )
-        self.assertEqual(
-            steer_reconcile.strip_steer_presentation("[主人] 只是普通正文"),
-            "[主人] 只是普通正文",
-        )
+    def test_new_row_reads_raw_text_without_stripping(self) -> None:
+        """新账项:恢复改投直接取原始正文,剥壳函数一次都不许调用。"""
+        raw = "[主人] [id=20001 user=主人号]: 正文里的形似标签\n第二行原样保留"
+        with patch.object(
+            steer_reconcile, "strip_steer_presentation",
+            side_effect=AssertionError("新账项不得剥壳"),
+        ):
+            self.assertEqual(
+                steer_reconcile.original_text_of({"m_id": "31", "raw_text": raw}),
+                raw,
+            )
 
     def test_strip_still_handles_legacy_prefix(self) -> None:
-        """升级前的台账正文不迁移:旧文法剥壳继续有效。"""
+        """升级前的台账正文不迁移:旧文法剥壳继续有效(raw_text 为 NULL 的账项)。"""
         self.assertEqual(
             steer_reconcile.strip_steer_presentation("[id=u1 user=小光] [m:36]: 老形态"),
             "老形态",
@@ -383,6 +345,10 @@ class SteerReconcileStripTests(unittest.TestCase):
                 "[有人@我] [主人] [id=20001 user=主人号] [m:37]: 老形态带身份"
             ),
             "老形态带身份",
+        )
+        self.assertEqual(
+            steer_reconcile.strip_steer_presentation("[主人] 只是普通正文"),
+            "[主人] 只是普通正文",
         )
 
 

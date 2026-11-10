@@ -332,7 +332,7 @@ async def get_bot_nickname(bot: Bot) -> str:
     """Return the bot's display nickname, cached per self_id. Fallback 'Bot' on failure.
 
     返回值一定是非空 str:除 forward-node 的 "name" 外,它还会进 prompt 的
-    runtime_state.you 和 <recent_messages> 的 bot 行 —— 实现端返回 null / 非字符串
+    runtime_state.you 和聊天区里 [我] 的行 —— 实现端返回 null / 非字符串
     时不能把那个对象原样渲染进 prompt。
     """
     self_id = bot.self_id

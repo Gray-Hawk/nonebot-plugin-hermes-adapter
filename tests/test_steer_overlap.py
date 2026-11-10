@@ -86,11 +86,13 @@ class _Base(unittest.TestCase):
     def legacy_ledger_rows(self, items: list[tuple[int, str, str]]) -> None:
         """按修复前形态(record_steer 无条件 INSERT)落一份台账,复现旧库现场。"""
         for mid, sender, rendered in items:
+            # 新文法账项:原文 = header 行之后的正文(与真实入账 raw_text 同源)。
+            raw = rendered.split("]:\n", 1)[-1] if "]:\n" in rendered else rendered
             self.tracker._conn.execute(
                 "INSERT INTO steer_ledger (run_id, m_id, scope_key, session_key,"
-                " sender_id, steer_text, accepted_at, status)"
-                " VALUES (?,?,?,?,?,?,0.0,'pending')",
-                (RUN_ID, str(mid), SCOPE_KEY, "sess", sender, rendered),
+                " sender_id, steer_text, raw_text, accepted_at, status)"
+                " VALUES (?,?,?,?,?,?,?,0.0,'pending')",
+                (RUN_ID, str(mid), SCOPE_KEY, "sess", sender, rendered, raw),
             )
         self.tracker._conn.commit()
 
@@ -203,8 +205,8 @@ class OverlappingFollowupEntryTests(_Base):
         facts = self._run_overlap()
         # 每个原始行各发一次:A 只发 A,B 那批只发 B(不重发已接受/在途的前缀)。
         self.assertEqual(facts["sent"], [
-            "[m:101] [普通用户] [id=u2]: alpha",
-            "[m:102] [普通用户] [id=u3]: beta",
+            "[m:101] [普通用户] [id=u2]:\nalpha",
+            "[m:102] [普通用户] [id=u3]:\nbeta",
         ])
         # 同一原始行只入账一次。
         self.assertEqual(facts["ledger"], [("101", "u2"), ("102", "u3")])
@@ -230,9 +232,9 @@ class OverlappingFollowupEntryTests(_Base):
         self.tracker._conn.execute("DELETE FROM steer_ledger")
         self.tracker._conn.commit()
         self.legacy_ledger_rows([
-            (101, "u2", "[m:101] [普通用户] [id=u2]: alpha"),
-            (102, "u3", "[m:102] [普通用户] [id=u3]: beta"),
-            (101, "u2", "[m:101] [普通用户] [id=u2]: alpha"),
+            (101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha"),
+            (102, "u3", "[m:102] [普通用户] [id=u3]:\nbeta"),
+            (101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha"),
         ])
         legacy = _legacy_restore(pending, self.tracker.pending_steers_by_scope(SCOPE_KEY))
         self.assertEqual([c["m_id"] for c in legacy], ["101", "102", "101"])
@@ -271,7 +273,7 @@ class RepeatedTriggerTests(_Base):
         first_ok, first_sent = self._direct(row)
         second_ok, second_sent = self._direct(row)
         self.assertTrue(first_ok)
-        self.assertEqual(first_sent, ["[m:101] [普通用户] [id=u2]: alpha"])
+        self.assertEqual(first_sent, ["[m:101] [普通用户] [id=u2]:\nalpha"])
         # 第二次触发算「已呈现」但不重发:调用方不再 dispatch 一遍。
         self.assertTrue(second_ok)
         self.assertEqual(second_sent, [])
@@ -397,7 +399,7 @@ class NativeRestoreOrderTests(_Base):
         sent = self._two_direct_steers(rows, delay_first=True)
         # 上游按 A、B 接受;A 的 HTTP 回应后到。台账是「发送前认领」落的库,
         # 顺序 = 发送/接受序,不再是 HTTP 回应序(旧形态这里会是 B/A)。
-        self.assertEqual(sent, ["[m:201] [普通用户] [id=u1]: first", "[m:202] [普通用户] [id=u2]: second"])
+        self.assertEqual(sent, ["[m:201] [普通用户] [id=u1]:\nfirst", "[m:202] [普通用户] [id=u2]:\nsecond"])
         self.assertEqual([(r["m_id"], r["sender_id"]) for r in self.ledger()],
                          [("201", "u1"), ("202", "u2")])
         pending = self._parser_pending("\n".join(sent))
@@ -407,8 +409,8 @@ class NativeRestoreOrderTests(_Base):
 
     def test_ack_ordered_legacy_ledger_restores_in_payload_order(self) -> None:
         """旧版本留下的 ACK 乱序台账(真实生产库形态):恢复仍按原文位置。"""
-        a = "[m:201] [普通用户] [id=u1]: first"
-        b = "[m:202] [普通用户] [id=u2]: second"
+        a = "[m:201] [普通用户] [id=u1]:\nfirst"
+        b = "[m:202] [普通用户] [id=u2]:\nsecond"
         self.legacy_ledger_rows([(202, "u2", b), (201, "u1", a)])   # B 先回、A 后回
         self.assertEqual([(r["m_id"], r["sender_id"]) for r in self.ledger()],
                          [("202", "u2"), ("201", "u1")])
@@ -423,8 +425,8 @@ class NativeRestoreOrderTests(_Base):
 
     def test_occurrence_count_follows_payload_not_ledger(self) -> None:
         """旧库留下的重复账项:原文出现几次还原几行,绝不多还原一行。"""
-        a = "[m:101] [普通用户] [id=u2]: alpha"
-        b = "[m:102] [普通用户] [id=u3]: beta"
+        a = "[m:101] [普通用户] [id=u2]:\nalpha"
+        b = "[m:102] [普通用户] [id=u3]:\nbeta"
         self.legacy_ledger_rows([(101, "u2", a), (102, "u3", b), (101, "u2", a)])
         self.assertEqual([r["m_id"] for r in self.ledger()], ["101", "102", "101"])
         self.assertEqual(
@@ -447,7 +449,7 @@ class NativeRestoreOrderTests(_Base):
         # 塌成一条;台账里两行 steer_text 的差异只在 speaker/[m:id] 前缀。
         texts = [c["steer_text"] for c in self.ledger()]
         self.assertEqual(len(texts), 2)
-        self.assertEqual(len({t.split("]: ", 1)[-1] for t in texts}), 1)
+        self.assertEqual(len({t.split("]:\n", 1)[-1] for t in texts}), 1)
 
 
 class TerminalInFlightSteerTests(_Base):
@@ -505,7 +507,7 @@ class TerminalInFlightSteerTests(_Base):
                           "error": {"message": "run is completed"}},
                 )
             if request.url.path.endswith("/messages"):
-                content = "[m:101]: alpha" if transcript == "has" else "primary trigger"
+                content = "[m:101]:\nalpha" if transcript == "has" else "primary trigger"
                 return httpx.Response(
                     200, json={"data": [{"id": 1, "role": "user", "content": content}]}
                 )
@@ -687,7 +689,7 @@ class TerminalInFlightSteerTests(_Base):
 
     def test_concurrent_reconciles_claim_once(self) -> None:
         """终态钩子与晚到确认各起一次对账:原子认领保证只补投一次。"""
-        a = "[m:101] [普通用户] [id=u2]: alpha"
+        a = "[m:101] [普通用户] [id=u2]:\nalpha"
         self.legacy_ledger_rows([(101, "u2", a)])
         tracked = self.tracker.get_by_run_id(RUN_ID)
         replays: list[tuple[str, str]] = []
@@ -717,7 +719,7 @@ class TerminalInFlightSteerTests(_Base):
         self.assertEqual(self._statuses(), [("101", "replayed")])
 
     def test_restart_returns_unfinished_reconcile_claim_to_pending(self) -> None:
-        a = "[m:101] [普通用户] [id=u2]: alpha"
+        a = "[m:101] [普通用户] [id=u2]:\nalpha"
         self.legacy_ledger_rows([(101, "u2", a)])
         self.tracker._conn.execute(
             "UPDATE steer_ledger SET status='reconciling' WHERE m_id='101'"
@@ -872,13 +874,13 @@ class NativeHandoverTests(_Base):
     def test_native_before_ack_presents_original_row_once(self) -> None:
         """R4 主场景:回收先到、ACK 晚到,原行只呈递一次(保留原 m:id+媒体身份)。"""
         facts = self._chain(
-            queued=[msg("u2", 101, "alpha")], pending_text="[m:101] [普通用户] [id=u2]: alpha",
+            queued=[msg("u2", 101, "alpha")], pending_text="[m:101] [普通用户] [id=u2]:\nalpha",
         )
-        self.assertEqual(facts["sent"], ["[m:101] [普通用户] [id=u2]: alpha"])
+        self.assertEqual(facts["sent"], ["[m:101] [普通用户] [id=u2]:\nalpha"])
         # 槽里已有同一原始行:回收副本被吸收,不再追加第二份。
         self.assertEqual(facts["absorbed"], ("101",))
         self.assertEqual(facts["handover_rows"], [(101, "alpha")])
-        self.assertEqual(facts["rendered"], "[m:101] [id=u2]: alpha")
+        self.assertEqual(facts["rendered"], "[m:101] [id=u2]:\nalpha")
         # 晚到的 200 不得把「已被 native 归还、仍欠一次呈递」的行从槽里摘掉。
         self.assertEqual(facts["statuses"], [("101", "recovered")])
         self.assertEqual(facts["rendered"].count("alpha"), 1)
@@ -886,17 +888,17 @@ class NativeHandoverTests(_Base):
     def test_ack_before_pop_also_presents_once(self) -> None:
         """对照:ACK 先到(结算时已 recovered)→ 槽保留原行,下一轮仍一份。"""
         facts = self._chain(
-            queued=[msg("u2", 101, "alpha")], pending_text="[m:101] [普通用户] [id=u2]: alpha",
+            queued=[msg("u2", 101, "alpha")], pending_text="[m:101] [普通用户] [id=u2]:\nalpha",
             ack_before_pop=True,
         )
         self.assertEqual(facts["absorbed"], ("101",))
-        self.assertEqual(facts["rendered"], "[m:101] [id=u2]: alpha")
+        self.assertEqual(facts["rendered"], "[m:101] [id=u2]:\nalpha")
         self.assertEqual(facts["statuses"], [("101", "recovered")])
 
     def test_negative_control_plain_add_followup_duplicates_row(self) -> None:
         """负对照:修复前只 add_followup(不看槽内原行),同一原行确实呈递两次。"""
         facts = self._chain(
-            queued=[msg("u2", 101, "alpha")], pending_text="[m:101] [普通用户] [id=u2]: alpha",
+            queued=[msg("u2", 101, "alpha")], pending_text="[m:101] [普通用户] [id=u2]:\nalpha",
             legacy_handover=True,
         )
         self.assertEqual(facts["absorbed"], ())
@@ -909,11 +911,11 @@ class NativeHandoverTests(_Base):
     def test_409_after_native_keeps_row_for_relay_once(self) -> None:
         """native 归还后 steer 返回 409:撤认领、原行留槽,下一轮一份。"""
         facts = self._chain(
-            queued=[msg("u2", 101, "alpha")], pending_text="[m:101] [普通用户] [id=u2]: alpha",
+            queued=[msg("u2", 101, "alpha")], pending_text="[m:101] [普通用户] [id=u2]:\nalpha",
             http_ok=False,
         )
         self.assertEqual(facts["absorbed"], ("101",))
-        self.assertEqual(facts["rendered"], "[m:101] [id=u2]: alpha")
+        self.assertEqual(facts["rendered"], "[m:101] [id=u2]:\nalpha")
         self.assertEqual(facts["statuses"], [("101", "recovered")])
 
     def test_recovered_row_not_in_slot_is_still_appended(self) -> None:
@@ -923,11 +925,11 @@ class NativeHandoverTests(_Base):
             KEY, msg(TRIGGER, 100, "running"), is_direct=True,
             original_msg_id="event-100", now_ms=100, commission=True,
         ))
-        self.legacy_ledger_rows([(101, "u2", "[m:101] [普通用户] [id=u2]: alpha")])
+        self.legacy_ledger_rows([(101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha")])
         runtime = SimpleNamespace(run_tracker=self.tracker, inflight=registry)
         with patch.object(turns, "_mcp", runtime):
             rec = turns._pending_steer_recovery_rows(
-                "[m:101] [普通用户] [id=u2]: alpha", adapter_name=ADAPTER, is_private=False,
+                "[m:101] [普通用户] [id=u2]:\nalpha", adapter_name=ADAPTER, is_private=False,
                 user_id=TRIGGER, group_id=GROUP_ID, now_ms=101,
             )
         self.assertIsNotNone(rec)
@@ -943,13 +945,13 @@ class NativeHandoverTests(_Base):
         absorbed = registry.add_recovered_followup(
             KEY, entry, known_m_ids=[m for m, _ in rec],
         )
-        self.tracker.recover_by_text("[m:101] [普通用户] [id=u2]: alpha")
+        self.tracker.recover_by_text("[m:101] [普通用户] [id=u2]:\nalpha")
         pending = registry.pop_next_pending(KEY, after_ts=100)
         self.assertIsNotNone(pending)
         self.assertEqual(absorbed, ())
         self.assertEqual([(r.id, r.content) for r in pending.fragments], [(None, "alpha")])
         self.assertEqual(render_current_rows(pending.fragments, is_private=False),
-                         "[id=u2]: alpha")
+                         "[id=u2]:\nalpha")
         self.assertEqual(
             [(str(r[0]), r[1]) for r in self.tracker._conn.execute(
                 "SELECT m_id, status FROM steer_ledger ORDER BY id"
@@ -969,11 +971,11 @@ class NativeHandoverTests(_Base):
             original_msg_id=101, fragments=[msg("u2", 101, "alpha")],
         ))
         self.legacy_ledger_rows([
-            (101, "u2", "[m:101] [普通用户] [id=u2]: alpha"),
-            (102, "u3", "[m:102] [普通用户] [id=u3]: beta"),
+            (101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha"),
+            (102, "u3", "[m:102] [普通用户] [id=u3]:\nbeta"),
         ])
         runtime = SimpleNamespace(run_tracker=self.tracker, inflight=registry)
-        pending_text = "[m:101] [普通用户] [id=u2]: alpha\n[m:102] [普通用户] [id=u3]: beta"
+        pending_text = "[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta"
         with patch.object(turns, "_mcp", runtime):
             rec = turns._pending_steer_recovery_rows(
                 pending_text, adapter_name=ADAPTER, is_private=False,
@@ -1019,11 +1021,11 @@ class NativeHandoverTests(_Base):
             msg=tail, is_direct=False, original_msg_id=102, fragments=[tail],
         ))
         self.legacy_ledger_rows([
-            (101, "u2", "[m:101] [普通用户] [id=u2]: alpha"),
-            (102, "u3", "[m:102] [普通用户] [id=u3]: beta"),
+            (101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha"),
+            (102, "u3", "[m:102] [普通用户] [id=u3]:\nbeta"),
         ])
         entry, known = self._recovery_entry(
-            "[m:101] [普通用户] [id=u2]: alpha\n[m:102] [普通用户] [id=u3]: beta",
+            "[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta",
         )
         tail_fragment = registry.peek_followup(KEY).fragments[0]
         absorbed = registry.add_recovered_followup(KEY, entry, known_m_ids=known)
@@ -1037,7 +1039,7 @@ class NativeHandoverTests(_Base):
         self.assertIs(slot.fragments[1], tail_fragment)
         self.assertEqual(
             render_current_rows(slot.fragments, is_private=False),
-            "[id=u2]: alpha\n[m:102] [id=u3]: beta",
+            "[id=u2]:\nalpha\n\n[m:102] [id=u3]:\nbeta",
         )
         self.assertEqual(slot.msg.content.count("alpha"), 0)
 
@@ -1055,11 +1057,11 @@ class NativeHandoverTests(_Base):
             fragments=[other, tail],
         ))
         self.legacy_ledger_rows([
-            (101, "u2", "[m:101] [普通用户] [id=u2]: alpha"),
-            (102, "u3", "[m:102] [普通用户] [id=u3]: beta"),
+            (101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha"),
+            (102, "u3", "[m:102] [普通用户] [id=u3]:\nbeta"),
         ])
         entry, known = self._recovery_entry(
-            "[m:101] [普通用户] [id=u2]: alpha\n[m:102] [普通用户] [id=u3]: beta",
+            "[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta",
         )
         queued_fragments = list(registry.peek_followup(KEY).fragments)
         absorbed = registry.add_recovered_followup(KEY, entry, known_m_ids=known)
@@ -1084,11 +1086,11 @@ class NativeHandoverTests(_Base):
             msg=b, is_direct=False, original_msg_id=102, fragments=[b, a],
         ))
         self.legacy_ledger_rows([
-            (101, "u2", "[m:101] [普通用户] [id=u2]: alpha"),
-            (102, "u3", "[m:102] [普通用户] [id=u3]: beta"),
+            (101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha"),
+            (102, "u3", "[m:102] [普通用户] [id=u3]:\nbeta"),
         ])
         entry, known = self._recovery_entry(
-            "[m:101] [普通用户] [id=u2]: alpha\n[m:102] [普通用户] [id=u3]: beta",
+            "[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta",
         )
         queued_fragments = list(registry.peek_followup(KEY).fragments)
         absorbed = registry.add_recovered_followup(KEY, entry, known_m_ids=known)
@@ -1121,7 +1123,7 @@ class NativeHandoverTests(_Base):
         )
         self.assertEqual(
             render_current_rows(ordered, is_private=False),
-            "[m:102] [id=u3]: beta\n[id=u2]: alpha",
+            "[m:102] [id=u3]:\nbeta\n\n[id=u2]:\nalpha",
         )
 
     def test_interleaved_unrelated_row_keeps_batch_and_position(self) -> None:
@@ -1139,11 +1141,11 @@ class NativeHandoverTests(_Base):
             fragments=[a, other, b],
         ))
         self.legacy_ledger_rows([
-            (101, "u2", "[m:101] [普通用户] [id=u2]: alpha"),
-            (102, "u3", "[m:102] [普通用户] [id=u3]: beta"),
+            (101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha"),
+            (102, "u3", "[m:102] [普通用户] [id=u3]:\nbeta"),
         ])
         entry, known = self._recovery_entry(
-            "[m:101] [普通用户] [id=u2]: alpha\n[m:102] [普通用户] [id=u3]: beta",
+            "[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta",
         )
         queued = list(registry.peek_followup(KEY).fragments)
         absorbed = registry.add_recovered_followup(KEY, entry, known_m_ids=known)
@@ -1170,11 +1172,11 @@ class NativeHandoverTests(_Base):
             msg=other, is_direct=False, original_msg_id=103, fragments=[other, a],
         ))
         self.legacy_ledger_rows([
-            (101, "u2", "[m:101] [普通用户] [id=u2]: alpha"),
-            (102, "u3", "[m:102] [普通用户] [id=u3]: beta"),
+            (101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha"),
+            (102, "u3", "[m:102] [普通用户] [id=u3]:\nbeta"),
         ])
         entry, known = self._recovery_entry(
-            "[m:101] [普通用户] [id=u2]: alpha\n[m:102] [普通用户] [id=u3]: beta",
+            "[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta",
         )
         absorbed = registry.add_recovered_followup(KEY, entry, known_m_ids=known)
         slot = registry.peek_followup(KEY)
@@ -1210,12 +1212,12 @@ class NativeHandoverTests(_Base):
         b = msg("u3", 102, "beta")
         facts = self._chain(
             queued=[a, b],
-            pending_text="[m:101] [普通用户] [id=u2]: alpha\n[m:102] [普通用户] [id=u3]: beta",
+            pending_text="[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta",
         )
         self.assertEqual(facts["absorbed"], ("101", "102"))
         self.assertEqual(facts["handover_rows"], [(101, "alpha"), (102, "beta")])
         self.assertEqual(
-            facts["rendered"], "[m:101] [id=u2]: alpha\n[m:102] [id=u3]: beta",
+            facts["rendered"], "[m:101] [id=u2]:\nalpha\n\n[m:102] [id=u3]:\nbeta",
         )
         self.assertEqual(facts["statuses"], [("101", "recovered"), ("102", "recovered")])
 
@@ -1223,7 +1225,7 @@ class NativeHandoverTests(_Base):
         """不同原始行同文:按 m_id 认行,槽内另一行不被正文去重吞掉。"""
         facts = self._chain(
             queued=[msg("u2", 101, "alpha"), msg("u3", 102, "alpha")],
-            pending_text="[m:101] [普通用户] [id=u2]: alpha",
+            pending_text="[m:101] [普通用户] [id=u2]:\nalpha",
         )
         self.assertEqual(facts["absorbed"], ("101",))
         self.assertEqual(facts["handover_rows"], [(101, "alpha"), (102, "alpha")])
@@ -1237,16 +1239,16 @@ class NativeHandoverTests(_Base):
         真实 pop 与 `render_current_rows`;只把 steer HTTP 换成等 ACK 的替身。
         """
         facts = self._chain(
-            ledger_prefix=[(101, "u2", "[m:101] [普通用户] [id=u2]: alpha")],
+            ledger_prefix=[(101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha")],
             queued=[msg("u3", 102, "beta")],
-            pending_text="[m:101] [普通用户] [id=u2]: alpha\n[m:102] [普通用户] [id=u3]: beta",
+            pending_text="[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta",
         )
         # 只有 B 走真实入口(它的 ACK 仍在途);A 早已被接受并摘槽。
-        self.assertEqual(facts["sent"], ["[m:102] [普通用户] [id=u3]: beta"])
+        self.assertEqual(facts["sent"], ["[m:102] [普通用户] [id=u3]:\nbeta"])
         self.assertEqual(facts["absorbed"], ("102",))
         self.assertEqual(facts["handover_rows"], [(None, "alpha"), (102, "beta")])
         self.assertEqual(
-            facts["rendered"], "[id=u2]: alpha\n[m:102] [id=u3]: beta",
+            facts["rendered"], "[id=u2]:\nalpha\n\n[m:102] [id=u3]:\nbeta",
         )
         # 槽内 B 的原 fragment 对象保留(真实 m:id/作者),回收只补缺行 A。
         self.assertEqual(facts["identities"], [(None, False), (102, True)])
@@ -1260,14 +1262,14 @@ class NativeHandoverTests(_Base):
     def test_partial_overlap_ack_first_control_same_order(self) -> None:
         """对照:两条 ACK 都先到(槽已空)时,回收仍按 A/B 各一份。"""
         facts = self._chain(
-            ledger_prefix=[(101, "u2", "[m:101] [普通用户] [id=u2]: alpha")],
+            ledger_prefix=[(101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha")],
             queued=[msg("u3", 102, "beta")],
-            pending_text="[m:101] [普通用户] [id=u2]: alpha\n[m:102] [普通用户] [id=u3]: beta",
+            pending_text="[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta",
             ack_before_pop=True,
         )
         self.assertEqual(facts["absorbed"], ("102",))
         self.assertEqual(
-            facts["rendered"], "[id=u2]: alpha\n[m:102] [id=u3]: beta",
+            facts["rendered"], "[id=u2]:\nalpha\n\n[m:102] [id=u3]:\nbeta",
         )
         self.assertEqual(facts["rendered"].count("alpha"), 1)
         self.assertEqual(facts["rendered"].count("beta"), 1)
@@ -1275,9 +1277,9 @@ class NativeHandoverTests(_Base):
     def test_negative_control_append_reverses_tail_row_chain(self) -> None:
         """负对照:同一真实链走第 4 轮「缺行追加到槽尾」→ 模型边界收到 B/A。"""
         facts = self._chain(
-            ledger_prefix=[(101, "u2", "[m:101] [普通用户] [id=u2]: alpha")],
+            ledger_prefix=[(101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha")],
             queued=[msg("u3", 102, "beta")],
-            pending_text="[m:101] [普通用户] [id=u2]: alpha\n[m:102] [普通用户] [id=u3]: beta",
+            pending_text="[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta",
             legacy_partial_merge=True,
         )
         self.assertEqual(facts["absorbed"], ("102",))
@@ -1286,7 +1288,7 @@ class NativeHandoverTests(_Base):
             "旧形态:缺行 A 被追加到槽尾 B 之后",
         )
         self.assertEqual(
-            facts["rendered"], "[m:102] [id=u3]: beta\n[id=u2]: alpha",
+            facts["rendered"], "[m:102] [id=u3]:\nbeta\n\n[id=u2]:\nalpha",
         )
         self.assertEqual(facts["rendered"].count("alpha"), 1)
         self.assertEqual(facts["rendered"].count("beta"), 1)
