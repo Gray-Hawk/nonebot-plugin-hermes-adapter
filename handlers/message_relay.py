@@ -491,7 +491,8 @@ async def _steer_text_into_live_run(
     )
     # 本部署补丁(弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75 根因、alive/84 方案):
     # steer 被上游接受(HTTP 200 且 accepted=True)即把发送前已去重/校验的逐行
-    # 投影从在途认领转正式 pending 台账(对账按 `[m:id]:` 搜转录)。无号行不入账;
+    # 投影从在途认领转正式 pending 台账(对账按「转录里出现该行聊天行」核销,
+    # 见 steer_reconcile._steer_line_hit_pattern)。无号行不入账;
     # 记台账失败只 WARN,不影响主流程。
     confirmed_ids: tuple[str, ...] = ()
     try:
@@ -600,7 +601,7 @@ def _render_steer_presentation_for_scope(
         self_id = None
     return render_steer_rows(
         rows, self_id=None if self_id is None else str(self_id),
-        adapter=adapter_name,
+        adapter=adapter_name, is_private=is_private,
     )
 
 

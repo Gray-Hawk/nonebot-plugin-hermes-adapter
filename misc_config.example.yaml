@@ -25,7 +25,8 @@ transport_error_fallback_text: ''
 # /help 菜单头尾自定义文件路径；中间命令清单仍由插件动态生成。空 = 使用内置动态菜单。
 help_menu_file: ''
 
-# 是否在本地保存每轮完整 system prompt 供排障（含画像与主机路径，仅存本地）。
+# 是否在本地保存每轮完整生产请求结构供排障（system 指令 + messages/input 里的
+# user content；含画像与主机路径，仅存本地，内联图片按长度占位）。
 prompt_dump_enabled: false
 
 # /approve 挂起审批超时秒数，默认 300，与上游默认审批超时一致。

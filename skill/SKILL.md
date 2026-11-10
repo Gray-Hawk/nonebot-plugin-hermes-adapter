@@ -223,7 +223,9 @@ Anchors are per-task, not per-person: participants share equal footing. When the
 current message belongs to a pinned task (a follow-up spec change, an acceptance
 reply), register `anchor_merge` with that task's starter user_id to join its participants
 instead of pinning a new anchor; quoting the task's original message auto-merges
-too. Mid-turn you may receive steered messages from stakeholders ([user=…] lines):
+too. Mid-turn you may receive steered messages from stakeholders — they render as the
+same chat lines as any other message (`[有人@我] [m:id] [身份] [id=… user=…]: 正文`;
+a private one-to-one steer omits the speaker tag exactly like a normal private line):
 handle them inline; if one is a brand-new independent commission, acknowledge it in
 your reply or ask them to re-send later — steered messages never create anchors.
 

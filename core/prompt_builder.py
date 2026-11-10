@@ -791,26 +791,17 @@ def _render_recent_messages_block(
     for m in reversed(msgs):
         if m.origin.author_kind not in (AuthorKind.HUMAN, AuthorKind.BOT):
             raise ValueError("历史消息块只接受可入库的真人或 bot 来源")
-        bot_prefix = "[bot] " if m.is_bot else ""
-        speaker_tag = _format_speaker_tag(
-            m.nickname, m.user_id,
-            canonical=name_resolver(m.user_id) if name_resolver else None)
-        identity = _identity_label(m, identity_ctx)
-        identity_prefix = f"[{identity}] " if identity else ""
-        at_mark = _at_me_mark(m, identity_ctx)
-        id_prefix = f"[m:{m.id}] " if m.id is not None else ""
         if m is expand_target:
             content = _expand_forward_preview(m.content, m.forward_content or "")
             rendered = _sanitize_history_content(content, max_chars=_MAX_EXPANDED_FORWARD_LINE_CHARS)
         else:
             rendered = _sanitize_history_content(m.content, max_chars=history_cap)
-        line = f"{at_mark}{id_prefix}{bot_prefix}{identity_prefix}{speaker_tag}: {rendered}"
         # 行尾追加紧凑媒体清单(带全局连续 idx,号即 message_images 地址,
         # 供按号拉图/指认)。占位带号不代表该图已内联——豁免/未内联行同样带号。
-        media_summary = render_media_summary(m)
-        if media_summary:
-            line += f" {media_summary}"
-        lines.append(line)
+        lines.append(_render_chat_line(
+            m, content=rendered, name_resolver=name_resolver,
+            identity_ctx=identity_ctx, bot_prefix=True,
+        ))
     lines.append("</recent_messages>")
     return "\n".join(lines)
 
@@ -914,41 +905,82 @@ def _render_pinned_tasks_block(anchors: Sequence[Any], *, now_ms: int) -> str:
     return "\n".join(lines)
 
 
-def _render_message_line(
-    row: BufferedMessage, *, name_resolver=None, with_speaker: bool = True,
-    identity_ctx: tuple[str, str] | None = None,
-) -> str:
-    """渲染一个来源明确的当前消息碎片；聚合资格判断不在这里做。
+def _private_single_human(
+    rows: Sequence[BufferedMessage], *, is_private: bool,
+) -> bool:
+    """私聊单人真人行的 speaker 省略判据。
 
-    identity_ctx 非空时在 [`id=…`] 前加身份栏、在 `m:id` 前加真实 @ 强提醒;
-    None 保持旧字节形态(低层调用方没有当前 BOT 身份,不猜)。
+    current 行与 steer 行共用这一份判据:同一消息事实不管从哪个入口呈递,
+    「私聊要不要 speaker」都由这里决定,不在两个入口各写一条分支。
     """
-    prefix = (
-        f"[m:{row.id}] "
-        if row.id is not None and row.origin.author_kind not in (AuthorKind.SYSTEM, AuthorKind.MIXED)
-        else ""
+    return (
+        is_private
+        and len(rows) == 1
+        and rows[0].origin.author_kind is AuthorKind.HUMAN
     )
-    identity = _identity_label(row, identity_ctx)
-    identity_prefix = f"[{identity}] " if identity else ""
-    at_mark = _at_me_mark(row, identity_ctx)
+
+
+def _render_chat_line(
+    row: BufferedMessage,
+    *,
+    content: str,
+    name_resolver=None,
+    identity_ctx: tuple[str, str] | None = None,
+    with_speaker: bool = True,
+    bot_prefix: bool = False,
+    media: str = "summary",
+) -> str:
+    """模型可见聊天行的唯一构造函数(current / recent / steer 共用)。
+
+    身份事实只有一份来源:``row``(作者、is_bot、at_user_ids、m:id)与
+    ``identity_ctx``(当前 BOT 的 self_id + adapter)。三个入口的真实差异只经参数
+    表达,不各自维护一套前缀拼装:
+
+    - ``with_speaker``:私聊单人行省略 speaker 标签(判据只有
+      ``_private_single_human`` 一份);
+    - ``bot_prefix``:历史行在 m:id 之后带 ``[bot] ``,当前消息与 steer 不带;
+    - ``media``:``summary`` = 行尾紧凑清单 ``(图#0)``(current/recent);
+      ``steer`` = 完整寻址标签 ``[图 m:id#idx]`` + 随条读图提示(steer 走文本
+      通道、媒体不内联,必须给出可寻址的号);
+    - ``content``:调用方自己的数据投影(历史截断/折叠展开/回收剥壳)已完成,
+      本函数只负责呈递,不再改写正文。
+
+    系统合成行只保留 ``[sys=来源] 正文``:没有人类/bot 身份,也没有 m:id。
+    """
     if row.origin.author_kind is AuthorKind.SYSTEM:
-        tag = f"[sys={_sanitize_tag_text(row.origin.display_label or '系统')}]"
-    elif with_speaker:
-        tag = _format_speaker_tag(
-            row.nickname, row.user_id,
-            canonical=name_resolver(row.user_id) if name_resolver else None)
+        line = f"[sys={_sanitize_tag_text(row.origin.display_label or '系统')}] {content}"
     else:
-        tag = ""
-    if row.origin.author_kind is AuthorKind.SYSTEM:
-        line = f"{prefix}{identity_prefix}{tag} {row.content}"
-    else:
-        line = (
-            f"{at_mark}{prefix}{identity_prefix}{tag}: {row.content}"
-            if tag else f"{at_mark}{prefix}{identity_prefix}{row.content}"
+        at_mark = _at_me_mark(row, identity_ctx)
+        mid = (
+            f"[m:{row.id}] "
+            if row.id is not None and row.origin.author_kind is not AuthorKind.MIXED
+            else ""
         )
-    summary = render_media_summary(row)
-    if summary:
-        line += f" {summary}"
+        identity = _identity_label(row, identity_ctx)
+        identity_prefix = f"[{identity}] " if identity else ""
+        bot_mark = "[bot] " if bot_prefix and row.is_bot else ""
+        tag = (
+            _format_speaker_tag(
+                row.nickname, row.user_id,
+                canonical=name_resolver(row.user_id) if name_resolver else None)
+            if with_speaker
+            else ""
+        )
+        head = f"{at_mark}{mid}{bot_mark}{identity_prefix}"
+        line = f"{head}{tag}: {content}" if tag else f"{head}{content}"
+    if media == "steer":
+        items = iter_message_media(row)
+        if items:
+            if row.id is None:
+                raise ValueError("有媒体但无合法行号,拒绝 steer 行渲染")
+            labels = " ".join(
+                media_label(kind, row.id, idx) for idx, (kind, _u) in enumerate(items)
+            )
+            line = f"{line} {labels}{_STEER_MEDIA_HINT.format(m_id=row.id)}"
+    else:
+        summary = render_media_summary(row)
+        if summary:
+            line += f" {summary}"
     return line
 
 
@@ -966,29 +998,29 @@ def render_current_rows(
     if not rows:
         raise ValueError("当前消息序列不得为空")
     ctx = _identity_context(self_id, adapter)
+    single_human = _private_single_human(rows, is_private=is_private)
     lines = []
     for row in rows:
         if row.origin.author_kind is AuthorKind.MIXED:
             raise ValueError("混合聚合消息必须先展开 fragments 再呈递")
         if row.origin.author_kind is AuthorKind.BOT:
             raise ValueError("bot 消息不得作为当前输入呈递")
-        private_single_human = (
-            is_private and len(rows) == 1 and row.origin.author_kind is AuthorKind.HUMAN
-        )
-        lines.append(_render_message_line(
-            row, name_resolver=name_resolver, with_speaker=not private_single_human,
-            identity_ctx=ctx,
+        lines.append(_render_chat_line(
+            row, content=row.content, name_resolver=name_resolver,
+            identity_ctx=ctx, with_speaker=not single_human,
         ))
     return "\n".join(lines)
 
 
-# --- steer 行渲染(P-07):与 current 行共用同一套 speaker 装配与媒体寻址,
-# 但保留 steer 既有文法 `[id=u user=N] [m:id]: 正文`(m:id 挂在 speaker 之后、
-# 冒号之前)。steer_reconcile 的转录命中判据就是 `[m:id]:`(带冒号),native 回收
-# 的剥壳正则也锚这一形态;换成 current 外壳(`[m:id] [id=…]: `)会让对账命中与
-# 回收剥壳同时失效。完整媒体寻址(`[图 m:id#idx]` + 随条读图提示)只用于 steer,
-# current 行不加这套噪声。身份栏与 [有人@我] 由 identity_ctx 决定,贴在这段文法
-# 最前(`[有人@我] [主人] [id=…] [m:id]: 正文`),与 current/recent 同一优先级。
+# --- steer 行呈递(P-07 + 呈递统一):与 current/recent 走同一个消息行构造函数
+# `_render_chat_line`,前缀文法(`[有人@我] [m:id] [身份] [id=…]: 正文`)逐字节同源。
+# steer 只保留两处真实差异,且都由参数表达:
+#   1) 媒体形态:steer 走文本通道、媒体不内联,行尾给完整寻址标签
+#      (`[图 m:id#idx]`)与随条读图提示;current/recent 用紧凑清单 `(图#0)`;
+#   2) 私聊单人 steered 行的 speaker 省略由 `_private_single_human` 与 current 共用。
+# m:id 在行首后,steer_reconcile 的转录命中判据随之改为「行首出现该行 m:id」
+# (语义不变:仍是「这条原始消息的聊天行是否真的出现在模型可见转录里」),
+# 回收剥壳正则同步认新文法并继续兼容旧台账形态。
 
 _STEER_MEDIA_HINT = (
     "（随条媒体未内联，需要看图/表情时用 get_message_images "
@@ -1020,17 +1052,17 @@ class SteerPresentation:
 def _render_steer_message_line(
     row: BufferedMessage, *, name_resolver=None,
     identity_ctx: tuple[str, str] | None = None,
+    with_speaker: bool = True,
 ) -> str:
     """渲染一条 steer 行;不合法时抛 ValueError,由 relay 边界转成安全回退。
 
-    与 _render_message_line 共用 speaker 装配与 iter_message_media 寻址,
-    区别只在文法(m:id 在 speaker 之后)与媒体形态(完整寻址标签 + 随条提示)。
-    每行只贴自己的 m:id 与自己那份媒体清单的 idx——媒体错贴别行正是本项要治的
-    缺陷,所以这里不做任何跨行的号/标签复用。
+    来源闸(混合/系统/bot)留在这里——steer 通道只接受真人行;通过闸后直接调用
+    `_render_chat_line`,与 current/recent 共用身份栏、真实 @、speaker、m:id 与
+    正文拼接的全部逻辑,只有媒体形态走 steer 参数。
 
     identity_ctx 非空时在 `[id=…]` 前加身份栏、在 `[m:id]` 前加真实 @ 强提醒
-    (与 current/recent 行同一套判定与同一优先级);None 保持旧字节形态,只有
-    拿不到 bot 上下文的低层旧调用会走到这里,生产 steer 两入口都带 ctx。
+    (与 current/recent 行同一套判定与同一优先级);None 时不贴身份栏(低层调用
+    拿不到 bot 上下文,不猜身份),行文法仍与 current 无 ctx 时一致。
     """
     if row.origin.author_kind is AuthorKind.MIXED:
         raise ValueError("混合聚合消息必须先展开 fragments 再呈递")
@@ -1038,31 +1070,16 @@ def _render_steer_message_line(
         raise ValueError("bot 消息不得作为 steer 输入")
     if row.origin.author_kind is AuthorKind.SYSTEM:
         raise ValueError("系统来源行不得作为 steer 输入")
-    at_mark = _at_me_mark(row, identity_ctx)
-    identity = _identity_label(row, identity_ctx)
-    identity_prefix = f"[{identity}] " if identity else ""
-    tag = _format_speaker_tag(
-        row.nickname, row.user_id,
-        canonical=name_resolver(row.user_id) if name_resolver else None)
-    mid = f" [m:{row.id}]" if row.id is not None else ""
-    body = (row.content or "").strip()
-    # 前缀序与 current/recent 一致:强提醒 → 身份栏 → speaker([id=…]) → m:id。
-    # m:id 必须留在冒号前,steer_reconcile 的 `[m:id]:` 转录命中与这块文法绑定。
-    line = f"{at_mark}{identity_prefix}{tag}{mid}: {body}".rstrip()
-    media = iter_message_media(row)
-    if media:
-        if row.id is None:
-            raise ValueError("有媒体但无合法行号,拒绝 steer 行渲染")
-        labels = " ".join(
-            media_label(kind, row.id, idx) for idx, (kind, _u) in enumerate(media)
-        )
-        line = f"{line} {labels}{_STEER_MEDIA_HINT.format(m_id=row.id)}"
-    return line
+    return _render_chat_line(
+        row, content=row.content or "", name_resolver=name_resolver,
+        identity_ctx=identity_ctx, with_speaker=with_speaker, media="steer",
+    )
 
 
 def render_steer_rows(
     rows: Sequence[BufferedMessage], *, name_resolver=None,
     self_id: str | None = None, adapter: str | None = None,
+    is_private: bool = False,
 ) -> SteerPresentation:
     """steer 唯一呈递入口:正文、媒体寻址、台账与去重同一份身份事实。
 
@@ -1071,16 +1088,21 @@ def render_steer_rows(
     不改写原始消息。
 
     self_id/adapter 是身份栏与 [有人@我] 的事实输入,取自本 scope 在跑 run 的
-    bot_self_id 与当前 adapter(与 current/recent 同一事实源);不传则保持旧形态。
+    bot_self_id 与当前 adapter(与 current/recent 同一事实源);不传则不贴身份栏。
+
+    is_private 只用于 speaker 省略判据 `_private_single_human`——私聊单人行与
+    current 行一样不重复 speaker;群聊/多人批仍带 `[id=…]`。
     """
     if not rows:
         raise ValueError("steer 行序列不得为空")
     ctx = _identity_context(self_id, adapter)
+    single_human = _private_single_human(rows, is_private=is_private)
     items = tuple(
         SteerRowPresentation(
             source_row=row,
             rendered_line=_render_steer_message_line(
                 row, name_resolver=name_resolver, identity_ctx=ctx,
+                with_speaker=not single_human,
             ),
         )
         for row in rows
