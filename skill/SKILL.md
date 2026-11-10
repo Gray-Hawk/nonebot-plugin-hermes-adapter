@@ -122,17 +122,19 @@ Read-only view of real background state for this conversation, as two separate l
 
 Never claim a background task from memory; the plugin wakes you when a result is ready.
 
-### `get_message_images(message_ids, idx?, adapter?, group_id?)`
+### `get_message_images(message_ids, adapter, idx?, group_id?)`
 
 Fetch image bytes for up to 4 message ids in a single call. Returns a content array
 mixing a JSON header (per-image metadata, including `kind`) with `TextContent` markers
 + `ImageContent` base64 blocks. The image content flows through Hermes's multimodal
 injection pipeline, so on your next LLM turn you'll **actually see** the images.
 Access is always checked per message id against the stored owner of that message.
-`adapter` / `group_id` are optional target parameters in the same shape as
-`get_recent_messages`: when given they must match the stored owner (group ids must carry
-the same `group_id`; private ids have no group, so omit `group_id` for them), and a
-mismatch is reported as `not_found`. Omit both to fetch by message id alone.
+`adapter` is **required** and must be the adapter of the current chat (the same value
+you pass to `get_recent_messages`; it is in `<session_context>`): it must match the
+stored owner of each message id, and a mismatch is reported as `not_found`.
+`group_id` stays optional in the same shape as `get_recent_messages`: when given it
+must match the stored `group_id` (private ids have no group, so omit it for them);
+a mismatch is reported as `not_found`.
 
 Stickers are stored and recalled through the exact same pipeline. Their marker reads
 `[sticker for m:<id> idx=N]` instead of `[image for ...]` — treat sticker bytes as a
@@ -341,7 +343,8 @@ To see the image, follow this two-step protocol:
    - "上图" / "这图" / "刚才那张" → most recent line where the message has an image
    - "我刚发的" → most recent image-bearing message from the current speaker
    - "他刚发的" → most recent image-bearing message from the user named in context
-2. **Fetch the bytes.** Call `get_message_images(message_ids=[<id>])`. The returned
+2. **Fetch the bytes.** Call `get_message_images(message_ids=[<id>], adapter=<the
+   adapter shown in <session_context>>)`. The returned
    ImageContent blocks become real visual input on your next LLM turn. To fetch only
    specific images of a multi-image message, pass the optional `idx=[...]` filter
    (numbers from the line's media manifest, e.g. `(图#0 #1)` → idx 0/1).

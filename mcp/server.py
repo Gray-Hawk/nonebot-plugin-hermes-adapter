@@ -397,8 +397,8 @@ def build_mcp_app(
     @mcp.tool()
     async def get_message_images(
         message_ids: list[int],
+        adapter: str,
         idx: list[int] | None = None,
-        adapter: str | None = None,
         group_id: str | None = None,
     ) -> list:
         """Fetch image/sticker bytes for specific message ids (max 4 ids per call).
@@ -410,12 +410,15 @@ def build_mcp_app(
         Use after get_recent_messages identifies which message_id the user
         is referring to (e.g. '上图' → most recent msg with image_count > 0,
         '表情包' → sticker_count > 0).
+        Required adapter: the adapter of the current chat (same value you pass to
+        get_recent_messages; see <session_context>). It must match the stored owner
+        of each message id, otherwise that id is reported as not_found.
         Optional idx: only fetch those per-message image indexes (applies to all
         message_ids; numbers come from the media manifest like `(图#0 #1)`).
         Omit to fetch every image of the given messages.
-        Optional adapter/group_id: consistency check against the stored owner of
-        each message id (same shape as get_recent_messages; private ids have no
-        group, so omit group_id for them). A mismatch is reported as not_found.
+        Optional group_id: consistency check against the stored group of each
+        message id. When given it must match; private ids have no group, so omit it
+        for them. A mismatch is reported as not_found.
         """
         inp = GetMessageImagesInput(
             message_ids=message_ids,
