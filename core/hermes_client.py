@@ -32,7 +32,7 @@ from .control_intent import CONTROL_TOOL_NAME
 from .media_patterns import _MD_IMAGE_PATTERN, _MEDIA_TAG_PATTERN
 from .media_whitelist import inline_local_media_images
 from .message_context import render_message_context_head
-from .prompt_dump import maybe_dump_system_prompt
+from .prompt_dump import maybe_dump_request
 from .routing import HermesTarget, default_target
 from .run_tracker import StaleGenerationError, make_scope_key
 from .bg_tasks import spawn_bg_task
@@ -1289,16 +1289,6 @@ class HermesClient:
         ):
             system_prompt = system_prompt + _decision_hint()
 
-        # 全文留痕(排障开关,默认关):截留在最终成形后、通道分流前,
-        # 两模式与 Completions/Runs 两通道抓到的是同一份真实上发字节。
-        maybe_dump_system_prompt(
-            adapter_name=adapter_name,
-            is_private=is_private,
-            user_id=user_id,
-            group_id=group_id,
-            system_prompt=system_prompt,
-        )
-
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": content},
@@ -1310,6 +1300,39 @@ class HermesClient:
             "stream": False,  # 旁白回显通道已退役；正文/进度都走非流式终态 + push_message
         }
         # 路径 B:不发 tools / tool_choice(Hermes 透传不可靠,P0-spike 已验)
+
+        # 请求留痕(排障开关,默认关):截留在请求体成形后、通道分流前,抓的是
+        # 「这一轮真实要发出去的结构」而不只是 system 文本——user content 里每一行
+        # 聊天呈递才是呈递改造要看的东西。三通道各按自己的外层字段组装视图。
+        _dump_iface = plugin_config.hermes_api_interface
+        _dump_note: str | None = None
+        if _dump_iface == "runs":
+            _dump_request: dict[str, Any] = {
+                "model": "hermes-agent",
+                "session_id": session_key,
+                "instructions": system_prompt,
+                "input": [{"role": "user", "content": content}],
+            }
+        elif _dump_iface == "astrbot":
+            # AstrBot 后端把图片另走附件上传;这里留本地侧请求视图,
+            # user content 逐字节保留(图片按 data: URL 占位)。
+            _dump_request = {
+                "model": "hermes-agent",
+                "system_prompt": system_prompt,
+                "user_content": content,
+            }
+            _dump_note = "astrbot 后端:图片另经附件上传,本转储为本地侧请求视图"
+        else:
+            _dump_request = payload
+        maybe_dump_request(
+            adapter_name=adapter_name,
+            is_private=is_private,
+            user_id=user_id,
+            group_id=group_id,
+            interface=_dump_iface,
+            request=_dump_request,
+            note=_dump_note,
+        )
 
         headers = self.get_headers(session_key, api_key=tgt.api_key)
         runs_pending_steer = ""

@@ -481,7 +481,8 @@ YAML_SPECS: dict[str, list[Any]] = {
         _Key(
             "prompt_dump_enabled",
             False,
-            ["是否在本地保存每轮完整 system prompt 供排障（含画像与主机路径，仅存本地）。"],
+            ["是否在本地保存每轮完整生产请求结构供排障（system 指令 + messages/input "
+             "里的 user content；含画像与主机路径，仅存本地，内联图片按长度占位）。"],
             type_="bool",
         ),
         _Key(

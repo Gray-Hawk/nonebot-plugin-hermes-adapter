@@ -69,18 +69,20 @@ async def reconcile_run_finished(tracked) -> None:
         return
     rows, complete = result
 
-    # 逐条判定: 任一转录行 content 含 "[m:{id}]:"(带冒号)即落账。冒号是关键判据:
-    # steer 挂载形态是 "标签 [m:xxx]: 内容"(带冒号), 正常消息信封是 "[m:xxx] 内容"
-    # (无冒号)——带冒号搜索天然区分。直注与跟帖统一挂感知库插件 m:id(alive/103),
-    # 旧台账里的平台 id 条目不做迁移, 与当时实际注入文本保持一致各自核销。
+    # 逐条判定:任一转录行里出现「这一行消息的聊天行」即落账。统一呈递后 steer
+    # 行与普通聊天行同文法(m:id 在行首),不再有 `标签 [m:id]: 内容` 这一带冒号的
+    # 独占形态;判据因此改为「行首出现该行 m:id」(强提醒/身份栏可前置),并继续
+    # 认旧文法 `[id=…] [m:id]:`——升级前已送达的旧台账行照样核销,不会因为改了
+    # 呈递文法就被误判成「被吞」而重复补投。语义未变:仍是「这条原始消息的聊天行
+    # 是否真的出现在模型可见转录里」。
     # 不加 display_kind 过滤: 上游
     # _merge_leftover_steer 会把 leftover steer 恢复为下一轮正常 user 行、回收路径落账
     # 后也是正常 user 行, 过滤会把这两类恢复误判成缺件导致双重投递。
     reconciled: list[str] = []
     missing: list[dict] = []
     for p in pending:
-        needle = f"[m:{p['m_id']}]:"
-        if any(needle in (r.get("content") or "") for r in rows):
+        hit = _steer_line_hit_pattern(p["m_id"])
+        if any(hit.search(r.get("content") or "") for r in rows):
             reconciled.append(p["m_id"])
         else:
             missing.append(p)
@@ -115,13 +117,14 @@ async def _fetch_transcript(tracked, pending: list[dict] | None = None):
     完整持久转录,不是模型当前可见窗口。
     分页用上游 limit/offset(latest 序)。查询期间新行只落在页尖,后续页旧行
     相对后移→页间可能重复(按 id 去重)但不会漏行。停止条件:全部 pending
-    的 "[m:id]:" 命中(无需更多证据)、遇到本 run 触发批(首个普通 user 行,
-    display_kind 空=覆盖本 run 范围)、页返回不足 limit(没有更多)。
+    行的聊天行已在累计行里出现(`_steer_line_hit_pattern`,无需更多证据)、
+    遇到本 run 触发批(首个普通 user 行,display_kind 空=覆盖本 run 范围)、
+    页返回不足 limit(没有更多)。
     """
     tgt = resolve_target(tracked.adapter, tracked.is_private, tracked.group_id)
     url = f"{tgt.base_url}/api/sessions/{tracked.session_key}/messages"
     headers = {"Authorization": f"Bearer {tgt.api_key}"} if tgt.api_key else {}
-    needles = [f"[m:{p['m_id']}]:" for p in (pending or [])]
+    needles = [_steer_line_hit_pattern(p["m_id"]) for p in (pending or [])]
     rows: list[dict] = []
     seen: set = set()
     offset = 0
@@ -172,7 +175,8 @@ async def _fetch_transcript(tracked, pending: list[dict] | None = None):
                         seen.add(rid)
                     rows.append(r)
                 if needles and all(
-                    any(n in (r.get("content") or "") for r in rows) for n in needles
+                    any(n.search(r.get("content") or "") for r in rows)
+                    for n in needles
                 ):
                     return rows, True
                 if any(
@@ -450,24 +454,59 @@ def _strip_convention(text: str) -> str:
 _STEER_STRIP_RE = None
 
 
+def _steer_line_hit_pattern(m_id) -> re.Pattern:
+    """对账命中判据:转录里是否出现这一行消息的聊天行。
+
+    统一呈递后 steer 行的 m:id 在行首(强提醒可前置),旧文法把 m:id 挂在
+    speaker 之后/冒号之前。两种形态都认,判据只回答一件事:这条原始消息的
+    聊天行有没有真的进模型可见转录——与「用哪种文法渲染」无关。
+    """
+    from ..core.prompt_builder import _AT_ME_MARK, _IDENTITY_LABELS
+
+    labels = "|".join(re.escape(x) for x in _IDENTITY_LABELS)
+    mid = rf"\[m:{re.escape(str(m_id))}\]"
+    return re.compile(
+        rf"^(?:{re.escape(_AT_ME_MARK.strip())}[ \t]+)?"
+        rf"(?:\[(?:{labels})\][ \t]+)?"
+        rf"(?:\[id=[^\]\n]+\][ \t]+)?{mid}",
+        flags=re.MULTILINE,
+    )
+
+
 def _steer_strip_pattern() -> re.Pattern:
     """steer 呈递外壳的剥壳正则,档位字面量与强提醒标记都取自渲染端常量。
 
-    渲染文法(与 current/recent 同一优先级):
-      `[有人@我] [主人] [id=…] [m:id]: 正文`
-    强提醒与身份栏各自可选(真实 @ / 有 bot 上下文才出现),`[id=…]` 标签必在
-    (speaker 装配恒产出),m:id 可有可无(无号行发不出对账锚但仍是合法字符串)。
-    只锚行首 + 这些固定标记 + 紧随其后的 `:` —— 正文里同样字样的文本不受影响。
+    渲染文法(与 current/recent 逐字节同源):
+      `[有人@我] [m:id] [主人] [id=…]: 正文`      群聊/多人批
+      `[有人@我] [m:id] [主人] 正文`              私聊单人行(speaker 省略)
+    另外继续认旧 steer 文法 `[身份] [id=…] [m:id]: 正文`——升级前落库的
+    steer_ledger 行不迁移正文,剥壳要能一起处理,否则回收时旧壳会残留在正文里。
+
+    每行只剥行首这些固定标记 + 紧随的分隔符(冒号或空格);`[m:id]` / `[id=…]` /
+    `[有人@我]` 至少出现一个才判定为呈递外壳——只有身份栏一行(`[主人] 你好`)
+    可能是用户原文,按「宁可保留、不吞正文」不剥。
+    正文里同样字样的文本不受影响(只锚行首)。
     """
     global _STEER_STRIP_RE
     if _STEER_STRIP_RE is None:
         from ..core.prompt_builder import _AT_ME_MARK, _IDENTITY_LABELS
 
         labels = "|".join(re.escape(x) for x in _IDENTITY_LABELS)
+        at = rf"(?:{re.escape(_AT_ME_MARK.strip())}[ \t]+)?"
+        idb = rf"(?:\[(?:{labels})\][ \t]+)?"
+        tag = r"\[id=[^\]\n]+\]"
+        mid = r"\[m:\d+\]"
         _STEER_STRIP_RE = re.compile(
-            r"^(?:%(at)s\s+)?(?:\[(?:%(labels)s)\]\s+)?"
-            r"(?:\[id=[^\]\n]+\](?:\s+\[m:\d+\])?|\[m:\d+\])\s*:\s*"
-            % {"at": re.escape(_AT_ME_MARK.strip()), "labels": labels},
+            rf"^{at}(?:"
+            # 统一文法 + 旧 speaker 形:`[m:id]? [身份]? [id=…]( [m:id])?: `
+            rf"(?:{mid}[ \t]+)?{idb}{tag}(?:[ \t]+{mid})?[ \t]*:[ \t]*"
+            rf"|"
+            # 旧无 speaker 形:`[m:id]: 正文`(身份栏可选)
+            rf"{idb}{mid}[ \t]*:[ \t]*"
+            rf"|"
+            # 统一私聊形:speaker 省略,`[m:id] [身份]? 正文`
+            rf"{mid}[ \t]+{idb}"
+            rf")",
             flags=re.MULTILINE,
         )
     return _STEER_STRIP_RE

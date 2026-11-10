@@ -33,8 +33,10 @@ from nonebot_plugin_hermes_adapter.core.run_tracker import (  # noqa: E402
 from nonebot_plugin_hermes_adapter.handlers import message_relay as relay  # noqa: E402
 
 RAWS = {
+    # 群聊:身份栏 + speaker(与 current/recent 同一文法,无 m:id 行)
     "group": "[普通用户] [id=u1 user=小光]: 你怎么看这个",
-    "private": "[普通用户] [id=u1 user=小光]: 你怎么看这个",
+    # 私聊单人行:speaker 省略,与 current 私聊行完全一致
+    "private": "[普通用户] 你怎么看这个",
 }
 GROUP_ID = "g1"
 USER_ID = "u1"
@@ -144,7 +146,7 @@ class SteerReplyConventionTests(unittest.TestCase):
         for is_private in (False, True):
             with self.subTest(scope="private" if is_private else "group"):
                 text = self._inject_direct(interface="runs", is_private=is_private)
-                self.assertTrue(text.startswith(RAWS["private"]))
+                self.assertTrue(text.startswith(RAWS["private" if is_private else "group"]))
                 self.assertTrue(text.endswith(relay._STEER_REPLY_CONVENTION_LINE))
                 self.assertNotIn("push_message", text)
                 self.assertNotIn("JSON", text)
@@ -168,12 +170,12 @@ class SteerReplyConventionTests(unittest.TestCase):
         for is_private in (False, True):
             with self.subTest(scope="private" if is_private else "group"):
                 text = self._inject_direct(interface="completions", is_private=is_private)
-                self.assertEqual(text, RAWS["private"])
+                self.assertEqual(text, RAWS["private" if is_private else "group"])
                 self.assertNotIn("push_message", text)
 
     def test_completions_followup_keeps_steer_text_verbatim(self) -> None:
         text = self._inject_followup(interface="completions")
-        self.assertEqual(text, RAWS["private"])
+        self.assertEqual(text, RAWS["group"])
         self.assertNotIn("push_message", text)
 
 

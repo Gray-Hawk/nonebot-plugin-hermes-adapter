@@ -147,11 +147,11 @@ steer_rows = [
 ]
 steer = pb.render_steer_rows(steer_rows[:2], self_id=SELF, adapter=ADAPTER)
 print(steer.text)
-check("steer 主人行:强提醒在 m:id 前、身份在 [id=…] 前",
-      steer.text.split("\n")[0] == "[有人@我] [主人] [id=10001 user=主人] [m:501]: 插一句")
+check("steer 主人行与 current 行逐字节一致（同一条聊天行）",
+      steer.text.split("\n")[0] == "[有人@我] [m:501] [主人] [id=10001 user=主人]: 插一句")
 check("steer 引用块/伪造 CQ/At 他人不误标",
-      "\n[普通用户] [id=10003 user=路人] [m:502]: " in steer.text
-      and "[有人@我] [普通用户] [id=10003" not in steer.text)
+      "\n[m:502] [普通用户] [id=10003 user=路人]: " in steer.text
+      and "[有人@我] [m:502]" not in steer.text)
 try:
     pb.render_steer_rows(steer_rows, self_id=SELF, adapter=ADAPTER)
     check("steer 来源闸仍然拒绝 bot 行", False)
@@ -159,13 +159,32 @@ except ValueError:
     check("steer 来源闸仍然拒绝 bot 行", True)
 legacy_steer = pb.render_steer_rows(steer_rows[:1]).text
 print(legacy_steer)
-check("steer 无 bot 上下文的旧调用保持旧字节形态",
-      legacy_steer == "[id=10001 user=主人] [m:501]: 插一句")
+check("steer 无 bot 上下文:不贴身份栏，行文法与 current 同源",
+      legacy_steer == "[m:501] [id=10001 user=主人]: 插一句")
+
+print("\n== 7. 同一事实跨入口对照（普通 current / steer / 私聊） ==")
+fact = human("10001", "主人", mid=601, at=(SELF,), text="在吗")
+cur_group = pb.render_current_rows([fact], is_private=False, self_id=SELF, adapter=ADAPTER)
+st_group = pb.render_steer_rows([fact], is_private=False, self_id=SELF, adapter=ADAPTER).text
+print("群 current:", cur_group)
+print("群 steer  :", st_group)
+check("群聊:current 与 steer 逐字节一致", cur_group == st_group)
+fact_p = human("10001", "主人", mid=602, at=(SELF,), group=None, text="在吗")
+cur_priv = pb.render_current_rows([fact_p], is_private=True, self_id=SELF, adapter=ADAPTER)
+st_priv = pb.render_steer_rows([fact_p], is_private=True, self_id=SELF, adapter=ADAPTER).text
+print("私 current:", cur_priv)
+print("私 steer  :", st_priv)
+check("私聊:current 与 steer 逐字节一致", cur_priv == st_priv)
+check("私聊单人行省略 speaker", cur_priv == "[有人@我] [m:602] [主人] 在吗")
 from nonebot_plugin_hermes_adapter.core import steer_reconcile  # noqa: E402
 stripped = steer_reconcile.strip_steer_presentation(steer.text)
 print("回收剥壳 →", repr(stripped))
 check("回收剥壳不留旧身份/不叠壳",
       stripped == "插一句\n(引用 主人(10001): 提及2968545011) [CQ:at,qq=2968545011] 我也说")
+check("剥壳幂等（不叠壳）",
+      steer_reconcile.strip_steer_presentation(stripped) == stripped)
+check("私聊单人形剥壳",
+      steer_reconcile.strip_steer_presentation(st_priv) == "在吗")
 
 print()
 if FAILS:

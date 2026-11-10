@@ -1,0 +1,161 @@
+提示词配套 3：steer 与普通聊天输入呈递统一 — 验证证据（2026-11-10）
+工作树：/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109
+基线：9f5945f（= b397d7f 的审核 R1 修正；本项开工时工作树无未提交改动）
+施工范围（均为本地提交，未部署、未上传、未重启）：
+  core/prompt_builder.py      唯一聊天行构造函数 _render_chat_line + _private_single_human
+  core/steer_reconcile.py     对账命中判据 _steer_line_hit_pattern + 剥壳正则认新文法
+  handlers/message_relay.py   steer 呈递入口传 is_private(既有参数)
+  core/prompt_dump.py         改为完整生产请求结构留痕（JSON）
+  core/hermes_client.py       按 runs/completions/astrbot 三通道组装请求视图后留痕
+  core/config_templates.py + misc_config.example.yaml  prompt_dump_enabled 说明改口
+  skill/SKILL.md              steer 行外观说明与新呈递对齐
+  tests/test_chat_line_unified.py（新增 18 例）、test_steer_identity_at.py、
+  test_steer_presentation.py、test_steer_overlap.py、test_steer_reply_convention.py
+  scripts/smoke_chat_identity_at.py、scripts/smoke_prompt_dump.py
+  EVIDENCE/probes/steer_chat_line_{matrix,compare}.py
+
+一、唯一呈递入口（代码复用点与删掉的重复逻辑）
+----------------------------------------------------------------------------
+复用点：core/prompt_builder.py:_render_chat_line(row, *, content, name_resolver,
+identity_ctx, with_speaker, bot_prefix, media) 是模型可见聊天行的唯一构造函数。
+  · render_current_rows        → _render_chat_line(..., media="summary")
+  · _render_recent_messages_block → _render_chat_line(..., bot_prefix=True)
+  · _render_steer_message_line → 来源闸后调用 _render_chat_line(..., media="steer")
+删掉的重复逻辑（三份各自拼前缀）：
+  1) _render_message_line 里的 prefix/identity_prefix/at_mark/speaker/媒体尾缀整段；
+  2) _render_steer_message_line 里的 at_mark/identity_prefix/tag/mid/body 拼接与
+     media 标签、`.strip()/.rstrip()`；
+  3) _render_recent_messages_block 循环内的 bot_prefix + speaker_tag + identity +
+     m:id + 媒体清单逐行拼装。
+收敛的判据：speaker 省略只由 _private_single_human(rows, is_private) 决定，
+current 与 steer 共用（此前 steer 无此概念，私聊单人行照常带 [id=…]）。
+
+二、跨入口差异矩阵（父 979eb63 vs 候选，同一份 27 例用例）
+----------------------------------------------------------------------------
+跑法：
+  git worktree add --detach <base> 979eb63
+  AGENT_PLUGIN_CUSTOM_DIR=<tmp> python -B EVIDENCE/probes/steer_chat_line_matrix.py <tree> <out.json>
+  python -B EVIDENCE/probes/steer_chat_line_compare.py base.json new.json
+结果：相同 21 例；不同 6 例（全部是 steer 的呈递外形对齐，正文一字未动）。
+
+相同 21 例（父与候选逐字节一致）：
+  current_group_self / current_group_self_at / current_group_other_bot /
+  current_group_other_bot_at / current_group_master / current_group_master_at /
+  current_group_admin / current_group_admin_at / current_group_ordinary /
+  current_group_ordinary_at / current_group_quote_forged / current_group_multi /
+  current_group_media / current_group_no_mid / current_group_no_ctx /
+  current_private_single / current_private_multi / current_private_no_ctx /
+  current_system / recent_group / steer_group_no_mid
+  （普通路径（含私聊、无 bot 上下文、引用/伪造 CQ、媒体、系统合成行）完全没被改坏；
+    无号 steer 行本来没有 m:id 可挪，字节不变。）
+
+不同 6 例（就是本项要对齐的错位）：
+  1) steer_group_master_at
+     父  : [有人@我] [主人] [id=20001 user=主人号] [m:40]: 你怎么看
+     候选: [有人@我] [m:40] [主人] [id=20001 user=主人号]: 你怎么看
+  2) steer_group_multi
+     父  : [有人@我] [主人] [id=20001 user=主人号] [m:41]: 第一句\n[普通用户] [id=10001 user=小光] [m:42]: 第二句
+     候选: [有人@我] [m:41] [主人] [id=20001 user=主人号]: 第一句\n[m:42] [普通用户] [id=10001 user=小光]: 第二句
+  3) steer_group_media（媒体段本身就与 current 不同，属保留差异）
+     父  : [主人] [id=20001 user=主人号] [m:43]: 你怎么看 [图 m:43#0]（随条媒体未内联，…）
+     候选: [m:43] [主人] [id=20001 user=主人号]: 你怎么看 [图 m:43#0]（随条媒体未内联，…）
+  4) steer_group_no_ctx（低层无 bot 上下文调用）
+     父  : [id=20001 user=主人号] [m:44]: 你怎么看
+     候选: [m:44] [id=20001 user=主人号]: 你怎么看
+  5) steer_private_multi
+     父  : [主人] [id=20001 user=主人号] [m:51]: 你怎么看\n[普通用户] [id=10001 user=小光] [m:52]: 再来
+     候选: [m:51] [主人] [id=20001 user=主人号]: 你怎么看\n[m:52] [普通用户] [id=10001 user=小光]: 再来
+  6) steer_private_single（私聊单人行省略 speaker，与普通私聊行一致）
+     父  : [有人@我] [主人] [id=20001 user=主人号] [m:50]: 你怎么看
+     候选: [有人@我] [m:50] [主人] 你怎么看
+判读：6 例的差异只有「m:id 挪到行首、speaker 位置/省略、冒号位置」这些呈递外形，
+正文、身份档位、强提醒、媒体标签与提示逐字节不变；普通路径 20 例（含 recent）无变化。
+
+跨入口同一性（候选内自证，tests/test_chat_line_unified.py 与 smoke 第 7 节）：
+  群聊  current: [有人@我] [m:601] [主人] [id=10001 user=主人]: 在吗
+        steer  : [有人@我] [m:601] [主人] [id=10001 user=主人]: 在吗   （相等）
+  私聊  current: [有人@我] [m:602] [主人] 在吗
+        steer  : [有人@我] [m:602] [主人] 在吗                          （相等）
+  身份五类 / 真实 @ / 引用块 / 伪造 CQ / 无 bot 上下文 / 无 m:id / 多人批，
+  两入口输出全部逐字节相等；recent 与 current 对同一真人事实也逐字节相等
+  （历史行只对自己发出的 bot 行多一个 [bot]）。
+
+三、负对照（新专项在父树上的表现）
+----------------------------------------------------------------------------
+把 tests/test_chat_line_unified.py 原样放进 979eb63 工作树跑：
+  Ran 18 tests → FAILED (failures=5, errors=13)   ← 13 个 error 里多处是
+  render_steer_rows() 不接受 is_private、两入口输出不等、剥壳不认新文法。
+候选树同文件：
+  Ran 18 tests → OK
+即新专项确实以「统一后的呈递」为判据，父实现过不了。
+
+四、测试与验收门（本提交，全部实跑）
+----------------------------------------------------------------------------
+1) 专项（新增 + 相关）
+   tests.test_chat_line_unified                     Ran 18 tests  OK（新增）
+   tests.test_steer_identity_at                     Ran 19 tests  OK
+   tests.test_steer_presentation                    Ran 21 tests  OK
+   tests.test_steer_overlap                         Ran 36 tests  OK
+   tests.test_steer_reply_convention                Ran 7 tests   OK
+   tests.test_chat_identity_at                      Ran 23 tests  OK
+   tests.test_steer_anchor_switch / task_anchor_switch 见全量
+2) 全量
+   PYTHONDONTWRITEBYTECODE=1 AGENT_PLUGIN_CUSTOM_DIR=$(mktemp -d) \
+     /home/neonsky/NeonBot/.venv/bin/python -B -m unittest discover -s tests -t . -q
+   → Ran 566 tests in 32.513s, OK（基线 547；新增 19 = 18 统一专项 + 1 剥壳私聊形用例）
+3) turn 入口
+   /home/neonsky/NeonBot/.venv/bin/python -B turn_tests/test_envelope_entry.py -v
+   → Ran 6 tests, OK
+4) verify.py（提交后复跑，见第六节）
+5) repo smokes（中立 cwd + 包名 shim + 独立配置目录，共 9 套全过）
+   smoke_chat_identity_at   exit=0  PASS 21 / FAIL 0  ALL PASS
+   smoke_prompt_dump        exit=0  PASS 34 / FAIL 0  ALL PASS（改造后覆盖完整请求结构、
+                                    大请求按文件头 sha 跳过、内联图片占位）
+   smoke_task_anchor_switch exit=0  ALL PASS
+   smoke_config_templates   exit=0  ALL PASS
+   smoke_chat_config        exit=0  ALL PASS
+   smoke_misc_media         exit=0  ALL PASS
+   smoke_group_profile      exit=0  全部通过
+   smoke_message_identity_mapping exit=0  全部通过
+   smoke_migrate_v6         exit=0  ALL PASS
+
+五、非呈递语义不变（逐项核对）
+----------------------------------------------------------------------------
+· 注入时机/防抖/direct-followup 路由/运行控制/回执/台账：未改；relay 只是把既有
+  is_private 传给 render_steer_rows。
+· seen：_steer_seen_mark/_steer_seen_filter 未改；渲染去重仍按 source_row.id。
+· 台账：steer_ledger 仍存 rendered_line（格式随呈现改变，sender/m_id/幂等判据不变）。
+· 对账命中：判据从「content 含 [m:id]:」改为 _steer_line_hit_pattern(m_id)
+  （行首该 m:id，强提醒/身份栏/旧 [id=…] [m:id]: 可前置）。语义仍是「这条原始消息
+  的聊天行是否真的出现在模型可见转录里」；`[m:id]:` 形态本身仍命中（前缀不含要求
+  紧跟冒号），旧台账已送达行照样核销，不会重复补投。
+· 回收剥壳：strip_steer_presentation 认新文法（群/私、有无冒号）并继续剥旧文法，
+  幂等（不叠壳）；仍要求至少一个机器锚点，`[主人] 你好` 这类可能是用户原文的行
+  不剥——不吞正文。
+· 原文回投/作者还原：_pending_steer_recovery_rows 仍按台账 rendered_line 子串匹配，
+  改用新格式后 pending 与台账两边同源，行序与作者还原回归全过。
+· 系统提示词：一字未改（本项不动提示词正文；decision_protocol 里
+  「steer 注入，以 [id=…] 行出现」这句在私聊单人 steer 已无 [id=…] 行，
+  按「不代写提示词正文」保留未改，交主会话定夺）。
+
+六、verify.py（提交后）
+----------------------------------------------------------------------------
+  PYTHONDONTWRITEBYTECODE=1 /home/neonsky/NeonBot/.venv/bin/python -B verify.py
+  → EXIT=0，ALL PASS: 19/19 项通过（本提交，父 9f5945f）；
+    其中「全量既有＋新增测试通过 — exit=0 ran=566，Ran 566 tests，OK」（耗时约 32.5s）；
+    「交付树干净（无未提交改动）」「交付树无 pyc／pytest 缓存」「验收不依赖暂存区」均 PASS。
+
+七、保留差异与已知限制
+----------------------------------------------------------------------------
+1) steer 媒体形态仍是完整寻址标签 [图 m:id#idx] + 随条读图提示；current/recent 是
+   紧凑清单 (图#0)。这是 steer 走文本通道、媒体不内联的真实差异，按参数保留。
+2) 历史行对自己发出的 bot 行多 [bot]（recent 与 current 的真实差异，按参数保留）。
+3) 私聊单人行省略 speaker 的判据是「私聊 + 该批只有这一行 + 真人」：私聊一次 steer
+   多行时与 current 多人批一致地带 speaker（同一判据、同一输入→同一输出）。
+4) 私聊无 m:id 且无强提醒的 steer 行（[主人] 正文）在回收剥壳时保留身份栏：没有
+   机器锚点就无法与用户正文区分，按「不吞正文」处理；这类行极少（需同时满足无
+   插件号 + 被上游吞 + 私聊单人）。不伪造 m:id。
+5) prompt_dump 的真实群聊/私聊样本须部署后由主会话取主实例实测；本卡未部署、
+   未重启、未采样，只用离线 smoke 验证字段齐全（system + messages/input +
+   interface + sha/time，内联图片按长度占位）。
+6) NoneBot 无 adapter 的 RuntimeWarning 与既有 ResourceWarning 不影响测试通过。
