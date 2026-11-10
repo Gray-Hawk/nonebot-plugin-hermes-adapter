@@ -903,8 +903,8 @@ class NativeHandoverTests(_Base):
         )
         self.assertEqual(facts["absorbed"], ())
         self.assertEqual(
-            facts["handover_rows"], [(101, "alpha"), (None, "alpha")],
-            "旧形态:回收副本与原行同时在槽",
+            facts["handover_rows"], [(101, "alpha"), (101, "alpha")],
+            "旧形态:同一原行的回收副本与原行同时在槽(正文各一份)",
         )
         self.assertEqual(facts["rendered"].count("alpha"), 2)
 
@@ -949,9 +949,9 @@ class NativeHandoverTests(_Base):
         pending = registry.pop_next_pending(KEY, after_ts=100)
         self.assertIsNotNone(pending)
         self.assertEqual(absorbed, ())
-        self.assertEqual([(r.id, r.content) for r in pending.fragments], [(None, "alpha")])
+        self.assertEqual([(r.id, r.content) for r in pending.fragments], [(101, "alpha")])
         self.assertEqual(render_current_rows(pending.fragments, is_private=False),
-                         "[id=u2]:\nalpha")
+                         "[m:101] [id=u2]:\nalpha")
         self.assertEqual(
             [(str(r[0]), r[1]) for r in self.tracker._conn.execute(
                 "SELECT m_id, status FROM steer_ledger ORDER BY id"
@@ -999,7 +999,7 @@ class NativeHandoverTests(_Base):
         self.assertEqual(absorbed, ("101",))
         self.assertEqual(
             [(r.id, r.user_id, r.content) for r in slot.fragments],
-            [(101, "u2", "alpha"), (None, "u3", "beta")],
+            [(101, "u2", "alpha"), (102, "u3", "beta")],
         )
         # 被吸收行的正文不得再并进批级载体(避免同一条内容以文本形式出现两次)。
         # 混合来源(原行 human + 回收 human_replay)按既有权重只保留首条批级正文,
@@ -1033,13 +1033,13 @@ class NativeHandoverTests(_Base):
         self.assertEqual(absorbed, ("102",))
         self.assertEqual(
             [(r.id, r.user_id, r.content) for r in slot.fragments],
-            [(None, "u2", "alpha"), (102, "u3", "beta")],
+            [(101, "u2", "alpha"), (102, "u3", "beta")],
         )
         # 槽内原 fragment 对象原样保留(真实 m:id/作者/媒体),回收副本只补缺行。
         self.assertIs(slot.fragments[1], tail_fragment)
         self.assertEqual(
             render_current_rows(slot.fragments, is_private=False),
-            "[id=u2]:\nalpha\n\n[m:102] [id=u3]:\nbeta",
+            "[m:101] [id=u2]:\nalpha\n\n[m:102] [id=u3]:\nbeta",
         )
         self.assertEqual(slot.msg.content.count("alpha"), 0)
 
@@ -1069,7 +1069,7 @@ class NativeHandoverTests(_Base):
         self.assertEqual(absorbed, ("102",))
         self.assertEqual(
             [(r.id, r.content) for r in slot.fragments],
-            [(103, "gamma"), (None, "alpha"), (102, "beta")],
+            [(103, "gamma"), (101, "alpha"), (102, "beta")],
         )
         self.assertIs(slot.fragments[0], queued_fragments[0])
         self.assertIs(slot.fragments[2], queued_fragments[1])
@@ -1183,7 +1183,7 @@ class NativeHandoverTests(_Base):
         self.assertEqual(absorbed, ("101",))
         self.assertEqual(
             [(r.id, r.content) for r in slot.fragments],
-            [(103, "gamma"), (101, "alpha"), (None, "beta")],
+            [(103, "gamma"), (101, "alpha"), (102, "beta")],
         )
 
     def _recovery_entry(self, pending_text: str) -> tuple[PendingEntry, list]:
@@ -1246,12 +1246,12 @@ class NativeHandoverTests(_Base):
         # 只有 B 走真实入口(它的 ACK 仍在途);A 早已被接受并摘槽。
         self.assertEqual(facts["sent"], ["[m:102] [普通用户] [id=u3]:\nbeta"])
         self.assertEqual(facts["absorbed"], ("102",))
-        self.assertEqual(facts["handover_rows"], [(None, "alpha"), (102, "beta")])
+        self.assertEqual(facts["handover_rows"], [(101, "alpha"), (102, "beta")])
         self.assertEqual(
-            facts["rendered"], "[id=u2]:\nalpha\n\n[m:102] [id=u3]:\nbeta",
+            facts["rendered"], "[m:101] [id=u2]:\nalpha\n\n[m:102] [id=u3]:\nbeta",
         )
         # 槽内 B 的原 fragment 对象保留(真实 m:id/作者),回收只补缺行 A。
-        self.assertEqual(facts["identities"], [(None, False), (102, True)])
+        self.assertEqual(facts["identities"], [(101, False), (102, True)])
         self.assertEqual(facts["rendered"].count("alpha"), 1)
         self.assertEqual(facts["rendered"].count("beta"), 1)
         self.assertEqual(
@@ -1269,7 +1269,7 @@ class NativeHandoverTests(_Base):
         )
         self.assertEqual(facts["absorbed"], ("102",))
         self.assertEqual(
-            facts["rendered"], "[id=u2]:\nalpha\n\n[m:102] [id=u3]:\nbeta",
+            facts["rendered"], "[m:101] [id=u2]:\nalpha\n\n[m:102] [id=u3]:\nbeta",
         )
         self.assertEqual(facts["rendered"].count("alpha"), 1)
         self.assertEqual(facts["rendered"].count("beta"), 1)
@@ -1284,11 +1284,11 @@ class NativeHandoverTests(_Base):
         )
         self.assertEqual(facts["absorbed"], ("102",))
         self.assertEqual(
-            facts["handover_rows"], [(102, "beta"), (None, "alpha")],
+            facts["handover_rows"], [(102, "beta"), (101, "alpha")],
             "旧形态:缺行 A 被追加到槽尾 B 之后",
         )
         self.assertEqual(
-            facts["rendered"], "[m:102] [id=u3]:\nbeta\n\n[id=u2]:\nalpha",
+            facts["rendered"], "[m:102] [id=u3]:\nbeta\n\n[m:101] [id=u2]:\nalpha",
         )
         self.assertEqual(facts["rendered"].count("alpha"), 1)
         self.assertEqual(facts["rendered"].count("beta"), 1)

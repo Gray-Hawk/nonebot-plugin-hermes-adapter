@@ -121,8 +121,34 @@ def _observe_silence(path: str, adapter_name: str, group_id: str | None, is_priv
         f"[HERMES {path}] 403/暂不可用硬静默观测 (group={group_id} is_private={is_private})",
     )
 
+def _speaker_name_resolver(adapter_name: str):
+    """发言者正主名 resolver(普通/历史/steer 行唯一接线)。
+
+    身份事实只有一份:custom_dir 下的 memory/<adapter>/identities.csv。配置目录
+    优先;配置目录里还没有这张表时,沿用本进程刚加载过的同一适配器身份表(定制
+    目录搬迁/预览环境未重新初始化配置时,身份事实仍是同一份表)。都查不到就
+    静默 None,不猜身份。steer 入口(直注/跟帖)与普通/历史行共用这一份接线,
+    避免同一个用户在不同呈递通道里一段有正主名、一段没有。
+    """
+    custom_dir = resolve_custom_dir()
+
+    def resolve(user_id: str) -> str | None:
+        name = identity.resolve_display_name(custom_dir, adapter_name, user_id)
+        if name:
+            return name
+        for alt in identity.loaded_identity_dirs(adapter_name):
+            if custom_dir is not None and str(alt) == str(custom_dir):
+                continue
+            name = identity.resolve_display_name(alt, adapter_name, user_id)
+            if name:
+                return name
+        return None
+
+    return resolve
+
+
 def _match_pending_steer_rows(
-    pending_steer: str, candidates: list[dict],
+    pending_steer: str, candidates: list[dict], *, convention_line: str = "",
 ) -> list[dict] | None:
     """按 pending 原文的出现位置与次数匹配台账行(台账只提供身份,不提供顺序)。
 
@@ -135,6 +161,11 @@ def _match_pending_steer_rows(
     返回 None = 原文里存在台账覆盖不到的正文(部分命中/台账缺失):调用方整段
     fallback,宁可作者信息回退,也不让未命中正文从呈递里消失。同一起点能匹配多条
     时取最长:更长账项完整覆盖后续行,避免把一条多行账项拆成「前缀 + 残段」。
+
+    convention_line 是发送原语在整批末尾追加一次的系统约定行(不属于任何账项
+    正文,多条各自成批时会出现多次):只有在**当前位置没有任何账项命中**时才把它
+    当分隔符跳过一次。绝不能先对整段文本做全局删除——用户正文里引用同一行字面量
+    时会被删掉,匹配随之失败,原文被永久改写。
     """
     remaining = list(candidates)
     matched: list[dict] = []
@@ -150,6 +181,9 @@ def _match_pending_steer_rows(
             if c.get("steer_text") and pending_steer.startswith(c["steer_text"], pos)
         ]
         if not hits:
+            if convention_line and pending_steer.startswith(convention_line, pos):
+                pos += len(convention_line)
+                continue
             return None
         hit = max(hits, key=lambda c: len(c["steer_text"]))
         matched.append(hit)
@@ -170,10 +204,11 @@ def _pending_steer_recovery_rows(
     逐行存了 scope+m_id+sender+rendered_line:按 scope 拉候选台账,**顺序与出现
     次数只认 pending 原文的实际位置**(`_match_pending_steer_rows`),台账仅提供
     每行的 sender/正文身份,不按 ACK／SQLite 插入序重排。命中行构造独立
-    human_replay fragments,各 sender 与原文顺序原样保留。旧 m:id 只留在台账供
-    媒体引用/对账追溯,不回填成新当前行 id(fragments 全部无号);返回值的 m_id
-    与 fragment 并排,只给「原行是否还在接力槽」的交接判断用(见
-    `InflightRegistry.add_recovered_followup`),不进呈递。
+    human_replay fragments,各 sender 与原文顺序原样保留。带号行的 m:id 是既有
+    原始行(库里那一行),随 fragments 一起带上:正文逐字节取自原文,媒体/引用
+    寻址按既有 message_images 事实单独恢复(空媒体表就不贴标签,不伪造)。
+    返回值的 m_id 与 fragment 并排,给「原行是否还在接力槽」的交接判断用
+    (见 `InflightRegistry.add_recovered_followup`),不用于新造身份。
     human_replay 的 allows_store=False 保证原行不重复入库。原文有台账覆盖不到的
     正文(部分命中/无台账)返回 None,调用方走原文整段回收 fallback 并记明确
     日志——不为修作者另造脆弱的模型文本解析侧链。
@@ -191,13 +226,13 @@ def _pending_steer_recovery_rows(
             exc_info=True,
         )
         return None
-    # 约定行是发送侧装饰(每批一次),不属于任何账项正文:多条 steer 各自成批时
-    # 拼接文本里会留下多个,必须先全部剔除再按位置匹配,否则多作者回收会被误判成
-    # 「部分命中」而整段降级。
+    # 约定行是发送侧装饰(每批一次),不属于任何账项正文:只在「当前位置没有任何
+    # 账项命中」时当分隔符跳过。绝不先做全局删除——用户正文引用同一行字面量时会被
+    # 删掉,匹配失败后整批退回渲染文本,原文就被永久改写了。
     from .message_relay import _STEER_REPLY_CONVENTION_LINE
 
     matched = _match_pending_steer_rows(
-        pending_steer.replace(_STEER_REPLY_CONVENTION_LINE, ""), candidates
+        pending_steer, candidates, convention_line=_STEER_REPLY_CONVENTION_LINE,
     )
     if matched is None:
         if candidates:
@@ -206,6 +241,7 @@ def _pending_steer_recovery_rows(
                 "为避免漏呈递改走原文整段 fallback"
             )
         return None
+    buffer = getattr(_mcp, "message_buffer", None)
     rows = []
     for c in matched:
         # 正文只取原始来源(台账 raw_text / 按 m:id 回查 messages / 旧账项兼容还原),
@@ -217,14 +253,31 @@ def _pending_steer_recovery_rows(
                 f"(m_id={c.get('m_id')})"
             )
             return None
+        m_id = str(c["m_id"])
+        # 真实带号行:按既有 messages/message_images 事实恢复 m:id 与媒体寻址。
+        # 正文仍逐字节取自原文,不把旧渲染尾缀塞回正文;id 是库里那一行,不是新造。
+        fragment_id = int(m_id) if m_id.isdigit() else None
+        media: dict[str, list[str]] = {}
+        if fragment_id is not None and buffer is not None:
+            try:
+                media = buffer.get_media_urls(fragment_id)
+            except Exception:
+                logger.warning(
+                    f"[HERMES steer回收] 媒体寻址回查失败 (m_id={m_id})", exc_info=True
+                )
+                media = {}
         rows.append((
-            str(c["m_id"]),
+            m_id,
             BufferedMessage(
                 ts=now_ms, adapter=adapter_name, group_id=group_id,
                 user_id=str(c["sender_id"]), nickname=str(c["sender_id"]),
                 content=content,
                 origin=MessageOrigin.human_replay(),
-                image_urls=[], sticker_urls=[],
+                image_urls=list(media.get("image", [])),
+                sticker_urls=list(media.get("sticker", [])),
+                quote_image_urls=list(media.get("quote", [])),
+                forward_image_urls=list(media.get("forward_image", [])),
+                id=fragment_id,
                 reply_to_ts=None, is_bot=False,
             ),
         ))
@@ -1021,10 +1074,7 @@ async def _run_passive_turn(
     _custom_dir = resolve_custom_dir()
     _memory_root = str(_custom_dir / "memory" / adapter_name) if _custom_dir else None
     # 身份表：发言者标签正主名注释，custom_dir 不可用/查不到都静默 None
-    _name_resolver = (
-        (lambda uid, _cd=_custom_dir, _ad=adapter_name: identity.resolve_display_name(_cd, _ad, uid))
-        if _custom_dir else None
-    )
+    _name_resolver = _speaker_name_resolver(adapter_name)
     system_prompt = build_passive_system_prompt(
         adapter=adapter_name,
         is_private=is_private,
@@ -1641,10 +1691,7 @@ async def _run_reactive_turn(
     _custom_dir = resolve_custom_dir()
     _memory_root = str(_custom_dir / "memory" / adapter_name) if _custom_dir else None
     # 身份表：发言者标签正主名注释，custom_dir 不可用/查不到都静默 None
-    _name_resolver = (
-        (lambda uid, _cd=_custom_dir, _ad=adapter_name: identity.resolve_display_name(_cd, _ad, uid))
-        if _custom_dir else None
-    )
+    _name_resolver = _speaker_name_resolver(adapter_name)
     system_prompt = build_reactive_system_prompt(
         # 群记忆外挂:群档案注入块(私聊/无档案返回 None,函数内静默跳过)
         profile_block=build_group_profile_block(adapter_name, group_id),

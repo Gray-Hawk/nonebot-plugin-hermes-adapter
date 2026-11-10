@@ -1,14 +1,15 @@
 区域化呈递改造证据（本地，未部署/未上传）
-基线 ecd5635；本文件由 scripts/sample_region_presentation.py 与测试实跑生成。
+基线 ecd5635；候选 306fff0；本文件由 scripts/sample_region_presentation.py、测试实跑与
+reviewer_gpt 随卡探针（region_review_probe.py，未改动）生成。本轮修 R1-R5 五项 P2。
 
 == 1. handler 构造入口渲染样例（群聊 reactive / 私聊 passive） ==
-11-10 13:23:28 [SUCCESS] nonebot | NoneBot is initializing...
-11-10 13:23:28 [INFO] nonebot | Current Env: prod
-11-10 13:23:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+11-10 13:55:24 [SUCCESS] nonebot | NoneBot is initializing...
+11-10 13:55:24 [INFO] nonebot | Current Env: prod
+11-10 13:55:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
 ======================================================================
 样例 1｜群聊 reactive:系统通知(跨会话递纸条) + 连续多条聊天
 ======================================================================
-（当前时间：2026-11-10 周二 13:23）
+（当前时间：2026-11-10 周二 13:55）
 
 <系统通知区域起始>
 [寻址：平台已确认聊天消息区域末条是冲你说的]
@@ -36,7 +37,7 @@
 ======================================================================
 样例 2｜群聊 reactive:只有通知(空聊天区被省略)
 ======================================================================
-（当前时间：2026-11-10 周二 13:23）
+（当前时间：2026-11-10 周二 13:55）
 
 <系统通知区域起始>
 [Kanban通知：卡片 t_7a05a6bb 已完成，等评审。]
@@ -49,7 +50,7 @@
 ======================================================================
 样例 3｜私聊 passive:对方消息省身份,自己的历史行保留[我]
 ======================================================================
-（当前时间：2026-11-10 周二 13:23）
+（当前时间：2026-11-10 周二 13:55）
 
 <聊天消息区域起始>
 （聊天消息区域仅含尚未推送过的新消息，更早的对话见本会话历史记录）
@@ -65,18 +66,19 @@
 <聊天消息区域结束>
 
 ======================================================================
-样例 4｜私聊 passive:系统便签 + 空聊天区
+样例 4｜私聊 passive:系统便签 + 空聊天区（R1：类型固定、source 只做审计）
 ======================================================================
-（当前时间：2026-11-10 周二 13:23）
+（当前时间：2026-11-10 周二 13:55）
 
 <系统通知区域起始>
-[agent-request：提醒：十点开会]
+[跨会话通知：提醒：十点开会]
+（系统唤起审计：调用来源=agent-request）
 <系统通知区域结束>
 
 ======================================================================
 样例 5｜黑名单 + 无结构化 @ 的寻址事实 → 两条系统通知
 ======================================================================
-（当前时间：2026-11-10 周二 13:23）
+（当前时间：2026-11-10 周二 13:55）
 
 <系统通知区域起始>
 [黑名单：当前发言者在黑名单名单里]
@@ -96,33 +98,66 @@
 
 == 2. 全量 unittest ==
 ----------------------------------------------------------------------
-Ran 575 tests in 32.513s
+Ran 580 tests in 32.537s
 
 OK
 
 == 3. turn 6 ==
-Ran 6 tests in 0.054s
+Ran 6 tests in 0.047s
 
 OK
 
 == 4. verify ==
-ALL PASS: 19/19 项通过（含「交付树干净（无未提交改动）」——本证据文件与改动一起提交后复跑；
-生成证据时该文件自身尚未入索引，故当时该项为唯一 FAIL，其余 18 项始终 PASS）
+19/19 项全部 PASS（提交后复跑；提交前唯一 FAIL 是「交付树干净」，其余 18 项始终 PASS）
 
-== 5. 相关 smoke ==
-
-ALL PASS
-
-ALL PASS
+== 5. 相关 smoke（中立 cwd + 真实包名 shim，九套全跑） ==
+smoke_chat_identity_at exit=0
+smoke_prompt_dump exit=0
+smoke_task_anchor_switch exit=0
 smoke_config_templates exit=0
+smoke_chat_config exit=0
+smoke_misc_media exit=0
 smoke_group_profile exit=0
 smoke_message_identity_mapping exit=0
 smoke_migrate_v6 exit=0
-smoke_misc_media exit=0
-（smoke_chat_config / smoke_prompt_dump 在本机解析到 venv 内已安装的旧包：
-  ChatConfig 无 task_anchor_enabled、prompt_dump 无 maybe_dump_request，属环境/harness
-  版本不一致，与本次改动无关；仓库源码里两个符号都存在。）
+SMOKES {'chat_identity_at': 0, 'prompt_dump': 0, 'task_anchor_switch': 0, 'config_templates': 0, 'chat_config': 0, 'misc_media': 0, 'group_profile': 0, 'message_identity_mapping': 0, 'migrate_v6': 0}
 
-== 6. 复跑命令 ==
+== 6. reviewer 随卡探针复跑（region_review_probe.py，23 例，未改探针）==
+Ran 23 tests in 0.156s
+
+OK
+
+R1 真实 MCP 入口（私/群 × source=agent-request/主人/寻址，六场景）：
+WAKE_REAL MessageSource.WAKE_MANUAL 跨会话通知
+  '…<系统通知区域起始>\n[跨会话通知：提醒：十点开会]\n（系统唤起审计：调用来源=主人）\n<系统通知区域结束>'
+  （source=寻址 同形；author_kind 恒 SYSTEM；类型槽位不再被 source 占据）
+
+R2 原生回收逐字节：
+RECOVERY 无号群 ': 原文\\n[id=10001 user=临时昵称]: 引用字面量' → actual 与该原文逐字节相同
+RECOVERY 私聊带号/无号混批 expected [': 第一条', '第二条\\n[主人] 正文字面量'] → actual 相同（两条各自成条）
+RECOVERY 两条无号私聊 expected ['甲\\n多行', '乙'] → actual 相同
+RECOVERY 正文引用约定行 → 约定行保留在正文里，恢复结果与原文相同
+RECOVERY 无号尾两个换行 '原文尾部有两个换行\\n\\n' → actual 相同
+CASE_A_EMPTY：空串原文不再被 `or` 复活成 `[m:302]:` 壳
+DB_FALLBACK：按 m:id 回查 messages.content 零剥壳（strip 被断言禁用）
+
+R3 媒体寻址（真实 MessageStore/MessageBuffer，m:2 四类媒体）：
+MEDIA_NEXT '…[m:2] [普通用户] [id=10001]:\n看这张和引用图 (图#0 表情#1 引用#2 转发#3)…'
+  original_id 2 / db_media 仍为原图，下一次真实 handler 请求可继续按 m:2 取图
+
+R4 正主名（临时真实 identities.csv，10001=正主名字 / 当前昵称=临时昵称）：
+CANONICAL direct 与 followup 均为 '[m:81] [普通用户] [id=10001 user=临时昵称(正主名字)]:\n你怎么看'
+  与普通 passive 行逐字节相等
+
+R5 followup 台账原文：
+FOLLOWUP_RAW 原文 '  : 冒号开头\\n  正文前有空格\\n解释:\\n尾行\\n\\n'
+  raw_text / original_text_of / DB messages.content 三者逐字节相同（呈递投影仍按既有政策）
+
+负对照仍成立：无号群正文、正文引用约定行、native 媒体寻址在父 ecd5635 上同样通过（reviewer 负对照包
+区域：negative_regressions_parent.log / extra_parent_controls.log 未改）。
+
+== 7. 复跑命令 ==
 python -m unittest discover -s tests -t . ; python -m unittest turn_tests.test_envelope_entry ; python verify.py
 python scripts/sample_region_presentation.py ; python scripts/smoke_chat_identity_at.py ; python scripts/smoke_task_anchor_switch.py
+（reviewer 探针：把 steer_unified_extra_probe.py 放进 TMPDIR，再
+  python -B region_review_probe.py <candidate_root>）

@@ -64,7 +64,10 @@ _POLICIES = {
     MessageSource.FEEDBACK_BOUNCE: SourcePolicy("重新提交", AuthorKind.SYSTEM, True, False, False),
     MessageSource.RECONCILE_TIMELINE: SourcePolicy("补投", AuthorKind.SYSTEM, True, False, False),
     MessageSource.DELIVERY_REPORT: SourcePolicy("任务投递", AuthorKind.SYSTEM, True, False, False),
-    MessageSource.WAKE_MANUAL: SourcePolicy("主动唤起", AuthorKind.SYSTEM, True, False, False, True),
+    # 唤起类来源的通知类型固定为「跨会话通知」:调用方自己的 source 串只作审计
+    # 信息(见 prompt_builder 的审计行),不得占据通知类型槽位冒充主人/寻址等
+    # 事实类型。可信内部生产者(Kanban/子代理)仍用 label 覆盖区分自己的类型。
+    MessageSource.WAKE_MANUAL: SourcePolicy("跨会话通知", AuthorKind.SYSTEM, True, False, False, True),
     MessageSource.PATROL: SourcePolicy("定时巡查", AuthorKind.SYSTEM, True, False, False),
 }
 SOURCE_POLICY: Mapping[MessageSource, SourcePolicy] = MappingProxyType(_POLICIES)

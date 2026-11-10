@@ -116,14 +116,18 @@ async def _wake(route: dict, text: str, source_event_id: str, source_kind: str =
     from ..handlers.message_relay import wake_group_turn, wake_private_turn
 
     label = _SOURCE_LABELS.get(source_kind, _DEFAULT_SOURCE_LABEL)
+    # 可信内部生产者显式给出通知类型;label 同时作为来源审计留在通知里。
+    notice_type = label
     if route["is_private"]:
         return await wake_private_turn(
             adapter_name=route["adapter_name"], user_id=route["user_id"],
             text=text, source=label, source_event_id=source_event_id,
+            notice_type=notice_type,
         )
     return await wake_group_turn(
         adapter_name=route["adapter_name"], group_id=route["group_id"],
         text=text, source=label, source_event_id=source_event_id,
+        notice_type=notice_type,
     )
 
 

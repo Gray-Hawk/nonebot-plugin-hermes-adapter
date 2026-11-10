@@ -30,7 +30,7 @@ class WakeTurnInput(BaseModel):
     user_id: str | None = Field(default=None, description="Private-chat target user id (mutually exclusive with group_id)")
     group_id: str | None = Field(default=None, description="Group target id (mutually exclusive with user_id)")
     text: str = Field(..., description="Content/prompt handed to the woken turn")
-    source: str = Field(default="agent-request", description="Caller label; recorded as the synthetic message nickname")
+    source: str = Field(default="agent-request", description="Caller label for auditing only; it never selects the notification type (wakes always render as 跨会话通知)")
 
     @model_validator(mode="after")
     def _exactly_one_target(self) -> "WakeTurnInput":

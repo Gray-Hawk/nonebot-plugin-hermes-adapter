@@ -96,9 +96,9 @@ print("=" * 70)
 print("样例 4｜私聊 passive:系统便签 + 空聊天区")
 print("=" * 70)
 note = BufferedMessage(
-    ts=1, adapter=ADAPTER, group_id=None, user_id="0", nickname="",
+    ts=1, adapter=ADAPTER, group_id=None, user_id="0", nickname="agent-request",
     content="提醒：十点开会", origin=MessageOrigin.synthetic(
-        MessageSource.WAKE_MANUAL, label="agent-request"), id=None,
+        MessageSource.WAKE_MANUAL, label="跨会话通知"), id=None,
 )
 print(pb.build_passive_user_content(
     recent_messages=[], rows=[note], current_image_urls=[],

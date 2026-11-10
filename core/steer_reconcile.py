@@ -409,7 +409,11 @@ def _build_case_a_text(rows, missing) -> tuple[str | None, bool]:
     for t in reversed(delivered_steers):
         parts.append(f"[已送达的中途插话] {t}")
     for p in missing:  # 已按 accepted_at 升序
-        text = original_text_of(p) or _strip_convention(p["steer_text"])
+        # 空串是合法原文(用户发了一条空行消息):只有 None 才算取不到,
+        # 用 `or` 会把它当成缺失,把渲染壳 `[m:302]:` 当正文补投。
+        text = original_text_of(p)
+        if text is None:
+            text = _strip_convention(p["steer_text"])
         parts.append(f"[★被吞的插话，本应在这里生效] {text}")
     parts.append(f"[我的最终回复] {final_reply[:500] if final_reply else '（空）'}")
     if tool_count:
@@ -452,13 +456,20 @@ def _extract_push_texts(tool_calls) -> list[str]:
 
 
 def _strip_convention(text: str) -> str:
-    """剥掉 steer 注入文本尾部的一次性约定行(补投是正常消息, 不该带)。"""
+    """剥掉 steer 注入文本尾部的一次性约定行(补投是正常消息, 不该带)。
+
+    发送原语挂的是 `text + "\\n" + 约定行`:只还原它插入的那一个分隔换行,正文
+    自己的尾随换行(用户原文可能以空行结尾)逐字节保留。旧实现 rstrip("\\n")
+    把正文尾空白一起吃掉,「全路径逐字节保全」就不成立。
+    """
     from ..handlers.message_relay import _STEER_REPLY_CONVENTION_LINE
 
     line = _STEER_REPLY_CONVENTION_LINE
     if text.endswith(line):
         text = text[: -len(line)]
-    return text.rstrip("\n")
+        if text.endswith("\n"):
+            text = text[:-1]
+    return text
 
 
 def original_text_of(row: dict) -> str | None:

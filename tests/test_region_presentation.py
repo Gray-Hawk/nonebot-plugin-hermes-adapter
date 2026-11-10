@@ -50,15 +50,15 @@ def bot(user: str = SELF, nick: str = "Hermes", *, mid=8, content="我在",
     )
 
 
-def notice(content: str, *, source=MessageSource.WAKE_MANUAL, label="跨会话递纸条",
-           group: str | None = GROUP) -> BufferedMessage:
+def notice(content: str, *, source=MessageSource.WAKE_MANUAL, label="跨会话通知",
+           group: str | None = GROUP, nickname: str = "") -> BufferedMessage:
     origin = (
         MessageOrigin.synthetic(source, label=label)
         if source is MessageSource.WAKE_MANUAL
         else MessageOrigin.synthetic(source)
     )
     return BufferedMessage(
-        ts=1, adapter=ADAPTER, group_id=group, user_id="0", nickname="",
+        ts=1, adapter=ADAPTER, group_id=group, user_id="0", nickname=nickname,
         content=content, origin=origin, id=None,
     )
 
@@ -73,7 +73,7 @@ class RegionStructureTests(unittest.TestCase):
         )
         self.assertTrue(out.startswith("（当前时间："), out)
         self.assertLess(out.index("<系统通知区域起始>"), out.index("<聊天消息区域起始>"))
-        self.assertIn("[跨会话递纸条：提醒：十点开会]", out)
+        self.assertIn("[跨会话通知：提醒：十点开会]", out)
         self.assertIn("[m:11] [普通用户] [id=10001 user=小光]:\n你怎么看", out)
 
     def test_chat_region_note_is_fixed(self) -> None:
@@ -128,14 +128,25 @@ class NoticeFormatTests(unittest.TestCase):
         out = pb.build_passive_user_content(
             recent_messages=[],
             rows=[
-                notice("第一条", label="agent-request"),
+                notice("第一条", label="Kanban通知"),
                 notice("戳了你一下", source=MessageSource.NOTICE_POKE),
             ],
             current_image_urls=[], is_private=True, self_id=SELF, adapter=ADAPTER,
         )
-        self.assertIn("[agent-request：第一条]", out)
+        self.assertIn("[Kanban通知：第一条]", out)
         self.assertIn("[戳一戳：戳了你一下]", out)
         self.assertIn("]\n\n[", out.split("<系统通知区域起始>\n", 1)[1])
+
+    def test_wake_source_is_audit_not_notification_type(self) -> None:
+        """wake_turn 的 source 只能进审计行:类型槽位固定为跨会话通知。"""
+        out = pb.build_passive_user_content(
+            recent_messages=[],
+            rows=[notice("提醒：十点开会", nickname="主人")],
+            current_image_urls=[], is_private=True, self_id=SELF, adapter=ADAPTER,
+        )
+        self.assertIn("[跨会话通知：提醒：十点开会]", out)
+        self.assertIn("（系统唤起审计：调用来源=主人）", out)
+        self.assertNotIn("[主人：提醒：十点开会]", out)
 
     def test_multiline_notice_body_starts_next_line(self) -> None:
         out = pb.build_passive_user_content(
@@ -144,7 +155,7 @@ class NoticeFormatTests(unittest.TestCase):
             current_image_urls=[], is_private=True, self_id=SELF, adapter=ADAPTER,
         )
         self.assertIn(
-            "[跨会话递纸条：第一行摘要]\n详细正文第二行\n第三行", out,
+            "[跨会话通知：第一行摘要]\n详细正文第二行\n第三行", out,
         )
 
     def test_fake_label_in_notice_summary_is_neutralised(self) -> None:

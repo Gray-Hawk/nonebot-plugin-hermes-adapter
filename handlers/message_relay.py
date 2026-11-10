@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import time
+import uuid
 from dataclasses import dataclass
 
 import nonebot_plugin_alconna as alconna
@@ -35,6 +36,7 @@ from ..core.message_buffer import (
 from ..core.run_tracker import TrackedRun, make_scope_key
 from ..core.bg_tasks import spawn_bg_task
 from ..core.prompt_builder import (
+    SteerPresentation,
     SteerRowPresentation,
     render_steer_rows,
 )
@@ -88,6 +90,17 @@ def _with_steer_reply_convention(text: str) -> str:
     if not steer_reply_push_active():
         return text
     return f"{text}\n{_STEER_REPLY_CONVENTION_LINE}"
+
+
+# 无号行(拿不到插件 m:id)的台账虚拟锚前缀:只承载原始正文供 native 回收,
+# 不参与转录对账(对账按 m:id 搜转录,无号行没有可搜的锚)。
+_NOID_LEDGER_PREFIX = "noid:"
+
+
+def _virtual_ledger_mid() -> str:
+    """无号行的台账虚拟锚(每批每行唯一,不参与跨批去重)。"""
+    return _NOID_LEDGER_PREFIX + uuid.uuid4().hex[:16]
+
 
 def _chain_allow(key: tuple[str, str], kind: str, limit: int) -> bool:
     """同 scope 连续计数未达上限 → 允许点火。"""
@@ -399,7 +412,16 @@ async def _steer_text_into_live_run(
     for item in presentation.rows:
         mid = item.source_row.id
         if mid is None:
-            # 无号行没有对账锚点,也永不参与跨批去重:每批按原样呈递。
+            # 无号行没有转录对账锚点(永不参与跨批去重、每批按原样呈递),但仍以
+            # 虚拟锚把原始正文随行入账:native 回收只能从台账取原文,不记就只能把
+            # 渲染文本当正文。虚拟锚不参与转录对账(见 claim_steers_for_reconcile
+            # 只认数字 m:id)。
+            items.append({
+                "m_id": _virtual_ledger_mid(),
+                "sender_id": str(item.source_row.user_id),
+                "steer_text": item.rendered_line,
+                "raw_text": item.source_row.content or "",
+            })
             ordered.append((None, item))
             continue
         key = str(mid)
@@ -447,6 +469,7 @@ async def _steer_text_into_live_run(
     in_flight_ids = tuple(c["m_id"] for c in claim.in_flight)
     claimed_keys = set(claimed_ids)
     # 无号行没有台账锚点,每批都按原样发送;有号行只发本批认领到的那些。
+    # 无号行的虚拟台账锚只承载原文,不进入发送集合。
     send_rows = [item for key, item in ordered if key is None or key in claimed_keys]
     if not send_rows:
         # 整批原始行本 run 已入账(普通重复触发)或正被别的重叠入口发送:不再
@@ -495,7 +518,8 @@ async def _steer_text_into_live_run(
     # 本部署补丁(弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75 根因、alive/84 方案):
     # steer 被上游接受(HTTP 200 且 accepted=True)即把发送前已去重/校验的逐行
     # 投影从在途认领转正式 pending 台账(对账按「转录里出现该行聊天行」核销,
-    # 见 steer_reconcile._steer_line_hit_pattern)。无号行不入账;
+    # 见 steer_reconcile._steer_line_hit_pattern)。无号行以虚拟锚入账承载原文,
+    # 不参与转录对账;
     # 记台账失败只 WARN,不影响主流程。
     confirmed_ids: tuple[str, ...] = ()
     try:
@@ -581,6 +605,16 @@ def _scope_live_run(adapter_name: str, is_private: bool, user_id: str, group_id:
         return None
 
 
+def _steer_name_resolver(adapter_name: str):
+    """steer 行与普通/历史行共用同一身份表 resolver(正主名注释)。
+
+    直接复用 message_turns 的那一份接线,不在 relay 里另造第二套取法。
+    """
+    from .message_turns import _speaker_name_resolver
+
+    return _speaker_name_resolver(adapter_name)
+
+
 def _render_steer_presentation_for_scope(
     rows, *, adapter_name: str, is_private: bool, user_id: str, group_id: str | None,
     live=None,
@@ -591,6 +625,9 @@ def _render_steer_presentation_for_scope(
     取自 live run 既有的 ``bot_self_id``(与 current/recent 行同一事实源,不新建
     身份系统),adapter 是当前入站适配器。steer 与 current/recent 是同一条聊天行,
     不能因为卡片没点名就退回裸数字身份。
+
+    正主名注释(identities.csv)与普通路径同源接线:direct/followup 入口不能因为
+    走 steer 通道就少一段用户身份事实。
 
     拿不到 live run 时 ctx 为空、渲染退化成旧形态——那条路径的注入本来就会因为
     没有 live run 而失败返回 False,不会把无身份文本发进生产聊天。
@@ -603,7 +640,8 @@ def _render_steer_presentation_for_scope(
     if not isinstance(self_id, (str, int)) or self_id == "":
         self_id = None
     return render_steer_rows(
-        rows, self_id=None if self_id is None else str(self_id),
+        rows, name_resolver=_steer_name_resolver(adapter_name),
+        self_id=None if self_id is None else str(self_id),
         adapter=adapter_name, is_private=is_private,
     )
 
@@ -794,6 +832,21 @@ async def _try_steer_followup(
             f"[HERMES steer探针] 早退: 行来源闸/渲染拒绝 (group={group_id})"
         )
         return False
+    # 投影只用于本入口的呈递;台账登记的「原文」必须是原始对象的正文,不能把
+    # 清洗后的投影冒充原文(否则完整 messages.content 被优先级遮住,合法行/空白
+    # 永久丢失)。按对象身份把渲染行映射回冻结原行——投影行与冻结行同序,且无号
+    # 行只能靠对象身份,不能靠 m:id。渲染文本本身保持不变(投影政策不动)。
+    original_of = {id(prow): row for row, prow in zip(frozen, projected)}
+    presentation = SteerPresentation(
+        rows=tuple(
+            SteerRowPresentation(
+                source_row=original_of.get(id(item.source_row), item.source_row),
+                rendered_line=item.rendered_line,
+            )
+            for item in presentation.rows
+        ),
+        text=presentation.text,
+    )
     outcome = await _steer_text_into_live_run(
         adapter_name, is_private, user_id, group_id, presentation=presentation
     )
@@ -1420,14 +1473,21 @@ def _wake_rate_limited(adapter_name: str, scope: str, scope_id: str) -> str | No
     )
 
 
+# 唤起类通知的固定系统类型:调用方 source 只是审计信息,不决定通知类型。
+_WAKE_NOTICE_TYPE = "跨会话通知"
+
+
 async def wake_private_turn(
     *, adapter_name: str, user_id: str, text: str, source: str = _DEFAULT_WAKE_SOURCE,
-    source_event_id: str | None = None,
+    source_event_id: str | None = None, notice_type: str = _WAKE_NOTICE_TYPE,
 ) -> str | None:
     """唤起一条私聊 turn。返回 None = 已点火;返回 str = 拒绝原因(原样回给调用方)。
 
     闸序:私聊主动下行白名单硬闸(user_lists.yaml,未配置回落管理员集合) → 令牌桶 →
     路由解析(registry 优先/合成兜底)→ _handle_passive_path。
+
+    通知类型固定由 notice_type 决定(默认「跨会话通知」),source 只作来源审计;
+    可信内部生产者(Kanban/子代理)显式传自己的 notice_type 以保持类型区分。
     """
     if not user_lists.private_allowed(adapter_name, user_id):
         return f"目标不在私聊主动下行白名单(user_lists.yaml 的 private_allow 或管理员集合): {user_id}"
@@ -1450,7 +1510,7 @@ async def wake_private_turn(
             image_urls=[],
             is_private=True,
             now_ms=_now_ms(),
-            origin=MessageOrigin.synthetic(MessageSource.WAKE_MANUAL, label=source),
+            origin=MessageOrigin.synthetic(MessageSource.WAKE_MANUAL, label=notice_type),
             source_event_id=source_event_id,
         )
     )
@@ -1460,11 +1520,12 @@ async def wake_private_turn(
 
 async def wake_group_turn(
     *, adapter_name: str, group_id: str, text: str, source: str = _DEFAULT_WAKE_SOURCE,
-    source_event_id: str | None = None,
+    source_event_id: str | None = None, notice_type: str = _WAKE_NOTICE_TYPE,
 ) -> str | None:
     """唤起一条群聊 ephemeral turn(无窗口依赖)。返回 None = 已点火;str = 拒绝原因。
 
     闸序:令牌桶 → 路由解析(registry 优先/合成兜底)→ _handle_reactive_path。
+    通知类型同私聊:notice_type 决定,source 只作来源审计。
     """
     denied = _wake_rate_limited(adapter_name, "group", group_id)
     if denied is not None:
@@ -1487,7 +1548,7 @@ async def wake_group_turn(
             addressed_to_bot=False,
             now_ms=_now_ms(),
             ephemeral=True,
-            origin=MessageOrigin.synthetic(MessageSource.WAKE_MANUAL, label=source),
+            origin=MessageOrigin.synthetic(MessageSource.WAKE_MANUAL, label=notice_type),
             source_event_id=source_event_id,
             commission_override=source_event_id is not None,
         )

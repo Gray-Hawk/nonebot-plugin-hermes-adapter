@@ -37,7 +37,7 @@ from .message_buffer import (
     render_media_summary,
 )
 from .message_context import render_message_context_head
-from .message_origin import AuthorKind
+from .message_origin import AuthorKind, MessageSource
 from .misc_config import load_misc_config
 from .sticker_library import default_sticker_library, sticker_feature_enabled
 from .prompt_protocol import (
@@ -677,9 +677,10 @@ def build_reactive_system_prompt(
 #   <系统通知区域结束>
 #
 # 通知类型取来源模型里那一个业务事实标签(MessageOrigin.display_label):
-# 主动唤起用调用来源、Kanban/子代理用生产方标签、补投/定时巡查/戳一戳各用自己
-# 的名字——审计时一眼分得出真实用户、合成系统输入与跨会话通知,不把 source
-# 套成用户昵称。没有通知时整个区域省略,不留空壳。
+# Kanban/子代理用可信生产方标签、补投/定时巡查/戳一戳各用自己的名字;主动唤起
+# (wake_turn)固定为「跨会话通知」,调用方自由 source 只进审计行(`_notice_audit`),
+# 不得占据类型槽位——审计时一眼分得出真实用户、合成系统输入与跨会话通知,不把
+# source 套成用户昵称。没有通知时整个区域省略,不留空壳。
 _NOTICE_REGION_OPEN = "<系统通知区域起始>"
 _NOTICE_REGION_CLOSE = "<系统通知区域结束>"
 _CHAT_REGION_OPEN = "<聊天消息区域起始>"
@@ -750,11 +751,35 @@ def _render_notice(kind: str, summary: str, body: str = "") -> str:
     return f"[{kind_text}：{summary_text}]\n{body}" if body else f"[{kind_text}：{summary_text}]"
 
 
+def _notice_audit(row: BufferedMessage) -> str:
+    """唤起类通知的来源审计行。
+
+    通知类型是固定系统类型(跨会话通知/Kanban通知…),调用方的自由 source 串
+    只作为审计信息单列一行:它既不能取得通知类型槽位(否则可以把自己写成
+    「主人」「寻址」这种事实类型),也不是用户身份。类型串与审计串相同时省略,
+    避免 Kanban 这类可信生产者的通知重复一遍抬头。
+    """
+    if row.origin.source is not MessageSource.WAKE_MANUAL:
+        return ""
+    label = " ".join(str(row.nickname or "").split())
+    if not label or label == (row.origin.display_label or ""):
+        return ""
+    label = _sanitize_notice_text(label[:_NOTICE_SUMMARY_MAX_CHARS])
+    event_id = " ".join(str(getattr(row, "source_event_id", "") or "").split())
+    if event_id:
+        event_id = _sanitize_notice_text(event_id[:40])
+        return f"（系统唤起审计：调用来源={label}；事件={event_id}）"
+    return f"（系统唤起审计：调用来源={label}）"
+
+
 def _notice_from_row(row: BufferedMessage) -> str:
     """系统来源行 → 一条通知。类型/来源只取来源模型,不从正文或昵称反推。"""
     kind = row.origin.display_label or "系统"
     summary, body = _notice_summary(row.content or "", kind=kind)
-    return _render_notice(kind, summary, body)
+    rendered = _render_notice(kind, summary, body)
+    audit = _notice_audit(row)
+    # 审计行在截断之后追加:它是来源事实,不是正文,不参与长文截断预算。
+    return f"{rendered}\n{audit}" if audit else rendered
 
 
 def _render_notice_region(notices: Sequence[str]) -> str:

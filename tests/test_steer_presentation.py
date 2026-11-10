@@ -334,7 +334,12 @@ class FollowupSteerGateTests(_TrackerCase):
         self.assertIsNone(
             self.registry.peek_followup(KEY), "已呈现的无号行必须结算,留槽会重复呈递"
         )
-        self.assertEqual(self.ledger(), [], "无号行不入账(对账无锚点)")
+        # 无号行没有转录对账锚点,但仍以虚拟锚入账承载原文(native 回收唯一的
+        # 原文来源);虚拟锚不参与转录对账。
+        ledger = self.ledger()
+        self.assertEqual(len(ledger), 1)
+        self.assertTrue(ledger[0]["m_id"].startswith("noid:"))
+        self.assertEqual(ledger[0]["raw_text"], "没有行号的跟帖")
 
     # --- P-19:quote／forward 媒体不得随摘槽丢失 ---
 
@@ -595,8 +600,8 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
             [(row.user_id, row.content) for row in entry.fragments],
             [("u2", "先别开枪"), ("u3", "等等我")],
         )
-        # 回收行是 human_replay:无号、不重复入库,台账供追溯
-        self.assertTrue(all(row.id is None for row in entry.fragments))
+        # 回收行是 human_replay:不重复入库,但带号行保留原始 m:id(既有寻址事实)
+        self.assertEqual([row.id for row in entry.fragments], [201, 202])
         self.assertTrue(all(row.origin.is_pure_human for row in entry.fragments))
         self.assertEqual(self.ledger(), [], "native 上浮即核销台账,防双重投递")
 
@@ -685,6 +690,65 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
                     pending_text, adapter_name=ADAPTER, is_private=False,
                     user_id=TRIGGER, group_id=GROUP_ID, now_ms=1,
                 ))
+
+
+class RecoveryTextSourceTests(unittest.TestCase):
+    """R2:恢复用原文的边界——约定行、尾空白、空串。
+
+    这里只测「文本来源」的纯函数边界:约定行是发送侧装饰,不是正文;正文里引用
+    同一行字面量必须逐字节保留;正文自己的尾随换行不能被吞。
+    """
+
+    @staticmethod
+    def _conv() -> str:
+        from nonebot_plugin_hermes_adapter.handlers.message_relay import (
+            _STEER_REPLY_CONVENTION_LINE,
+        )
+
+        return _STEER_REPLY_CONVENTION_LINE
+
+    def test_body_quoting_convention_line_is_not_stripped(self) -> None:
+        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+
+        conv = self._conv()
+        body = "用户正在引用：\n" + conv + "\n请解释这行，不要删除。"
+        rendered = "[m:1] [普通用户] [id=u1 user=甲]:\n" + body
+        pending = rendered + "\n" + conv
+        rows = [{"m_id": "1", "steer_text": rendered, "raw_text": body}]
+        matched = mt._match_pending_steer_rows(pending, rows, convention_line=conv)
+        self.assertIsNotNone(matched)
+        self.assertEqual([m["m_id"] for m in matched], ["1"])
+
+    def test_matcher_skips_convention_line_only_between_batches(self) -> None:
+        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+
+        conv = self._conv()
+        first = "[m:1] [普通用户] [id=u1 user=甲]:\n甲"
+        second = "[m:2] [普通用户] [id=u2 user=乙]:\n乙"
+        pending = first + "\n" + conv + "\n" + second + "\n" + conv
+        rows = [
+            {"m_id": "1", "steer_text": first, "raw_text": "甲"},
+            {"m_id": "2", "steer_text": second, "raw_text": "乙"},
+        ]
+        matched = mt._match_pending_steer_rows(pending, rows, convention_line=conv)
+        self.assertEqual([m["m_id"] for m in matched], ["1", "2"])
+
+    def test_strip_convention_keeps_body_trailing_newlines(self) -> None:
+        from nonebot_plugin_hermes_adapter.core.steer_reconcile import _strip_convention
+
+        conv = self._conv()
+        body = "原文尾部有两个换行\n\n"
+        self.assertEqual(_strip_convention(body + "\n" + conv), body)
+        self.assertEqual(_strip_convention(body), body, "没有约定行时原样返回")
+
+    def test_empty_raw_text_is_original_not_missing(self) -> None:
+        from nonebot_plugin_hermes_adapter.core.steer_reconcile import original_text_of
+
+        self.assertEqual(
+            original_text_of({"m_id": "9", "raw_text": "", "steer_text": "[m:9]:\n"}),
+            "",
+            "空串是合法原文,不能被当成缺失再退回渲染壳",
+        )
 
 
 if __name__ == "__main__":

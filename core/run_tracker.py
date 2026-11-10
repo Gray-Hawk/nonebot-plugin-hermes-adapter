@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS active_runs (
 # 本部署补丁(弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75 根因、alive/84 方案):
 # steer 对账台账。每条被上游 steer 接口接受(HTTP 200 且 accepted=True)的注入记
 # 一行 pending;run 终态后按 m_id 拉转录精确搜, 搜不到即被静默丢弃, 批 2 补投成新
-# run。无 m:id 的 steer 不入账(对账无锚点)。CREATE TABLE IF NOT EXISTS 幂等。
+# run。无 m:id 的行以虚拟锚(noid:*)入账:只承载原始正文供 native 回收, 不参与
+# 转录对账(没有可搜的锚), 也不参与跨批去重。CREATE TABLE IF NOT EXISTS 幂等。
 #
 # P-07 起本表同时是「同一原始行只入账一次」的唯一身份来源:发送前先按
 # (run_id, m_id) 认领(status='sending'),HTTP 接受后确认成 pending,失败则撤行;
@@ -482,9 +483,9 @@ class RunTracker:
     ) -> None:
         """逐行入账(等价「已认领且已被上游接受」),同一 run 内 m_id 幂等。
 
-        items=[{m_id, sender_id, steer_text}, ...]。发送/台账/去重同一份
-        SteerPresentation 派生,不再有第二条平行 ID 轨。无 m:id 的行由调用方在
-        投影时过滤(对账无锚点),这里只落给到的行。
+        items=[{m_id, sender_id, steer_text, raw_text}, ...]。发送/台账/去重同一份
+        SteerPresentation 派生,不再有第二条平行 ID 轨。无 m:id 的行由调用方给
+        虚拟锚(noid:*)并带上原文:对账不认它, native 回收按它取原文。
 
         生产路径走 claim_steer/confirm_steer(发送前认领,重叠入口才看得到在途);
         本方法保留给「已知接受、无在途发窗口」的调用场景,重复 m_id 只落一次。
@@ -644,6 +645,9 @@ class RunTracker:
             "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text, raw_text,"
             " accepted_at, status FROM steer_ledger WHERE run_id=?"
             f" AND status IN ({_STEER_ACCEPTED_STATUSES})"
+            # 无号行的虚拟锚(noid:*)只承载原文供 native 回收,没有可搜的转录锚:
+            # 拿它按 m:id 搜转录必然落空,会被误判成「被吞」而重复补投。
+            " AND m_id NOT LIKE 'noid:%'"
             " ORDER BY id",
             (run_id,),
         ).fetchall()
