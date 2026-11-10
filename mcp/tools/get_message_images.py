@@ -38,6 +38,13 @@ class GetMessageImagesInput(BaseModel):
         max_length=4,
         description="要取图字节的消息 id 列表;最多 4 个",
     )
+    adapter: str = Field(
+        ...,
+        description=(
+            "必填:当前会话的 adapter(与 get_recent_messages 同形;取自 <session_context>)。"
+            "必须与该消息行存储的归属一致;不匹配按 not_found。"
+        ),
+    )
     idx: list[int] | None = Field(
         default=None,
         description=(
@@ -45,8 +52,13 @@ class GetMessageImagesInput(BaseModel):
             "idx 取自历史行/当前消息的媒体清单(如 `(图#0 #1 表情#2)` 里的号)。"
         ),
     )
-    adapter: str | None = Field(default=None, description="可选防御性过滤")
-    group_id: str | None = Field(default=None, description="可选防御性过滤")
+    group_id: str | None = Field(
+        default=None,
+        description=(
+            "可选一致性校验(仅群聊):填了必须与该消息行存储的 group_id 相同;"
+            "私聊 id 没有群号,取私聊图时省略。不匹配按 not_found。"
+        ),
+    )
 
 
 _TOTAL_RESULT_MAX_BYTES = 25 * 1024 * 1024  # 25MB
@@ -102,18 +114,25 @@ async def get_message_images_impl(
     拉图出站压缩:静图撞 fetch 大小门走梯度压缩,动图一律抽帧,
     表情超 sticker 门控强制压缩(见 _encode_outbound)。
     """
-    # 范围判定必须按行做:入参的 adapter/group_id 是调用方自报的(而且是可选的),
-    # message_id 是自增小整数、可枚举,所以真正的归属只能从 DB 反查。
-    # 越权 id 一律按 not_found 处理 —— 回一个专门的 reason 等于给越权方一个
-    # "这个 id 存在"的探测口。
+    # 范围判定必须按行做:message_id 是自增小整数、可枚举,真正的归属只能从 DB 反查。
+    # 入参 adapter/group_id 是调用方自报的目标,不能当放行依据;先过 CallerScope,
+    # 再用它们做一致性校验:adapter 必填、给了 group_id 就必须与库里那一行相同。
+    # 不匹配与越权同口径:一律按 not_found —— 回一个专门的 reason 等于给越权方
+    # 一个"这个 id 存在"的探测口。
     owners = store.get_message_owners(inp.message_ids)
     denied = {
-        mid for mid, (adapter, group_id) in owners.items() if scope is None or not scope.allows(adapter, group_id or "")
+        mid
+        for mid, (adapter, group_id) in owners.items()
+        if scope is None
+        or not scope.allows(adapter, group_id or "")
+        or inp.adapter != adapter
+        or (inp.group_id is not None and inp.group_id != group_id)
     }
     if denied:
         logger.warning(
-            f"[HERMES MCP] get_message_images 越权 message_id 已按 not_found 处理: {sorted(denied)} "
-            f"(caller: {'unresolved' if scope is None else scope.describe()})"
+            f"[HERMES MCP] get_message_images 越权或目标不一致的 message_id 已按 not_found 处理: "
+            f"{sorted(denied)} (caller: {'unresolved' if scope is None else scope.describe()}; "
+            f"adapter={inp.adapter!r} group={inp.group_id!r})"
         )
 
     metas = store.get_message_images_meta(inp.message_ids)

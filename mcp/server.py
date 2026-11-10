@@ -368,21 +368,28 @@ def build_mcp_app(
     @mcp.tool()
     async def get_recent_messages(
         adapter: str,
-        group_id: str,
+        group_id: str | None = None,
+        user_id: str | None = None,
         limit: int = 20,
         before_ts: int | None = None,
     ) -> GetRecentMessagesResult:
-        """Fetch recent messages from a group's buffer. Use sparingly."""
+        """Fetch recent messages from a group buffer or a private-chat buffer.
+
+        Group chat: pass group_id only. Private chat: pass user_id only (the owner of
+        that private conversation) and omit group_id. Exactly one of group_id / user_id
+        must be given. Private reads require an identifiable caller. Use sparingly.
+        """
         inp = GetRecentMessagesInput(
             adapter=adapter,
             group_id=group_id,
+            user_id=user_id,
             limit=limit,
             before_ts=before_ts,
         )
         result = await get_recent_messages_impl(inp, message_buffer=message_buffer, scope=caller_scope_from_request())
         _log_tool_call(
             "get_recent_messages",
-            f"adapter={adapter} group={group_id} limit={limit}",
+            f"adapter={adapter} group={group_id} user={user_id} limit={limit}",
             f"messages={len(result.messages)}" + (f" error={_clip(result.error)!r}" if result.error else ""),
         )
         return result
@@ -390,8 +397,8 @@ def build_mcp_app(
     @mcp.tool()
     async def get_message_images(
         message_ids: list[int],
+        adapter: str,
         idx: list[int] | None = None,
-        adapter: str | None = None,
         group_id: str | None = None,
     ) -> list:
         """Fetch image/sticker bytes for specific message ids (max 4 ids per call).
@@ -403,9 +410,15 @@ def build_mcp_app(
         Use after get_recent_messages identifies which message_id the user
         is referring to (e.g. '上图' → most recent msg with image_count > 0,
         '表情包' → sticker_count > 0).
+        Required adapter: the adapter of the current chat (same value you pass to
+        get_recent_messages; see <session_context>). It must match the stored owner
+        of each message id, otherwise that id is reported as not_found.
         Optional idx: only fetch those per-message image indexes (applies to all
         message_ids; numbers come from the media manifest like `(图#0 #1)`).
         Omit to fetch every image of the given messages.
+        Optional group_id: consistency check against the stored group of each
+        message id. When given it must match; private ids have no group, so omit it
+        for them. A mismatch is reported as not_found.
         """
         inp = GetMessageImagesInput(
             message_ids=message_ids,

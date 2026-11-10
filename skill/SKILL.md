@@ -83,9 +83,13 @@ is ambiguous, do not call it.
 List all groups currently in active reactive state. Returns sessions with `expires_at`
 and `triggered_by`. Use to decide whether a delayed `push_message` is still welcome.
 
-### `get_recent_messages(adapter, group_id, limit?, before_ts?)`
+### `get_recent_messages(adapter, group_id? | user_id?, limit?, before_ts?)`
 
-Pull the latest `limit` messages from a group buffer (capped at 50). Prefer the
+Pull the latest `limit` messages from a group buffer or from one private conversation
+(capped at 50). Give exactly one target: `group_id` for a group chat, or `user_id` for
+the owner of a private chat (omit `group_id` there). Private reads return only that
+owner's conversation with the bot, including the bot's own messages in it; an
+unresolved caller gets an `error` and no messages. Prefer the
 `<recent_messages>` block already inlined in your reactive prompt, but note that on
 follow-up turns that block may only carry the not-yet-pushed increment (a block header
 line says so), not the full buffer — if the message you're looking for isn't in it, page
@@ -118,12 +122,19 @@ Read-only view of real background state for this conversation, as two separate l
 
 Never claim a background task from memory; the plugin wakes you when a result is ready.
 
-### `get_message_images(message_ids, adapter?, group_id?)`
+### `get_message_images(message_ids, adapter, idx?, group_id?)`
 
 Fetch image bytes for up to 4 message ids in a single call. Returns a content array
 mixing a JSON header (per-image metadata, including `kind`) with `TextContent` markers
 + `ImageContent` base64 blocks. The image content flows through Hermes's multimodal
 injection pipeline, so on your next LLM turn you'll **actually see** the images.
+Access is always checked per message id against the stored owner of that message.
+`adapter` is **required** and must be the adapter of the current chat (the same value
+you pass to `get_recent_messages`; it is in `<session_context>`): it must match the
+stored owner of each message id, and a mismatch is reported as `not_found`.
+`group_id` stays optional in the same shape as `get_recent_messages`: when given it
+must match the stored `group_id` (private ids have no group, so omit it for them);
+a mismatch is reported as `not_found`.
 
 Stickers are stored and recalled through the exact same pipeline. Their marker reads
 `[sticker for m:<id> idx=N]` instead of `[image for ...]` — treat sticker bytes as a
@@ -136,7 +147,7 @@ Each per-image result has `available: true|false`. When unavailable, `reason` is
 - `cache_miss` — image was never fetched (URL expired before download) or has been
   evicted from the local cache; tell the user the image is gone, request a resend
 - `not_found` — the message_id is not in the DB anymore (past 30-day retention or
-  hard row cap)
+  hard row cap), or its stored chat is outside the caller's allowed scope
 - `compress_failed` — image exceeded the fetch size gate and both compression ladder
   steps still overshot; ask the user to send a smaller/compressed version
 - `cap_exceeded` — your call totaled more than 25 MB; retry with fewer ids
@@ -332,7 +343,8 @@ To see the image, follow this two-step protocol:
    - "上图" / "这图" / "刚才那张" → most recent line where the message has an image
    - "我刚发的" → most recent image-bearing message from the current speaker
    - "他刚发的" → most recent image-bearing message from the user named in context
-2. **Fetch the bytes.** Call `get_message_images(message_ids=[<id>])`. The returned
+2. **Fetch the bytes.** Call `get_message_images(message_ids=[<id>], adapter=<the
+   adapter shown in <session_context>>)`. The returned
    ImageContent blocks become real visual input on your next LLM turn. To fetch only
    specific images of a multi-image message, pass the optional `idx=[...]` filter
    (numbers from the line's media manifest, e.g. `(图#0 #1)` → idx 0/1).

@@ -1,4 +1,10 @@
-"""get_recent_messages: 拉取一个群的最近 N 条消息(文本 + 图数,不含图字节)。
+"""get_recent_messages: 拉取一个群或一个私聊会话的最近 N 条消息(文本 + 媒体计数,不含字节)。
+
+群私双路(group_id / user_id 互斥二选一):
+  - 群侧(行为不变):adapter + group_id,范围判定沿用 CallerScope 的群模型;
+  - 私侧:adapter + user_id,内部按 (adapter, private_owner_id=user_id) 查
+    `group_id IS NULL` 的私聊行(MessageStore.get_recent 已有该 where 与索引),
+    只读目标 owner 的会话,不跨私聊串号。闸只有一条:调用方必须可识别。
 
 返回每条消息的 `id` (DB 主键),供 Hermes 端后续调 `get_message_images`
 按 id 取图字节。原 `image_urls: list[str]` 字段去掉 —— 让 Hermes 不要直接
@@ -7,22 +13,40 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-from ...config import plugin_config
 from ...core.chat_config import load_chat_config
 from ...core.routing import CallerScope
-from ..auth import scope_refusal
+from ..auth import private_scope_refusal, scope_refusal
 
 
 class GetRecentMessagesInput(BaseModel):
     adapter: str
-    group_id: str = Field(..., description="Group ID. M1: 私聊不支持,group_id 必须非空。")
+    group_id: str | None = Field(
+        default=None,
+        description=(
+            "Group ID (mutually exclusive with user_id). Group chat: the latest messages "
+            "of this group's buffer."
+        ),
+    )
+    user_id: str | None = Field(
+        default=None,
+        description=(
+            "Private-chat owner user id (mutually exclusive with group_id). Private chat: "
+            "the latest messages of that owner's private conversation with the bot."
+        ),
+    )
     limit: int = Field(default=20, ge=1, le=100)
     before_ts: int | None = Field(
         default=None,
         description="Unix timestamp (ms);只返回 ts 严格小于此值的消息(分页拉取早于某点的历史)",
     )
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> "GetRecentMessagesInput":
+        if bool(self.group_id) == bool(self.user_id):
+            raise ValueError("exactly one of group_id / user_id must be given")
+        return self
 
 
 class RecentMessageView(BaseModel):
@@ -40,7 +64,7 @@ class RecentMessageView(BaseModel):
 class GetRecentMessagesResult(BaseModel):
     messages: list[RecentMessageView]
     error: str | None = None
-    """非 None 表示这次调用被拒(目前只有越权一种),messages 为空。
+    """非 None 表示这次调用被拒(越权或未识别调用方),messages 为空。
 
     走返回值而不是抛异常:FastMCP 对工具体里的任何异常都 logger.exception,越权是预期内的
     判定结果,不该在 bot 日志里刷 traceback。与 push_message 的 ok/error 形状一致。
@@ -53,18 +77,27 @@ async def get_recent_messages_impl(
     message_buffer,
     scope: CallerScope | None,
 ) -> GetRecentMessagesResult:
-    # 读也要收敛:能读别的群的历史,隔离同样是破的。判定在取数之前。
-    refusal = scope_refusal(inp.adapter, inp.group_id, scope)
+    # 读也要收敛:能读别的群/别人的私聊历史,隔离同样是破的。判定在取数之前。
+    if inp.group_id is not None:
+        refusal = scope_refusal(inp.adapter, inp.group_id, scope)
+    elif inp.user_id is not None:
+        refusal = private_scope_refusal(inp.adapter, inp.user_id, scope)
+    else:  # pragma: no cover - model_validator 已挡,这里只为类型收窄
+        return GetRecentMessagesResult(
+            messages=[], error="exactly one of group_id / user_id must be given"
+        )
     if refusal is not None:
         return GetRecentMessagesResult(messages=[], error=refusal)
 
     cap = load_chat_config().mcp_recent_limit_max
     effective_limit = min(inp.limit, cap)
+    # 群侧 owner_user_id 传了也不参与 where(store 只在 group_id IS NULL 时用它)。
     rows = message_buffer.get_recent(
         adapter=inp.adapter,
         group_id=inp.group_id,
         limit=effective_limit,
         before_ts=inp.before_ts,
+        owner_user_id=inp.user_id,
     )
     views = [
         RecentMessageView(
