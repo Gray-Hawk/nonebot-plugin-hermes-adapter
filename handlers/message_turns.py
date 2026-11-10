@@ -1085,8 +1085,16 @@ async def _run_passive_turn(
         current_sticker_urls=_label_groups(label_index, sticker_inlined),
         is_private=is_private,
         # 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
+        # 任务锚总开关关闭:上一轮(开启时)排队的两类非法锚纠错便签不再组装进
+        # user content——关闭后不继续教模型用锚;其余便签(引用/退窗/媒体等)照常。
         plugin_note="\n".join(
-            task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, is_private, user_id, group_id))
+            task_notes.pop_plugin_notes(
+                _feedback_scope_key(adapter_name, is_private, user_id, group_id),
+                drop_kinds=(
+                    () if load_chat_config().task_anchor_enabled
+                    else task_notes.ANCHOR_NOTE_KINDS
+                ),
+            )
         ) or None,
         name_resolver=_name_resolver,
         # 身份栏与 [有人@我]:当前 bot 的 self_id 是「我」的唯一事实源;
@@ -1648,7 +1656,7 @@ async def _run_reactive_turn(
     # 改手动单轨后,入口不再自动钉锚;这里只会读到「之前判断轮已确认
     # 并 pin 成功」的锚。ephemeral 临时 session 不注册进管理器,天然无锚。
     pinned_anchors: list[AnchorRecord] = []
-    if not ephemeral:
+    if not ephemeral and chat_cfg.task_anchor_enabled:
         pinned_anchors = [
             a
             for a in _mcp.active_sessions.get_anchors(
@@ -1729,8 +1737,16 @@ async def _run_reactive_turn(
         sender_blacklisted=sender_blacklisted,
         pinned_anchors=pinned_anchors,
         # 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
+        # 任务锚总开关关闭:上一轮(开启时)排队的两类非法锚纠错便签不再组装进
+        # user content——关闭后不继续教模型用锚;其余便签照常。
         plugin_note="\n".join(
-            task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, False, user_id, group_id))
+            task_notes.pop_plugin_notes(
+                _feedback_scope_key(adapter_name, False, user_id, group_id),
+                drop_kinds=(
+                    () if chat_cfg.task_anchor_enabled
+                    else task_notes.ANCHOR_NOTE_KINDS
+                ),
+            )
         ) or None,
         now_ms=now_ms,
         name_resolver=_name_resolver,
@@ -2216,6 +2232,16 @@ async def _run_reactive_turn(
             return
         # 生效控制：submit_control 登记值兜底，旧信封控制行原样优先。
         ctl = control_intent.resolve_control(decision)
+        # 任务锚总开关关闭：锚字段在本轮消费点直接丢弃，不产生任何锚副作用
+        # （不 merge、不钉、不标应答、不松）；reply_to / 退窗等非锚控制照常。
+        # 存量锚数据不动，重新开启后按原规则恢复。
+        if not chat_cfg.task_anchor_enabled:
+            ctl, dropped_anchor_fields = control_intent.neutralize_anchor_fields(ctl)
+            if dropped_anchor_fields:
+                logger.info(
+                    f"[HERMES reactive] task anchors disabled: ignored {dropped_anchor_fields} "
+                    f"(group={group_id} user={user_id})"
+                )
         # 发言即开窗(窗口生命周期定案):隐式激活的临时 turn 真说了话 → 开启活跃
         # 窗口,群内跟帖可被听见。should_exit_active 优先——LLM 明说了「这轮谈完了」,
         # 不得借发言把窗又顶开。开窗后 touch / mark_bot_replied 都有了落点。

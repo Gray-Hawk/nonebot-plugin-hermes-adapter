@@ -36,6 +36,15 @@ CONTROL_FIELDS: tuple[str, ...] = (
 CONTROL_BOOL_FIELDS: tuple[str, ...] = ("should_exit_active", "pin_anchor")
 CONTROL_STR_FIELDS: tuple[str, ...] = ("reply_to", "release_anchor", "answer_anchor", "anchor_merge")
 
+# 任务锚控制字段：任务锚总开关关闭时，工具与消费点都不接受/不执行这四项，
+# 其余控制（reply_to / should_exit_active）照常。
+ANCHOR_CONTROL_FIELDS: tuple[str, ...] = (
+    "pin_anchor",
+    "release_anchor",
+    "answer_anchor",
+    "anchor_merge",
+)
+
 # MCP 工具名。runs 流里该工具的 tool.started/tool.completed 不算「普通工作工具」
 # 的封批边界（见 hermes_client.RunsEventParser），所以这个名字是唯一的跨模块契约。
 CONTROL_TOOL_NAME = "submit_control"
@@ -92,9 +101,46 @@ def build_control(
     return control
 
 
+def task_anchor_enabled() -> bool:
+    """任务锚总开关（chat_config.yaml: task_anchor_enabled，缺省 True）。
+
+    工具侧与 handler 消费点共用同一读取口径：每次现读配置快照，手动重载后生效。
+    """
+    from .chat_config import load_chat_config
+
+    return load_chat_config().task_anchor_enabled
+
+
+def drop_anchor_fields(control: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """关闭任务锚时从一份控制里剔除锚字段（工具登记用：字段直接不进入队列）。
+
+    返回（保留的控制, 被丢弃的锚字段名）。没有锚字段时原样返回，不做无谓复制。
+    """
+    dropped = [name for name in ANCHOR_CONTROL_FIELDS if control.get(name)]
+    if not dropped:
+        return control, []
+    return {name: value for name, value in control.items() if name not in ANCHOR_CONTROL_FIELDS}, dropped
+
+
+def neutralize_anchor_fields(control: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """关闭任务锚时把已消费控制里的锚字段置回缺省（handler 消费用）。
+
+    与 ``drop_anchor_fields`` 的区别：这里保留 ``resolve_control`` 的完整六字段形状
+    （缺键会让下游 ``ctl["pin_anchor"]`` 直接 KeyError），只把四个锚字段还原成
+    False／空串——后续锚分支自然全部短路，其余控制值一个不动。
+    """
+    dropped = [name for name in ANCHOR_CONTROL_FIELDS if control.get(name)]
+    if not dropped:
+        return control, []
+    cleaned = dict(control)
+    for name in ANCHOR_CONTROL_FIELDS:
+        if name in cleaned:
+            cleaned[name] = False if name in CONTROL_BOOL_FIELDS else ""
+    return cleaned, dropped
+
+
 class ControlQueue:
     """按会话键维护的简单 FIFO；只登记、只按决策顺序弹出。"""
-
     def __init__(self, *, max_pending: int = MAX_PENDING_CONTROLS) -> None:
         self._queues: dict[tuple[str, str], deque[dict[str, Any]]] = {}
         self._lock = threading.Lock()

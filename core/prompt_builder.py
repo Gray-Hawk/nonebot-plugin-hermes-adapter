@@ -27,7 +27,11 @@ from zoneinfo import ZoneInfo
 from nonebot import logger
 
 from . import user_lists
-from .decision_contract import render_cn_field_lines, render_field_name_list
+from .decision_contract import (
+    NON_ANCHOR_FIELD_NAMES,
+    render_cn_field_lines,
+    render_field_name_list,
+)
 from .hermes_client import UserContent
 from .message_buffer import (
     BufferedMessage,
@@ -42,7 +46,7 @@ from .misc_config import load_misc_config
 from .sticker_library import default_sticker_library, sticker_feature_enabled
 from .prompt_protocol import (
     FILE_TOOL_GUIDANCE, STICKER_TOOL_GUIDANCE, STICKER_CONTINUATION,
-    render_decision_protocol,
+    render_decision_protocol, strip_task_anchor,
 )
 
 
@@ -454,6 +458,66 @@ _DECISION_PROTOCOL_BLOCK_RUNS = _build_json_lines_protocol(
 _JSON_LINES_PRIVATE_BLOCK_RUNS = render_decision_protocol(runs=True)
 
 
+# 任务锚总开关关闭时用的协议块：开启路径仍用上面这些常量（逐字节不变），
+# 关闭路径只在同一份文本上摘掉锚说明与锚示例，不生成第二套协议。
+_DECISION_PROTOCOL_BLOCK_NO_ANCHOR = strip_task_anchor(_DECISION_PROTOCOL_BLOCK)
+_DECISION_PROTOCOL_BLOCK_COMPLETIONS_NO_ANCHOR = strip_task_anchor(
+    _build_json_lines_protocol(_DECISION_PROTOCOL_BLOCK)
+)
+_DECISION_PROTOCOL_BLOCK_RUNS_NO_ANCHOR = strip_task_anchor(
+    _build_json_lines_protocol(_DECISION_PROTOCOL_BLOCK, runs=True)
+)
+_JSON_LINES_PRIVATE_BLOCK_NO_ANCHOR = strip_task_anchor(
+    render_decision_protocol(runs=False)
+)
+_JSON_LINES_PRIVATE_BLOCK_RUNS_NO_ANCHOR = strip_task_anchor(
+    render_decision_protocol(runs=True)
+)
+# 旧 envelope reminder 的字段单：只去掉四个锚字段（字段本身与解析保留）。
+_FIELD_NAME_LIST_NO_ANCHOR = render_field_name_list(names=NON_ANCHOR_FIELD_NAMES)
+
+
+def task_anchor_enabled() -> bool:
+    """任务锚总开关（chat_config.yaml: task_anchor_enabled，缺省 True）。
+
+    同时决定实际锚行为（handler）与本文件里的提示词拼装；每次调用现读配置
+    快照，管理员手动重载后立即生效。配置域与重载机制复用 chat_config，
+    不另建开关通道。
+    """
+    from .chat_config import load_chat_config
+
+    return load_chat_config().task_anchor_enabled
+
+
+def _reactive_protocol_block() -> str:
+    """群决策协议块：按接口模式与总开关选现成常量（不现场拼装，缓存友好）。"""
+    mode = _json_lines_mode()
+    if task_anchor_enabled():
+        return {
+            "completions": _DECISION_PROTOCOL_BLOCK_COMPLETIONS,
+            "runs": _DECISION_PROTOCOL_BLOCK_RUNS,
+        }.get(mode, _DECISION_PROTOCOL_BLOCK)
+    return {
+        "completions": _DECISION_PROTOCOL_BLOCK_COMPLETIONS_NO_ANCHOR,
+        "runs": _DECISION_PROTOCOL_BLOCK_RUNS_NO_ANCHOR,
+    }.get(mode, _DECISION_PROTOCOL_BLOCK_NO_ANCHOR)
+
+
+def _private_protocol_block() -> str:
+    """私聊决策协议块：旧接口块本身没有锚说明，两种开关取值共用。"""
+    mode = _json_lines_mode()
+    enabled = task_anchor_enabled()
+    if mode == "completions":
+        return _JSON_LINES_PRIVATE_BLOCK if enabled else _JSON_LINES_PRIVATE_BLOCK_NO_ANCHOR
+    if mode == "runs":
+        return (
+            _JSON_LINES_PRIVATE_BLOCK_RUNS
+            if enabled
+            else _JSON_LINES_PRIVATE_BLOCK_RUNS_NO_ANCHOR
+        )
+    return _PRIVATE_DECISION_PROTOCOL_BLOCK
+
+
 def _json_lines_mode() -> str:
     """current 接口的终态信封形态:completions 恰好一份 / runs 可多份 / 其余旧协议。"""
     from ..config import plugin_config
@@ -566,11 +630,10 @@ def build_reactive_system_prompt(
     本部署补丁:群档案功能启用时注入记忆写入路由提示。群聊用完整版(三层),
     私聊用简化版(两层,无群层面);功能关闭时不注入。路径根动态跟随 hermes_custom_dir。
     本部署补丁:会话上下文(adapter/group_id/self)挪入系统提示,吃缓存。
+    任务锚总开关(chat_config.task_anchor_enabled)关闭时选去锚协议块:
+    锚说明与锚操作示例一并消失,其余协议逐字节不变。
     """
-    protocol_block = {
-        "completions": _DECISION_PROTOCOL_BLOCK_COMPLETIONS,
-        "runs": _DECISION_PROTOCOL_BLOCK_RUNS,
-    }.get(_json_lines_mode(), _DECISION_PROTOCOL_BLOCK)
+    protocol_block = _reactive_protocol_block()
     parts = [protocol_block, _FILE_TOOL_GUIDANCE]
     if sticker_feature_enabled():
         parts.append(_render_sticker_tool_guidance())
@@ -800,10 +863,7 @@ def build_passive_system_prompt(
         adapter=adapter, is_private=is_private, user_id=user_id, group_id=group_id
     )
     if private_decision:
-        head += "\n\n" + {
-            "completions": _JSON_LINES_PRIVATE_BLOCK,
-            "runs": _JSON_LINES_PRIVATE_BLOCK_RUNS,
-        }.get(_json_lines_mode(), _PRIVATE_DECISION_PROTOCOL_BLOCK)
+        head += "\n\n" + _private_protocol_block()
     head += "\n\n" + _FILE_TOOL_GUIDANCE
     if sticker_feature_enabled():
         head += "\n\n" + _render_sticker_tool_guidance()
@@ -1058,6 +1118,7 @@ def build_reactive_user_content(
 
     rows 是当前输入的有序碎片，身份、正文、m:id 与媒体清单只从这里读取；
     current_origin 在混合批时传聚合来源，用于 runtime_state 的触发来源说明。
+    pinned_anchors 只在任务锚总开关开启时渲染（关闭时整块不出现）。
     current_image_urls / current_sticker_urls: 内联帧组,每项为 (寻址三元组, 帧列表) 或
     裸帧列表;三元组 (kind, mid, idx) 用于给 parts 打全称标签 [图 m:ID#idx]。
     """
@@ -1080,7 +1141,9 @@ def build_reactive_user_content(
         self_id=self_id, adapter=adapter,
     )
     pinned_block = (
-        _render_pinned_tasks_block(pinned_anchors, now_ms=now_ms) if pinned_anchors else ""
+        _render_pinned_tasks_block(pinned_anchors, now_ms=now_ms)
+        if pinned_anchors and task_anchor_enabled()
+        else ""
     )
 
     cur_line = render_current_rows(
@@ -1095,22 +1158,33 @@ def build_reactive_user_content(
     # 又把回复写回 JSON 信封。把契约提示放到 user content 最末,LLM 近因效应让它最难忘
     # ——这一行不能改成 byte-stable system 的一部分,必须紧贴 current_message。
     mode = _json_lines_mode()
+    anchor_on = task_anchor_enabled()
     if mode == "completions":
+        anchor_hint = (
+            "需要引用／退窗／锚时调用 submit_control。"
+            if anchor_on
+            else "需要引用／退窗时调用 submit_control。"
+        )
         reminder = (
             "\n\n请直接输出最终正文，不要写 JSON 信封；要分成多条最终消息时，"
             "在两条之间单独写一行 §；轮中进度用 push_message，需要续跑时调用 request_continuation，"
-            "需要引用／退窗／锚时调用 submit_control。"
+            + anchor_hint
         )
     elif mode == "runs":
+        anchor_hint = (
+            "需要引用／退窗／锚控制时先调 submit_control 登记，普通回复不要调控制工具。"
+            if anchor_on
+            else "需要引用／退窗控制时先调 submit_control 登记，普通回复不要调控制工具。"
+        )
         reminder = (
             "\n\n请直接输出正文，不要写 JSON 信封；要分成多条时，在两条之间单独写一行 §；"
-            "需要引用／退窗／锚控制时先调 submit_control 登记，普通回复不要调控制工具。"
+            + anchor_hint
             + _RUNS_VISIBLE_REPLY_REMINDER
         )
     else:
         reminder = (
             "\n\n请用 submit_decision JSON 对象回复（字段："
-            + render_field_name_list()
+            + (render_field_name_list() if anchor_on else _FIELD_NAME_LIST_NO_ANCHOR)
             + "），不要直接说话或扮演动作。"
         )
     # 分级反馈:插件提示便签贴 reminder 尾(近因位置,下轮即见即焚)

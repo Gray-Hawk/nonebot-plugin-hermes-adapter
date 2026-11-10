@@ -213,6 +213,12 @@ answered guest anchor yields its slot to new commissions sooner. Only ids curren
 pinned are accepted; unknown ids are ignored and echoed back next turn as a plugin
 note, so fix it then.
 
+The deployment can switch task anchors off (`chat_config.yaml` `task_anchor_enabled`).
+When they are off you get no anchor guidance and no `<pinned_tasks>` block, and the four
+anchor fields are not applied: `submit_control` lists them under `ignored_fields`, and a
+call carrying only anchor fields returns `ok=false`. That is not an error to retry —
+continue with `reply_to` / `should_exit_active` only.
+
 Anchors are per-task, not per-person: participants share equal footing. When the
 current message belongs to a pinned task (a follow-up spec change, an acceptance
 reply), register `anchor_merge` with that task's starter user_id to join its participants

@@ -23,6 +23,7 @@ class ChatConfig:
     group_trigger: str = "keyword"
     keywords: set[str] = field(default_factory=lambda: {"/ai"})
     anchor_max_age_sec: int = 150
+    task_anchor_enabled: bool = True
     reply_delay_for_bot_sec: float = 0.0
     long_reply_forward: bool = True
     rate_limit_emoji_id: int = 96
@@ -48,6 +49,7 @@ def parse_chat_config(doc: dict) -> ChatConfig:
         group_trigger=choice_field(doc, "group_trigger", "keyword", ("keyword", "at")),
         keywords=str_set_field(doc, "keywords", {"/ai"}),
         anchor_max_age_sec=int_field(doc, "anchor_max_age_sec", 150, min_v=1),
+        task_anchor_enabled=bool_field(doc, "task_anchor_enabled", True),
         reply_delay_for_bot_sec=float_field(doc, "reply_delay_for_bot_sec", 0.0),
         long_reply_forward=bool_field(doc, "long_reply_forward", True),
         rate_limit_emoji_id=int_field(doc, "rate_limit_emoji_id", 96),

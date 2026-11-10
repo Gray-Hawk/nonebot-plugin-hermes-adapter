@@ -638,6 +638,11 @@ def build_mcp_app(
           - release_anchor / answer_anchor: commissioner user_id or "all" (unpin / mark answered)
           - anchor_merge: starter user_id of a pinned task this message belongs to
 
+        The four anchor fields above only work when task anchors are enabled
+        (chat_config.yaml task_anchor_enabled, default true). When that switch is off they are
+        rejected, never applied: the result reports them in ignored_fields, and a call that
+        carries only anchor fields returns ok=false. reply_to / should_exit_active stay usable.
+
         One call registers one control — several fields passed together travel as one control
         — consumed by the next reply text (silence still counts as a decision). Call it again
         only to control further replies. This tool only registers: it never sends a message,

@@ -102,6 +102,99 @@ def render_decision_protocol(*, runs: bool, group_rules: str | None = None) -> s
     )
 
 
+# --------------------------------------------------------------------------- #
+# 任务锚总开关：关闭时从已渲染的协议块里摘掉锚说明与锚操作示例。
+# 只做文本删改，不碰状态与工具；开启路径不经过本函数，输出逐字节不变。
+# --------------------------------------------------------------------------- #
+
+_ANCHOR_SECTION_HEAD = "任务锚（输入里出现 <pinned_tasks> 块时）："
+_ANCHOR_SECTION_NEXT = "插话原则（决定"
+_ANCHOR_FIELD_LINES_HEAD = "  pin_anchor（"
+_ANCHOR_FIELD_LINES_NEXT = "  not_final（"
+
+# (原句, 去掉锚之后的句子)。逐句精确匹配：模板漂移时宁可不改也不会改错。
+_ANCHOR_GUIDE_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    (
+        "需要引用消息、提前退窗或操作任务锚时",
+        "需要引用消息或提前退窗时",
+    ),
+    (
+        "控制工具只登记，不直接发消息，也不会自己退窗或钉锚。",
+        "控制工具只登记，不直接发消息，也不会自己退窗。",
+    ),
+    (
+        "；pin_anchor=true 在委托判断轮钉住当前请求；release_anchor / answer_anchor "
+        "填委托人 user_id 或 \"all\"，分别松锚与标应答；anchor_merge 填在钉任务的"
+        "发起者 user_id，用于归并进该任务。",
+        "。",
+    ),
+    (
+        "退窗与任务锚只在群活跃态生效。",
+        "退窗只在群活跃态生效。",
+    ),
+    (
+        "不可 reply_to 或钉锚",
+        "不可 reply_to",
+    ),
+    (
+        "不可用 submit_control 引用或钉锚",
+        "不可用 submit_control 引用",
+    ),
+    (
+        "当前 <pinned_tasks> 锚或近期人类消息明确委托了你与该账号互动",
+        "近期人类消息明确委托了你与该账号互动",
+    ),
+    (
+        "    （有 <pinned_tasks> 锚时，锚行本身就是可引用的委托原话）\n",
+        "",
+    ),
+)
+
+# 关闭时不得再出现在提示词里的锚标记（验收用；“无锚代词”“锚定原文”这类
+# 与任务锚无关的用法不在此列）。
+ANCHOR_PROMPT_MARKERS: tuple[str, ...] = (
+    "任务锚",
+    "pinned_tasks",
+    "pin_anchor",
+    "release_anchor",
+    "answer_anchor",
+    "anchor_merge",
+    "钉锚",
+    "松锚",
+)
+
+
+def _cut_between(text: str, head: str, tail: str) -> str:
+    start = text.find(head)
+    if start < 0:
+        return text
+    end = text.find(tail, start)
+    if end < 0:
+        return text
+    return text[:start] + text[end:]
+
+
+def strip_task_anchor(text: str) -> str:
+    """把协议文本里的任务锚说明与锚示例摘干净（关闭开关时组装用）。
+
+    处理三处：
+    1. 任务锚整节（含旧接口的“带 release_anchor/answer_anchor/anchor_merge”四段）；
+    2. 旧接口字段表里连续的四行锚字段；
+    3. 散句：控制说明、来源标签、黑名单例外、回复纪律里的锚引用备注。
+    私有 scope 行的“退窗与任务锚”同步收窄为“退窗”。
+    """
+    text = _cut_between(text, _ANCHOR_SECTION_HEAD, _ANCHOR_SECTION_NEXT)
+    text = _cut_between(text, _ANCHOR_FIELD_LINES_HEAD, _ANCHOR_FIELD_LINES_NEXT)
+    for old, new in _ANCHOR_GUIDE_REPLACEMENTS:
+        text = text.replace(old, new)
+    return text
+
+
+def anchor_prompt_residue(text: str) -> list[str]:
+    """返回文本里残留的锚标记（空列表 = 干净），供关闭路径回归使用。"""
+    return [marker for marker in ANCHOR_PROMPT_MARKERS if marker in text]
+
+
 FILE_TOOL_GUIDANCE = '''QQ 文件工具：
 - [文件 m:X#fN:名称] 只代表元数据，不包含任何实际内容；需要读取文件内容时，调用 get_message_files，参数写 refs=[{"message_id": X, "idx": N}] 下载，下载后再用本地文件工具读取，不要把文件名当成实际内容。
 - 群文件库要先用 browse_group_files 浏览根目录，或者传入 folder_id 浏览指定文件夹，从返回列表中取得目标文件的 file_id，再用 file_id 调用 download_group_file 下载；浏览不会自动下载文件，不要无目标批量拉取文件列表。
