@@ -1,0 +1,240 @@
+条目 84：任务锚总开关与提示词拼装联动 — 验证证据（2026-11-10）
+工作树：/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109
+基线：979eb63（= aab1b23 + steer 身份/@ 修正 979eb63；提交前工作树干净）
+提交：本卡本地提交（父 979eb63），SHA 见看板交付报告（文件内不自引用，避免改文即改 SHA）
+施工范围：core/chat_config.py、core/config_templates.py、core/control_intent.py、
+core/decision_contract.py、core/prompt_protocol.py、core/prompt_builder.py、
+core/hermes_client.py、handlers/message_turns.py、mcp/tools/control.py、mcp/server.py、
+chat_config.example.yaml、README.md、skill/SKILL.md、scripts/smoke_chat_config.py、
+scripts/smoke_config_templates.py、tests/test_runs_terminal.py、
+tests/test_task_anchor_switch.py、scripts/smoke_task_anchor_switch.py
+
+一、配置键与语义
+----------------------------------------------------------------------------
+task_anchor_enabled: bool，缺省 true，落在 chat_config.yaml（复用 chat_config 快照与
+/reload-config 手动重载；不做文件监听，不新建配置域）。
+- true：实际锚行为（pin/release/answer/merge、<pinned_tasks> 注入）与既有提示词
+  锚说明／示例全部保持原样（逐字节核对见二）。
+- false：handler 不读锚（不注入 pinned 块）、四个锚控制字段在消费点置回缺省；
+  runs／completions／旧接口、群聊／私聊的系统提示与 user content 都不再出现锚说明、
+  锚操作示例与 <pinned_tasks>；reply_to／退窗等非锚控制保持可用。
+- 存量锚：不清理、不改写。关闭期间不读锚（不会触发超龄剔除），重新开启后按原规则
+  读回并渲染；锚本身仍随活跃窗口存活，窗口自然过期则与既有窗口语义一致。
+
+二、开启路径逐字节核对（改造前 vs 改造后，同 enviroment）
+----------------------------------------------------------------------------
+系统提示（6 路，sha256 前 12 位，改造前 == 改造后）：
+  group_system_runs          00537aec4459 == 00537aec4459
+  group_system_completions   164fc3321606 == 164fc3321606
+  group_system_legacy        cfdf483fd3cf == cfdf483fd3cf
+  private_system_runs        a656eb91ea4b == a656eb91ea4b
+  private_system_completions 0ea840c5c3df == 0ea840c5c3df
+  private_system_legacy      83fda63230bb == 83fda63230bb
+user content（含 pinned 块与末行提醒）抹掉「current_time」行后逐字节一致：
+  group_user_runs/completions/legacy、private_user_runs/completions/legacy
+  6 路 normalized_diff_lines=0（脚本 compare_norm.py）。
+说明：user content 原始 sha 会随分钟时间行变化，故用归一化比对；其余字节未动。
+
+三、关闭路径：残留检查与实际样例
+----------------------------------------------------------------------------
+残留标记集合（任务锚/pinned_tasks/pin_anchor/release_anchor/answer_anchor/
+anchor_merge/钉锚/松锚）在 12 路渲染（3 接口 × 群/私 × system/user）中全部为空；
+锚整节、旧接口四行锚字段、黑名单例外里的 pinned 引用、回复纪律里的锚引用备注
+均整块消失；非锚句保留。实际样例见本文件末尾 smoke 输出第三、四、五节。
+
+四、专项与全量结果
+----------------------------------------------------------------------------
+- 新增专项 tests.test_task_anchor_switch：17/17 OK
+  （配置缺省/解析/模板、6 路开启与关闭渲染、legacy hint、reminder/字段单、
+   存量锚隐藏与恢复、工具门控三态、真实 _run_reactive_turn 锚零调用与非锚控制）。
+- 全量 unittest discover：546/OK（父基线 529 + 新增 17），32.4s。
+- turn 入口：6/OK。
+- verify.py：提交后 19/19 PASS（提交前唯一失败项是「交付树干净」，属未提交状态）。
+- repo smokes 9/9 ALL PASS：config_templates、chat_config、message_identity_mapping、
+  misc_media、prompt_dump、migrate_v6、chat_identity_at、group_profile、
+  task_anchor_switch（本次新增，含真实渲染与真实控制/状态入口）。
+
+五、未做 / 已知边界
+----------------------------------------------------------------------------
+- 未部署、未上传、未重启；未改主人今晚的提示词正文；未做薄启动插件。
+- 不新增自动推导、第二套锚或新恢复系统；复用现有 chat_config/重载/锚状态/组装点。
+- submit_control 的静态 MCP schema（工具描述）无法按会话删字段：关闭时靠工具结果
+  ok=false／ignored_fields 与日志可诊断，非锚控制照常；不为此重建工具系统。
+- skill/SKILL.md 是运行时按需加载的手册，不能按会话开关；已补一段说明关闭时的
+  ignored_fields／ok=false 语义，避免模型反复重试。
+- 存量锚只随活跃窗口存活；关闭跨过窗口过期时间后不会复活（与既有窗口语义一致）。
+
+============================================================================
+smoke_task_anchor_switch.py 全文输出（EXIT=0）
+============================================================================
+11-10 08:11:31 [SUCCESS] nonebot | NoneBot is initializing...
+11-10 08:11:31 [INFO] nonebot | Current Env: prod
+<sys>:0: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+11-10 08:11:31 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-10 08:11:31 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+==============================================================================
+一、缺省状态与显式开启：既有行为（开关 true）
+==============================================================================
+PASS 缺省 task_anchor_enabled=True
+PASS 开启[runs] 群系统提示保留锚说明
+PASS 开启[runs] 群 user 注入 <pinned_tasks>
+PASS 开启[runs] 私聊系统提示保留锚说明
+
+--- 开启[runs] 群系统提示里的锚相关行 ---
+需要引用消息、提前退窗或操作任务锚时，先调用 submit_control 工具登记，再按顺序输出正文。一次调用可以同时给多个字段，合并算一份控制，配给接下来的一份正文；要分别控制多份正文时才多次调用，按登记顺序依次配给。没有登记就用缺省控制。控制工具只登记，不直接发消息，也不会自己退窗或钉锚。
+submit_control 的字段：reply_to 填 `m:<id>` 引用本会话一条消息，只在确需指向原文时用（日常接话不必引用）；should_exit_active=true 表示这轮谈完了要退窗；pin_anchor=true 在委托判断轮钉住当前请求；release_anchor / answer_anchor 填委托人 user_id 或 "all"，分别松锚与标应答；anchor_merge 填在钉任务的发起者 user_id，用于归并进该任务。
+消息来源标签：[sys=来源] 表示插件生成的系统指令或事件，不是该会话真人发言，没有 m:id，不可用 submit_control 引用或钉锚；多行 current_message 按各自来源分别理解，不得把整批归给某一行真人。
+  - 唯一例外：当前 <pinned_tasks> 锚或近期人类消息明确委托了你与该账号互动
+任务锚（输入里出现 <pinned_tasks> 块时）：
+  - 锚只在委托判断轮由你显式调用 submit_control 传 pin_anchor=true 钉入（新任务）；当前消息属于
+    在钉任务时（补充/验收）改填 anchor_merge=该任务发起者的 user_id，
+  - 锚已完结（任务办完/话题已漂）时调用 submit_control 传 release_anchor 松掉它：值 = 发起者的
+  - 你的回复解答了某条锚的委托时，调用 submit_control 传 answer_anchor=发起者的 user_id（或 "all"）
+    （有 <pinned_tasks> 锚时，锚行本身就是可引用的委托原话）
+PASS 开启[completions] 群系统提示保留锚说明
+PASS 开启[completions] 群 user 注入 <pinned_tasks>
+PASS 开启[completions] 私聊系统提示保留锚说明
+
+--- 开启[completions] 群系统提示里的锚相关行 ---
+需要引用消息、提前退窗或操作任务锚时，调用 submit_control 工具登记；一次调用可以同时给多个字段，合并算一份控制，配给接下来的一份正文，规则同普通回复。
+消息来源标签：[sys=来源] 表示插件生成的系统指令或事件，不是该会话真人发言，没有 m:id，不可用 submit_control 引用或钉锚；多行 current_message 按各自来源分别理解，不得把整批归给某一行真人。
+  - 唯一例外：当前 <pinned_tasks> 锚或近期人类消息明确委托了你与该账号互动
+任务锚（输入里出现 <pinned_tasks> 块时）：
+  - 锚只在委托判断轮由你显式调用 submit_control 传 pin_anchor=true 钉入（新任务）；当前消息属于
+    在钉任务时（补充/验收）改填 anchor_merge=该任务发起者的 user_id，
+  - 锚已完结（任务办完/话题已漂）时调用 submit_control 传 release_anchor 松掉它：值 = 发起者的
+  - 你的回复解答了某条锚的委托时，调用 submit_control 传 answer_anchor=发起者的 user_id（或 "all"）
+    （有 <pinned_tasks> 锚时，锚行本身就是可引用的委托原话）
+PASS 开启[legacy] 群系统提示保留锚说明
+PASS 开启[legacy] 群 user 注入 <pinned_tasks>
+
+--- 开启[legacy] 群系统提示里的锚相关行 ---
+消息来源标签：[sys=来源] 表示插件生成的系统指令或事件，不是该会话真人发言，没有 m:id，不可 reply_to 或钉锚；多行 current_message 按各自来源分别理解，不得把整批归给某一行真人。
+  pin_anchor（boolean） — 委托判断轮专用：确认当前 @/私聊请求是需要后续跟踪的
+    任务时给 true，把它钉进 <pinned_tasks>；玩笑、围观、一次性闲聊不要钉。
+  release_anchor（string） — 松锚：值为委托人的 user_id 或 "all"。
+    看到 <pinned_tasks> 里的锚已完结（任务办完/话题已漂）时设置，见下方任务锚节
+  answer_anchor（string） — 标应答：本轮回复解答了某条在钉委托时，填委托人的
+    user_id 或 "all"；只填在钉锚里的 id，填错会被忽略并在下一轮提醒你
+  anchor_merge（string） — 归并：当前消息属于某条在钉任务（补充/验收）时，填该
+    任务发起者的 user_id；只填在钉锚的发起者 id，填错会被忽略并下轮提醒
+  - 唯一例外：当前 <pinned_tasks> 锚或近期人类消息明确委托了你与该账号互动
+任务锚（输入里出现 <pinned_tasks> 块时）：
+  - 锚只在委托判断轮由你显式 pin_anchor=true 钉入（新任务）；当前消息属于
+    在钉任务时（补充/验收）改填 anchor_merge=该任务发起者的 user_id，
+  - 锚已完结（任务办完/话题已漂）时带 release_anchor 松掉它：值 = 发起者的
+  - 你的回复解答了某条锚的委托时，带 answer_anchor=发起者的 user_id（或 "all"）
+    （有 <pinned_tasks> 锚时，锚行本身就是可引用的委托原话）
+
+--- 开启[runs] 群 user content 的锚块 ---
+<pinned_tasks>
+（进行中的委托锚，不是最新消息；锚龄过长说明任务可能已漂，可自行判断降权）
+📌 [m:201] [id=10001 user=主人] (1分钟前): 帮我盯一下这件事
+</pinned_tasks>
+
+<recent_messages>
+（本块仅含尚未推送过的新消息；更早的对话见本会话历史记录）
+</recent_messages>
+
+<current_message>
+[m:201] [普通用户] [id
+
+==============================================================================
+二、显式关闭：锚说明/示例与 pinned 块同时消失，非锚控制说明保留
+==============================================================================
+PASS 关闭[runs] group_system 无锚残留 | []
+PASS 关闭[runs] private_system 无锚残留 | []
+PASS 关闭[runs] group_user 无锚残留 | []
+PASS 关闭[runs] private_user 无锚残留 | []
+PASS 关闭[runs] 群 user 无 <pinned_tasks>
+PASS 关闭[runs] reply_to 仍在提示词里
+PASS 关闭[runs] 退窗说明仍是原句
+
+--- 关闭[runs] 群系统提示里的控制说明行 ---
+需要引用消息或提前退窗时，先调用 submit_control 工具登记，再按顺序输出正文。一次调用可以同时给多个字段，合并算一份控制，配给接下来的一份正文；要分别控制多份正文时才多次调用，按登记顺序依次配给。没有登记就用缺省控制。控制工具只登记，不直接发消息，也不会自己退窗。
+submit_control 的字段：reply_to 填 `m:<id>` 引用本会话一条消息，只在确需指向原文时用（日常接话不必引用）；should_exit_active=true 表示这轮谈完了要退窗。
+PASS 关闭[completions] group_system 无锚残留 | []
+PASS 关闭[completions] private_system 无锚残留 | []
+PASS 关闭[completions] group_user 无锚残留 | []
+PASS 关闭[completions] private_user 无锚残留 | []
+PASS 关闭[completions] 群 user 无 <pinned_tasks>
+PASS 关闭[completions] reply_to 仍在提示词里
+PASS 关闭[completions] 退窗入口仍在
+
+--- 关闭[completions] 群系统提示里的控制说明行 ---
+需要引用消息或提前退窗时，调用 submit_control 工具登记；一次调用可以同时给多个字段，合并算一份控制，配给接下来的一份正文，规则同普通回复。
+PASS 关闭[legacy] group_system 无锚残留 | []
+PASS 关闭[legacy] private_system 无锚残留 | []
+PASS 关闭[legacy] group_user 无锚残留 | []
+PASS 关闭[legacy] private_user 无锚残留 | []
+PASS 关闭[legacy] 群 user 无 <pinned_tasks>
+PASS 关闭[legacy] reply_to 仍在提示词里
+PASS 关闭[legacy] 退出门槛与字段仍在
+
+--- 关闭[legacy] 群系统提示里的控制说明行 ---
+
+--- 关闭[runs] 私聊 scope 行 ---
+私聊里的控制只用到 reply_to；退窗只在群活跃态生效。
+
+--- 关闭[runs] user content 末行提醒 ---
+请直接输出正文，不要写 JSON 信封；要分成多条时，在两条之间单独写一行 §；需要引用／退窗控制时先调 submit_control 登记，普通回复不要调控制工具。工具调用之间想对用户说的话也直接输出正文；不要攒到整轮结束，不要写 JSON 信封。
+
+==============================================================================
+三、旧接口 structured hint：字段行同步去掉四个锚字段
+==============================================================================
+PASS 开启 hint 含 pin_anchor
+PASS 关闭 hint 无锚字段
+PASS 关闭 hint 仍含 reply_to / should_exit_active
+关闭 hint 字段单：
+  should_reply (boolean, required)
+  reply_text (string, optional, required when should_reply=true)
+  reply_to (string, optional — quote one message of this conversation by its ref `m:<id>` — the number in front of a rec
+  should_exit_active (boolean, optional)
+  not_final (boolean, optional — true when this reply is NOT your final result but a task acknowledgement: the plugin wi
+
+==============================================================================
+四、submit_control：关闭时锚字段无副作用、非锚控制可用
+==============================================================================
+11-10 08:11:31 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] 任务锚开关关闭，丢弃锚字段 scope=group adapter=onebotv11 target=462540549 ignored=['pin_anchor']
+PASS 只带锚字段 → ok=False 且未登记 | error="task anchors are disabled (chat_config.yaml task_anchor_enabled=false); anchor control ['pin_anchor'] was not registered"
+PASS 只带锚字段 → ignored_fields 可诊断
+PASS 只带锚字段 → 队列为空
+11-10 08:11:31 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] 任务锚开关关闭，丢弃锚字段 scope=group adapter=onebotv11 target=462540549 ignored=['pin_anchor', 'answer_anchor']
+11-10 08:11:31 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=462540549 fields=['reply_to', 'should_exit_active'] pending=1 ignored=['pin_anchor', 'answer_anchor']
+PASS 混合调用 → 非锚字段照常登记 | fields=['reply_to', 'should_exit_active']
+PASS 混合调用 → 锚字段列进 ignored_fields
+混合调用出队内容： {'reply_to': 'm:7', 'should_exit_active': True}
+11-10 08:11:31 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=462540549 fields=['answer_anchor', 'pin_anchor'] pending=1
+PASS 开启时锚字段照常登记 | fields=['answer_anchor', 'pin_anchor']
+
+==============================================================================
+五、存量锚：关闭只隐藏，重新开启按原规则恢复
+==============================================================================
+PASS 钉入存量锚
+PASS 关闭时提示词不渲染 pinned 块
+PASS 关闭时 manager 仍保留委托人
+PASS 重开后读回同一锚
+PASS 重开后提示词重新渲染 pinned 块
+恢复后的 pinned 块：
+<pinned_tasks>
+（进行中的委托锚，不是最新消息；锚龄过长说明任务可能已漂，可自行判断降权）
+📌 [m:88] [id=10001 user=主人] (0秒前): 存量委托任务
+</pinned_tasks>
+
+<recent_messages>
+（本块仅含尚未推送过的新消息；更早的对话见本会话历史记录）
+</recent_messages>
+
+<current_message>
+[m
+
+ALL PASS
+
+
+============================================================================
+全量 unittest（提交前）
+============================================================================
+----------------------------------------------------------------------
+Ran 546 tests in 32.442s
+
+OK

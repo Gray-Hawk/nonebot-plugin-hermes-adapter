@@ -9,6 +9,9 @@ release_anchor / answer_anchor / anchor_merge。一次调用登记一份控制�
   发送成功后的原有控制应用时机；
 - 只在有正文决策通道的接口生效（Runs / completions）：astrbot 等接口直接拒
   （控制丢失，正文照发）；
+- 任务锚总开关（chat_config.yaml task_anchor_enabled，缺省 true）关闭时，四个锚
+  字段一律不进队列：只带锚字段的调用返回 ok=False，混合调用把锚字段列进
+  ignored_fields；reply_to / should_exit_active 不受影响；
 - 失败一律返回 ok=False 而不是抛异常：控制是增强，绝不允许卡住正文。
 """
 
@@ -64,6 +67,8 @@ class SubmitControlResult(BaseModel):
     registered: bool = False
     """本控制是否真的进了队列（false = 控制丢失，正文将按缺省控制发送）。"""
     fields: list[str] = Field(default_factory=list)
+    ignored_fields: list[str] = Field(default_factory=list)
+    """因任务锚总开关关闭而丢弃的锚字段（pin/release/answer/merge）；不为空时绝不假装已登记。"""
     pending: int = 0
     """登记后该会话队列深度（本份 + 之前未消费的份数）。"""
 
@@ -118,7 +123,28 @@ def submit_control_impl(
         logger.info(f"[MCP submit_control] 拒绝控制: {exc} (adapter={inp.adapter})")
         return _fail(str(exc))
 
+    # 任务锚总开关关闭：锚字段一律不进队列（不产生实际锚副作用），非锚控制照常。
+    # 只有锚字段时返回 ok=False + ignored_fields，明确告诉模型「没登记」，不假装成功。
+    ignored_fields: list[str] = []
+    if control and not control_intent.task_anchor_enabled():
+        control, ignored_fields = control_intent.drop_anchor_fields(control)
+        if ignored_fields:
+            logger.info(
+                f"[MCP submit_control] 任务锚开关关闭，丢弃锚字段 scope={scope_kind} "
+                f"adapter={inp.adapter} target={target_id} ignored={ignored_fields}"
+            )
+
     if not control:
+        if ignored_fields:
+            return SubmitControlResult(
+                ok=False,
+                error=(
+                    "task anchors are disabled (chat_config.yaml task_anchor_enabled=false); "
+                    f"anchor control {ignored_fields} was not registered"
+                ),
+                scope=scope_kind, target_id=target_id, registered=False,
+                fields=[], ignored_fields=ignored_fields, pending=queue.pending(_key()),
+            )
         # 一次空调用等于「什么都不登记」：正文照缺省控制发送，不算失败。
         return SubmitControlResult(
             ok=True, scope=scope_kind, target_id=target_id,
@@ -130,8 +156,10 @@ def submit_control_impl(
     logger.info(
         f"[MCP submit_control] registered scope={scope_kind} adapter={inp.adapter} "
         f"target={target_id} fields={sorted(control)} pending={pending}"
+        + (f" ignored={ignored_fields}" if ignored_fields else "")
     )
     return SubmitControlResult(
         ok=True, scope=scope_kind, target_id=target_id,
-        registered=True, fields=sorted(control), pending=pending,
+        registered=True, fields=sorted(control), ignored_fields=ignored_fields,
+        pending=pending,
     )

@@ -233,7 +233,7 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
     async def _run(self, result, *, tracker, bounce=None, real_bounce: bool = False, chat=None,
                    sessions=None, current_buffered=None,
                    replied_msg_id=None, now_ms: int = 1, resolve_reply=None,
-                   trigger_msg_id=None):
+                   trigger_msg_id=None, task_anchor_enabled: bool = True):
         from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
         from nonebot_plugin_hermes_adapter.handlers import message_feedback as fb
         from nonebot_plugin_hermes_adapter.core import prompt_builder
@@ -245,6 +245,8 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
         cfg.history_message_limit = 5
         # 锚控制路径要拿真实数值算超龄；MagicMock 参与 `>` 比较会直接 TypeError。
         cfg.anchor_max_age_sec = 3600
+        # 任务锚总开关：默认开启（保持既有用例语义），关闭用例显式传 False。
+        cfg.task_anchor_enabled = task_anchor_enabled
         bot = MagicMock(self_id=1)
         bot.call_api = AsyncMock(return_value={"file_id": "f"})
         target = SimpleNamespace(private=False, id="g1")

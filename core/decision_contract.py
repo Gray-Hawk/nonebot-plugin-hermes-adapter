@@ -128,6 +128,18 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
 )
 
 
+# 任务锚字段（总开关关闭时从字段表渲染里剔除；字段本身与解析保留）
+ANCHOR_FIELD_NAMES: tuple[str, ...] = (
+    'pin_anchor',
+    'release_anchor',
+    'answer_anchor',
+    'anchor_merge',
+)
+NON_ANCHOR_FIELD_NAMES: tuple[str, ...] = tuple(
+    f.name for f in DECISION_FIELDS if f.name not in ANCHOR_FIELD_NAMES
+)
+
+
 # 引用槽(reply_to)唯一合法形态:`m:<正整数>`,号 = 消息库自增主键,与
 # recent_messages / current_message 行首的 m 号同源。QQ 的 message_id 与 Hermes
 # 转录行 id 只作内部映射,不接受。
@@ -172,9 +184,9 @@ def _render_line(
     return line
 
 
-def render_en_field_lines() -> str:
+def render_en_field_lines(names: tuple[str, ...] | None = None) -> str:
     """英文字段行(_DECISION_HINT 用),每行 `\n` 收尾。"""
-    return "".join(_render_line(f, lang="en") + "\n" for f in DECISION_FIELDS)
+    return "".join(_render_line(f, lang="en") + "\n" for f in _select(names))
 
 
 def _select(names: tuple[str, ...] | None) -> tuple[DecisionFieldSpec, ...]:
@@ -191,6 +203,6 @@ def render_cn_field_lines(
     return "".join(_render_line(f, lang="cn", short=short) + "\n" for f in _select(names))
 
 
-def render_field_name_list() -> str:
+def render_field_name_list(names: tuple[str, ...] | None = None) -> str:
     """`a / b / c` 形态的字段名清单(近因 reminder 用)。"""
-    return " / ".join(f.name for f in DECISION_FIELDS)
+    return " / ".join(f.name for f in _select(names))

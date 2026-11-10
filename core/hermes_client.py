@@ -24,7 +24,10 @@ from nonebot import logger
 
 from ..config import plugin_config
 from ..backends.astrbot import client as astrbot_client
-from .decision_contract import render_en_field_lines
+from .decision_contract import (
+    NON_ANCHOR_FIELD_NAMES,
+    render_en_field_lines,
+)
 from .control_intent import CONTROL_TOOL_NAME
 from .media_patterns import _MD_IMAGE_PATTERN, _MEDIA_TAG_PATTERN
 from .media_whitelist import inline_local_media_images
@@ -113,6 +116,22 @@ _DECISION_HINT = (
     + "Output ONLY the JSON object, no preamble, no postscript, no markdown fences.\n"
     "All string values MUST be single-line; escape line breaks inside strings as \\n (no raw newlines)."
 )
+
+# 任务锚总开关关闭时同一份 hint 的字段行：只去掉四个锚字段，其余逐字节不变。
+_DECISION_HINT_NO_ANCHOR = (
+    "\n\n=== STRUCTURED OUTPUT ===\n"
+    "Your reply MUST be a single JSON object with these keys:\n"
+    + render_en_field_lines(names=NON_ANCHOR_FIELD_NAMES)
+    + "Output ONLY the JSON object, no preamble, no postscript, no markdown fences.\n"
+    "All string values MUST be single-line; escape line breaks inside strings as \\n (no raw newlines)."
+)
+
+
+def _decision_hint() -> str:
+    """旧接口 structured output hint：按任务锚总开关选现成常量。"""
+    from .chat_config import load_chat_config
+
+    return _DECISION_HINT if load_chat_config().task_anchor_enabled else _DECISION_HINT_NO_ANCHOR
 
 
 def _escape_raw_newlines_in_strings(s: str) -> str:
@@ -1268,7 +1287,7 @@ class HermesClient:
             and structured_tool_name == "submit_decision"
             and plugin_config.hermes_api_interface not in {"completions", "runs"}
         ):
-            system_prompt = system_prompt + _DECISION_HINT
+            system_prompt = system_prompt + _decision_hint()
 
         # 全文留痕(排障开关,默认关):截留在最终成形后、通道分流前,
         # 两模式与 Completions/Runs 两通道抓到的是同一份真实上发字节。

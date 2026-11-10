@@ -22,7 +22,7 @@ NoneBot 插件，将 NoneBot2 桥接到 Hermes Agent 的 API Server
 
 其余设置放在插件配置根目录（`AGENT_PLUGIN_CUSTOM_DIR`，留空则用 localstore 插件数据目录）：
 
-`chat_config.yaml` ———— 私聊与群聊触发、防抖、活跃窗口、巡查。启动加载，管理员 `/reload-config` 手动重载
+`chat_config.yaml` ———— 私聊与群聊触发、防抖、活跃窗口、巡查、任务锚总开关。启动加载，管理员 `/reload-config` 手动重载
 `misc_config.yaml` ———— 历史文本、记忆外挂、输出、排障、存储。手动重载
 `media_config.yaml` ———— 图片投送模式、压缩梯度、缓存与限额。手动重载
 `user_lists.yaml` ———— 黑名单、已知 bot、各处白名单与管理员。手动重载

@@ -259,7 +259,7 @@ YAML_SPECS: dict[str, list[Any]] = {
             ["私聊响应范围：all = 全部用户；allowlist = 仅白名单（名单本体在 user_lists.yaml 的 allow_users）。"],
             type_="str",
         ),
-        _Section("群聊触发、历史与回复：9 键"),
+        _Section("群聊触发、历史与回复：10 键"),
         _Key(
             "group_trigger",
             "keyword",
@@ -278,8 +278,24 @@ YAML_SPECS: dict[str, list[Any]] = {
         _Key(
             "anchor_max_age_sec",
             150,
-            ["委托锚最长寿命秒数，超时自动释放，防止模型一直忘记松锚。"],
+            [
+                "委托锚最长寿命秒数，超时自动释放，防止模型一直忘记松锚。",
+                "task_anchor_enabled=false 时不读锚，本键不生效。",
+            ],
             type_="int",
+        ),
+        _Key(
+            "task_anchor_enabled",
+            True,
+            [
+                "任务锚总开关：同时控制实际锚行为与提示词拼装。true = 保持既有行为；",
+                "false = 不钉/不松/不标应答/不归并，不在提示词里组装任务锚说明与",
+                "锚操作示例（runs／completions／旧接口一致），也不注入 <pinned_tasks>。",
+                "关闭只隐藏、不清理存量锚数据，重新开启后按原规则恢复；",
+                "submit_control 的锚字段不会生效：只带锚字段返回 ok=false，混合调用把",
+                "锚字段列进 ignored_fields，reply_to／退窗等非锚控制照常。",
+            ],
+            type_="bool",
         ),
         _Key(
             "reply_delay_for_bot_sec",
