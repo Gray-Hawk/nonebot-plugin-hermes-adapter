@@ -209,6 +209,14 @@ class MessageBuffer:
         """m:id → 原始正文(门面透传;steer 恢复改投读原文用,查不到返回 None)。"""
         return self._store.get_content(message_id)
 
+    def get_message_facts(self, message_id: int) -> dict | None:
+        """m:id → 恢复呈递所需的原始身份事实(昵称/发送者/结构化 At)。
+
+        门面透传 MessageStore.get_message_facts:恢复出的 fragment 按库里那一行
+        水合,真实 @ 与原昵称不因经过 steer 通道而消失;查不到返回 None(不猜)。
+        """
+        return self._store.get_message_facts(message_id)
+
     def get_media_urls(self, message_id: int) -> dict[str, list[str]]:
         """m:id → 已入库的原始媒体清单(按枚举序分组),恢复呈递时恢复寻址用。
 

@@ -1,6 +1,7 @@
 区域化呈递改造证据（本地，未部署/未上传）
-基线 ecd5635；候选 306fff0；本文件由 scripts/sample_region_presentation.py、测试实跑与
-reviewer_gpt 随卡探针（region_review_probe.py，未改动）生成。本轮修 R1-R5 五项 P2。
+基线 ecd5635；候选 306fff0 → fbb3850（R1-R5）→ 本提交（复审 N1-N4）；本文件由
+scripts/sample_region_presentation.py、测试实跑与 reviewer_gpt 随卡探针
+（region_review_probe.py / extended_probe.py，均未改动）生成。
 
 == 1. handler 构造入口渲染样例（群聊 reactive / 私聊 passive） ==
 11-10 13:55:24 [SUCCESS] nonebot | NoneBot is initializing...
@@ -161,3 +162,36 @@ python -m unittest discover -s tests -t . ; python -m unittest turn_tests.test_e
 python scripts/sample_region_presentation.py ; python scripts/smoke_chat_identity_at.py ; python scripts/smoke_task_anchor_switch.py
 （reviewer 探针：把 steer_unified_extra_probe.py 放进 TMPDIR，再
   python -B region_review_probe.py <candidate_root>）
+
+== 8. 复审 N1-N4 闭合（本轮，reviewer 随卡探针 extended_probe.py 未改动 8/8 OK） ==
+原审核探针仍 23/23 OK；扩展探针修前 5 failures（无 errors），修后 0。
+
+N1 无号批的行边界/空串行（真实 direct HTTP → parser → handler → 队列 pop）：
+RECOVERY 前导空白批 expected ["  : 第一条\n尾行\n", "第二条"] → actual 相同（修前合成一条）
+RECOVERY 空串+带号批 expected ["", "有效正文"] → actual 相同（修前空串行消失）
+  实现：匹配器先按原位置精确匹配，空白只在「此处没有账项命中」时当分隔符；空串账项
+  在无处可锚时按批次顺序就地取出，尾部空串一次补齐（不新造剥壳/不按换行猜边界）。
+
+N2 跨 run 旧原文（真实第一轮 chat→HTTP/SSE→终态钩子→followup 注入 → 新 run）：
+OLD_RUN_REMAINING [] （修前旧 noid 账项仍 pending）
+CROSS_RUN_RAW recovered 由 ["有效正文\n解释:\n"]（上一轮原文）→ ["有效正文"]（本轮原文）
+  实现：无号虚拟锚随本 run 终态对账结算（不做转录核验、不补投），从候选里消失；
+  真被吞时仍由回收点在第一现场按 pending 原文核销（recovered），语义保留。
+  附带收紧：回收点的子串核销限定当前 scope（空串 steer_text 的 LIKE 会退化成
+  %%，不限定会把别的会话里还等着回收的账项一起核销），生产两处调用都传 scope。
+
+N3 带号回收行的身份事实（真实 MessageStore/Buffer，m:2 原昵称=临时昵称、at=(999,)）：
+RECOVERY_FACTS recovered_at [999] / recovered_nick 临时昵称（修前 [] / "10001"）
+  下一轮真实普通 handler：'[有人@我] [m:2] [普通用户] [id=10001 user=临时昵称]:\n看这里'
+  实现：新增 MessageStore/MessageBuffer.get_message_facts（只读 messages 行），恢复
+  fragment 按库里那一行水合昵称/发送者/结构化 At；正文与 m:id 逐字节不变、不重复入库，
+  查不到保持未知（不猜、不重复入库）。
+
+N4 身份表边界（configured 表存在且只有 20002；previous 表先加载 10001=旧目录名字）：
+IDENTITY_BOUNDARY 修前 '旧目录名字' → 修后 None
+  实现：跨目录沿用仅限「当前配置表整张缺档/无条目」（搬迁/预览场景）；当前表只要
+  有任一 entries，缺该用户就是没有事实。当前表有该用户时正主名照常（正向控制通过）。
+
+复跑：全量 unittest 592/OK、turn 6/OK、verify 19/19、九套 smoke 全 exit 0、
+原审核探针 23/23 OK、扩展探针 8/8 OK；同一扩展探针在父 306fff0 上仍失败（负对照）。
+

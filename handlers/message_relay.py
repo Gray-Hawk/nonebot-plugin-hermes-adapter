@@ -33,7 +33,11 @@ from ..core.message_buffer import (
     BufferedMessage,
     iter_message_media,
 )
-from ..core.run_tracker import TrackedRun, make_scope_key
+from ..core.run_tracker import (
+    TrackedRun,
+    VIRTUAL_LEDGER_MID_PREFIX as _NOID_LEDGER_PREFIX,
+    make_scope_key,
+)
 from ..core.bg_tasks import spawn_bg_task
 from ..core.prompt_builder import (
     SteerPresentation,
@@ -93,8 +97,8 @@ def _with_steer_reply_convention(text: str) -> str:
 
 
 # 无号行(拿不到插件 m:id)的台账虚拟锚前缀:只承载原始正文供 native 回收,
-# 不参与转录对账(对账按 m:id 搜转录,无号行没有可搜的锚)。
-_NOID_LEDGER_PREFIX = "noid:"
+# 不参与转录对账(对账按 m:id 搜转录,无号行没有可搜的锚)。值来自 core.run_tracker,
+# 与终态对账的结算判据共用同一常量,避免两处各写一份漂移。
 
 
 def _virtual_ledger_mid() -> str:

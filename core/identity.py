@@ -117,6 +117,22 @@ def loaded_identity_dirs(adapter: str) -> list["Path"]:
     return out
 
 
+def has_identity_entries(custom_dir: Path | None, adapter: str) -> bool:
+    """配置目录里的该适配器身份表是否已经有条目(缺档/空表返回 False)。
+
+    跨目录 fallback 的唯一闸门:当前权威表只要有任何条目,缺某个用户就是「没有
+    这条事实」——不得拿别的目录里同名账号的旧名字补上(身份事实只有当前配置
+    那一份表)。只有整张表都不存在/没有条目时,才允许沿用本进程刚加载过的同一
+    适配器身份表(定制目录搬迁/预览环境未重新初始化配置)。
+    """
+    if custom_dir is None:
+        return False
+    try:
+        return bool(_load_raw(_path(custom_dir, adapter)))
+    except Exception:
+        return False
+
+
 def resolve_display_name(custom_dir: Path | None, adapter: str, user_id: str) -> str | None:
     """发言者标签注释用：返回正主名，查不到/异常返回 None（热路径静默）。"""
     if custom_dir is None:

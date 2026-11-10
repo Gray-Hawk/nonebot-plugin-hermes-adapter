@@ -58,7 +58,7 @@ _STEER_LEDGER_SCHEMA = """
 CREATE TABLE IF NOT EXISTS steer_ledger (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id      TEXT NOT NULL,
-    m_id        TEXT NOT NULL,          -- 原始消息的 m:id(纯数字串);无 m:id 不入账
+    m_id        TEXT NOT NULL,          -- 原始消息的 m:id(纯数字串);无 m:id 用 noid:* 虚拟锚
     scope_key   TEXT NOT NULL,
     session_key TEXT NOT NULL,
     sender_id   TEXT NOT NULL,
@@ -79,6 +79,17 @@ _STEER_ACCEPTED_STATUSES = "'pending'"
 # reconciling 是对账消费者自己的在途认领(见 claim_steers_for_reconcile):终态钩子
 # 与晚到确认可以各触发一次对账, 只有原子认领到行的那一次负责补投。
 _STEER_LIVE_STATUSES = "'pending','sending','reconciling'"
+
+# 无号行(拿不到插件 m:id)的台账虚拟锚前缀,必须与 handlers/message_relay 的发送侧
+# 常量同值。虚拟锚只承载原始正文供 native 回收,没有可搜的转录锚:终态对账不做
+# 转录核验,run 正常收尾即结算(见 steer_reconcile),否则旧 run 的锚会留在 live 里
+# 被后一轮按 scope 拉走,把上一轮的原文误还给新 run。
+VIRTUAL_LEDGER_MID_PREFIX = "noid:"
+
+
+def is_virtual_ledger_mid(m_id) -> bool:
+    """台账行号是否是无号行的虚拟锚(不可按转录搜索/不可补投)。"""
+    return str(m_id or "").startswith(VIRTUAL_LEDGER_MID_PREFIX)
 
 
 _RECOVERED_REPLY_LEDGER_SCHEMA = """
@@ -645,9 +656,10 @@ class RunTracker:
             "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text, raw_text,"
             " accepted_at, status FROM steer_ledger WHERE run_id=?"
             f" AND status IN ({_STEER_ACCEPTED_STATUSES})"
-            # 无号行的虚拟锚(noid:*)只承载原文供 native 回收,没有可搜的转录锚:
-            # 拿它按 m:id 搜转录必然落空,会被误判成「被吞」而重复补投。
-            " AND m_id NOT LIKE 'noid:%'"
+            # 无号行的虚拟锚(noid:*)也在这里认领:它没有可搜的转录锚,不能按 m:id
+            # 搜转录,但必须在 run 收尾时结算——留给后面的 run 当候选就是把上一轮
+            # 的原文误还给新 run。调用方(steer_reconcile)对虚拟锚不做转录核验,
+            # 直接按「run 已正常收尾」核销;真被吞时回收点已先按原文核销。
             " ORDER BY id",
             (run_id,),
         ).fetchall()
@@ -757,19 +769,30 @@ class RunTracker:
         self._conn.commit()
         return cur.rowcount
 
-    def recover_by_text(self, recovered_text: str) -> int:
+    def recover_by_text(self, recovered_text: str, *, scope_key: str | None = None) -> int:
         """按文本子串核销 pending 台账, 返回影响行数。
 
         回收点(message_turns 两处 pending_steer 回收)拿不到 run_id(ChatResult 不带、
         tracker 行已 finish), 但拿得到 result.pending_steer 拼接文本; 上游 agent.steer()
         的拼接是 existing + "\\n" + cleaned, 台账 steer_text 是单次注入文本, 故
         pending_steer 必然把各条 steer_text 含为子串, 据此反向核销防双重投递。
+
+        ``scope_key`` 给定时只核销本会话: 子串匹配本身是跨会话的(同一个字面量在两个
+        群都出现很常见), 而空串正文的 LIKE 还会退化成 `%%`——不限定 scope 会把别的
+        会话里「真的被吞、还等着回收」的账项一起核销, 静默丢失。回收点都持有当前
+        scope, 因此生产路径恒传; 不传保持旧的全局语义(测试/兼容)。
         """
-        cur = self._conn.execute(
+        sql = (
             "UPDATE steer_ledger SET status='recovered'"
-            f" WHERE status IN ({_STEER_LIVE_STATUSES}) AND ? LIKE '%'||steer_text||'%'",
-            (recovered_text,),
+            f" WHERE status IN ({_STEER_LIVE_STATUSES})"
         )
+        params: list[object] = []
+        if scope_key is not None:
+            sql += " AND scope_key=?"
+            params.append(scope_key)
+        sql += " AND ? LIKE '%'||steer_text||'%'"
+        params.append(recovered_text)
+        cur = self._conn.execute(sql, tuple(params))
         self._conn.commit()
         return cur.rowcount
 

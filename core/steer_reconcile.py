@@ -26,7 +26,7 @@ from ..core.bg_tasks import spawn_bg_task
 from ..core.hermes_client import _try_parse_first_json_block
 from ..core.message_origin import MessageOrigin, MessageSource
 from ..core.routing import resolve_target
-from ..core.run_tracker import TrackedRun
+from ..core.run_tracker import TrackedRun, is_virtual_ledger_mid
 
 _QUERY_LIMIT = 500
 _QUERY_TIMEOUT = 10
@@ -55,6 +55,20 @@ async def reconcile_run_finished(tracked) -> None:
         return
     if not pending:
         return  # 常态零开销路径到此为止: 该 run 没有已接受待对账的 steer。
+    # 无号行的虚拟锚只承载原文供 native 回收,没有可搜的转录锚:按 m:id 搜必然落空,
+    # 会被误判成「被吞」而重复补投,所以不做转录核验——run 已正常收尾即结算。
+    # 真被吞的时候,回收点(pending_steer 上浮)已经先按原文把这些账项核销成
+    # recovered;剩下的虚拟锚留在 live 只会被后来的 run 按 scope 拉走(旧原文污染)。
+    virtual = [p for p in pending if is_virtual_ledger_mid(p.get("m_id"))]
+    if virtual:
+        _mark_status(tracked, [p["m_id"] for p in virtual], "reconciled")
+        logger.info(
+            f"[HERMES steer对账] 无号行虚拟锚 {len(virtual)} 条随 run 收尾结算 "
+            f"(run_id={tracked.run_id})"
+        )
+        pending = [p for p in pending if not is_virtual_ledger_mid(p.get("m_id"))]
+    if not pending:
+        return
     logger.info(
         f"[HERMES steer对账] 触发: run_id={tracked.run_id} pending={len(pending)}"
     )
