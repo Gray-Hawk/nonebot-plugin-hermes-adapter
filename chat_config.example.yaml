@@ -82,7 +82,7 @@ proactive_groups: []
 
 # ---- 工具、转发与通知：4 键 ----
 
-# get_recent_messages 工具单次最多返回多少条群消息；作为 MCP 专用上限独立保留，
+# get_recent_messages 工具单次最多返回多少条消息（群聊或私聊同一上限）；作为 MCP 专用上限独立保留，
 # 不并入聊天历史。MCP server 启用时该工具强制注册，不另设开关。
 mcp_recent_limit_max: 50
 

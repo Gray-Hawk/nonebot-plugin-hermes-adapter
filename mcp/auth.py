@@ -71,6 +71,26 @@ def scope_refusal(adapter: str, group_id: str, scope: CallerScope | None) -> str
     )
 
 
+def private_scope_refusal(adapter: str, user_id: str, scope: CallerScope | None) -> str | None:
+    """私聊读取的范围判定:放行返回 None,拒绝返回给调用方看的一句话。
+
+    私聊目标没有群号,不能套 `CallerScope.allows(adapter, group_id)` 的群范围模型;
+    单上游下也没有 per-group 隔离可复用。闸只有一条,与 validate_push_context 私侧
+    一致:调用方必须可识别(防匿名端点)。不新建白名单、身份映射或第二套权限系统。
+    """
+    if scope is not None:
+        return None
+    logger.warning(
+        f"[HERMES MCP] 拒绝未识别调用方读取私聊 ({adapter}, {user_id}) —— caller: unresolved"
+    )
+    return (
+        f"not authorized for private chat ({adapter}, {user_id}): the bridge could not "
+        "identify this caller's endpoint. This is a configuration boundary, not a transient "
+        "failure — do not retry. If it should be allowed, the operator has to configure "
+        "AGENT_API_KEY on the bot side so this caller authenticates."
+    )
+
+
 def assert_scope_allows(adapter: str, group_id: str, scope: CallerScope | None) -> None:
     """scope_refusal 的抛异常版本,供已经把错误折进返回值的调用点使用
     (push_message 的 validate_push_context 链)。

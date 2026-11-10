@@ -368,21 +368,28 @@ def build_mcp_app(
     @mcp.tool()
     async def get_recent_messages(
         adapter: str,
-        group_id: str,
+        group_id: str | None = None,
+        user_id: str | None = None,
         limit: int = 20,
         before_ts: int | None = None,
     ) -> GetRecentMessagesResult:
-        """Fetch recent messages from a group's buffer. Use sparingly."""
+        """Fetch recent messages from a group buffer or a private-chat buffer.
+
+        Group chat: pass group_id only. Private chat: pass user_id only (the owner of
+        that private conversation) and omit group_id. Exactly one of group_id / user_id
+        must be given. Private reads require an identifiable caller. Use sparingly.
+        """
         inp = GetRecentMessagesInput(
             adapter=adapter,
             group_id=group_id,
+            user_id=user_id,
             limit=limit,
             before_ts=before_ts,
         )
         result = await get_recent_messages_impl(inp, message_buffer=message_buffer, scope=caller_scope_from_request())
         _log_tool_call(
             "get_recent_messages",
-            f"adapter={adapter} group={group_id} limit={limit}",
+            f"adapter={adapter} group={group_id} user={user_id} limit={limit}",
             f"messages={len(result.messages)}" + (f" error={_clip(result.error)!r}" if result.error else ""),
         )
         return result
@@ -406,6 +413,9 @@ def build_mcp_app(
         Optional idx: only fetch those per-message image indexes (applies to all
         message_ids; numbers come from the media manifest like `(图#0 #1)`).
         Omit to fetch every image of the given messages.
+        Optional adapter/group_id: consistency check against the stored owner of
+        each message id (same shape as get_recent_messages; private ids have no
+        group, so omit group_id for them). A mismatch is reported as not_found.
         """
         inp = GetMessageImagesInput(
             message_ids=message_ids,

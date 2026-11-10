@@ -1,0 +1,63 @@
+== tests.test_recent_messages_private (new) ==
+test_group_query_unchanged_and_does_not_mix_private_rows (tests.test_recent_messages_private.GroupPathRegressionTests.test_group_query_unchanged_and_does_not_mix_private_rows) ... /usr/lib/python3.13/unittest/case.py:651: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+test_group_scope_still_refused_when_caller_unresolved (tests.test_recent_messages_private.GroupPathRegressionTests.test_group_scope_still_refused_when_caller_unresolved) ... 11-10 20:29:38 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] 拒绝越权操作 (onebotv11, g-1) —— caller: unresolved caller
+test_exactly_one_target_required (tests.test_recent_messages_private.InputContractTests.test_exactly_one_target_required) ... ok
+test_limit_bounds (tests.test_recent_messages_private.InputContractTests.test_limit_bounds) ... ok
+test_mcp_tool_schema_exposes_both_targets (tests.test_recent_messages_private.InputContractTests.test_mcp_tool_schema_exposes_both_targets) ... ok
+test_before_ts_pages_back_through_private_history (tests.test_recent_messages_private.PrivatePathTests.test_before_ts_pages_back_through_private_history) ... ok
+test_limit_is_capped_by_config (tests.test_recent_messages_private.PrivatePathTests.test_limit_is_capped_by_config) ... ok
+test_private_media_counts_are_preserved (tests.test_recent_messages_private.PrivatePathTests.test_private_media_counts_are_preserved) ... ok
+test_private_reads_only_target_owner (tests.test_recent_messages_private.PrivatePathTests.test_private_reads_only_target_owner) ... ok
+test_unresolved_caller_cannot_read_private (tests.test_recent_messages_private.PrivatePathTests.test_unresolved_caller_cannot_read_private) ... 11-10 20:29:38 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] 拒绝未识别调用方读取私聊 (onebotv11, 10001) —— caller: unresolved
+Ran 10 tests in 0.295s
+OK
+
+== tests.test_get_message_images_contract (new) ==
+test_adapter_or_group_mismatch_is_not_found (tests.test_get_message_images_contract.GetMessageImagesContractTests.test_adapter_or_group_mismatch_is_not_found) ... /usr/lib/python3.13/unittest/case.py:651: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+test_group_and_private_fetch_pass_consistency_check (tests.test_get_message_images_contract.GetMessageImagesContractTests.test_group_and_private_fetch_pass_consistency_check) ... 11-10 20:29:39 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] get_message_images 越权或目标不一致的 message_id 已按 not_found 处理: [2] (caller: dev-mode(未配置任何 key); adapter='ob11' group='g-1')
+test_no_target_params_still_authorizes_by_stored_owner (tests.test_get_message_images_contract.GetMessageImagesContractTests.test_no_target_params_still_authorizes_by_stored_owner) ... ok
+test_schema_matches_get_recent_messages_target_shape (tests.test_get_message_images_contract.GetMessageImagesContractTests.test_schema_matches_get_recent_messages_target_shape) ... ok
+test_unresolved_caller_gets_not_found_for_group_and_private_ids (tests.test_get_message_images_contract.GetMessageImagesContractTests.test_unresolved_caller_gets_not_found_for_group_and_private_ids) ... 11-10 20:29:39 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] get_message_images 越权或目标不一致的 message_id 已按 not_found 处理: [1, 2] (caller: unresolved; adapter='ob11' group=None)
+Ran 5 tests in 0.268s
+OK
+
+== full suite ==
+Ran 608 tests in 32.674s
+OK
+
+== turn tests ==
+Ran 6 tests in 0.048s
+OK
+
+== smoke_config_templates ==
+PASS .env 逐键注释
+
+ALL PASS
+
+== verify.py ==
+interpreter=/home/neonsky/NeonBot/.venv/bin/python
+root=/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109
+HEAD=16a104d feat(mcp): get_recent_messages 接入私聊查询并让 get_message_images 目标参数真正生效
+[PASS] 交付树无 pyc／pytest 缓存
+[PASS] 全量既有＋新增测试通过 — exit=0 ran=608 Ran 608 tests in 32.651s /  / OK
+[PASS] 已删除的信封模块／符号零引用 — 文件仍在=[] 引用=[]
+[PASS] Runs 终态／流式／恢复／对账共用同一纯文本解析器
+11-10 20:32:11 [SUCCESS] nonebot | NoneBot is initializing...
+11-10 20:32:11 [INFO] nonebot | Current Env: prod
+[PASS] _DECISION_PROTOCOL_BLOCK_COMPLETIONS 纯文本（无信封字段）
+[PASS] _DECISION_PROTOCOL_BLOCK_RUNS 纯文本（无信封字段）
+[PASS] runs 协议块：§ 整行分隔、无 push_message、无布尔箭头
+[PASS] runs 私聊协议块无 push_message
+[PASS] completions 协议块保留 push_message 进度口径
+[PASS] completions 私聊块无信封
+[PASS] 协议渲染：runs/completions 互不串味
+[PASS] 流式只追加计划／终态与恢复共用计划适配器
+[PASS] 控制 FIFO 与续跑登记各只有一条链路
+[PASS] Runs 轮内 push 硬拒（轮外/completions 不变）
+[PASS] 终态链先落整批计划再发送
+[PASS] 关键验收用例齐全 — 缺=[]
+[PASS] 验收不依赖暂存区 — staged=[]
+[PASS] 交付树干净（无未提交改动）
+[PASS] 交付树无 pyc／pytest 缓存
+
+ALL PASS: 19/19 项通过
