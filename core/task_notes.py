@@ -14,9 +14,14 @@ Key 与 inflight 同形(构造统一走 core/inflight.make_inflight_key):
 from __future__ import annotations
 
 import time
+from collections.abc import Collection
 
-# scope_key -> [提示便签, ...](FIFO,下一轮一次性弹出)
-_plugin_notes: dict[tuple[str, str], list[str]] = {}
+# 任务锚纠错便签:任务锚总开关(task_anchor_enabled)关闭时,这两类便签不再随下一轮
+# 组装进 user content——关闭后不继续教模型用锚。开启时原样弹出,其他种类不受影响。
+ANCHOR_NOTE_KINDS = frozenset({"anchor-merge-invalid", "answer-anchor-invalid"})
+
+# scope_key -> [(提示种类, 提示便签), ...](FIFO,下一轮一次性弹出)
+_plugin_notes: dict[tuple[str, str], list[tuple[str, str]]] = {}
 # (scope_key, 提示种类) -> 上次提示时间戳(同类提示 24h 内不重复,防提醒通胀)
 _hint_marks: dict[tuple[tuple[str, str], str], float] = {}
 
@@ -48,10 +53,17 @@ def push_plugin_note(key: tuple[str, str], kind: str, text: str, cooldown_sec: f
         return False
     _hint_marks[mark] = now
     _sweep_expired(_hint_marks, now - _HINT_MARK_KEEP_SEC, ts_of=float)
-    _plugin_notes.setdefault(key, []).append(text)
+    _plugin_notes.setdefault(key, []).append((kind, text))
     return True
 
 
-def pop_plugin_notes(key: tuple[str, str]) -> list[str]:
-    """取出并清空该 scope 的提示便签(构造下一轮 content 时消费)。"""
-    return _plugin_notes.pop(key, [])
+def pop_plugin_notes(
+    key: tuple[str, str], *, drop_kinds: Collection[str] = ()
+) -> list[str]:
+    """取出并清空该 scope 的提示便签(构造下一轮 content 时消费)。
+
+    ``drop_kinds`` 里的种类按「关闭即不组装」丢弃:仍然弹出(见即焚),但不返回、
+    也不留给下一轮;其余种类照常返回。
+    """
+    notes = _plugin_notes.pop(key, [])
+    return [text for kind, text in notes if kind not in drop_kinds]

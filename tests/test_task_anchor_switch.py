@@ -23,6 +23,8 @@ from nonebot_plugin_hermes_adapter.core import chat_config as cc
 from nonebot_plugin_hermes_adapter.core import config_templates as ct
 from nonebot_plugin_hermes_adapter.core import control_intent
 from nonebot_plugin_hermes_adapter.core import prompt_builder as pb
+from nonebot_plugin_hermes_adapter.core import task_notes
+from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
 from nonebot_plugin_hermes_adapter.core.active_session import (
     ActiveSessionManager,
     AnchorRecord,
@@ -389,6 +391,90 @@ class TaskAnchorHandlerTests(e2._ReactiveHarness):
         self.assertEqual(resolved, ["m:7"])
         self.assertIsNone(manager.get("onebotv11", "g1"))
         self.assertEqual(observed["pins"], 0)
+
+    def _manager_with_anchor(self):
+        """在钉锚 u2 的任务：非法 anchor_merge / answer_anchor 才会触发纠错便签。"""
+        manager = ActiveSessionManager()
+        session = manager.trigger("onebotv11", "g1", "u1", now_ms=self.now)
+        anchor = AnchorRecord(
+            participants=[Participant(user_id="u2", nickname="B", joined_ts=self.now - 1000)],
+            text="存量委托", ts=self.now - 1000, m_id=12,
+        )
+        self.assertTrue(manager.pin_anchor(
+            session, anchor, master_ids=set(), max_age_ms=3_600_000, now_ms=self.now,
+        ))
+        return manager
+
+    async def _run_capturing_user_content(self, manager, *, enabled, control=None):
+        """真实 _run_reactive_turn + 真实 task_notes 队列，捕获本轮 user content。"""
+        _commit(enabled)
+        buffered = _row("跟进这件事", now=self.now)
+        buffered.id = 5
+        result = _result('{"body":"答复"}')
+        if control:
+            result.structured["_control"] = control
+        captured: list[str] = []
+        real_build = mt.build_reactive_user_content
+        original = mt._run_reactive_turn
+
+        def capture(**kwargs):
+            out = real_build(**kwargs)
+            captured.append(out)
+            return out
+
+        async def actual(**kwargs):
+            kwargs["ephemeral"] = False
+            with patch.object(mt, "task_notes", task_notes), \
+                    patch.object(mt, "build_reactive_user_content", capture):
+                return await original(**kwargs)
+
+        with patch.object(mt, "_run_reactive_turn", actual):
+            await self._run(
+                result, tracker=self._plain_tracker(), sessions=manager,
+                current_buffered=buffered, now_ms=self.now,
+                task_anchor_enabled=enabled,
+            )
+        return captured
+
+    async def test_anchor_feedback_not_injected_after_switch_off(self) -> None:
+        """开→非法锚反馈→关：关闭后下一轮不再新组装锚纠错，普通便签照常。
+
+        复用既有便签队列/组装链；开启轮的两条纠错反馈逐字保留，关闭轮只丢弃
+        anchor-merge-invalid / answer-anchor-invalid 两类，其余便签原样贴回。
+        """
+        manager = self._manager_with_anchor()
+        task_notes.pop_plugin_notes(KEY)
+        self.addCleanup(task_notes.pop_plugin_notes, KEY)
+        await self._run_capturing_user_content(
+            manager, enabled=True,
+            control={"anchor_merge": "nonexistent", "answer_anchor": "nonexistent"},
+        )
+        queued = task_notes._plugin_notes.get(KEY, [])
+        self.assertEqual(len(queued), 2)
+        # 开启时组装不变：下一轮（仍开启）两条纠错如实贴进 user content。
+        on_prompts = await self._run_capturing_user_content(manager, enabled=True)
+        on = "\n".join(on_prompts)
+        self.assertIn("anchor_merge=nonexistent", on)
+        self.assertIn("要归并请填在钉任务的发起者 id", on)
+        self.assertIn("answer_anchor=nonexistent", on)
+        self.assertIn("要标应答请填在钉委托人的 id 或 all", on)
+        self.assertEqual(task_notes._plugin_notes.get(KEY, []), [])
+        # 再做一次开启轮产生纠错，混入一条普通（非锚）便签后切关闭。
+        await self._run_capturing_user_content(
+            manager, enabled=True,
+            control={"anchor_merge": "nonexistent", "answer_anchor": "nonexistent"},
+        )
+        self.assertEqual(len(task_notes._plugin_notes.get(KEY, [])), 2)
+        task_notes.push_plugin_note(KEY, "media-inline-missing", "普通便签：图片没取到")
+        off_prompts = await self._run_capturing_user_content(manager, enabled=False)
+        off = "\n".join(off_prompts)
+        self.assertNotIn("anchor_merge=nonexistent", off)
+        self.assertNotIn("answer_anchor=nonexistent", off)
+        self.assertNotIn("要归并请填在钉任务的发起者 id", off)
+        self.assertNotIn("要标应答请填在钉委托人的 id 或 all", off)
+        self.assertIn("普通便签：图片没取到", off)
+        # 两类锚纠错按见即焚丢弃，不残留到再开启轮。
+        self.assertEqual(task_notes._plugin_notes.get(KEY, []), [])
 
 
 if __name__ == "__main__":

@@ -1085,8 +1085,16 @@ async def _run_passive_turn(
         current_sticker_urls=_label_groups(label_index, sticker_inlined),
         is_private=is_private,
         # 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
+        # 任务锚总开关关闭:上一轮(开启时)排队的两类非法锚纠错便签不再组装进
+        # user content——关闭后不继续教模型用锚;其余便签(引用/退窗/媒体等)照常。
         plugin_note="\n".join(
-            task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, is_private, user_id, group_id))
+            task_notes.pop_plugin_notes(
+                _feedback_scope_key(adapter_name, is_private, user_id, group_id),
+                drop_kinds=(
+                    () if load_chat_config().task_anchor_enabled
+                    else task_notes.ANCHOR_NOTE_KINDS
+                ),
+            )
         ) or None,
         name_resolver=_name_resolver,
         # 身份栏与 [有人@我]:当前 bot 的 self_id 是「我」的唯一事实源;
@@ -1729,8 +1737,16 @@ async def _run_reactive_turn(
         sender_blacklisted=sender_blacklisted,
         pinned_anchors=pinned_anchors,
         # 分级反馈:弹出本 scope 的插件提示便签贴进本轮(见即焚)
+        # 任务锚总开关关闭:上一轮(开启时)排队的两类非法锚纠错便签不再组装进
+        # user content——关闭后不继续教模型用锚;其余便签照常。
         plugin_note="\n".join(
-            task_notes.pop_plugin_notes(_feedback_scope_key(adapter_name, False, user_id, group_id))
+            task_notes.pop_plugin_notes(
+                _feedback_scope_key(adapter_name, False, user_id, group_id),
+                drop_kinds=(
+                    () if chat_cfg.task_anchor_enabled
+                    else task_notes.ANCHOR_NOTE_KINDS
+                ),
+            )
         ) or None,
         now_ms=now_ms,
         name_resolver=_name_resolver,

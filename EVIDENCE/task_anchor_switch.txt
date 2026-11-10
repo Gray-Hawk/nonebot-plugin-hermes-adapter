@@ -64,6 +64,29 @@ anchor_merge/钉锚/松锚）在 12 路渲染（3 接口 × 群/私 × system/us
   ignored_fields／ok=false 语义，避免模型反复重试。
 - 存量锚只随活跃窗口存活；关闭跨过窗口过期时间后不会复活（与既有窗口语义一致）。
 
+六、R1 修正：关闭后不再组装待发锚纠错便签（2026-11-10，父 b397d7f）
+----------------------------------------------------------------------------
+审核 R1（P2）：开启轮对非法 anchor_merge／answer_anchor 写入的 task_notes 纠错便签，
+切换到 false 后下一轮仍被无条件弹出并组装进 user content——等于关闭后继续教模型用锚。
+修法（最小）：便签队列沿用既有 kind 记录种类（_plugin_notes 内部改存 (kind, text)），
+两条组装链（reactive 与 passive 群路共用同一 scope）在总开关关闭时只丢弃
+anchor-merge-invalid／answer-anchor-invalid 两类便签（见即焚，不残留）；开启时原样
+弹出，其他种类便签不受影响。不按用户文本清洗，不动历史消息与存量锚，不新增平行
+状态机、持久化表或恢复系统。
+- 新增回归 tests.test_task_anchor_switch.TaskAnchorHandlerTests.test_anchor_feedback_not_injected_after_switch_off：
+  真实非 ephemeral _run_reactive_turn + 真实 ActiveSessionManager（含在钉锚）+ 真实
+  task_notes 与 user content 构造。时序：开启轮产生 2 条非法锚纠错便签；下一开启轮
+  两条纠错逐字贴回 user content；再做一次开启轮后切关闭并混入 1 条普通便签，关闭轮
+  user content 无任何锚纠错、普通便签保留、两类锚纠错不残留。
+- 失败→通过见证：仅回退源码改动（保留新测试）跑到父实现，用例失败
+  `AssertionError: 'anchor_merge=nonexistent' unexpectedly found in ...`（即 R1 原缺陷）；
+  应用本修正后同一用例通过。审核方只读复现脚本 anchor84_review_probe.py 修前
+  1 failure/3、修后 3/3 OK。
+- 修后实跑：专项 tests.test_task_anchor_switch 18/18 OK（父 17 + 本卡 1）；
+  task_anchor_switch + control_mcp + control_regressions 73/OK；全量 unittest 547/OK；
+  turn_tests 6/OK；verify.py 19/19 PASS；smoke_task_anchor_switch、
+  smoke_config_templates、smoke_chat_config 全 ALL PASS。
+
 ============================================================================
 smoke_task_anchor_switch.py 全文输出（EXIT=0）
 ============================================================================
