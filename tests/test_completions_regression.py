@@ -14,12 +14,16 @@ from tests import _bootstrap  # noqa: E402
 
 
 class CompletionsTextSeamTests(unittest.TestCase):
-    """终态正文切分与静默口径（Runs 与 completions 共用同一份）。"""
+    """终态正文切分与静默口径（Runs 与 completions 共用同一份分节符信封）。"""
+
+    @staticmethod
+    def _unit(body: str) -> str:
+        return f"§\n{body}\n§"
 
     def test_single_sentence_is_one_unit(self) -> None:
         from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text
 
-        decisions = decisions_from_text("正文")
+        decisions = decisions_from_text(self._unit("正文"))
         self.assertEqual(len(decisions), 1)
         self.assertEqual(decisions[0]["body"], "正文")
         self.assertNotIn("reply_text", decisions[0])
@@ -29,14 +33,21 @@ class CompletionsTextSeamTests(unittest.TestCase):
     def test_empty_text_maps_to_silent(self) -> None:
         from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text
 
-        for text in ("", "   ", "\n\n"):
+        for text in ("", "   ", "\n\n", "§\n§"):
             self.assertEqual(decisions_from_text(text), [])
 
     def test_separator_makes_multiple_units(self) -> None:
         from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text
 
-        decisions = decisions_from_text("甲\n§\n乙\n§\n丙")
+        decisions = decisions_from_text("§\n甲\n§\n乙\n§\n丙\n§")
         self.assertEqual([d["body"] for d in decisions], ["甲", "乙", "丙"])
+
+    def test_bare_text_is_not_a_body(self) -> None:
+        from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text
+
+        # 旧裸正文不保留兼容层：没有分节符就没有正文。
+        self.assertEqual(decisions_from_text("甲\n§\n乙"), [])
+        self.assertEqual(decisions_from_text("直接一句话"), [])
 
     def test_over_limit_fails_closed(self) -> None:
         from nonebot_plugin_hermes_adapter.core.runs_text import (
@@ -46,7 +57,7 @@ class CompletionsTextSeamTests(unittest.TestCase):
         )
 
         with self.assertRaises(TextUnitsError):
-            decisions_from_text("长" * (MAX_BODY_CHARS + 1))
+            decisions_from_text(self._unit("长" * (MAX_BODY_CHARS + 1)))
 
     def test_media_extraction_unchanged(self) -> None:
         from nonebot_plugin_hermes_adapter.core.hermes_client import extract_response_media
@@ -164,20 +175,22 @@ class ChatTextUnitTests(unittest.IsolatedAsyncioTestCase):
             object.__setattr__(plugin_config, "hermes_api_interface", old_iface)
 
     async def test_plain_sentence_is_one_decision(self) -> None:
-        result = await self._chat_with("你好")
+        result = await self._chat_with("§\n你好\n§")
         self.assertFalse(result.parse_failed)
         self.assertEqual(result.structured["body"], "你好")
         self.assertEqual([d["body"] for d in result.terminal_decisions], ["你好"])
 
     async def test_separator_splits_final_answer(self) -> None:
-        result = await self._chat_with("甲\n§\n乙")
+        result = await self._chat_with("§\n甲\n§\n乙\n§")
         self.assertEqual([d["body"] for d in result.terminal_decisions], ["甲", "乙"])
 
-    async def test_legacy_json_is_plain_text(self) -> None:
+    async def test_legacy_json_is_not_a_body(self) -> None:
         legacy = '{"body":"旧格式"}'
         result = await self._chat_with(legacy)
+        # 旧裸正文不再兼容：零发送、零决策，也不是解析失败（只是没有可发的正文）。
         self.assertFalse(result.parse_failed)
-        self.assertEqual(result.structured["body"], legacy)
+        self.assertEqual(result.terminal_decisions, [])
+        self.assertFalse(result.structured["should_reply"])
 
     async def test_empty_content_is_silent(self) -> None:
         result = await self._chat_with("")
@@ -187,12 +200,12 @@ class ChatTextUnitTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_markdown_and_cq_kept_verbatim(self) -> None:
         text = "看这里 [文档](https://example.com/a) 和 [CQ:at,qq=123]"
-        result = await self._chat_with(text)
+        result = await self._chat_with(f"§\n{text}\n§")
         self.assertEqual(result.structured["body"], text)
 
     async def test_quotes_and_tail_residue_kept_verbatim(self) -> None:
         text = '"body":"SECRET"}'
-        result = await self._chat_with(text)
+        result = await self._chat_with(f"§\n{text}\n§")
         self.assertEqual(result.structured["body"], text)
 
 

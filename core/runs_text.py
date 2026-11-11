@@ -1,21 +1,33 @@
-"""纯文本正文协议：正文就是用户看到的消息，独立整行 `§` 只作连发分隔。
+"""分节符正文信封：独立整行 `§` 是唯一标记，只有完整闭合的段才可发送。
 
-规则（对应设计 t_306c4938 v5）：
+协议（主人 2026-11-11 定案）：
 
-- 只有「整行内容严格等于 `§`」才是单位边界（任何位置，含代码围栏内都一样）；
-  ` §`、`§ `、` § ` 都只是普通正文（不做 strip 后的宽松识别）；不按行、不按空行切；
-- 首／尾／连续 `§` 不产生空消息，空单位直接丢弃；
-- 单个单位超 `MAX_BODY_CHARS` 一律 fail-closed（``TextUnitsError``），绝不发半截；
-- 解析是纯函数：同一段文本永远得到同一串单位，正常链／恢复链／对账链共用这一份。
+- 每份回复以独立一行 `§` 开头，以独立一行 `§` 结尾；多条正文之间也用独立一行
+  `§` 分隔。标记是**分隔符**：相邻两个标记之间的内容就是一份正文。
+- 单条 ``§\\n正文\\n§``；两条 ``§\\nA\\n§\\nB\\n§``。
+- 静默：整段只含 `§` 与空白字符（``§``／``§§``／``§\\n§``／``§ §``／多行）——
+  去掉 `§` 与空白后没有任何内容就是静默，不发送、也不报错。
+- 只有完整闭合的段可发送：第一个标记之前的正文（缺开头）与最后一个标记之后的
+  正文（缺末尾）都不是正文，不产生单位，只留一条可见 WARNING。
+- 行内 `§`（``第 3 节 §3``）与带空格的 `§`（`` §``／``§ ``／`` § ``）都是普通
+  正文，不是标记；代码围栏没有豁免——围栏内独立整行 `§` 同样分隔。
+- 旧裸正文不保留兼容层：整段没有任何独立整行 `§` 时不产生单位（``no_marker``）。
+- 单个单位超 ``MAX_BODY_CHARS`` 一律 fail-closed（``TextUnitsError``），绝不发半截。
 
-本模块不含流式状态机、旧格式识别或兼容分支——段内去重由 ``RunsEventParser``
-按「完整发送单元全文匹配」维护，不在这里加第二套协议。
+本模块是正常链／流式链／恢复链／对账链共用的唯一解析器：纯函数（除不可发送段的
+WARNING），不含流式状态机。段内去重由 ``RunsEventParser`` 按「完整单位全文匹配」
+维护，不在这里加第二套协议。
 """
 
 from __future__ import annotations
 
 SEPARATOR = "§"
 MAX_BODY_CHARS = 4000
+
+# 不可发送段的原因：只用于日志，永远不参与发送决策。
+_NO_MARKER = "no_marker"          # 整段没有任何独立整行 §（旧裸正文／缺开头也缺末尾）
+_MISSING_OPEN = "missing_open"    # 首个 § 之前还有正文
+_MISSING_CLOSE = "missing_close"  # 末个 § 之后还有正文（没等到闭合标记）
 
 
 class TextUnitsError(ValueError):
@@ -34,28 +46,48 @@ def _unit_length(text: str) -> int:
     return len(shrunk)
 
 
+def _warn_dropped(reason: str, text: str) -> None:
+    """不可发送段留一条可见日志（截断预览，绝不把整段正文写进日志）。"""
+    from nonebot import logger
+
+    flat = " ".join(text.split())
+    preview = flat if len(flat) <= 80 else flat[:80] + "…"
+    logger.warning(
+        f"[HERMES] 正文信封无效 reason={reason} chars={len(text)} preview={preview!r}"
+    )
+
+
 def split_text_units(text: str, *, max_body_chars: int = MAX_BODY_CHARS) -> list[str]:
-    """整段正文 → 有序发送单位；空文本返回 ``[]``（静默），超长抛 ``TextUnitsError``。"""
+    """整段正文 → 有序发送单位；静默／全不可发送返回 ``[]``，超长抛 ``TextUnitsError``。"""
     raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
     if not raw.strip():
         return []
+    # 静默优先：只含 § 与空白就是「什么都不说」，不做任何分段／报错分支。
+    if not raw.replace(SEPARATOR, "").strip():
+        return []
+    lines = raw.split("\n")
+    # 严格整行匹配：前后带空格（` §`、`§ `、` § `）都是普通正文，不切分。
+    # 不设第二套规则：代码围栏内的整行 § 同样分隔，没有转义/豁免。
+    positions = [index for index, line in enumerate(lines) if line == SEPARATOR]
+    if not positions:
+        _warn_dropped(_NO_MARKER, raw)
+        return []
+
+    head = "\n".join(lines[:positions[0]]).strip()
+    if head:
+        _warn_dropped(_MISSING_OPEN, head)
     units: list[str] = []
-    current: list[str] = []
-    for line in raw.split("\n"):
-        # 严格整行匹配：前后带空格（` §`、`§ `、` § `）都是普通正文，不切分。
-        # 不设第二套规则：代码围栏内的整行 § 同样分隔，没有转义/豁免。
-        if line == SEPARATOR:
-            units.append("\n".join(current))
-            current = []
-            continue
-        current.append(line)
-    units.append("\n".join(current))
-    cleaned = [unit.strip() for unit in units]
-    kept = [unit for unit in cleaned if unit]
-    for unit in kept:
-        if _unit_length(unit) > max_body_chars:
+    for start, end in zip(positions, positions[1:]):
+        body = "\n".join(lines[start + 1:end]).strip()
+        if not body:
+            continue  # 空段（相邻标记或只有空白）不是正文，也不算违规。
+        if _unit_length(body) > max_body_chars:
             raise TextUnitsError("body_overflow")
-    return kept
+        units.append(body)
+    tail = "\n".join(lines[positions[-1] + 1:]).strip()
+    if tail:
+        _warn_dropped(_MISSING_CLOSE, tail)
+    return units
 
 
 def units_from_text(text: str, *, max_body_chars: int = MAX_BODY_CHARS) -> list[dict]:

@@ -46,8 +46,8 @@ class FinalPromptTests(unittest.TestCase):
             for scope, prompt in self.prompts(mode).items():
                 with self.subTest(mode=mode, scope=scope):
                     self.assertIn('用户能看到你输出的正文', prompt)
-                    self.assertIn('用户明显还要继续说话、说话说一半、意思没表达完整时，本轮不回答、不调用工具，什么都不输出', prompt)
-                    self.assertIn('如果上一轮回复已经涵盖用户后续补充的内容，本轮保持静默，不要重复回复。', prompt)
+                    self.assertIn('本轮不回答、不调用工具，只输出两行 §（静默）', prompt)
+                    self.assertIn('本轮只输出两行 §（静默），不要重复回复。', prompt)
                     self.assertIn('闲聊时输出尽可能单句不分段，简短，不超过15字。', prompt)
                     self.assertNotRegex(prompt, r'(?m)^[%#]|[%#]$')
                     if mode == 'runs':

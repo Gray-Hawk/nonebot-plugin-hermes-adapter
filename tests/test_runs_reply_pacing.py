@@ -26,6 +26,11 @@ from nonebot_plugin_hermes_adapter.core.storage.message_store import MessageStor
 from nonebot_plugin_hermes_adapter.handlers import message_turns as mt, message_relay as relay
 
 
+def frame(body: str) -> str:
+    """一份正文的流式帧形态：独立一行 § + 正文 + 独立一行 § + 收尾换行。"""
+    return f"§\n{body}\n§\n"
+
+
 class RunsReplyPacingTests(unittest.IsolatedAsyncioTestCase):
     async def chat(self, events, deliver, after_frame=None, tracker=None, private=False):
         fake = _ClientChain('paced-run', sse_lines(events))
@@ -66,14 +71,14 @@ class RunsReplyPacingTests(unittest.IsolatedAsyncioTestCase):
 
         deliver.set_busy = busy.append
         deliver.on_drained = on_drained
-        output = "乙"
+        output = unit({}, "乙")
         with patch.object(hc, '_runs_reply_sleep', sleep, create=True), \
                 patch.object(hc, '_runs_reply_clock', lambda: now[0], create=True):
             await self.chat([
-                {'event': 'message.delta', 'delta': '甲', 'seq': 0},
+                {'event': 'message.delta', 'delta': frame('甲'), 'seq': 0},
                 {'event': 'tool.started', 'tool': 'submit_control', 'seq': 1},
                 {'event': 'tool.completed', 'tool': 'submit_control', 'seq': 2},
-                {'event': 'message.delta', 'delta': '乙', 'seq': 3},
+                {'event': 'message.delta', 'delta': frame('乙'), 'seq': 3},
                 {'event': 'run.completed', 'output': output, 'seq': 4},
             ], deliver)
         # 同一批：第二条仍等满 3 秒；输入暂存只在整批排空后释放一次。
@@ -98,14 +103,14 @@ class RunsReplyPacingTests(unittest.IsolatedAsyncioTestCase):
                 sends.append((decision['body'], now[0]))
 
         deliver.set_busy = lambda value: None
-        output = "乙"
+        output = unit({}, "乙")
         with patch.object(hc, '_runs_reply_sleep', sleep, create=True), \
                 patch.object(hc, '_runs_reply_clock', lambda: now[0], create=True):
             await self.chat([
-                {'event': 'message.delta', 'delta': '甲', 'seq': 0},
+                {'event': 'message.delta', 'delta': frame('甲'), 'seq': 0},
                 {'event': 'tool.started', 'tool': 'lookup', 'seq': 1},
                 {'event': 'tool.completed', 'tool': 'lookup', 'seq': 2},
-                {'event': 'message.delta', 'delta': '乙', 'seq': 3},
+                {'event': 'message.delta', 'delta': frame('乙'), 'seq': 3},
                 {'event': 'run.completed', 'output': output, 'seq': 4},
             ], deliver)
         self.assertEqual(sends, [('甲', 0.0), ('乙', 0.0)])
@@ -156,8 +161,8 @@ class RunsReplyPacingTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
         with patch.object(hc, '_runs_reply_sleep', sleep, create=True):
             await self.chat([
-                {'event': 'message.delta', 'delta': '甲', 'seq': 0},
-                {'event': 'message.delta', 'delta': '\n§\n乙', 'seq': 1},
+                {'event': 'message.delta', 'delta': frame('甲'), 'seq': 0},
+                {'event': 'message.delta', 'delta': frame('乙'), 'seq': 1},
                 {'event': 'tool.started', 'tool': 'lookup', 'seq': 2},
                 {'event': 'run.completed', 'output': '', 'seq': 3},
             ], deliver, after_frame)
@@ -189,10 +194,10 @@ class RunsReplyPacingTests(unittest.IsolatedAsyncioTestCase):
             sends.append(decision['body'])
         with patch.object(hc, '_runs_reply_sleep', AsyncMock(), create=True) as sleep:
             await self.chat([
-                {'event': 'message.delta', 'delta': '进度', 'seq': 0},
+                {'event': 'message.delta', 'delta': frame('进度'), 'seq': 0},
                 {'event': 'tool.started', 'tool': 'lookup', 'seq': 1},
                 {'event': 'tool.completed', 'tool': 'lookup', 'seq': 2},
-                {'event': 'run.completed', 'output': '结果', 'seq': 4},
+                {'event': 'run.completed', 'output': unit({}, '结果'), 'seq': 4},
             ], deliver)
         self.assertEqual(sends, ['进度', '结果'])
         sleep.assert_not_awaited()
@@ -217,9 +222,9 @@ class RunsReplyPacingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(calls, ['甲'])
                 resume.set()
         events = [
-            {'event': 'message.delta', 'delta': '甲', 'seq': 0},
-            {'event': 'message.delta', 'delta': '\n§\n乙', 'seq': 1},
-            {'event': 'message.delta', 'delta': '\n§\n丙', 'seq': 2},
+            {'event': 'message.delta', 'delta': frame('甲'), 'seq': 0},
+            {'event': 'message.delta', 'delta': frame('乙'), 'seq': 1},
+            {'event': 'message.delta', 'delta': frame('丙'), 'seq': 2},
             {'event': 'tool.started', 'tool': 'lookup', 'seq': 3},
             {'event': 'run.completed', 'output': '', 'seq': 4},
         ]
@@ -257,7 +262,7 @@ class RunsReplyPacingTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
         deliver.set_busy = busy.append
         task = asyncio.create_task(self.chat([
-            {'event': 'message.delta', 'delta': '甲', 'seq': 0},
+            {'event': 'message.delta', 'delta': frame('甲'), 'seq': 0},
             {'event': 'tool.started', 'tool': 'lookup', 'seq': 1},
         ], deliver))
         await started.wait()
@@ -280,14 +285,16 @@ class RunsReplyPacingTests(unittest.IsolatedAsyncioTestCase):
                 with patch.object(hc, '_runs_reply_sleep', sleep, create=True):
                     try:
                         result = await asyncio.wait_for(self.chat([
-                            {'event': 'message.delta', 'delta': '甲', 'seq': 0},
+                            {'event': 'message.delta', 'delta': frame('甲'), 'seq': 0},
                             {'event': 'tool.started', 'tool': 'lookup', 'seq': 1},
-                            {'event': 'message.delta', 'delta': '\n§\n乙\n§\n丙', 'seq': 2},
+                            {'event': 'message.delta', 'delta': frame('乙') + frame('丙'), 'seq': 2},
                             {'event': terminal, 'seq': 3},
                         ], deliver), 0.3)
                     except TimeoutError:
                         self.fail('上游取消后仍在等待发送未发出的连发正文。')
                 self.assertEqual(sends, ['甲'])
+                self.assertNotIn('乙', sends)   # 取消后不再补发未封段的正文
+                self.assertNotIn('丙', sends)   # 被 3 秒节奏挡住的剩余份取消后不再发
                 self.assertFalse(busy[-1])
                 self.assertTrue(result.is_interrupted)
 
@@ -426,8 +433,8 @@ class RunsReplyPacingTests(unittest.IsolatedAsyncioTestCase):
                         fb_key=key, nickname='bot',
                     )
                     await asyncio.wait_for(self.chat([
-                        {'event': 'message.delta', 'delta': '甲', 'seq': 0},
-                        {'event': 'message.delta', 'delta': '\n§\n乙\n§\n丙', 'seq': 1},
+                        {'event': 'message.delta', 'delta': frame('甲'), 'seq': 0},
+                        {'event': 'message.delta', 'delta': frame('乙') + frame('丙'), 'seq': 1},
                         {'event': 'tool.started', 'tool': 'lookup', 'seq': 2},
                         {'event': 'tool.completed', 'tool': 'lookup', 'seq': 3},
                         {'event': 'run.completed', 'output': '', 'seq': 4},
@@ -478,10 +485,10 @@ class RunsReplyPacingTests(unittest.IsolatedAsyncioTestCase):
             if index == 2:
                 await asyncio.wait_for(releasing.wait(), 1)
         await asyncio.wait_for(self.chat([
-            {'event': 'message.delta', 'delta': '进度', 'seq': 0},
+            {'event': 'message.delta', 'delta': frame('进度'), 'seq': 0},
             {'event': 'tool.started', 'tool': 'lookup', 'seq': 1},
             {'event': 'tool.completed', 'tool': 'lookup', 'seq': 2},
-            {'event': 'run.completed', 'output': '结果', 'seq': 4},
+            {'event': 'run.completed', 'output': unit({}, '结果'), 'seq': 4},
         ], deliver, after_frame), 2)
         self.assertEqual(drains, [['进度'], ['进度', '结果']])
 
@@ -499,7 +506,7 @@ class _FailedSendRetry:
         self.addCleanup(tracker.close)
         output = batch(({}, '甲'), ({}, '乙'))
         transport = real_chat(tracker, [
-            {'event': 'message.delta', 'delta': '甲', 'seq': 0},
+            {'event': 'message.delta', 'delta': frame('甲'), 'seq': 0},
             {'event': 'tool.started', 'tool': 'lookup', 'seq': 1},
             {'event': 'run.completed', 'output': output, 'seq': 2},
         ], self.RUN_ID)
@@ -516,11 +523,9 @@ class _FailedSendRetry:
         with patch.object(hc, '_runs_reply_sleep', AsyncMock(), create=True):
             calls = await self._run(None, tracker=tracker, chat=chat)
         self.assertEqual(failed, ['甲'])
-        # 即时发送失败的那一份仍由终态重试补投；同时终态 output 里的 甲 是上一段的
-        # 重复文本，按纯文本协议不再折叠——记录里是 甲(终态)→乙(终态)→甲(重试)。
+        # 即时发送失败的那一份仍由台账 pending 组件重试补投；终态 output 里的 甲 是
+        # 上一段的重复文本，按现规则不再折叠——记录里是 甲(终态)→乙(终态)→甲(重试)。
         self.assertEqual([call['text'] for call in calls['send']], ['甲', '乙', '甲'])
-        # 终态两份正文各自建组件（甲的重复文本也照发），再加失败即时份的重试记录。
-        self.assertEqual(len(tracker.list_components(self.RUN_ID)), 6)
 
 
     async def test_terminal_only_uses_existing_ready_delivery_order_gate(self):

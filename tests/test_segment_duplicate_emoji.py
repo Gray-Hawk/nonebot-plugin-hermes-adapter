@@ -209,9 +209,9 @@ class RunsClientToHookTests(unittest.IsolatedAsyncioTestCase):
             adapter_name="onebotv11", interface="runs",
         )
         result, seen = await self._chat([
-            {"event": "message.interim", "text": "好", "seq": 0},
-            {"event": "message.interim", "text": "好", "seq": 1},
-            {"event": "message.interim", "text": "好", "seq": 2},
+            {"event": "message.interim", "text": "§\n好\n§", "seq": 0},
+            {"event": "message.interim", "text": "§\n好\n§", "seq": 1},
+            {"event": "message.interim", "text": "§\n好\n§", "seq": 2},
             {"event": "run.completed", "output": "", "seq": 3},
         ], hook)
         await _settle()
@@ -229,8 +229,8 @@ class RunsClientToHookTests(unittest.IsolatedAsyncioTestCase):
             adapter_name="onebotv11", interface="runs",
         )
         await self._chat([
-            {"event": "message.delta", "delta": "未封口的尾巴", "seq": 0},
-            {"event": "run.completed", "output": "真正的终态正文", "seq": 1},
+            {"event": "message.delta", "delta": "§\n未闭合的尾巴", "seq": 0},
+            {"event": "run.completed", "output": "§\n真正的终态正文\n§", "seq": 1},
         ], hook)
         await _settle()
         bot.call_api.assert_not_awaited()
@@ -242,19 +242,19 @@ class RunsClientToHookTests(unittest.IsolatedAsyncioTestCase):
             adapter_name="onebotv11", interface="runs",
         )
         await self._chat([
-            # 第一段：delta 后工具封段 → 发出。
-            {"event": "message.delta", "delta": "同一句", "seq": 0},
+            # 第一段：delta 闭合即发，工具再封段（不重发）。
+            {"event": "message.delta", "delta": "§\n同一句\n§\n", "seq": 0},
             {"event": "tool.started", "tool": "todo_list", "seq": 1},
-            # 第二段同文：终端 output 照发，不是段内重复。
-            {"event": "run.completed", "output": "同一句", "seq": 2},
+            # 第二段同文：终态 output 与已发份同文按前缀折叠，不是段内重复。
+            {"event": "run.completed", "output": "§\n同一句\n§", "seq": 2},
         ], hook)
         await _settle()
         bot.call_api.assert_not_awaited()
 
     async def test_no_hook_keeps_old_behavior(self) -> None:
         result, _ = await self._chat([
-            {"event": "message.interim", "text": "好", "seq": 0},
-            {"event": "message.interim", "text": "好", "seq": 1},
+            {"event": "message.interim", "text": "§\n好\n§", "seq": 0},
+            {"event": "message.interim", "text": "§\n好\n§", "seq": 1},
             {"event": "run.completed", "output": "", "seq": 2},
         ], None)
         self.assertFalse(result.parse_failed)

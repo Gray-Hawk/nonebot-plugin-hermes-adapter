@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""纯文本正文协议的只读验收入口。
+"""分节符正文信封的只读验收入口。
 
 跑法：python3 verify.py    （需要 nonebot 环境，例如生产 venv 的 python）
 逐项打印 PASS/FAIL，退出码 0 = 全过。
@@ -8,7 +8,7 @@
 统一纯文本）之后，旧的 `core/npha_terminal.py`、`decode_terminal_batch`、
 `fold_stream_decisions`、`strip_complete_decisions`、`scan_stream_decisions`
 与两个 replay 脚本都已删除，且它引用的基线提交不在本仓库——本版改为断言当前
-事实：只有一份纯文本解析器、协议块里没有信封字段、控制与续跑各只有一条链路。
+事实：只有一份分节符信封解析器、协议块里没有信封字段、控制与续跑各只有一条链路。
 """
 
 from __future__ import annotations
@@ -127,6 +127,61 @@ def check_single_text_parser() -> None:
         and client.count("class RunsEventParser") == 1
     )
     check("Runs 终态／流式／恢复／对账共用同一纯文本解析器", ok, "")
+
+
+def check_envelope_protocol() -> None:
+    """分节符信封的真实语义（跑解析器与提示词，不是文本匹配）。"""
+    sys.path.insert(0, str(ROOT))
+    from tests import _bootstrap  # noqa: F401
+
+    from nonebot_plugin_hermes_adapter.core import prompt_protocol as pp
+    from nonebot_plugin_hermes_adapter.core import runs_text
+
+    sep = runs_text.SEPARATOR
+
+    def units(text: str) -> list[str]:
+        return runs_text.split_text_units(text)
+
+    def raises_overflow(text: str) -> bool:
+        try:
+            runs_text.split_text_units(text)
+        except runs_text.TextUnitsError as exc:
+            return exc.reason == "body_overflow"
+        return False
+
+    cases = {
+        "单条": units(f"{sep}\n正文\n{sep}") == ["正文"],
+        "两条共享标记": units(f"{sep}\nA\n{sep}\nB\n{sep}") == ["A", "B"],
+        "静默零单位": (
+            units(f"{sep}\n{sep}") == []
+            and units(f"{sep}{sep}") == []
+            and units(f"{sep} {sep}") == []
+        ),
+        "空段丢弃": units(f"{sep}\nA\n{sep}\n{sep}\nB\n{sep}") == ["A", "B"],
+        "缺开头只丢头部": units(f"裸\n{sep}\nB\n{sep}") == ["B"],
+        "缺末尾只丢尾部": units(f"{sep}\nA\n{sep}\n裸") == ["A"],
+        "旧裸正文不兼容": units("你好") == [] and units('{"body":"旧"}') == [],
+        "行内与带空格 § 是正文": (
+            units(f"{sep}\n第 3 节 §3\n{sep}") == ["第 3 节 §3"]
+            and units(f"{sep}\n甲\n § \n乙\n{sep}") == ["甲\n § \n乙"]
+        ),
+        "围栏内 § 仍分隔": units(f"{sep}\n```\n§\n```\n{sep}") == ["```", "```"],
+        "超长 fail-closed": raises_overflow(f"{sep}\n" + "长" * 4001 + f"\n{sep}"),
+    }
+    failed = [name for name, ok in cases.items() if not ok]
+    check("信封解析语义（单条/多条/静默/缺开缺闭/旧裸正文不兼容）", not failed, f"失败={failed}")
+
+    prompt_ok = all(
+        "以独立一行 § 开头，以独立一行 § 结尾" in block
+        and "只有被两个 § 完整包住的段才会发出去" in block
+        and "只输出两行 §" in block
+        and "没有 § 就是一条消息" not in block
+        for block in (
+            pp.render_mode_text(pp._PROTOCOL, runs=True),
+            pp.render_mode_text(pp._PROTOCOL, runs=False),
+        )
+    )
+    check("Runs／completions 提示词同口径写死信封格式", prompt_ok, "")
 
 
 def check_prompt_protocol() -> None:
@@ -255,6 +310,29 @@ def check_plan_before_send() -> None:
 
 
 ACCEPTANCE_CASES = {
+    # 分节符信封（tests/test_runs_envelope.py）
+    "envelope_single": "test_single_body",
+    "envelope_multi": "test_multiple_bodies_share_one_marker_each_side",
+    "envelope_silent": "test_silence_is_two_markers",
+    "envelope_silent_rule": "test_silence_is_only_markers_and_whitespace",
+    "envelope_empty_segment": "test_empty_segments_are_dropped_without_complaint",
+    "envelope_missing_open": "test_missing_open_drops_only_the_head",
+    "envelope_missing_close": "test_missing_close_drops_the_tail",
+    "envelope_no_marker": "test_no_marker_is_not_a_body",
+    "envelope_half_line": "test_half_line_markers_are_plain_text",
+    "envelope_spaced": "test_spaced_markers_are_plain_text",
+    "envelope_fenced": "test_fenced_marker_splits",
+    "envelope_overflow": "test_over_limit_is_fail_closed",
+    "envelope_stream_char_by_char": "test_char_by_char_delta",
+    "envelope_stream_marker_split": "test_marker_split_across_frames",
+    "envelope_stream_dangling": "test_dangling_marker_is_not_sent_until_closed",
+    "envelope_interim_partial": "test_interim_only_sends_closed_segments",
+    "envelope_terminal_tail": "test_run_completed_only_uses_the_final_output",
+    "envelope_prompt_envelope": "test_all_four_prompts_state_the_envelope",
+    "envelope_prompt_parser": "test_prompt_three_body_example_parses_to_three",
+    "envelope_prompt_silence": "test_prompt_silence_example_is_silent",
+    "envelope_prompt_literal": "test_prompt_literal_marker_example_is_plain_text",
+    "envelope_prompt_no_escapes": "test_prompt_uses_real_multiline_examples_not_escapes",
     # 纯文本切分
     "single_sentence": "test_single_sentence_is_one_unit",
     "multiline_no_split": "test_multiline_without_separator_stays_one",
@@ -275,14 +353,17 @@ ACCEPTANCE_CASES = {
     "stream_unsealed_tail": "test_terminal_ignores_unsealed_delta_tail",
     "stream_suppression_observable": "test_segment_duplicate_suppression_is_observable",
     "stream_repeat_terminal": "test_terminal_repeating_last_segment_reports_no_suppression",
+    "stream_invalid_log": "test_invalid_envelope_leaves_visible_log",
+    "stream_incomplete": "test_incomplete_envelope_is_not_sent",
     "stream_real_samples": "test_real_retained_samples",
     "stream_regression_scenarios": "test_regression_scenarios",
     # 真实 client 链
     "client_single_zero_calls": "test_single_sentence_zero_extra_calls",
     "client_multi_terminal": "test_three_units_from_terminal_in_order",
-    "client_legacy_once": "test_legacy_json_sent_exactly_once_verbatim",
+    "client_legacy_rejected": "test_legacy_json_sends_nothing",
     "client_silent": "test_silent_output_sends_nothing",
     "client_progress_then_final": "test_interim_progress_then_final",
+    "client_interim_partial": "test_incomplete_interim_progress_is_not_sent",
     "client_control_seal": "test_control_frame_seals_segment_before_registration",
     "client_terminal_repeat_resent": "test_terminal_repeating_last_segment_is_resent",
     "client_overflow_fail_closed": "test_overflow_terminal_fails_closed",
@@ -316,6 +397,7 @@ ACCEPTANCE_CASES = {
 def check_acceptance_cases() -> None:
     haystack = "\n".join(
         read(path) for path in (
+            "tests/test_runs_envelope.py",
             "tests/test_runs_terminal.py",
             "tests/test_runs_stream.py",
             "tests/test_astrbot_text_compat.py",
@@ -342,6 +424,7 @@ def main() -> int:
     check_tests()
     check_no_deleted_modules()
     check_single_text_parser()
+    check_envelope_protocol()
     check_prompt_protocol()
     check_plan_and_stream()
     check_control_and_continuation()

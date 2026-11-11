@@ -68,12 +68,14 @@ class RemovedFieldHygieneTests(unittest.TestCase):
         # 离场提示改为指向真实登记查询，而不是让模型自报。
         self.assertIn("get_background_tasks", message_feedback._DEPARTURE_CONFIRM_PROMPT)
 
-    def test_legacy_control_line_is_plain_text(self) -> None:
-        # 旧信封控制行不再有语义：整段按纯文本原样发送，未知/退役字段同样只是正文。
+    def test_legacy_control_line_is_not_a_body(self) -> None:
+        # 旧信封控制行不再有语义，也不再算正文：没有分节符就一条都不发。
         from nonebot_plugin_hermes_adapter.core.runs_text import units_from_text
 
         legacy = '{"legacy_unknown":"收尾"}\n{"body":"正文"}'
-        self.assertEqual([u["body"] for u in units_from_text(legacy)], [legacy])
+        self.assertEqual(units_from_text(legacy), [])
+        # 被分节符包住时才是正文，按原文发送、不拆壳。
+        self.assertEqual([u["body"] for u in units_from_text(f"§\n{legacy}\n§")], [legacy])
 
     def test_retired_background_task_field_is_gone_from_control(self) -> None:
         from nonebot_plugin_hermes_adapter.core import control_intent

@@ -63,6 +63,11 @@ def _load_run_resume():
 run_resume = _load_run_resume()
 
 
+def framed(body: str) -> str:
+    """分节符信封：一份正文 = 独立一行 § + 正文 + 独立一行 §（与生产解析器同一口径）。"""
+    return f"§\n{body}\n§"
+
+
 class _GatewayHandler(BaseHTTPRequestHandler):
     """真实 loopback gateway:任何 GET 都回当前 status 载荷(测试逐例设置)。"""
 
@@ -104,7 +109,7 @@ class RestartRouteHarness(unittest.IsolatedAsyncioTestCase):
         # 每个用例显式覆盖自己那条 run 的 gateway 终态,避免用例间载荷串味。
         _GatewayHandler.payload = {
             "status": "completed",
-            "output": '重启恢复正文',
+            "output": framed('重启恢复正文'),
             "updated_at": time.time(),
         }
 
@@ -198,7 +203,7 @@ class RestartRouteHarness(unittest.IsolatedAsyncioTestCase):
             user_id="u1", group_id=group_id,
         )
         self.tracker.record_expected_delivery(
-            run_id=run_id, output=body, expect_structured=True,
+            run_id=run_id, output=framed(body), expect_structured=True,
         )
         prepare_terminal_batch(
             tracker=self.tracker, run_id=run_id,
@@ -268,7 +273,7 @@ class RestartRouteRecoveryTests(RestartRouteHarness):
                    user_id="u1", group_id="g1")
         _GatewayHandler.payload = {
             "status": "completed",
-            "output": '停机期间完成的回复',
+            "output": framed('停机期间完成的回复'),
             "updated_at": time.time(),
         }
         self.assertEqual(self.registry.known(), [])
@@ -316,7 +321,7 @@ class RestartRouteRecoveryTests(RestartRouteHarness):
                    user_id="u1", group_id="g2")
         _GatewayHandler.payload = {
             "status": "completed",
-            "output": '停机期间完成的回复',
+            "output": framed('停机期间完成的回复'),
             "updated_at": time.time(),
         }
         with patch.object(run_resume, "_RESUME_RETRY_SEC", 0.01), \
@@ -349,7 +354,7 @@ class RestartRouteRecoveryTests(RestartRouteHarness):
         self._bind(run_id="run-overlap", scope="onebotv11:group:g1", is_private=False,
                    user_id="u1", group_id="g1")
         self.tracker.record_expected_delivery(
-            run_id="run-overlap", output='{}\n{"body":"崩溃窗口补投"}', expect_structured=True,
+            run_id="run-overlap", output=framed("崩溃窗口补投"), expect_structured=True,
         )
         prepare_terminal_batch(
             tracker=self.tracker, run_id="run-overlap",
@@ -358,7 +363,7 @@ class RestartRouteRecoveryTests(RestartRouteHarness):
         # 注意:这里刻意不 finish —— active_runs 与 ready 交付并存,恢复与对账会同时被唤醒。
         _GatewayHandler.payload = {
             "status": "completed",
-            "output": '崩溃窗口补投',
+            "output": framed('崩溃窗口补投'),
             "updated_at": time.time(),
         }
 
@@ -379,7 +384,7 @@ class RestartRouteRecoveryTests(RestartRouteHarness):
         self._bind(run_id="run-private", scope="onebotv11:private:u1",
                    is_private=True, user_id="u1", group_id=None)
         self.tracker.record_expected_delivery(
-            run_id="run-private", output='私聊补投', expect_structured=True,
+            run_id="run-private", output=framed("私聊补投"), expect_structured=True,
         )
         prepare_terminal_batch(
             tracker=self.tracker, run_id="run-private",
@@ -388,7 +393,7 @@ class RestartRouteRecoveryTests(RestartRouteHarness):
         self.tracker.finish("run-private")
         _GatewayHandler.payload = {
             "status": "completed",
-            "output": '{}\n{"body":"私聊补投"}',
+            "output": framed('私聊补投'),
             "updated_at": time.time(),
         }
 

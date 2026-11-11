@@ -1,7 +1,7 @@
 """Runs 终态多份交付（E2）。
 
-`core.runs_text.split_text_units()` 把 `run.completed.output` 按纯文本协议切成 N 份
-正文单位；本模块只负责把整批**一次形成完整终态计划**并落库，再按份返回各自的
+`core.runs_text.split_text_units()` 把 `run.completed.output` 按分节符正文信封切成
+N 份正文单位；本模块只负责把整批**一次形成完整终态计划**并落库，再按份返回各自的
 投递上下文。
 
 两条硬约束（E2 卡片）：
@@ -88,10 +88,11 @@ def units_from_decisions(decisions) -> list[tuple[dict, dict]]:
 
 
 def units_from_output(output: str) -> list[dict] | None:
-    """终态 output → 有序 units；None=无正文／协议失败，[]=有文本但全空内容。
+    """终态 output → 有序 units；None=无正文／协议失败，[]=有文本但无可发送单位。
 
-    纯文本协议：正文就是 ``run.completed.output``，独立整行 ``§`` 只作连发分隔。
-    正常链、恢复链、对账链共用 ``core.runs_text`` 的同一份切分，不识别旧 JSON。
+    分节符正文信封：正文就是 ``run.completed.output``，独立整行 ``§`` 是唯一标记，
+    只有完整闭合的段才是正文。正常链、恢复链、对账链共用 ``core.runs_text`` 的同一份
+    扫描；缺开头／缺末尾的段丢弃并留可见日志，不识别旧 JSON，也不留裸正文兼容层。
     """
     from .runs_text import TextUnitsError, units_from_text
 
