@@ -1,151 +1,145 @@
-11-11 16:02:28 [SUCCESS] nonebot | NoneBot is initializing...
-11-11 16:02:28 [INFO] nonebot | Current Env: prod
+11-11 16:07:01 [SUCCESS] nonebot | NoneBot is initializing...
+11-11 16:07:01 [INFO] nonebot | Current Env: prod
 /usr/lib/python3.13/unittest/main.py:153: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
   self.test = self.testLoader.loadTestsFromNames(self.testNames,
-11-11 16:02:28 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
-11-11 16:02:28 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
-test_crlf_in_one_frame_control (test_reviewer_contract.ReviewerContract.test_crlf_in_one_frame_control) ... 11-11 16:02:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+11-11 16:07:01 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-11 16:07:01 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-11 16:07:01 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
 /home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/typing.py:103: DeprecationWarning: Failing to pass a value to the 'type_params' parameter of 'typing.ForwardRef._evaluate' is deprecated, as it leads to incorrect behaviour when calling typing.ForwardRef._evaluate on a stringified annotation that references a PEP 695 type parameter. It will be disallowed in Python 3.15.
   return ref._evaluate(globalns, localns, recursive_guard=frozenset())
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
 OUTLET {"case": "whole-CRLF", "frames": [{"event": "message.delta", "seq": 0, "delta": "§\r\nA\r\nB\r\n§\r\n"}, {"event": "run.completed", "seq": 1, "output": "§\r\nA\r\nB\r\n§\r\n"}], "expected": ["A\nB"], "actual": [{"text": "A\nB", "component": "primary:0"}]}
-ok
-test_crlf_split_between_frames_preserves_body (test_reviewer_contract.ReviewerContract.test_crlf_split_between_frames_preserves_body) ... /usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpe2ak7ruc'>
+./usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpj40qs8jh'>
   _warnings.warn(warn_message, ResourceWarning)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
 OUTLET {"case": "split-CRLF", "frames": [{"event": "message.delta", "seq": 0, "delta": "§\r\nA\r"}, {"event": "message.delta", "seq": 1, "delta": "\nB\r\n§\r\n"}, {"event": "run.completed", "seq": 2, "output": "§\r\nA\r\nB\r\n§\r\n"}], "expected": ["A\nB"], "actual": [{"text": "A\nB", "component": "primary:0"}]}
-ok
-test_inline_left_neighbor_is_not_a_whole_line_marker (test_reviewer_contract.ReviewerContract.test_inline_left_neighbor_is_not_a_whole_line_marker) ... 11-11 16:02:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=4 preview='A§ B'
-/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpd0in574f'>
+.11-11 16:07:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=4 preview='A§ B'
+/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpliae3liy'>
   _warnings.warn(warn_message, ResourceWarning)
-/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f294f003880>
+/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f6863507880>
   def __init__(self, name, parent):
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f294e51d8a0>
+/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f6862a298a0>
   def __init__(self, name, parent):
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-11-11 16:02:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='A§'
-11-11 16:02:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='A§'
+11-11 16:07:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
 OUTLET {"case": "inline-left-neighbor", "frames": [{"event": "message.delta", "seq": 0, "delta": "A§\nB\n§"}, {"event": "message.interim", "seq": 1, "text": "A§"}, {"event": "tool.started", "seq": 2, "tool": "lookup"}, {"event": "run.completed", "seq": 3, "output": "§\nC\n§"}], "expected": ["C"], "actual": [{"text": "C", "component": "primary:0"}]}
-ok
-test_interim_covers_partially_arrived_first_unit_control (test_reviewer_contract.ReviewerContract.test_interim_covers_partially_arrived_first_unit_control) ... /usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp5tn3w3qi'>
+./usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpmz8_0wsc'>
   _warnings.warn(warn_message, ResourceWarning)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
 OUTLET {"case": "partial-first-unit", "frames": [{"event": "message.delta", "seq": 0, "delta": "§\nA"}, {"event": "message.interim", "seq": 1, "text": "§\nA\n§"}, {"event": "message.delta", "seq": 2, "delta": "\nC\n§\n"}, {"event": "tool.started", "seq": 3, "tool": "lookup"}, {"event": "run.completed", "seq": 4, "output": "§\nD\n§"}], "expected": ["A", "C", "D"], "actual": [{"text": "A", "component": "primary:0"}, {"text": "C", "component": "primary:1"}, {"text": "D", "component": "primary:2"}]}
-ok
-test_interim_covers_partially_arrived_second_unit (test_reviewer_contract.ReviewerContract.test_interim_covers_partially_arrived_second_unit) ... /usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp3txg23y6'>
+./usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp896g8eih'>
   _warnings.warn(warn_message, ResourceWarning)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第3份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第3份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
 OUTLET {"case": "partial-second-unit", "frames": [{"event": "message.delta", "seq": 0, "delta": "§\nA\n§\nB"}, {"event": "message.interim", "seq": 1, "text": "§\nA\n§\nB\n§"}, {"event": "message.delta", "seq": 2, "delta": "\nC\n§\n"}, {"event": "tool.started", "seq": 3, "tool": "lookup"}, {"event": "run.completed", "seq": 4, "output": "§\nD\n§"}], "expected": ["A", "B", "C", "D"], "actual": [{"text": "A", "component": "primary:0"}, {"text": "B", "component": "primary:1"}, {"text": "C", "component": "primary:2"}, {"text": "D", "component": "primary:3"}]}
-ok
-test_prior_R1_and_four_malformed_controls (test_reviewer_contract.ReviewerContract.test_prior_R1_and_four_malformed_controls) ... /usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpfst2jqia'>
+./usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmphmv2qn6q'>
   _warnings.warn(warn_message, ResourceWarning)
-/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f294e51d6c0>
+/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f6862a296c0>
   def __init__(self, name, parent):
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f294e51f5b0>
+/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f6862a2b5b0>
   def __init__(self, name, parent):
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
 OUTLET {"case": "legal-shared", "frames": [{"event": "message.delta", "seq": 0, "delta": "§\nA\n§\nB\n§"}, {"event": "message.interim", "seq": 1, "text": "§\nA\n§"}, {"event": "tool.started", "seq": 2, "tool": "lookup"}, {"event": "run.completed", "seq": 3, "output": "§\nC\n§"}], "expected": ["A", "B", "C"], "actual": [{"text": "A", "component": "primary:0"}, {"text": "B", "component": "primary:1"}, {"text": "C", "component": "primary:2"}]}
-/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp7b8f4i2w'>
+/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpdbjey4od'>
   _warnings.warn(warn_message, ResourceWarning)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
 OUTLET {"case": "legal-shared-newline", "frames": [{"event": "message.delta", "seq": 0, "delta": "§\nA\n§\nB\n§\n"}, {"event": "message.interim", "seq": 1, "text": "§\nA\n§\n"}, {"event": "tool.started", "seq": 2, "tool": "lookup"}, {"event": "run.completed", "seq": 3, "output": "§\nC\n§"}], "expected": ["A", "B", "C"], "actual": [{"text": "A", "component": "primary:0"}, {"text": "B", "component": "primary:1"}, {"text": "C", "component": "primary:2"}]}
-/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpg7k9hyku'>
+/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpu3dqg3kz'>
   _warnings.warn(warn_message, ResourceWarning)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='B'
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='B'
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
 OUTLET {"case": "unclosed", "frames": [{"event": "message.delta", "seq": 0, "delta": "§\nA\n§\nB"}, {"event": "message.interim", "seq": 1, "text": "§\nA\n§"}, {"event": "tool.started", "seq": 2, "tool": "lookup"}, {"event": "run.completed", "seq": 3, "output": "§\nC\n§"}], "expected": ["A", "C"], "actual": [{"text": "A", "component": "primary:0"}, {"text": "C", "component": "primary:1"}]}
-/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmphp77w_yu'>
+/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp8l9g2zjb'>
   _warnings.warn(warn_message, ResourceWarning)
-11-11 16:02:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=1 preview='A'
-11-11 16:02:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=1 preview='B'
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=1 preview='A'
+11-11 16:07:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=1 preview='B'
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
 OUTLET {"case": "bare", "frames": [{"event": "message.delta", "seq": 0, "delta": "AB"}, {"event": "message.interim", "seq": 1, "text": "A"}, {"event": "tool.started", "seq": 2, "tool": "lookup"}, {"event": "run.completed", "seq": 3, "output": "§\nC\n§"}], "expected": ["C"], "actual": [{"text": "C", "component": "primary:0"}]}
-/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp65u_qp3l'>
+/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp_pbwhnp6'>
   _warnings.warn(warn_message, ResourceWarning)
-/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f294e51eb60>
+/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f6862a2ab60>
   def __init__(self, name, parent):
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f294e51f100>
+/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f6862a2b100>
   def __init__(self, name, parent):
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f294e51ed40>
+/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f6862a2ad40>
   def __init__(self, name, parent):
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
-11-11 16:02:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
 OUTLET {"case": "inline-silent", "frames": [{"event": "message.delta", "seq": 0, "delta": "§B\n§"}, {"event": "message.interim", "seq": 1, "text": "§"}, {"event": "tool.started", "seq": 2, "tool": "lookup"}, {"event": "run.completed", "seq": 3, "output": "§\nC\n§"}], "expected": ["C"], "actual": [{"text": "C", "component": "primary:0"}]}
-/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpvqtdwhip'>
+/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp1rf73bp9'>
   _warnings.warn(warn_message, ResourceWarning)
-11-11 16:02:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
 OUTLET {"case": "spaced-silent", "frames": [{"event": "message.delta", "seq": 0, "delta": "§ \nB\n§"}, {"event": "message.interim", "seq": 1, "text": "§"}, {"event": "tool.started", "seq": 2, "tool": "lookup"}, {"event": "run.completed", "seq": 3, "output": "§\nC\n§"}], "expected": ["C"], "actual": [{"text": "C", "component": "primary:0"}]}
-/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp2ryhzo46'>
+/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpc41vdv54'>
   _warnings.warn(warn_message, ResourceWarning)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
 OUTLET {"case": "inline-nonsilent", "frames": [{"event": "message.delta", "seq": 0, "delta": "§\nA\n§B\n§"}, {"event": "message.interim", "seq": 1, "text": "§\nA\n§"}, {"event": "tool.started", "seq": 2, "tool": "lookup"}, {"event": "run.completed", "seq": 3, "output": "§\nC\n§"}], "expected": ["A", "C"], "actual": [{"text": "A", "component": "primary:0"}, {"text": "C", "component": "primary:1"}]}
-/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp1r051nbm'>
+/usr/lib/python3.13/tempfile.py:1131: ResourceWarning: Implicitly cleaning up <TemporaryDirectory '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp1bh5ao_s'>
   _warnings.warn(warn_message, ResourceWarning)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
-11-11 16:02:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 16:07:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
 OUTLET {"case": "spaced-nonsilent", "frames": [{"event": "message.delta", "seq": 0, "delta": "§\nA\n§ \nB\n§"}, {"event": "message.interim", "seq": 1, "text": "§\nA\n§"}, {"event": "tool.started", "seq": 2, "tool": "lookup"}, {"event": "run.completed", "seq": 3, "output": "§\nC\n§"}], "expected": ["A", "C"], "actual": [{"text": "A", "component": "primary:0"}, {"text": "C", "component": "primary:1"}]}
-ok
-
+.
 ----------------------------------------------------------------------
-Ran 6 tests in 0.313s
+Ran 6 tests in 0.312s
 
 OK

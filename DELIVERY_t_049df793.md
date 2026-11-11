@@ -90,23 +90,25 @@
 | ③ interim 补齐第二份尾巴后 B 留在碎片，和下一帧 C 合成 `B\nC` | 新增 `_covers_a_closed_unit`：碎片 `§\n<body>` 正是 interim 已闭合交付的**最后一份**正文时，换成 interim 的结构剩余（`_marker_tail`），与首份半截的处理一致 | `['A','B','B\nC','D']` → `['A','B','C','D']` |
 
 `_marker_tail` 同步改成原样切片（interim 的 CRLF 不再被顺手归一），`_terminate_marker_line`
-的整行判据改在归一文本上做（纯 CR 的 `§\r` 也认得）。判据仍是同一套「独立整行 §」，
+的整行判据改在归一文本上做（纯 CR 的 `§\r` 也认得）。另加一条保守边界：interim 自身没闭合
+（最后一行不是整行 `§`）时不接管碎片——否则矛盾帧（delta 已闭合甲、interim 只到 `§\n甲`）
+会让下一帧把甲和乙拼成一份原文没有的正文。判据仍是同一套「独立整行 §」，
 没有新增函数式协议之外的东西。
 
 ## 4. 真实测试输出
 
 | 命令 | 结果 | 证据 |
 | --- | --- | --- |
-| 全量 `tests/`（`unittest discover`） | **703 OK (skipped=1)** | `EVIDENCE/full_tests_round3.txt` |
+| 全量 `tests/`（`unittest discover`） | **704 OK (skipped=1)** | `EVIDENCE/full_tests_round3.txt` |
 | 插件 `queued-lane-interim-thin` | **48 OK** | `EVIDENCE/verify_round3.txt`（verify 闸位） |
 | 插件 `steer-presentation-thin` | **21 OK** | 同上 |
 | 真 client/handler（`tests.test_queued_lane_interim_client`，13 tests） | **OK (skipped=1)** | `EVIDENCE/r1_round3_parser_client.txt` |
-| 解析器＋client 两组用例（50 tests） | **OK (skipped=1)** | 同上 |
+| 解析器＋client 两组用例（51 tests） | **OK (skipped=1)** | 同上 |
 | 复核方 `test_reviewer_contract.py`（6 tests，adcb542 时 3 failures） | **OK** | `EVIDENCE/r1_round3_reviewer_probe.txt` |
 | 解析器矩阵（本节表格，含本轮三例） | 见上 | `EVIDENCE/structured_queue_matrix_round3.txt` |
 | `verify.py` | **22/22 PASS**（清洁树） | `EVIDENCE/verify_round3.txt` |
 
-`tests/` 的 703 **不含**插件用例；完整口径是 `tests/ 703 OK (skipped=1)` + `queued-lane 48 OK` +
+`tests/` 的 704 **不含**插件用例；完整口径是 `tests/ 704 OK (skipped=1)` + `queued-lane 48 OK` +
 `steer-presentation 21 OK`，由 `verify.py` 的插件闸位单独把关（R2）。唯一 skip 仍是
 `test_deployed_parser_still_seals_at_interim`：部署副本已是信封解析器，该「stock = 裸正文」
 前提不成立，显式 skip（同 t_f9767f18 记录的环境变化，未改弱断言）。

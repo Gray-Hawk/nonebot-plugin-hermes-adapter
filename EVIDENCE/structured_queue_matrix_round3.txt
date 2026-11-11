@@ -1,5 +1,5 @@
-11-11 16:02:53 [SUCCESS] nonebot | NoneBot is initializing...
-11-11 16:02:53 [INFO] nonebot | Current Env: prod
+11-11 16:07:01 [SUCCESS] nonebot | NoneBot is initializing...
+11-11 16:07:01 [INFO] nonebot | Current Env: prod
 ### R1-repro
 {"drained": ["A", "B"], "seg_text": "", "suppressed": [["segment_duplicate", "A", "segment"]], "terminal": ["C"], "terminal_error": "", "text_error": "", "delta_count": 1, "interim_count": 1}
 
@@ -18,8 +18,8 @@
 ### cross-frame-CRLF whole-frame control
 {"drained": ["A\nB"], "seg_text": "", "suppressed": [["terminal_same_segment", "A\nB", "terminal"]], "terminal": [], "terminal_error": "", "text_error": "", "delta_count": 1, "interim_count": 0}
 
-11-11 16:02:53 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='A§'
-11-11 16:02:53 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-11 16:07:01 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='A§'
+11-11 16:07:01 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
 ### inline-left-neighbor (reviewer-2)
 {"drained": [], "seg_text": "", "suppressed": [], "terminal": ["C"], "terminal_error": "", "text_error": "", "delta_count": 1, "interim_count": 1}
 
@@ -29,23 +29,23 @@
 ### interim-completes-first-unit control
 {"drained": ["A", "C"], "seg_text": "", "suppressed": [], "terminal": ["D"], "terminal_error": "", "text_error": "", "delta_count": 2, "interim_count": 1}
 
-11-11 16:02:53 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-11 16:07:01 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
 ### inline-silent
 {"drained": [], "seg_text": "", "suppressed": [], "terminal": ["C"], "terminal_error": "", "text_error": "", "delta_count": 1, "interim_count": 1}
 
-11-11 16:02:53 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-11 16:07:01 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
 ### spaced-silent
 {"drained": [], "seg_text": "", "suppressed": [], "terminal": ["C"], "terminal_error": "", "text_error": "", "delta_count": 1, "interim_count": 1}
 
-11-11 16:02:53 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-11 16:07:01 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
 ### inline-nonsilent
 {"drained": ["A"], "seg_text": "", "suppressed": [], "terminal": ["C"], "terminal_error": "", "text_error": "", "delta_count": 1, "interim_count": 1}
 
-11-11 16:02:53 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-11 16:07:01 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
 ### spaced-nonsilent
 {"drained": ["A"], "seg_text": "", "suppressed": [], "terminal": ["C"], "terminal_error": "", "text_error": "", "delta_count": 1, "interim_count": 1}
 
-11-11 16:02:53 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='B'
+11-11 16:07:01 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='B'
 ### unclosed-tail
 {"drained": ["A"], "seg_text": "", "suppressed": [["segment_duplicate", "A", "segment"]], "terminal": ["C"], "terminal_error": "", "text_error": "", "delta_count": 1, "interim_count": 1}
 
