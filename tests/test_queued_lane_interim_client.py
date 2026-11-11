@@ -33,6 +33,11 @@ from tests import _bootstrap  # noqa: E402,F401
 from tests.test_runs_stream import real_chat  # noqa: E402
 from tests.test_runs_terminal import _ReactiveHarness  # noqa: E402
 
+# 线上装的那一份(本项目主实例 NeonBot 的 venv)。对照用例比的是它，不是本工作树。
+_DEPLOYED_SITE = (
+    "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot_plugin_hermes_adapter"
+)
+
 
 def _install_stock_parser_alias() -> type:
     """The deployed site-packages parser under its own package name (stock, pre-fix)."""
@@ -40,7 +45,7 @@ def _install_stock_parser_alias() -> type:
     import types
 
     name = "qlt_stock_nonebot_adapter"
-    site = "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot_plugin_hermes_adapter"
+    site = _DEPLOYED_SITE
     if name not in sys.modules:
         pkg = types.ModuleType(name)
         pkg.__path__ = [site]
@@ -48,6 +53,22 @@ def _install_stock_parser_alias() -> type:
     from qlt_stock_nonebot_adapter.core.hermes_client import RunsEventParser
 
     return RunsEventParser
+
+
+def _deployed_parser_is_pre_envelope() -> bool:
+    """已部署副本是否仍是「裸正文」解析器（本用例的前提）。
+
+    该用例比的是**线上装的那份**解析器：前提是它还没有分节符信封语义。2026-11-11
+    信封候选部署到 NeonBot 之后这条前提不再成立（部署副本只认完整闭合段），用例必须
+    显式跳过，而不是在环境变化下静默变成假红/假绿。
+    """
+    source = Path(_DEPLOYED_SITE) / "core" / "runs_text.py"
+    if not source.is_file():
+        return False
+    try:
+        return "分节符正文信封" not in source.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
 
 
 A, P, C = "答复A", "查B前的说明", "答复C"
@@ -134,6 +155,13 @@ class QueuedLaneInterimClientTest(_ReactiveHarness):
         """
         import asyncio
 
+        if not _deployed_parser_is_pre_envelope():
+            self.skipTest(
+                "已部署副本已切到分节符信封解析器（2026-11-11 部署），"
+                "本用例『deployed = 裸正文 stock』的前提不再成立；"
+                "混装行为由 tests.test_queued_lane_interim_client 的其余用例与 "
+                "tests.test_runs_envelope 覆盖"
+            )
         stock = _install_stock_parser_alias()
         calls = asyncio.run(self._drive(LEGACY_FRAMES, parser=stock))
         sent = [c["text"] for c in calls["send"]]

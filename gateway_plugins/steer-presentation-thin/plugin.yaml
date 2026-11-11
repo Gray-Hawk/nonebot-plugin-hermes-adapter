@@ -1,0 +1,3 @@
+name: steer-presentation-thin
+version: 0.1.0
+description: "Narrow gateway wrapper, no upstream edit: a Runs steer whose request declares the chat-region presentation marker (NB core/steer_presentation) is delivered as the standalone user row NB rendered, without the [OUT-OF-BAND …] shell; plus one appended paragraph in the steer channel note so the model recognizes that shape as a genuine user message."

@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
+from tests._regions import region_rows, wrap_region  # noqa: E402
 
 from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import steer_reconcile  # noqa: E402
@@ -109,7 +110,8 @@ class _SteerBoundaryBase(unittest.TestCase):
         )
         self.sent: list[str] = []
 
-    async def _fake_steer_run(self, *, tgt, run_id, text) -> bool:
+    async def _fake_steer_run(self, *, tgt, run_id, text, presented=False) -> bool:
+        self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
         self.sent.append(text)
         return True
 
@@ -154,8 +156,9 @@ class _SteerBoundaryBase(unittest.TestCase):
 
     def _single(self) -> str:
         self.assertEqual(len(self.sent), 1, self.sent)
-        # 新呈递:一条消息 = 消息头一行 + 正文从下一行开始,整条按原样返回。
-        return self.sent[0]
+        # 新呈递:一条消息 = 消息头一行 + 正文从下一行开始;整批外面是聊天区区域块,
+        # 这里只取区域内消息行做行级断言,框架由 RegionFrameTests 单独钉住。
+        return region_rows(self.sent[0])
 
 
 class SteerDirectBoundaryTests(_SteerBoundaryBase):
@@ -233,14 +236,16 @@ class SteerDirectBoundaryTests(_SteerBoundaryBase):
             row(ORDINARY, "小光", mid=17, content="第二行", at=()),
         ]
         self.assertTrue(self._inject_direct(rows))
-        # 两条消息 = 两个消息头 + 各自正文,中间空一行。
+        # 两条消息 = 两个消息头 + 各自正文,中间空一行;整批在同一个区域块里。
+        sent = self.sent[0]
         self.assertEqual(
-            self.sent[0],
+            region_rows(sent),
             "[有人@我] [m:16] [主人] [id=20001 user=主人号]:\n第一行\n\n"
             "[m:17] [普通用户] [id=10001 user=小光]:\n第二行",
         )
-        blocks = self.sent[0].split("\n\n")
-        self.assertEqual(len(blocks), 2, self.sent[0])
+        self.assertEqual(sent, wrap_region(region_rows(sent)))
+        blocks = region_rows(sent).split("\n\n")
+        self.assertEqual(len(blocks), 2, sent)
         self.assertNotIn("[有人@我]", blocks[1])
         self.assertLess(blocks[0].index("[有人@我]"), blocks[0].index("[m:16]"))
 
@@ -289,7 +294,8 @@ class LegacyRenderCompatibilityTests(unittest.TestCase):
     def test_render_without_context_keeps_old_bytes(self) -> None:
         presentation = pb.render_steer_rows([row(MASTER, "主人号", mid=31, at=(SELF_ID,))])
         self.assertEqual(
-            presentation.text, "[m:31] [id=20001 user=主人号]:\n你怎么看",
+            presentation.text,
+            wrap_region("[m:31] [id=20001 user=主人号]:\n你怎么看"),
         )
 
     def test_stub_bot_self_id_degrades_to_old_form(self) -> None:
@@ -300,7 +306,8 @@ class LegacyRenderCompatibilityTests(unittest.TestCase):
             group_id=GROUP_ID, live=SimpleNamespace(bot_self_id=object()),
         )
         self.assertEqual(
-            presentation.text, "[m:32] [id=20001 user=主人号]:\n你怎么看",
+            presentation.text,
+            wrap_region("[m:32] [id=20001 user=主人号]:\n你怎么看"),
         )
 
 
@@ -315,7 +322,7 @@ class ScopeIdentityHelperTests(_SteerBoundaryBase):
         )
         self.assertEqual(
             presentation.text,
-            "[有人@我] [m:33] [主人] [id=20001 user=主人号]:\n你怎么看",
+            wrap_region("[有人@我] [m:33] [主人] [id=20001 user=主人号]:\n你怎么看"),
         )
 
 

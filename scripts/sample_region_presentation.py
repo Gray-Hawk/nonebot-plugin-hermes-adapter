@@ -115,4 +115,29 @@ print(pb.build_reactive_user_content(
     current_image_urls=[], self_id=SELF, adapter=ADAPTER,
 ))
 
+print()
+print("=" * 70)
+print("样例 6｜steer 呈递:与普通消息同一个聊天区区域块（direct/followup 同一入口）")
+print("=" * 70)
+from unittest.mock import patch  # noqa: E402
+
+from nonebot_plugin_hermes_adapter.handlers import message_relay as relay  # noqa: E402
+
+steer_rows = [
+    human("10001", "主人", mid=8001, text="插一句"),
+    human("10003", "路人", mid=8002, text="我也说", images=("https://example.invalid/a.png",)),
+]
+steer_batch = pb.render_steer_rows(steer_rows, self_id=SELF, adapter=ADAPTER).text
+print("—— 区域块(发送文本主体) ——")
+print(steer_batch)
+print()
+with patch.object(relay, "steer_reply_push_active", lambda: True):
+    print("—— 最终发送文本(区域块 + 空行 + 批次尾部系统提示) ——")
+    print(relay._with_steer_reply_convention(steer_batch))
+print()
+print("—— 负对照:上游原样包裹(插件未装时的转录形态) ——")
+print("[OUT-OF-BAND USER MESSAGE — a direct message from the user, delivered once …]")
+print(steer_batch)
+print("[/OUT-OF-BAND USER MESSAGE]")
+
 user_lists._store.commit(saved)

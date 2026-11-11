@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import partial
 
@@ -83,6 +83,7 @@ from ..core.prompt_builder import (
     build_reactive_system_prompt,
     build_reactive_user_content,
     split_unpushed_messages,
+    steer_region_decorations,
 )
 from ..core.routing import resolve_target
 from ..core.session import session_manager
@@ -156,6 +157,7 @@ def _speaker_name_resolver(adapter_name: str):
 
 def _match_pending_steer_rows(
     pending_steer: str, candidates: list[dict], *, convention_line: str = "",
+    decorations: Sequence[str] = (),
 ) -> list[dict] | None:
     """按 pending 原文的出现位置与次数匹配台账行(台账只提供身份,不提供顺序)。
 
@@ -181,6 +183,10 @@ def _match_pending_steer_rows(
     正文,多条各自成批时会出现多次):只有在**当前位置没有任何账项命中**时才把它
     当分隔符跳过一次。绝不能先对整段文本做全局删除——用户正文里引用同一行字面量
     时会被删掉,匹配随之失败,原文被永久改写。
+
+    decorations 同理:steer 整批在聊天区区域块里发送,开标签行/固定说明行/闭标签
+    是块框架(`prompt_builder.steer_region_decorations`),不是任何账项正文。同样
+    只在没有账项命中处跳过。
     """
     remaining = list(candidates)
     matched: list[dict] = []
@@ -204,6 +210,12 @@ def _match_pending_steer_rows(
         #    是整行字面量,不能被当成"这里可以插一条空行消息"的位置)。
         if convention_line and pending_steer.startswith(convention_line, pos):
             pos += len(convention_line)
+            continue
+        decoration = next(
+            (d for d in decorations if d and pending_steer.startswith(d, pos)), None
+        )
+        if decoration is not None:
+            pos += len(decoration)
             continue
         # 3) 空串账项:原文里没有可锚定的字符,只能在「此处没有非空账项」时就地取出。
         empty = next(
@@ -265,6 +277,7 @@ def _pending_steer_recovery_rows(
 
     matched = _match_pending_steer_rows(
         pending_steer, candidates, convention_line=_STEER_REPLY_CONVENTION_LINE,
+        decorations=steer_region_decorations(),
     )
     if matched is None:
         if candidates:
