@@ -1,0 +1,406 @@
+t_049df793 / R1：interim 前缀裁剪必须保留两份正文共享的 §
+=====================================================================
+
+对象：候选 4df5c60 + b3b1fac，本轮基线 6fbcceb（含 t_f9767f18 的 steer 区域化）。
+跑法（同一组新测试分别喂给「修前 / 修后」两棵树）：
+
+  # 修前：git worktree add --detach <tmp> 6fbcceb，只拷这两份测试文件，生产代码保持 6fbcceb
+  cd <wt> && PYTHONDONTWRITEBYTECODE=1 /home/neonsky/NeonBot/.venv/bin/python -B \
+      -m unittest tests.test_runs_stream tests.test_queued_lane_interim_client -q
+
+  # 修后：本工作树同一命令
+  cd <repo> && PYTHONDONTWRITEBYTECODE=1 /home/neonsky/NeonBot/.venv/bin/python -B \
+      -m unittest tests.test_runs_stream tests.test_queued_lane_interim_client -q
+
+真实链路：真 _run_reactive_turn + 真 HermesClient.chat + 真 RunsEventParser + 真
+_RunsReplyQueue + 真 RunTracker 台账 + 真 runs_terminal 计划；只替换 HTTP 与平台发送出口。
+1 个 skip 是 tests.test_queued_lane_interim_client 里「部署副本仍是裸正文 stock」的旧前提
+（部署副本 14:34 已切信封解析器，见该用例内说明）。
+
+------------------------------- 修前（6fbcceb 生产代码 + 本轮新测试）------------------------
+11-11 14:56:35 [SUCCESS] nonebot | NoneBot is initializing...
+11-11 14:56:35 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:103: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.parseArgs(argv)
+11-11 14:56:35 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-11 14:56:35 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-11 14:56:35 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+Executing <Task pending name='Task-2' coro=<ClientChainTests.test_control_frame_seals_segment_before_registration() running at /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/wt-before-1794380192/tests/test_runs_stream.py:702> cb=[_run_until_complete_cb() at /usr/lib/python3.13/asyncio/base_events.py:181] created at /usr/lib/python3.13/asyncio/runners.py:100> took 0.147 seconds
+11-11 14:56:38 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=4 preview='写到一半'
+11-11 14:56:38 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='{"reply_to":"m:1"} {"body":"旧格式正文"}'
+11-11 14:56:38 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='{"reply_to":"m:1"} {"body":"旧格式正文"}'
+11-11 14:56:38 [ERROR] nonebot_plugin_hermes_adapter | [HERMES] runs 终态正文单位不合法,本轮 fail-closed reason=body_overflow run_id=run-e2-h
+11-11 14:56:38 [ERROR] nonebot_plugin_hermes_adapter | [HERMES] runs 正文单位不合法,本轮零发送 (run_id=run-e2-h reason=body_overflow)
+11-11 14:56:38 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] runs 订阅断开,保留原 run 待恢复 run_id=run-break: stream reset
+/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/typing.py:103: DeprecationWarning: Failing to pass a value to the 'type_params' parameter of 'typing.ForwardRef._evaluate' is deprecated, as it leads to incorrect behaviour when calling typing.ForwardRef._evaluate on a stringified annotation that references a PEP 695 type parameter. It will be disallowed in Python 3.15.
+  return ref._evaluate(globalns, localns, recursive_guard=frozenset())
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=4 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=33 preview='{} {"body":"先记录“E0-FIX 乙取证”待办"}'
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=26 preview='{} {"body":"待办已记录，当前为进行中"}'
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=64 preview='{"reply_to":"m:7"} {"body":"第一份正文"} {} {"body":"第二份第一行\\n第二份第二行"}'
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=3 preview='没闭合'
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='没开头'
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=7 preview='写到一半的进度'
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='B'
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=3 preview='没闭合'
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=7 preview='裸正文没有标记'
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='{"reply_to":"m:1"} {"body":"旧格式正文"}'
+11-11 14:56:47 [ERROR] nonebot_plugin_hermes_adapter | [HERMES] runs 正文单位不合法,本轮停止发送 reason=body_overflow
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=6 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='答复B'
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='答复B'
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='答复B'
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='答复B'
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=3 preview='答复B'
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:56:47 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+======================================================================
+FAIL: test_interim_prefix_keeps_every_shared_marker_after_it (tests.test_runs_stream.TextProtocolParserTests.test_interim_prefix_keeps_every_shared_marker_after_it)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/wt-before-1794380192/tests/test_runs_stream.py", line 269, in test_interim_prefix_keeps_every_shared_marker_after_it
+    self.assertEqual([d["body"] for d in drained], ["A", "B", "D"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['A', 'D'] != ['A', 'B', 'D']
+
+First differing element 1:
+'D'
+'B'
+
+Second list contains 1 additional elements.
+First extra element 2:
+'D'
+
+- ['A', 'D']
++ ['A', 'B', 'D']
+?       +++++
+
+
+======================================================================
+FAIL: test_interim_prefix_keeps_the_shared_marker_of_the_tail (tests.test_runs_stream.TextProtocolParserTests.test_interim_prefix_keeps_the_shared_marker_of_the_tail) (interim='§\nA\n§')
+delta 已积到多份、interim 只是前面一份：两份正文共享的 § 不能被前缀裁掉。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/wt-before-1794380192/tests/test_runs_stream.py", line 259, in test_interim_prefix_keeps_the_shared_marker_of_the_tail
+    self.assertEqual([d["body"] for d in drained], ["A", "B"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['A'] != ['A', 'B']
+
+Second list contains 1 additional elements.
+First extra element 1:
+'B'
+
+- ['A']
++ ['A', 'B']
+
+======================================================================
+FAIL: test_interim_prefix_keeps_the_shared_marker_of_the_tail (tests.test_runs_stream.TextProtocolParserTests.test_interim_prefix_keeps_the_shared_marker_of_the_tail) (interim='§\nA\n§\n')
+delta 已积到多份、interim 只是前面一份：两份正文共享的 § 不能被前缀裁掉。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/wt-before-1794380192/tests/test_runs_stream.py", line 259, in test_interim_prefix_keeps_the_shared_marker_of_the_tail
+    self.assertEqual([d["body"] for d in drained], ["A", "B"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['A'] != ['A', 'B']
+
+Second list contains 1 additional elements.
+First extra element 1:
+'B'
+
+- ['A']
++ ['A', 'B']
+
+======================================================================
+FAIL: test_interim_prefix_tail_still_needs_its_own_close (tests.test_runs_stream.TextProtocolParserTests.test_interim_prefix_tail_still_needs_its_own_close)
+接回共享标记不等于给尾巴补信封：尾巴本身没闭合就照旧丢弃。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/wt-before-1794380192/tests/test_runs_stream.py", line 282, in test_interim_prefix_tail_still_needs_its_own_close
+    self.assertIn("reason=missing_close", "\n".join(logs.messages))
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'reason=missing_close' not found in "[HERMES] 正文信封无效 reason=no_marker chars=2 preview='B'"
+
+======================================================================
+FAIL: test_shared_marker_between_units_survives_interim_prefix (tests.test_queued_lane_interim_client.QueuedLaneInterimClientTest.test_shared_marker_between_units_survives_interim_prefix)
+delta 已到 A、B 两份，interim 只是 A：完整的 B 仍要发一次。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/wt-before-1794380192/tests/test_queued_lane_interim_client.py", line 205, in test_shared_marker_between_units_survives_interim_prefix
+    self.assertEqual([c["text"] for c in calls["send"]], [A, B, C])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['答复A', '答复C'] != ['答复A', '答复B', '答复C']
+
+First differing element 1:
+'答复C'
+'答复B'
+
+Second list contains 1 additional elements.
+First extra element 2:
+'答复C'
+
+- ['答复A', '答复C']
++ ['答复A', '答复B', '答复C']
+?         +++++++
+
+
+======================================================================
+FAIL: test_shared_marker_tail_is_independent_of_trailing_newlines (tests.test_queued_lane_interim_client.QueuedLaneInterimClientTest.test_shared_marker_tail_is_independent_of_trailing_newlines) (delta='§\n答复A\n§\n答复B\n§\n', interim='§\n答复A\n§\n')
+换行有无不能改变结果：信封标记按行匹配，帧尾换行属于噪声。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/wt-before-1794380192/tests/test_queued_lane_interim_client.py", line 241, in test_shared_marker_tail_is_independent_of_trailing_newlines
+    self.assertEqual([c["text"] for c in calls["send"]], [A, B, C])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['答复A', '答复C'] != ['答复A', '答复B', '答复C']
+
+First differing element 1:
+'答复C'
+'答复B'
+
+Second list contains 1 additional elements.
+First extra element 2:
+'答复C'
+
+- ['答复A', '答复C']
++ ['答复A', '答复B', '答复C']
+?         +++++++
+
+
+======================================================================
+FAIL: test_shared_marker_tail_is_independent_of_trailing_newlines (tests.test_queued_lane_interim_client.QueuedLaneInterimClientTest.test_shared_marker_tail_is_independent_of_trailing_newlines) (delta='§\n答复A\n§\n答复B\n§', interim='§\n答复A\n§')
+换行有无不能改变结果：信封标记按行匹配，帧尾换行属于噪声。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/wt-before-1794380192/tests/test_queued_lane_interim_client.py", line 241, in test_shared_marker_tail_is_independent_of_trailing_newlines
+    self.assertEqual([c["text"] for c in calls["send"]], [A, B, C])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['答复A', '答复C'] != ['答复A', '答复B', '答复C']
+
+First differing element 1:
+'答复C'
+'答复B'
+
+Second list contains 1 additional elements.
+First extra element 2:
+'答复C'
+
+- ['答复A', '答复C']
++ ['答复A', '答复B', '答复C']
+?         +++++++
+
+
+======================================================================
+FAIL: test_shared_marker_tail_is_independent_of_trailing_newlines (tests.test_queued_lane_interim_client.QueuedLaneInterimClientTest.test_shared_marker_tail_is_independent_of_trailing_newlines) (delta='§\n答复A\n§\n答复B\n§\n', interim='§\n答复A\n§')
+换行有无不能改变结果：信封标记按行匹配，帧尾换行属于噪声。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/wt-before-1794380192/tests/test_queued_lane_interim_client.py", line 241, in test_shared_marker_tail_is_independent_of_trailing_newlines
+    self.assertEqual([c["text"] for c in calls["send"]], [A, B, C])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['答复A', '答复C'] != ['答复A', '答复B', '答复C']
+
+First differing element 1:
+'答复C'
+'答复B'
+
+Second list contains 1 additional elements.
+First extra element 2:
+'答复C'
+
+- ['答复A', '答复C']
++ ['答复A', '答复B', '答复C']
+?         +++++++
+
+
+----------------------------------------------------------------------
+Ran 60 tests in 12.413s
+
+FAILED (failures=8, skipped=1)
+
+------------------------------- 修后（本工作树）--------------------------------------------
+11-11 14:56:51 [SUCCESS] nonebot | NoneBot is initializing...
+11-11 14:56:51 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:103: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.parseArgs(argv)
+11-11 14:56:51 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-11 14:56:51 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-11 14:56:51 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+Executing <Task pending name='Task-2' coro=<ClientChainTests.test_control_frame_seals_segment_before_registration() running at /home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/tests/test_runs_stream.py:702> cb=[_run_until_complete_cb() at /usr/lib/python3.13/asyncio/base_events.py:181] created at /usr/lib/python3.13/asyncio/runners.py:100> took 0.147 seconds
+11-11 14:56:54 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=4 preview='写到一半'
+11-11 14:56:54 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='{"reply_to":"m:1"} {"body":"旧格式正文"}'
+11-11 14:56:54 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='{"reply_to":"m:1"} {"body":"旧格式正文"}'
+11-11 14:56:54 [ERROR] nonebot_plugin_hermes_adapter | [HERMES] runs 终态正文单位不合法,本轮 fail-closed reason=body_overflow run_id=run-e2-h
+11-11 14:56:54 [ERROR] nonebot_plugin_hermes_adapter | [HERMES] runs 正文单位不合法,本轮零发送 (run_id=run-e2-h reason=body_overflow)
+11-11 14:56:54 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] runs 订阅断开,保留原 run 待恢复 run_id=run-break: stream reset
+/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/typing.py:103: DeprecationWarning: Failing to pass a value to the 'type_params' parameter of 'typing.ForwardRef._evaluate' is deprecated, as it leads to incorrect behaviour when calling typing.ForwardRef._evaluate on a stringified annotation that references a PEP 695 type parameter. It will be disallowed in Python 3.15.
+  return ref._evaluate(globalns, localns, recursive_guard=frozenset())
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=4 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+11-11 14:57:04 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=33 preview='{} {"body":"先记录“E0-FIX 乙取证”待办"}'
+11-11 14:57:04 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=26 preview='{} {"body":"待办已记录，当前为进行中"}'
+11-11 14:57:04 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=64 preview='{"reply_to":"m:7"} {"body":"第一份正文"} {} {"body":"第二份第一行\\n第二份第二行"}'
+11-11 14:57:04 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=3 preview='没闭合'
+11-11 14:57:04 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='没开头'
+11-11 14:57:04 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=7 preview='写到一半的进度'
+11-11 14:57:04 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='B'
+11-11 14:57:04 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=3 preview='没闭合'
+11-11 14:57:04 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=7 preview='裸正文没有标记'
+11-11 14:57:04 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='{"reply_to":"m:1"} {"body":"旧格式正文"}'
+11-11 14:57:04 [ERROR] nonebot_plugin_hermes_adapter | [HERMES] runs 正文单位不合法,本轮停止发送 reason=body_overflow
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=6 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=3 preview='答复B'
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 14:57:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+----------------------------------------------------------------------
+Ran 60 tests in 12.403s
+
+OK (skipped=1)
+
+结论：修前 8 项失败（5 个用例，含换行两种写法）全部是同一处——message.interim 的
+pending.startswith(text) 分支直接 pending[len(text):]，把两份正文共享的 § 一起裁掉，
+完整 B 变成 missing_open（尾部未闭合时还会被误记成 missing_open 而不是 missing_close）。
+修后 60 项全过（1 skip），平台出口 [A, B, C] 各一次，组件 primary:0/1/2。

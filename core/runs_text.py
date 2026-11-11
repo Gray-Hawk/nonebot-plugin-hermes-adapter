@@ -57,6 +57,23 @@ def _warn_dropped(reason: str, text: str) -> None:
     )
 
 
+def continue_after_shared_prefix(text: str, remainder: str) -> str:
+    """``text`` 是已缓冲 delta 的前缀时，决定剩余片段怎么接下去。
+
+    相邻两份正文共享一个标记：``§\\nA\\n§\\nB\\n§`` 的 ``§\\nA\\n§`` 前缀裁掉后，
+    剩下 ``\\nB\\n§`` 少了开头标记，会被当成 ``missing_open`` 丢掉（完整 B 丢失）。
+    ``text`` 本身以独立整行 ``§`` 结尾（即它是一份完整闭合正文）时，那个标记是
+    两份正文共享的，按原输入接回尾部；尾巴本身仍缺闭合就照旧丢弃。
+
+    裸正文没有标记可共享：原样返回，绝不给旧裸正文补信封。
+    """
+    if not remainder.strip():
+        return remainder
+    if text.rstrip("\n").split("\n")[-1] != SEPARATOR:
+        return remainder
+    return SEPARATOR + ("" if remainder.startswith("\n") else "\n") + remainder
+
+
 def split_text_units(text: str, *, max_body_chars: int = MAX_BODY_CHARS) -> list[str]:
     """整段正文 → 有序发送单位；静默／全不可发送返回 ``[]``，超长抛 ``TextUnitsError``。"""
     raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")

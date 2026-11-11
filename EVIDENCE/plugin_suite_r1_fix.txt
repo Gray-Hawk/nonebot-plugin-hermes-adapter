@@ -1,0 +1,315 @@
+t_049df793 / R2：queued-lane-interim-thin 插件独立测试（不在 tests/ 的发现里）
+=====================================================================
+
+跑法（Hermes venv + 离开仓库根目录，否则根目录 utils.py 遮蔽 Hermes 的 utils）：
+
+  cd /tmp && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/home/neonsky/.hermes/hermes-agent \
+      /home/neonsky/.hermes/hermes-agent/venv/bin/python -B -m unittest discover \
+      -s <repo>/gateway_plugins/queued-lane-interim-thin/tests -v
+
+本轮把夹具从「裸正文」迁到分节符信封，stock 对照改成当前事实（部署副本已是信封解析器，
+不再拼 A+P），并补了 R1 的共享标记用例。断言一条没削：原 11 项失败用例全部保留且更严
+（例如终态 output 现在比的是信封原文，共享标记用例额外断言 suppressed == []）。
+
+------------------------------- 修前（裸正文夹具 + 旧 stock 前提）-------------------------
+test_independent_cli_inherits_only_what_still_exists (test_plugin.IndependentCliCreateTest.test_independent_cli_inherits_only_what_still_exists) ... ok
+test_child_does_not_inherit_api_server_rows (test_plugin.KanbanNotifyGuardTest.test_child_does_not_inherit_api_server_rows) ... ok
+test_creator_origin_inheritance_is_guarded (test_plugin.KanbanNotifyGuardTest.test_creator_origin_inheritance_is_guarded)
+``kanban_db_graph.inherit_creator_origin`` (create_task ``creator_task_id``) copies too. ... ok
+test_explicit_subscription_is_still_allowed (test_plugin.KanbanNotifyGuardTest.test_explicit_subscription_is_still_allowed) ... ok
+test_install_is_idempotent (test_plugin.KanbanNotifyGuardTest.test_install_is_idempotent) ... ok
+test_late_link_inheritance_is_guarded (test_plugin.KanbanNotifyGuardTest.test_late_link_inheritance_is_guarded)
+``kb.link_tasks`` copies parent rows too — the same single owner must be guarded. ... ok
+test_nb_report_source_still_routes_from_task_session_id (test_plugin.KanbanNotifyGuardTest.test_nb_report_source_still_routes_from_task_session_id) ... ok
+test_new_card_from_api_server_session_gets_no_subscription (test_plugin.KanbanNotifyGuardTest.test_new_card_from_api_server_session_gets_no_subscription) ... ok
+test_new_card_from_telegram_session_keeps_its_subscription (test_plugin.KanbanNotifyGuardTest.test_new_card_from_telegram_session_keeps_its_subscription) ... ok
+test_slash_create_from_api_server_source_is_refused (test_plugin.KanbanNotifyGuardTest.test_slash_create_from_api_server_source_is_refused) ... ok
+test_slash_create_from_telegram_source_still_subscribes (test_plugin.KanbanNotifyGuardTest.test_slash_create_from_telegram_source_still_subscribes) ... ok
+test_directory_alone_is_not_loaded (test_plugin.PluginEnabledAtLoadTest.test_directory_alone_is_not_loaded) ... ok
+test_enabled_profile_loads_and_wraps (test_plugin.PluginEnabledAtLoadTest.test_enabled_profile_loads_and_wraps) ... ok
+test_enabling_then_rediscovering_installs_the_wrappers (test_plugin.PluginEnabledAtLoadTest.test_enabling_then_rediscovering_installs_the_wrappers) ... ok
+test_manifest_is_discovered_as_a_user_plugin (test_plugin.PluginPackageTest.test_manifest_is_discovered_as_a_user_plugin) ... ok
+test_register_wires_the_api_server_factory (test_plugin.PluginPackageTest.test_register_wires_the_api_server_factory) ... ok
+test_abc_each_once_in_order (test_plugin.QueuedLaneInterimTest.test_abc_each_once_in_order) ... FAIL
+test_admitted_adapter_owns_the_publication (test_plugin.QueuedLaneInterimTest.test_admitted_adapter_owns_the_publication)
+The seam's delivery adapter may be another instance; the admitting one owns the run. ... ok
+test_allowed_silence_marker_publishes_nothing (test_plugin.QueuedLaneInterimTest.test_allowed_silence_marker_publishes_nothing) ... ok
+test_already_streamed_is_untouched (test_plugin.QueuedLaneInterimTest.test_already_streamed_is_untouched) ... ok
+test_compression_tip_binds_logical_root (test_plugin.QueuedLaneInterimTest.test_compression_tip_binds_logical_root) ... ok
+test_compression_tip_without_live_root_is_visible_and_safe (test_plugin.QueuedLaneInterimTest.test_compression_tip_without_live_root_is_visible_and_safe) ... ok
+test_control_loses_every_queued_answer (test_plugin.QueuedLaneInterimTest.test_control_loses_every_queued_answer) ... FAIL
+test_distinct_terminal_is_unchanged (test_plugin.QueuedLaneInterimTest.test_distinct_terminal_is_unchanged) ... FAIL
+test_event_less_pending_event_followup (test_plugin.QueuedLaneInterimTest.test_event_less_pending_event_followup) ... FAIL
+test_generation_or_epoch_mismatch_is_refused (test_plugin.QueuedLaneInterimTest.test_generation_or_epoch_mismatch_is_refused) ... ok
+test_human_turn_silence_marker_publishes_the_stock_replacement (test_plugin.QueuedLaneInterimTest.test_human_turn_silence_marker_publishes_the_stock_replacement) ... ok
+test_install_is_idempotent_and_shape_checked (test_plugin.QueuedLaneInterimTest.test_install_is_idempotent_and_shape_checked) ... ok
+test_interim_prefix_of_streamed_delta_keeps_the_tail (test_plugin.QueuedLaneInterimTest.test_interim_prefix_of_streamed_delta_keeps_the_tail) ... FAIL
+test_interim_without_any_delta_still_sends_once (test_plugin.QueuedLaneInterimTest.test_interim_without_any_delta_still_sends_once) ... FAIL
+test_missing_session_db_accessor_is_refused (test_plugin.QueuedLaneInterimTest.test_missing_session_db_accessor_is_refused) ... ok
+test_muted_turn_is_untouched (test_plugin.QueuedLaneInterimTest.test_muted_turn_is_untouched) ... ok
+test_no_admission_stamp_is_silent (test_plugin.QueuedLaneInterimTest.test_no_admission_stamp_is_silent) ... ok
+test_non_api_platform_is_untouched (test_plugin.QueuedLaneInterimTest.test_non_api_platform_is_untouched) ... ok
+test_partial_delta_before_interim_is_not_resent (test_plugin.QueuedLaneInterimTest.test_partial_delta_before_interim_is_not_resent) ... FAIL
+test_profile_mismatch_is_refused (test_plugin.QueuedLaneInterimTest.test_profile_mismatch_is_refused) ... ok
+test_queued_interim_closes_the_preceding_delta_segment (test_plugin.QueuedLaneInterimTest.test_queued_interim_closes_the_preceding_delta_segment)
+delta(A) → queued interim(A) → delta(P before its tool) → terminal C must be [A, P, C]. ... FAIL
+test_same_session_db_object_is_accepted (test_plugin.QueuedLaneInterimTest.test_same_session_db_object_is_accepted) ... ok
+test_settled_admission_is_refused (test_plugin.QueuedLaneInterimTest.test_settled_admission_is_refused) ... ok
+test_stale_goal_early_return_does_not_duplicate (test_plugin.QueuedLaneInterimTest.test_stale_goal_early_return_does_not_duplicate) ... FAIL
+test_stock_parser_replays_the_reviewer_gap (test_plugin.QueuedLaneInterimTest.test_stock_parser_replays_the_reviewer_gap)
+The same frames through the deployed (stock) parser still give [A, A+P, C]. ... FAIL
+test_terminal_same_text_is_not_repeated (test_plugin.QueuedLaneInterimTest.test_terminal_same_text_is_not_repeated) ... FAIL
+test_two_runs_bound_one_after_another (test_plugin.QueuedLaneInterimTest.test_two_runs_bound_one_after_another) ... ok
+test_unknown_admission_is_refused (test_plugin.QueuedLaneInterimTest.test_unknown_admission_is_refused) ... ok
+test_unprovable_session_db_none_is_refused (test_plugin.QueuedLaneInterimTest.test_unprovable_session_db_none_is_refused) ... ok
+test_unprovable_session_db_raises_is_refused (test_plugin.QueuedLaneInterimTest.test_unprovable_session_db_raises_is_refused) ... ok
+
+======================================================================
+FAIL: test_abc_each_once_in_order (test_plugin.QueuedLaneInterimTest.test_abc_each_once_in_order)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py", line 340, in test_abc_each_once_in_order
+    self.assertEqual(client.sent, ["答复A", "答复B", "答复C"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['答复A', '答复B', '答复C']
+
+Second list contains 3 additional elements.
+First extra element 0:
+'答复A'
+
+- []
++ ['答复A', '答复B', '答复C']
+
+======================================================================
+FAIL: test_control_loses_every_queued_answer (test_plugin.QueuedLaneInterimTest.test_control_loses_every_queued_answer)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py", line 325, in test_control_loses_every_queued_answer
+    self.assertEqual(client.sent, ["答复C"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['答复C']
+
+Second list contains 1 additional elements.
+First extra element 0:
+'答复C'
+
+- []
++ ['答复C']
+
+======================================================================
+FAIL: test_distinct_terminal_is_unchanged (test_plugin.QueuedLaneInterimTest.test_distinct_terminal_is_unchanged)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py", line 561, in test_distinct_terminal_is_unchanged
+    self.assertEqual(client.sent, ["答复A", "答复C"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['答复A', '答复C']
+
+Second list contains 2 additional elements.
+First extra element 0:
+'答复A'
+
+- []
++ ['答复A', '答复C']
+
+======================================================================
+FAIL: test_event_less_pending_event_followup (test_plugin.QueuedLaneInterimTest.test_event_less_pending_event_followup)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py", line 696, in test_event_less_pending_event_followup
+    self.assertEqual(client.sent, ["答复A", "答复C"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['答复A', '答复C']
+
+Second list contains 2 additional elements.
+First extra element 0:
+'答复A'
+
+- []
++ ['答复A', '答复C']
+
+======================================================================
+FAIL: test_interim_prefix_of_streamed_delta_keeps_the_tail (test_plugin.QueuedLaneInterimTest.test_interim_prefix_of_streamed_delta_keeps_the_tail)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py", line 628, in test_interim_prefix_of_streamed_delta_keeps_the_tail
+    self.assertEqual(client.sent, ["答复A", "查B前", "答复C"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['答复A', '查B前', '答复C']
+
+Second list contains 3 additional elements.
+First extra element 0:
+'答复A'
+
+- []
++ ['答复A', '查B前', '答复C']
+
+======================================================================
+FAIL: test_interim_without_any_delta_still_sends_once (test_plugin.QueuedLaneInterimTest.test_interim_without_any_delta_still_sends_once)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py", line 639, in test_interim_without_any_delta_still_sends_once
+    self.assertEqual(client.sent, ["答复A", "答复C"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['答复A', '答复C']
+
+Second list contains 2 additional elements.
+First extra element 0:
+'答复A'
+
+- []
++ ['答复A', '答复C']
+
+======================================================================
+FAIL: test_partial_delta_before_interim_is_not_resent (test_plugin.QueuedLaneInterimTest.test_partial_delta_before_interim_is_not_resent)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py", line 614, in test_partial_delta_before_interim_is_not_resent
+    self.assertEqual(client.sent, ["答复A", "答复C"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['答复A', '答复C']
+
+Second list contains 2 additional elements.
+First extra element 0:
+'答复A'
+
+- []
++ ['答复A', '答复C']
+
+======================================================================
+FAIL: test_queued_interim_closes_the_preceding_delta_segment (test_plugin.QueuedLaneInterimTest.test_queued_interim_closes_the_preceding_delta_segment)
+delta(A) → queued interim(A) → delta(P before its tool) → terminal C must be [A, P, C].
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py", line 579, in test_queued_interim_closes_the_preceding_delta_segment
+    self.assertEqual(client.sent, ["答复A", "查B前的说明", "答复C"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['答复A', '查B前的说明', '答复C']
+
+Second list contains 3 additional elements.
+First extra element 0:
+'答复A'
+
+- []
++ ['答复A', '查B前的说明', '答复C']
+
+======================================================================
+FAIL: test_stale_goal_early_return_does_not_duplicate (test_plugin.QueuedLaneInterimTest.test_stale_goal_early_return_does_not_duplicate)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py", line 721, in test_stale_goal_early_return_does_not_duplicate
+    self.assertEqual(client.sent, ["答复A"])   # the interim already carried it
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['答复A']
+
+Second list contains 1 additional elements.
+First extra element 0:
+'答复A'
+
+- []
++ ['答复A']
+
+======================================================================
+FAIL: test_stock_parser_replays_the_reviewer_gap (test_plugin.QueuedLaneInterimTest.test_stock_parser_replays_the_reviewer_gap)
+The same frames through the deployed (stock) parser still give [A, A+P, C].
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py", line 601, in test_stock_parser_replays_the_reviewer_gap
+    self.assertEqual(client.sent, ["答复A", "答复A查B前的说明", "答复C"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['答复A', '答复A查B前的说明', '答复C']
+
+Second list contains 3 additional elements.
+First extra element 0:
+'答复A'
+
+- []
++ ['答复A', '答复A查B前的说明', '答复C']
+
+======================================================================
+FAIL: test_terminal_same_text_is_not_repeated (test_plugin.QueuedLaneInterimTest.test_terminal_same_text_is_not_repeated)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py", line 546, in test_terminal_same_text_is_not_repeated
+    self.assertEqual(client.sent, ["答复A", "答复B"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != ['答复A', '答复B']
+
+Second list contains 2 additional elements.
+First extra element 0:
+'答复A'
+
+- []
++ ['答复A', '答复B']
+
+----------------------------------------------------------------------
+Ran 46 tests in 3.807s
+
+FAILED (failures=11)
+
+------------------------------- 修后（信封夹具 + 当前 stock 事实）--------------------------
+test_independent_cli_inherits_only_what_still_exists (test_plugin.IndependentCliCreateTest.test_independent_cli_inherits_only_what_still_exists) ... ok
+test_child_does_not_inherit_api_server_rows (test_plugin.KanbanNotifyGuardTest.test_child_does_not_inherit_api_server_rows) ... ok
+test_creator_origin_inheritance_is_guarded (test_plugin.KanbanNotifyGuardTest.test_creator_origin_inheritance_is_guarded)
+``kanban_db_graph.inherit_creator_origin`` (create_task ``creator_task_id``) copies too. ... ok
+test_explicit_subscription_is_still_allowed (test_plugin.KanbanNotifyGuardTest.test_explicit_subscription_is_still_allowed) ... ok
+test_install_is_idempotent (test_plugin.KanbanNotifyGuardTest.test_install_is_idempotent) ... ok
+test_late_link_inheritance_is_guarded (test_plugin.KanbanNotifyGuardTest.test_late_link_inheritance_is_guarded)
+``kb.link_tasks`` copies parent rows too — the same single owner must be guarded. ... ok
+test_nb_report_source_still_routes_from_task_session_id (test_plugin.KanbanNotifyGuardTest.test_nb_report_source_still_routes_from_task_session_id) ... ok
+test_new_card_from_api_server_session_gets_no_subscription (test_plugin.KanbanNotifyGuardTest.test_new_card_from_api_server_session_gets_no_subscription) ... ok
+test_new_card_from_telegram_session_keeps_its_subscription (test_plugin.KanbanNotifyGuardTest.test_new_card_from_telegram_session_keeps_its_subscription) ... ok
+test_slash_create_from_api_server_source_is_refused (test_plugin.KanbanNotifyGuardTest.test_slash_create_from_api_server_source_is_refused) ... ok
+test_slash_create_from_telegram_source_still_subscribes (test_plugin.KanbanNotifyGuardTest.test_slash_create_from_telegram_source_still_subscribes) ... ok
+test_directory_alone_is_not_loaded (test_plugin.PluginEnabledAtLoadTest.test_directory_alone_is_not_loaded) ... ok
+test_enabled_profile_loads_and_wraps (test_plugin.PluginEnabledAtLoadTest.test_enabled_profile_loads_and_wraps) ... ok
+test_enabling_then_rediscovering_installs_the_wrappers (test_plugin.PluginEnabledAtLoadTest.test_enabling_then_rediscovering_installs_the_wrappers) ... ok
+test_manifest_is_discovered_as_a_user_plugin (test_plugin.PluginPackageTest.test_manifest_is_discovered_as_a_user_plugin) ... ok
+test_register_wires_the_api_server_factory (test_plugin.PluginPackageTest.test_register_wires_the_api_server_factory) ... ok
+test_abc_each_once_in_order (test_plugin.QueuedLaneInterimTest.test_abc_each_once_in_order) ... ok
+test_admitted_adapter_owns_the_publication (test_plugin.QueuedLaneInterimTest.test_admitted_adapter_owns_the_publication)
+The seam's delivery adapter may be another instance; the admitting one owns the run. ... ok
+test_allowed_silence_marker_publishes_nothing (test_plugin.QueuedLaneInterimTest.test_allowed_silence_marker_publishes_nothing) ... ok
+test_already_streamed_is_untouched (test_plugin.QueuedLaneInterimTest.test_already_streamed_is_untouched) ... ok
+test_compression_tip_binds_logical_root (test_plugin.QueuedLaneInterimTest.test_compression_tip_binds_logical_root) ... ok
+test_compression_tip_without_live_root_is_visible_and_safe (test_plugin.QueuedLaneInterimTest.test_compression_tip_without_live_root_is_visible_and_safe) ... ok
+test_control_loses_every_queued_answer (test_plugin.QueuedLaneInterimTest.test_control_loses_every_queued_answer) ... ok
+test_distinct_terminal_is_unchanged (test_plugin.QueuedLaneInterimTest.test_distinct_terminal_is_unchanged) ... ok
+test_event_less_pending_event_followup (test_plugin.QueuedLaneInterimTest.test_event_less_pending_event_followup) ... ok
+test_generation_or_epoch_mismatch_is_refused (test_plugin.QueuedLaneInterimTest.test_generation_or_epoch_mismatch_is_refused) ... ok
+test_human_turn_silence_marker_publishes_the_stock_replacement (test_plugin.QueuedLaneInterimTest.test_human_turn_silence_marker_publishes_the_stock_replacement) ... ok
+test_install_is_idempotent_and_shape_checked (test_plugin.QueuedLaneInterimTest.test_install_is_idempotent_and_shape_checked) ... ok
+test_interim_prefix_of_streamed_delta_keeps_the_tail (test_plugin.QueuedLaneInterimTest.test_interim_prefix_of_streamed_delta_keeps_the_tail) ... ok
+test_interim_prefix_tail_without_close_is_not_sent (test_plugin.QueuedLaneInterimTest.test_interim_prefix_tail_without_close_is_not_sent)
+接回共享标记 ≠ 替尾巴补信封：没等到闭合标记的尾巴照旧不发。 ... ok
+test_interim_without_any_delta_still_sends_once (test_plugin.QueuedLaneInterimTest.test_interim_without_any_delta_still_sends_once) ... ok
+test_missing_session_db_accessor_is_refused (test_plugin.QueuedLaneInterimTest.test_missing_session_db_accessor_is_refused) ... ok
+test_muted_turn_is_untouched (test_plugin.QueuedLaneInterimTest.test_muted_turn_is_untouched) ... ok
+test_no_admission_stamp_is_silent (test_plugin.QueuedLaneInterimTest.test_no_admission_stamp_is_silent) ... ok
+test_non_api_platform_is_untouched (test_plugin.QueuedLaneInterimTest.test_non_api_platform_is_untouched) ... ok
+test_partial_delta_before_interim_is_not_resent (test_plugin.QueuedLaneInterimTest.test_partial_delta_before_interim_is_not_resent) ... ok
+test_profile_mismatch_is_refused (test_plugin.QueuedLaneInterimTest.test_profile_mismatch_is_refused) ... ok
+test_queued_interim_closes_the_preceding_delta_segment (test_plugin.QueuedLaneInterimTest.test_queued_interim_closes_the_preceding_delta_segment)
+delta(A) → queued interim(A) → delta(P before its tool) → terminal C must be [A, P, C]. ... ok
+test_same_session_db_object_is_accepted (test_plugin.QueuedLaneInterimTest.test_same_session_db_object_is_accepted) ... ok
+test_settled_admission_is_refused (test_plugin.QueuedLaneInterimTest.test_settled_admission_is_refused) ... ok
+test_shared_marker_between_units_survives_queued_interim (test_plugin.QueuedLaneInterimTest.test_shared_marker_between_units_survives_queued_interim)
+R1（t_049df793）：delta 已到 A、B 两份，queued interim 只是 A → B 仍发一次。 ... ok
+test_stale_goal_early_return_does_not_duplicate (test_plugin.QueuedLaneInterimTest.test_stale_goal_early_return_does_not_duplicate) ... ok
+test_stock_parser_closes_at_interim_under_the_envelope (test_plugin.QueuedLaneInterimTest.test_stock_parser_closes_at_interim_under_the_envelope)
+部署副本已是信封解析器：同一帧序不再把两份答复拼成 A+P。 ... ok
+test_terminal_same_text_is_not_repeated (test_plugin.QueuedLaneInterimTest.test_terminal_same_text_is_not_repeated) ... ok
+test_two_runs_bound_one_after_another (test_plugin.QueuedLaneInterimTest.test_two_runs_bound_one_after_another) ... ok
+test_unknown_admission_is_refused (test_plugin.QueuedLaneInterimTest.test_unknown_admission_is_refused) ... ok
+test_unprovable_session_db_none_is_refused (test_plugin.QueuedLaneInterimTest.test_unprovable_session_db_none_is_refused) ... ok
+test_unprovable_session_db_raises_is_refused (test_plugin.QueuedLaneInterimTest.test_unprovable_session_db_raises_is_refused) ... ok
+
+----------------------------------------------------------------------
+Ran 48 tests in 3.838s
+
+OK
+
+结论：修前 46 跑 11 失败（全部是裸正文在信封解析器下 no_marker 的夹具事实）；修后 48 跑
+全过（46 个既有用例 + 2 个新用例：共享标记边界、尾巴未闭合仍拒绝）。
+`tests/` 的全量数字（682）**不包含**这一批：验收脚本 verify.py 已新增
+「网关插件独立测试（不在 tests/ 全量里）」，对 48/21 两个下界单独设闸。

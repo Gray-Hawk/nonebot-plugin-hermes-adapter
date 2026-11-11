@@ -124,6 +124,21 @@ os.environ["HERMES_HOME"] = HOME  # after the imports: a pre-import switch re-ex
 os.environ["HERMES_DISABLE_LAZY_INSTALLS"] = "1"
 
 SEND_ERROR = "API server uses HTTP request/response, not send()"
+
+
+def _deployed_parser_is_envelope() -> bool:
+    """部署副本（NeonBot site-packages）是否已是分节符信封解析器。
+
+    stock 对照只在「部署副本与候选同代」时才有意义：2026-11-11 部署副本已切到信封
+    解析器（t_0ecd8f77 候选部署），旧用例『stock = 裸正文、不结段』的前提不再成立。
+    """
+    source = Path(NB_SITE) / _NB_PKG / "core" / "runs_text.py"
+    try:
+        return "分节符正文信封" in source.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
 _STOCK = {
     "first_response": GatewayTurnMixin._run_agent_deliver_first_response,
     "put_event": _RunLaunch.put_event,
@@ -262,6 +277,19 @@ def term(run: Run, output: str) -> None:
                                          owner=run.adapter), event)
 
 
+SEP = "§"
+
+
+def env(body: str) -> str:
+    """分节符信封：模型回复的一份正文（独立一行 § 开头、独立一行 § 结尾）。"""
+    return f"{SEP}\n{body}\n{SEP}"
+
+
+def batch(*bodies: str) -> str:
+    """多份正文连发：相邻两份共享中间那个 §。"""
+    return SEP + "\n" + ("\n" + SEP + "\n").join(bodies) + "\n" + SEP
+
+
 def frame(run: Run, name: str, **fields) -> None:
     """One SSE frame as the run's own publisher emits it (real ``_run_event`` + ``put_event``).
 
@@ -320,13 +348,13 @@ class QueuedLaneInterimTest(unittest.TestCase):
         client = NbClient(run.stream)
         runner = make_runner()
         asyncio.run(self._abc(run, runner))
-        term(run, "答复C")
+        term(run, env("答复C"))
         client.pump()
         self.assertEqual(client.sent, ["答复C"])
 
     async def _abc(self, run, runner):
-        await deliver(run, runner, "答复A")
-        await deliver(run, runner, "答复B")
+        await deliver(run, runner, env("答复A"))
+        await deliver(run, runner, env("答复B"))
 
     def test_abc_each_once_in_order(self):
         patches.install()
@@ -335,13 +363,13 @@ class QueuedLaneInterimTest(unittest.TestCase):
         client = NbClient(run.stream)
         runner = make_runner()
         asyncio.run(self._abc(run, runner))
-        term(run, "答复C")
+        term(run, env("答复C"))
         client.pump()
         self.assertEqual(client.sent, ["答复A", "答复B", "答复C"])
         self.assertEqual(client.parser.interim_count, 2)
         self.assertEqual(client.suppressed, [])
         # SSE enqueue is not a chat ACK: the stock delivery result must stay untouched.
-        result = asyncio.run(deliver(run, runner, "答复D"))
+        result = asyncio.run(deliver(run, runner, env("答复D")))
         self.assertNotIn("already_sent", result)
 
     def test_install_is_idempotent_and_shape_checked(self):
@@ -370,10 +398,10 @@ class QueuedLaneInterimTest(unittest.TestCase):
             "admission_id": a.admission_id}
         self._exec(a)
         runner = make_runner()
-        asyncio.run(deliver(a, runner, "答复A"))
+        asyncio.run(deliver(a, runner, env("答复A")))
         self.assertEqual([e for _, e in a.stream.backlog if e and e.get("event") == "message.interim"],
                          [e for _, e in a.stream.backlog if e and e.get("event") == "message.interim"])
-        self.assertTrue(any(e and e.get("text") == "答复A" for _, e in a.stream.backlog))
+        self.assertTrue(any(e and e.get("text") == env("答复A") for _, e in a.stream.backlog))
         self.assertEqual(list(b.stream.backlog), [])
 
         # A settles; B claims the FIFO (generation 2) and gets its own frame.
@@ -387,8 +415,8 @@ class QueuedLaneInterimTest(unittest.TestCase):
         a.live.event_stream.execution = {
             "authority_epoch": a.epoch, "execution_generation": claimed["generation"],
             "admission_id": claimed["admission_id"]}
-        asyncio.run(deliver(b, runner, "答复B"))
-        self.assertTrue(any(e and e.get("text") == "答复B" for _, e in b.stream.backlog))
+        asyncio.run(deliver(b, runner, env("答复B")))
+        self.assertTrue(any(e and e.get("text") == env("答复B") for _, e in b.stream.backlog))
         self.assertEqual(sum(1 for _, e in a.stream.backlog
                              if e and e.get("event") == "message.interim"), 1)
 
@@ -400,7 +428,7 @@ class QueuedLaneInterimTest(unittest.TestCase):
         run.ctx.session_id = tip          # the turn carries the physical tip
         self._exec(run)
         runner = make_runner()
-        binding = asyncio.run(deliver(run, runner, "答复A"))
+        binding = asyncio.run(deliver(run, runner, env("答复A")))
         self.assertEqual(binding.get("already_sent"), None)
         self.assertTrue(any(e and e.get("event") == "message.interim" for _, e in run.stream.backlog))
 
@@ -412,7 +440,7 @@ class QueuedLaneInterimTest(unittest.TestCase):
         self._exec(run)
         runner = make_runner()
         with self.assertLogs("patches", level="WARNING") as logs:
-            result = asyncio.run(deliver(run, runner, "答复A"))
+            result = asyncio.run(deliver(run, runner, env("答复A")))
         self.assertEqual(list(run.stream.backlog), [])
         self.assertNotIn("already_sent", result)          # stock fallback stays the safe result
         self.assertIn("no live session", "\n".join(logs.output))
@@ -426,7 +454,7 @@ class QueuedLaneInterimTest(unittest.TestCase):
         self._exec(run)
         runner = make_runner()
         with self.assertLogs("patches", level="WARNING") as logs:
-            result = asyncio.run(deliver(run, runner, "答复A"))
+            result = asyncio.run(deliver(run, runner, env("答复A")))
         self.assertEqual(list(run.stream.backlog), [])
         self.assertNotIn("already_sent", result)
         self.assertIn("another profile's SessionDB", "\n".join(logs.output))
@@ -438,7 +466,7 @@ class QueuedLaneInterimTest(unittest.TestCase):
                                                execution_generation=run.generation + 5)
         self._exec(run)
         with self.assertLogs("patches", level="WARNING") as logs:
-            asyncio.run(deliver(run, make_runner(), "答复A"))
+            asyncio.run(deliver(run, make_runner(), env("答复A")))
         self.assertEqual(list(run.stream.backlog), [])
         self.assertIn("generation mismatch", "\n".join(logs.output))
 
@@ -451,7 +479,7 @@ class QueuedLaneInterimTest(unittest.TestCase):
 
         self._exec(run)
         with self.assertLogs("patches", level="WARNING") as logs:
-            asyncio.run(deliver(run, make_runner(), "答复A"))
+            asyncio.run(deliver(run, make_runner(), env("答复A")))
         self.assertEqual(list(run.stream.backlog), [])
         self.assertIn("not started", "\n".join(logs.output))
 
@@ -463,7 +491,7 @@ class QueuedLaneInterimTest(unittest.TestCase):
                                            "admission_id": "adm_missing"}
         self._exec(run)
         with self.assertLogs("patches", level="WARNING") as logs:
-            asyncio.run(deliver(run, make_runner(), "答复A"))
+            asyncio.run(deliver(run, make_runner(), env("答复A")))
         self.assertEqual(list(run.stream.backlog), [])
         self.assertIn("missing from the store", "\n".join(logs.output))
 
@@ -471,7 +499,7 @@ class QueuedLaneInterimTest(unittest.TestCase):
         patches.install()
         run = Run(platform=Platform.TELEGRAM, send_ok=True)
         self._exec(run)
-        result = asyncio.run(deliver(run, make_runner(), "telegram answer"))
+        result = asyncio.run(deliver(run, make_runner(), env("telegram answer")))
         self.assertEqual(list(run.stream.backlog), [])
         self.assertTrue(result.get("already_sent"))
 
@@ -479,7 +507,7 @@ class QueuedLaneInterimTest(unittest.TestCase):
         patches.install()
         run = Run(send_ok=True)
         self._exec(run)
-        result = asyncio.run(deliver(run, make_runner(already_streamed=True), "已流式答复"))
+        result = asyncio.run(deliver(run, make_runner(already_streamed=True), env("已流式答复")))
         self.assertEqual(list(run.stream.backlog), [])
         self.assertTrue(result.get("already_sent"))
 
@@ -488,7 +516,7 @@ class QueuedLaneInterimTest(unittest.TestCase):
         run = Run()
         run.ctx.mute_notification_reply = True
         self._exec(run)
-        asyncio.run(deliver(run, make_runner(), "内部通知"))
+        asyncio.run(deliver(run, make_runner(), env("内部通知")))
         self.assertEqual(list(run.stream.backlog), [])
 
     def test_allowed_silence_marker_publishes_nothing(self):
@@ -518,10 +546,10 @@ class QueuedLaneInterimTest(unittest.TestCase):
                                 _ensure_session_db=lambda: run.db,
                                 send=_failing_send, edit_message=_declined_edit,
                                 extract_media=BasePlatformAdapter.extract_media)
-        result = {"final_response": "答复A", "messages": [], "completed": True}
+        result = {"final_response": env("答复A"), "messages": [], "completed": True}
         asyncio.run(GatewayRunner._run_agent_deliver_first_response(
-            make_runner(), run.ctx, other, "答复A", result, None))
-        self.assertTrue(any(e and e.get("text") == "答复A" for _, e in run.stream.backlog))
+            make_runner(), run.ctx, other, env("答复A"), result, None))
+        self.assertTrue(any(e and e.get("text") == env("答复A") for _, e in run.stream.backlog))
         self.assertNotIn("already_sent", result)
 
     def test_no_admission_stamp_is_silent(self):
@@ -529,7 +557,7 @@ class QueuedLaneInterimTest(unittest.TestCase):
         run = Run()
         run.live.event_stream.execution = {}
         self._exec(run)
-        asyncio.run(deliver(run, make_runner(), "答复A"))
+        asyncio.run(deliver(run, make_runner(), env("答复A")))
         self.assertEqual(list(run.stream.backlog), [])
 
     def test_terminal_same_text_is_not_repeated(self):
@@ -538,10 +566,10 @@ class QueuedLaneInterimTest(unittest.TestCase):
         self._exec(run)
         runner = make_runner()
         client = NbClient(run.stream)
-        asyncio.run(deliver(run, runner, "答复A"))
-        asyncio.run(deliver(run, runner, "答复B"))
+        asyncio.run(deliver(run, runner, env("答复A")))
+        asyncio.run(deliver(run, runner, env("答复B")))
         # The follow-up's final answer happens to be the same text as the interim just published.
-        term(run, "答复B")
+        term(run, env("答复B"))
         client.pump()
         self.assertEqual(client.sent, ["答复A", "答复B"])
         completed = [e for _, e in run.stream.backlog if e and e.get("event") == "run.completed"]
@@ -555,12 +583,12 @@ class QueuedLaneInterimTest(unittest.TestCase):
         run = Run()
         self._exec(run)
         client = NbClient(run.stream)
-        asyncio.run(deliver(run, make_runner(), "答复A"))
-        term(run, "答复C")
+        asyncio.run(deliver(run, make_runner(), env("答复A")))
+        term(run, env("答复C"))
         client.pump()
         self.assertEqual(client.sent, ["答复A", "答复C"])
         completed = [e for _, e in run.stream.backlog if e and e.get("event") == "run.completed"]
-        self.assertEqual(completed[0]["output"], "答复C")
+        self.assertEqual(completed[0]["output"], env("答复C"))
 
     # ---------------------------------------------------------------- R1: segment boundary
     def test_queued_interim_closes_the_preceding_delta_segment(self):
@@ -570,71 +598,109 @@ class QueuedLaneInterimTest(unittest.TestCase):
         self._exec(run)
         client = NbClient(run.stream)                 # candidate parser (this repository)
         runner = make_runner()
-        frame(run, "message.delta", delta="答复A")
-        asyncio.run(deliver(run, runner, "答复A"))
-        frame(run, "message.delta", delta="查B前的说明")
+        frame(run, "message.delta", delta=env("答复A"))
+        asyncio.run(deliver(run, runner, env("答复A")))
+        frame(run, "message.delta", delta=env("查B前的说明"))
         frame(run, "tool.started", tool="lookup")
-        term(run, "答复C")
+        term(run, env("答复C"))
         client.pump()
         self.assertEqual(client.sent, ["答复A", "查B前的说明", "答复C"])
         self.assertEqual(len(client.sent), 3)         # platform outlet counted, not observed
         self.assertEqual(client.parser.interim_count, 1)
         self.assertEqual(client.parser.delta_count, 2)
 
-    def test_stock_parser_replays_the_reviewer_gap(self):
-        """The same frames through the deployed (stock) parser still give [A, A+P, C].
+    def test_stock_parser_closes_at_interim_under_the_envelope(self):
+        """部署副本已是信封解析器：同一帧序不再把两份答复拼成 A+P。
 
-        This is the exact finding R1 closes: the interim alone only sends text, it does not close
-        the delta segment the previous turn left buffered.
+        旧用例假定部署副本是「裸正文、不结段」的 stock（reviewer t_049df793 R2：该前提
+        已经随着 2026-11-11 14:34 的信封部署失效）。当前事实：部署副本与候选同代，在
+        interim 处结清前一段 delta，普通 A/P/C 帧序得到 [A, P, C]。R1 的共享标记边界由
+        ``test_shared_marker_between_units_survives_queued_interim`` 在候选解析器上断言。
         """
+        if not _deployed_parser_is_envelope():
+            self.skipTest("部署副本不是信封解析器：本对照『与候选项同代』的前提不成立")
         patches.install()
         run = Run()
         self._exec(run)
         client = NbClient(run.stream, parser_cls=StockRunsEventParser)
         runner = make_runner()
-        frame(run, "message.delta", delta="答复A")
-        asyncio.run(deliver(run, runner, "答复A"))
-        frame(run, "message.delta", delta="查B前的说明")
+        frame(run, "message.delta", delta=env("答复A"))
+        asyncio.run(deliver(run, runner, env("答复A")))
+        frame(run, "message.delta", delta=env("查B前的说明"))
         frame(run, "tool.started", tool="lookup")
-        term(run, "答复C")
+        term(run, env("答复C"))
         client.pump()
-        self.assertEqual(client.sent, ["答复A", "答复A查B前的说明", "答复C"])
+        self.assertEqual(client.sent, ["答复A", "查B前的说明", "答复C"])
+        self.assertNotIn("答复A查B前的说明", client.sent)
 
     def test_partial_delta_before_interim_is_not_resent(self):
         patches.install()
         run = Run()
         self._exec(run)
         client = NbClient(run.stream)
-        frame(run, "message.delta", delta="答复")
-        asyncio.run(deliver(run, make_runner(), "答复A"))
+        frame(run, "message.delta", delta=f"{SEP}\n答复")
+        asyncio.run(deliver(run, make_runner(), env("答复A")))
         frame(run, "tool.started", tool="lookup")
-        term(run, "答复C")
+        term(run, env("答复C"))
         client.pump()
         # The streamed prefix is covered by the interim: one message, no [答复, 答复A] pair.
         self.assertEqual(client.sent, ["答复A", "答复C"])
+
+    def test_shared_marker_between_units_survives_queued_interim(self):
+        """R1（t_049df793）：delta 已到 A、B 两份，queued interim 只是 A → B 仍发一次。
+
+        反例：裸切片 ``pending[len(text):]`` 剩下 ``\n答复B\n§`` 缺开头，完整的 B 被当
+        missing_open 丢掉；修后共享的 § 按原输入接回尾部，B 在工具边界发一次。
+        """
+        patches.install()
+        run = Run()
+        self._exec(run)
+        client = NbClient(run.stream)
+        frame(run, "message.delta", delta=batch("答复A", "答复B"))
+        asyncio.run(deliver(run, make_runner(), env("答复A")))
+        frame(run, "tool.started", tool="lookup")
+        term(run, env("答复C"))
+        client.pump()
+        self.assertEqual(client.sent, ["答复A", "答复B", "答复C"])
+        self.assertEqual(len(client.sent), 3)
+        self.assertEqual(client.parser.interim_count, 1)
+        self.assertEqual(client.suppressed, [])          # no missing_open on the shared marker
 
     def test_interim_prefix_of_streamed_delta_keeps_the_tail(self):
         patches.install()
         run = Run()
         self._exec(run)
         client = NbClient(run.stream)
-        frame(run, "message.delta", delta="答复A查B前")
-        asyncio.run(deliver(run, make_runner(), "答复A"))
+        frame(run, "message.delta", delta=batch("答复A", "查B前"))
+        asyncio.run(deliver(run, make_runner(), env("答复A")))
         frame(run, "tool.started", tool="lookup")
-        term(run, "答复C")
+        term(run, env("答复C"))
         client.pump()
         # The delta already ran past the interim: the covered head is not repeated, the tail is
         # still delivered at the tool boundary.
         self.assertEqual(client.sent, ["答复A", "查B前", "答复C"])
+
+    def test_interim_prefix_tail_without_close_is_not_sent(self):
+        """接回共享标记 ≠ 替尾巴补信封：没等到闭合标记的尾巴照旧不发。"""
+        patches.install()
+        run = Run()
+        self._exec(run)
+        client = NbClient(run.stream)
+        frame(run, "message.delta", delta=f"{SEP}\n答复A\n{SEP}\n查B前")
+        asyncio.run(deliver(run, make_runner(), env("答复A")))
+        frame(run, "tool.started", tool="lookup")
+        term(run, env("答复C"))
+        client.pump()
+        self.assertEqual(client.sent, ["答复A", "答复C"])
 
     def test_interim_without_any_delta_still_sends_once(self):
         patches.install()
         run = Run()
         self._exec(run)
         client = NbClient(run.stream)
-        asyncio.run(deliver(run, make_runner(), "答复A"))
+        asyncio.run(deliver(run, make_runner(), env("答复A")))
         frame(run, "tool.started", tool="lookup")
-        term(run, "答复C")
+        term(run, env("答复C"))
         client.pump()
         self.assertEqual(client.sent, ["答复A", "答复C"])
         self.assertEqual(client.parser.delta_count, 0)
@@ -646,12 +712,12 @@ class QueuedLaneInterimTest(unittest.TestCase):
         break_store(run.adapter)
         self._exec(run)
         with self.assertLogs("patches", level="WARNING") as logs:
-            result = asyncio.run(deliver(run, make_runner(), "答复A"))
+            result = asyncio.run(deliver(run, make_runner(), env("答复A")))
         self.assertEqual(list(run.stream.backlog), [])           # nothing reaches the run stream
         log = "\n".join(logs.output)
         self.assertIn("NOT published", log)
         self.assertIn("cannot prove its SessionDB", log)
-        self.assertEqual(result.get("final_response"), "答复A")   # stock result, untouched
+        self.assertEqual(result.get("final_response"), env("答复A"))   # stock result, untouched
         self.assertNotIn("already_sent", result)
         return run
 
@@ -674,16 +740,16 @@ class QueuedLaneInterimTest(unittest.TestCase):
         patches.install()
         run = Run()
         self._exec(run)
-        asyncio.run(deliver(run, make_runner(), "答复A"))
+        asyncio.run(deliver(run, make_runner(), env("答复A")))
         frames = [e for _, e in run.stream.backlog if e and e.get("event") == "message.interim"]
-        self.assertEqual([f["text"] for f in frames], ["答复A"])
+        self.assertEqual([f["text"] for f in frames], [env("答复A")])
 
     def test_event_less_pending_event_followup(self):
         patches.install()
         run = Run()
         self._exec(run)
         runner = _followup_runner(run)
-        first = {"final_response": "答复A", "messages": [], "completed": True}
+        first = {"final_response": env("答复A"), "messages": [], "completed": True}
         ctx = run.ctx
         ctx.history = []
         ctx._interrupt_depth = 0
@@ -702,7 +768,7 @@ class QueuedLaneInterimTest(unittest.TestCase):
         run = Run()
         self._exec(run)
         runner = _followup_runner(run, stale_goal=True)
-        first = {"final_response": "答复A", "messages": [], "completed": True}
+        first = {"final_response": env("答复A"), "messages": [], "completed": True}
         ctx = run.ctx
         ctx.history = []
         ctx._interrupt_depth = 0
@@ -740,7 +806,7 @@ def _followup_runner(run: Run, *, stale_goal: bool = False):
 
     async def _run_agent(**kwargs):
         runner._recursive_calls += 1
-        text = "答复C"
+        text = env("答复C")
         result = {"final_response": text, "messages": [], "completed": True}
         await GatewayRunner._run_agent_deliver_first_response(
             runner, run.ctx, run.adapter, text, result, None)

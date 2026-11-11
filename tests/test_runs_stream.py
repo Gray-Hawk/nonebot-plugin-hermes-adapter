@@ -242,6 +242,54 @@ class TextProtocolParserTests(unittest.TestCase):
         ])
         self.assertEqual([d["body"] for d in drained], ["A", "B"])
 
+    def test_interim_prefix_keeps_the_shared_marker_of_the_tail(self) -> None:
+        """delta 已积到多份、interim 只是前面一份：两份正文共享的 § 不能被前缀裁掉。
+
+        反例（t_049df793 R1）：``pending[len(text):]`` 直接切片，剩下 ``\nB\n§`` 缺开头，
+        完整的 B 被误记 missing_open 丢掉。
+        """
+        for interim in (unit({}, "A"), unit({}, "A") + "\n"):
+            with self.subTest(interim=interim):
+                parser = RunsEventParser()
+                drained = feed_all(parser, [
+                    {"event": "message.delta", "delta": batch(({}, "A"), ({}, "B")), "seq": 0},
+                    {"event": "message.interim", "text": interim, "seq": 1},
+                    {"event": "tool.started", "tool": "todo_list", "seq": 2},
+                ])
+                self.assertEqual([d["body"] for d in drained], ["A", "B"])
+
+    def test_interim_prefix_keeps_every_shared_marker_after_it(self) -> None:
+        parser = RunsEventParser()
+        drained = feed_all(parser, [
+            {"event": "message.delta",
+             "delta": batch(({}, "A"), ({}, "B"), ({}, "D")), "seq": 0},
+            {"event": "message.interim", "text": unit({}, "A"), "seq": 1},
+            {"event": "tool.started", "tool": "todo_list", "seq": 2},
+        ])
+        self.assertEqual([d["body"] for d in drained], ["A", "B", "D"])
+
+    def test_interim_prefix_tail_still_needs_its_own_close(self) -> None:
+        """接回共享标记不等于给尾巴补信封：尾巴本身没闭合就照旧丢弃。"""
+        parser = RunsEventParser()
+        drained: list[dict] = []
+        with _e2._CapturedWarnings() as logs:
+            drained = feed_all(parser, [
+                {"event": "message.delta", "delta": f"{SEP}\nA\n{SEP}\nB", "seq": 0},
+                {"event": "message.interim", "text": unit({}, "A"), "seq": 1},
+                {"event": "tool.started", "tool": "todo_list", "seq": 2},
+            ])
+        self.assertEqual([d["body"] for d in drained], ["A"])
+        self.assertIn("reason=missing_close", "\n".join(logs.messages))
+
+    def test_interim_same_text_as_delta_sends_once(self) -> None:
+        parser = RunsEventParser()
+        drained = feed_all(parser, [
+            {"event": "message.delta", "delta": unit({}, "A"), "seq": 0},
+            {"event": "message.interim", "text": unit({}, "A"), "seq": 1},
+            {"event": "tool.started", "tool": "todo_list", "seq": 2},
+        ])
+        self.assertEqual([d["body"] for d in drained], ["A"])
+
     def test_same_text_across_segments_sends_twice(self) -> None:
         parser = RunsEventParser()
         drained = feed_all(parser, [

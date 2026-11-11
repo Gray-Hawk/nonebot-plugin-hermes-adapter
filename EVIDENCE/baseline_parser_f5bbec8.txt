@@ -1,0 +1,20 @@
+t_049df793 / R3：基线解析器（git f5bbec8:core/runs_text.py）对信封正文的真实行为
+=====================================================================
+
+只读实测：git archive f5bbec8 到临时目录，用真模块跑 split_text_units（没有活实例、
+没有网络、没有改任何文件）。用来更正 DELIVERY_t_0ecd8f77.md 里「只上提示词会多发一条
+空消息」的说法。
+
+single-envelope: ['正文']  (count=1, empties=0)
+silence-two-lines: []  (count=0, empties=0)
+silence-adjacent: ['§§']  (count=1, empties=0)
+multi-envelope: ['A', 'B']  (count=2, empties=0)
+unclosed-open-only: ['A']  (count=1, empties=0)
+bare-text: ['你好']  (count=1, empties=0)
+marker-with-spaces: ['甲\n § \n乙']  (count=1, empties=0)
+
+结论：旧解析器把 § 当纯分隔符，空段丢弃——单条信封 ['正文']、静默 '§\n§' → []，连发
+多份 ['A', 'B']，**不会多发空消息**。真正的差别是口径：旧解析器不校验闭合，'§\nA'
+这种没等到闭合标记的半段仍会整段发出；新解析器要求完整闭合（缺开／缺闭不发）。因此
+「解析器与提示词必须同批部署、同批回滚」的硬约束不变，但理由改成口径/回滚边界一致，
+而不是空消息。另：只上新解析器时，旧裸正文（含在飞旧格式 run）全部 no_marker → 零发送。

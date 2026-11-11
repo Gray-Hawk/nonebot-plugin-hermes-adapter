@@ -235,6 +235,51 @@ def check_prompt_protocol() -> None:
     )
 
 
+# 网关薄插件与 NB 侧不是同一套测试发现：`tests/` 的数字不含它们（reviewer t_049df793 R2）。
+# 这些插件测试必须用 Hermes venv、离开本仓库根目录（根目录 utils.py 会遮蔽 Hermes 的
+# utils），并且以各自声明的用例数下界做闸——少跑不等于通过。
+HERMES_REPO = Path("/home/neonsky/.hermes/hermes-agent")
+HERMES_VENV_PY = HERMES_REPO / "venv" / "bin" / "python"
+PLUGIN_TEST_SUITES = {
+    "queued-lane-interim-thin": 48,
+    "steer-presentation-thin": 21,
+}
+
+
+def check_gateway_plugin_tests() -> None:
+    """网关插件独立测试：不在 `tests/` 里，必须单独跑，不能拿全量数字冒充包含它们。"""
+    if not HERMES_VENV_PY.is_file():
+        check("网关插件独立测试", False, f"缺 Hermes 解释器 {HERMES_VENV_PY}")
+        return
+    import shutil
+    import tempfile
+
+    base = Path(tempfile.mkdtemp(prefix="verify-plugins-"))
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1",
+               PYTHONPATH=str(HERMES_REPO), TMPDIR=str(base))
+    env.pop("HERMES_KANBAN_TASK", None)
+    details: list[str] = []
+    ok = True
+    for name, minimum in PLUGIN_TEST_SUITES.items():
+        suite = ROOT / "gateway_plugins" / name / "tests"
+        if not suite.is_dir():
+            details.append(f"{name}: 缺 tests/")
+            ok = False
+            continue
+        proc = subprocess.run(
+            [str(HERMES_VENV_PY), "-B", "-m", "unittest", "discover",
+             "-s", str(suite), "-q"],
+            cwd=str(base), capture_output=True, text=True, env=env,
+        )
+        match = re.search(r"Ran (\d+) tests", proc.stderr + proc.stdout)
+        ran = int(match.group(1)) if match else 0
+        verdict = "OK" if proc.returncode == 0 else "FAILED"
+        details.append(f"{name}: {verdict} ran={ran} (需 >= {minimum})")
+        ok = ok and proc.returncode == 0 and ran >= minimum
+    shutil.rmtree(base, ignore_errors=True)
+    check("网关插件独立测试（不在 tests/ 全量里）", ok, "; ".join(details))
+
+
 def check_plan_and_stream() -> None:
     runs_terminal = read("core/runs_terminal.py")
     tracker = read("core/run_tracker.py")
@@ -348,6 +393,8 @@ ACCEPTANCE_CASES = {
     "stream_spaced_separator": "test_separator_with_spaces_does_not_split",
     "stream_interim_one_char": "test_interim_one_char_progress_is_sent",
     "stream_interim_dedupe": "test_interim_and_delta_same_text_sent_once_per_segment",
+    "stream_interim_prefix_shared_marker": "test_interim_prefix_keeps_the_shared_marker_of_the_tail",
+    "stream_interim_prefix_tail_close": "test_interim_prefix_tail_still_needs_its_own_close",
     "stream_cross_segment_twice": "test_same_text_across_segments_sends_twice",
     "stream_control_seals": "test_control_tool_frame_seals_segment_without_new_batch",
     "stream_unsealed_tail": "test_terminal_ignores_unsealed_delta_tail",
@@ -364,6 +411,8 @@ ACCEPTANCE_CASES = {
     "client_silent": "test_silent_output_sends_nothing",
     "client_progress_then_final": "test_interim_progress_then_final",
     "client_interim_partial": "test_incomplete_interim_progress_is_not_sent",
+    "client_interim_shared_marker": "test_shared_marker_between_units_survives_interim_prefix",
+    "client_interim_shared_marker_unclosed": "test_shared_marker_tail_without_close_is_still_refused",
     "client_control_seal": "test_control_frame_seals_segment_before_registration",
     "client_terminal_repeat_resent": "test_terminal_repeating_last_segment_is_resent",
     "client_overflow_fail_closed": "test_overflow_terminal_fails_closed",
@@ -400,6 +449,7 @@ def check_acceptance_cases() -> None:
             "tests/test_runs_envelope.py",
             "tests/test_runs_terminal.py",
             "tests/test_runs_stream.py",
+            "tests/test_queued_lane_interim_client.py",
             "tests/test_astrbot_text_compat.py",
             "tests/test_continuation.py",
         )
@@ -426,6 +476,7 @@ def main() -> int:
     check_single_text_parser()
     check_envelope_protocol()
     check_prompt_protocol()
+    check_gateway_plugin_tests()
     check_plan_and_stream()
     check_control_and_continuation()
     check_push_gate()
