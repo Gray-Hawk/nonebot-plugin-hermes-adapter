@@ -23,7 +23,7 @@
 行工具、4 个解析器方法（`_queue_units`、`_ingest_delta`、`_fail_text`、`terminal_decisions`），
 删除 1 个兼容函数（`continue_after_shared_prefix`）；`_RunsReplyQueue` 零改动）。
 
-第三轮复核后的局部修正另计 **3 文件 +215/−26**：`core/runs_text.py` 三个内部判据
+第三轮复核后的局部修正另计 **3 文件 +239/−26**：`core/runs_text.py` 三个内部判据
 （原样碎片／共享标记左右整行／已闭合尾部覆盖）+ 两个测试文件的新用例；
 `core/hermes_client.py`、`core/runs_terminal.py`、插件、提示词本轮**零改动**。
 
