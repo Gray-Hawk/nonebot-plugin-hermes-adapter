@@ -107,7 +107,8 @@ class _HTTP:
 
 
 def _output(body: str) -> str:
-    return "{}\n" + json.dumps({"body": body}, ensure_ascii=False)
+    """分节符信封：一份正文 = 独立一行 § + 正文 + 独立一行 §。"""
+    return "§\n" + body + "\n§"
 
 
 def _simple_events(body: str) -> list[dict]:
@@ -205,7 +206,13 @@ class StreamingPrefixTests(_LifecycleCase):
         next_event = "kanban:t_next:2" if next_source == SOURCE_KANBAN else "deleg_next"
         h.add_event(event_id, source=source)
         h.outbox.claim_event(event_id, idempotency_key="attempt-1", now=self.now, lease_seconds=120)
-        events = json.loads(SAMPLE.read_text())["events"]
+        # 分节符信封：一次封段（工具边界）实发一份，第二份要等放行 SSE 后才到。
+        events = [
+            {"event": "message.delta", "delta": "§\n第一份汇报\n§\n", "seq": 0},
+            {"event": "tool.started", "tool": "todo_list", "seq": 1},
+            {"event": "message.delta", "delta": "§\n第二份汇报\n§", "seq": 2},
+            {"event": "run.completed", "output": "§\n第二份汇报\n§", "seq": 3},
+        ]
         http = _HTTP("run-stream", events, pause_after_first=True)
         sends: list[str] = []
 

@@ -162,8 +162,8 @@ class TaskAnchorPromptTests(unittest.TestCase):
         self.assertIn("reply_to 填 `m:<id>`", group)
         self.assertIn("需要引用消息或提前退窗时", group)
         self.assertIn("退窗只在群活跃态生效。", rendered["private_system"])
-        # 段落结构与正文协议其余部分不变：§ 多条、控制工具只登记等仍在。
-        self.assertIn("只有整行严格等于 § 才算分隔", group)
+        # 段落结构与正文协议其余部分不变：分节符信封、控制工具只登记等仍在。
+        self.assertIn("只有被两个 § 完整包住的段才会发出去", group)
         self.assertIn("控制工具只登记，不直接发消息，也不会自己退窗。", group)
 
     def test_off_renders_expected_block_constants(self) -> None:

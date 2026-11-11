@@ -1330,8 +1330,8 @@ def build_reactive_user_content(
             else "需要引用／退窗时调用 submit_control。"
         )
         reminder = (
-            "\n\n请直接输出最终正文，不要写 JSON 信封；要分成多条最终消息时，"
-            "在两条之间单独写一行 §；轮中进度用 push_message，需要续跑时调用 request_continuation，"
+            "\n\n请直接输出最终正文，不要写 JSON 信封；每份正文用独立一行 § 开头、独立一行 § 结尾，"
+            "多条之间也单独写一行 §，静默写两行 §；轮中进度用 push_message，需要续跑时调用 request_continuation，"
             + anchor_hint
         )
     elif mode == "runs":
@@ -1341,7 +1341,8 @@ def build_reactive_user_content(
             else "需要引用／退窗控制时先调 submit_control 登记，普通回复不要调控制工具。"
         )
         reminder = (
-            "\n\n请直接输出正文，不要写 JSON 信封；要分成多条时，在两条之间单独写一行 §；"
+            "\n\n请直接输出正文，不要写 JSON 信封；每份正文用独立一行 § 开头、独立一行 § 结尾，"
+            "多条之间也单独写一行 §，静默写两行 §；"
             + anchor_hint
             + _RUNS_VISIBLE_REPLY_REMINDER
         )

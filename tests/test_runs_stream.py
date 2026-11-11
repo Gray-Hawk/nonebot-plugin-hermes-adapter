@@ -1,10 +1,14 @@
-"""纯文本正文协议：Runs 段落切分、段内去重、终态与真实链式回放。
+"""分节符正文信封：Runs 段落切分、段内去重、终态与真实链式回放。
 
-覆盖实现卡 t_979bff13 的硬验收：
-- 单句零工具零额外调用、§ 跨帧闭合与连发、静默／进度／最终；
+协议（t_0ecd8f77）：每份回复以独立一行 ``§`` 开头、以独立一行 ``§`` 结尾；多条之间
+也共享一个独立整行 ``§``。只有完整闭合的段才可发送；缺开头／缺末尾的段一律不发并留
+可见日志；旧裸正文不保留兼容层。
+
+覆盖：
+- 单条／多条／静默／空段／缺开／缺闭／行内与带空格标记／代码围栏；
+- delta 逐字符与跨帧拼标记、interim 段边界与不完整 interim、终态只认 output；
 - 段内 interim／delta 同文去重、跨段同文两份；
 - 控制帧在 tool.started 封段（不切批）、控制 FIFO 与作用域；
-- 旧 JSON 逐字原样一条、不识别控制语义；
 - 流式／终态／恢复一致，断流与协议失败关闭。
 """
 
@@ -40,6 +44,8 @@ from nonebot_plugin_hermes_adapter.core.runs_terminal import (  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker  # noqa: E402
 from tests import test_runs_terminal as _e2  # noqa: E402
 
+SEP = runs_text.SEPARATOR
+
 
 def sse_lines(events: list[dict]) -> list[str]:
     """真实事件 payload → 上游 runs 的 data-only SSE 行形态。"""
@@ -47,12 +53,14 @@ def sse_lines(events: list[dict]) -> list[str]:
 
 
 def unit(control: dict | None = None, body: str = "正文") -> str:
-    """纯文本协议：一份正文就是这段文本（control 形参只为保留调用形状）。"""
-    return body
+    """分节符信封：一份正文 = 开头一行 § + 正文 + 结尾一行 §（control 只为保留调用形状）。"""
+    return f"{SEP}\n{body}\n{SEP}"
 
 
 def batch(*pairs) -> str:
-    return "\n§\n".join(unit(control, body) for control, body in pairs)
+    """多份正文按协议连发：``§`` A ``§`` B ``§``（相邻两份共享中间那个标记）。"""
+    bodies = [str(body) for _control, body in pairs]
+    return SEP + "\n" + ("\n" + SEP + "\n").join(bodies) + "\n" + SEP
 
 
 def decisions(*bodies) -> list[dict]:
@@ -73,13 +81,14 @@ class TextProtocolParserTests(unittest.TestCase):
 
     def test_single_sentence_is_one_verbatim_unit(self) -> None:
         parser = RunsEventParser()
+        text = unit({}, "你好")
         drained = feed_all(parser, [
-            {"event": "message.delta", "delta": "你好", "seq": 0},
-            {"event": "run.completed", "output": "你好", "seq": 1},
+            {"event": "message.delta", "delta": text, "seq": 0},
+            {"event": "run.completed", "output": text, "seq": 1},
         ])
+        # 段内 delta 不即时成段：最后一段只认 output，同文不会因为 delta 也出现过而多发。
         self.assertEqual(drained, [])
-        self.assertEqual(parser.output, "你好")
-        # 终态只认 output：同文不会因为 delta 也出现过而提前发。
+        self.assertEqual(parser.output, text)
         self.assertEqual(parser.text_error, "")
 
     def test_three_units_split_by_standalone_separator(self) -> None:
@@ -88,66 +97,130 @@ class TextProtocolParserTests(unittest.TestCase):
 
     def test_separator_split_across_delta_frames(self) -> None:
         events = [
-            {"event": "message.delta", "delta": "甲\n", "seq": 0},
-            {"event": "message.delta", "delta": "§", "seq": 1},
-            {"event": "message.delta", "delta": "\n乙", "seq": 2},
-            {"event": "tool.started", "tool": "todo_list", "seq": 3},
+            {"event": "message.delta", "delta": f"{SEP}\n甲\n", "seq": 0},
+            {"event": "message.delta", "delta": SEP, "seq": 1},
+            {"event": "message.delta", "delta": "\n乙\n", "seq": 2},
+            {"event": "message.delta", "delta": f"{SEP}\n", "seq": 3},
+            {"event": "tool.started", "tool": "todo_list", "seq": 4},
         ]
         parser = RunsEventParser()
         drained = feed_all(parser, events)
-        # 工具边界封段：跨帧闭合的 § 正确切开，两段都发。
+        # 工具边界封段：跨帧拼出的闭合标记正确切开，两段都发。
+        self.assertEqual([d["body"] for d in drained], ["甲", "乙"])
+
+    def test_char_by_char_delta_closes_at_segment_boundary(self) -> None:
+        source = batch(({}, "甲"), ({}, "乙"))
+        events = [
+            {"event": "message.delta", "delta": char, "seq": index}
+            for index, char in enumerate(source)
+        ]
+        events.append({"event": "tool.started", "tool": "todo_list", "seq": 99})
+        parser = RunsEventParser()
+        drained = feed_all(parser, events)
+        # 逐字符帧：封段后两个闭合段各发一次，标记不会被拆错。
         self.assertEqual([d["body"] for d in drained], ["甲", "乙"])
 
     def test_separator_with_spaces_does_not_split(self) -> None:
         for line in (" §", "§ ", " § "):
+            body = f"甲\n{line}\n乙"
             parser = RunsEventParser()
             drained = feed_all(parser, [
-                {"event": "message.delta", "delta": f"甲\n{line}\n乙", "seq": 0},
+                {"event": "message.delta", "delta": unit({}, body), "seq": 0},
                 {"event": "tool.started", "tool": "todo_list", "seq": 1},
             ])
-            self.assertEqual([d["body"] for d in drained], [f"甲\n{line}\n乙"])
+            self.assertEqual([d["body"] for d in drained], [body])
 
     def test_spaced_separator_across_frames_does_not_split(self) -> None:
         parser = RunsEventParser()
         spilled: list[dict] = []
         for line in sse_lines([
-            {"event": "message.delta", "delta": "甲\n ", "seq": 0},
-            {"event": "message.delta", "delta": "§\n", "seq": 1},
-            {"event": "message.delta", "delta": "乙", "seq": 2},
+            {"event": "message.delta", "delta": f"{SEP}\n甲\n ", "seq": 0},
+            {"event": "message.delta", "delta": f"{SEP}\n", "seq": 1},
+            {"event": "message.delta", "delta": f"乙\n{SEP}\n", "seq": 2},
             {"event": "tool.started", "tool": "todo_list", "seq": 3},
         ]):
             parser.feed(line)
             spilled.extend(parser.drain_stream_decisions())
-        # 跨帧拼出的是「空格 + §」，不是独立整行 §，所以仍是一条消息。
+        # 跨帧拼出的是「空格 + §」，不是独立整行 §，所以整块是一份正文。
         self.assertEqual([d["body"] for d in spilled], ["甲\n §\n乙"])
 
     def test_multiline_body_is_not_split(self) -> None:
         body = "第一行\n第二行\n\n第三段"
         parser = RunsEventParser()
         drained = feed_all(parser, [
-            {"event": "message.delta", "delta": body, "seq": 0},
+            {"event": "message.delta", "delta": unit({}, body), "seq": 0},
             {"event": "tool.started", "tool": "todo_list", "seq": 1},
         ])
         self.assertEqual([d["body"] for d in drained], [body])
 
+    def test_fenced_marker_still_splits(self) -> None:
+        # 代码围栏没有豁免：围栏内独立整行 § 同样分隔（纯切分，不经过段内去重）。
+        body = "```\n§\n```"
+        self.assertEqual(runs_text.split_text_units(unit({}, body)), ["```", "```"])
+
+    def test_fenced_marker_splits_in_parser(self) -> None:
+        # parser 侧再加一层段内全文去重：两段同文"```"只发一份。
+        body = "```\n§\n```"
+        parser = RunsEventParser()
+        drained = feed_all(parser, [
+            {"event": "message.delta", "delta": unit({}, body), "seq": 0},
+            {"event": "tool.started", "tool": "todo_list", "seq": 1},
+        ])
+        self.assertEqual([d["body"] for d in drained], ["```"])
+
+    def test_incomplete_envelope_is_not_sent(self) -> None:
+        """缺开头／缺末尾的段一律不发：只发完整闭合的段。"""
+        parser = RunsEventParser()
+        drained = feed_all(parser, [
+            # 缺末尾 §：整段在工具边界被丢掉。
+            {"event": "message.delta", "delta": f"{SEP}\n没闭合", "seq": 0},
+            {"event": "tool.started", "tool": "todo_list", "seq": 1},
+            # 缺开头 §：前导正文丢弃，闭合的 B 照发。
+            {"event": "message.delta", "delta": f"没开头\n{SEP}\nB\n{SEP}", "seq": 2},
+            {"event": "tool.started", "tool": "todo_list", "seq": 3},
+        ])
+        self.assertEqual([d["body"] for d in drained], ["B"])
+
+    def test_invalid_envelope_leaves_visible_log(self) -> None:
+        with _e2._CapturedWarnings() as logs:
+            RunsEventParser()  # 只为确认捕获器不影响正常路径
+            feed_all(RunsEventParser(), [
+                {"event": "message.delta", "delta": f"{SEP}\n没闭合", "seq": 0},
+                {"event": "tool.started", "tool": "todo_list", "seq": 1},
+                {"event": "message.delta", "delta": "裸正文没有标记", "seq": 2},
+                {"event": "tool.started", "tool": "todo_list", "seq": 3},
+            ])
+        joined = "\n".join(logs.messages)
+        self.assertIn("reason=missing_close", joined)
+        self.assertIn("reason=no_marker", joined)
+
     def test_interim_one_char_progress_is_sent(self) -> None:
         parser = RunsEventParser()
         drained = feed_all(parser, [
-            {"event": "message.interim", "text": "好", "seq": 0},
+            {"event": "message.interim", "text": unit({}, "好"), "seq": 0},
             {"event": "tool.started", "tool": "todo_list", "seq": 1},
         ])
-        # 不走 _INTERIM_MIN_CHARS：1 字进度原样发出。
+        # 不走最小长度门槛：1 字进度原样发出。
         self.assertEqual([d["body"] for d in drained], ["好"])
         self.assertEqual(parser.interim_count, 1)
+
+    def test_incomplete_interim_is_not_sent(self) -> None:
+        parser = RunsEventParser()
+        drained = feed_all(parser, [
+            {"event": "message.interim", "text": f"{SEP}\n写到一半的进度", "seq": 0},
+            {"event": "tool.started", "tool": "todo_list", "seq": 1},
+        ])
+        # 未闭合的 interim 半成品不发送。
+        self.assertEqual(drained, [])
 
     def test_interim_json_literal_progress_is_sent_verbatim(self) -> None:
         literal = '{"body":"进度"}'
         parser = RunsEventParser()
         drained = feed_all(parser, [
-            {"event": "message.interim", "text": literal, "seq": 0},
+            {"event": "message.interim", "text": unit({}, literal), "seq": 0},
             {"event": "tool.started", "tool": "todo_list", "seq": 1},
         ])
-        # 不经过 strip_complete_decisions：旧 JSON 片段按正文原样发。
+        # 不经过 strip_complete_decisions：旧 JSON 片段在信封里按正文原样发。
         self.assertEqual([d["body"] for d in drained], [literal])
 
     def test_interim_and_delta_same_text_sent_once_per_segment(self) -> None:
@@ -163,7 +236,7 @@ class TextProtocolParserTests(unittest.TestCase):
     def test_interim_prefix_then_delta_adds_only_new_unit(self) -> None:
         parser = RunsEventParser()
         drained = feed_all(parser, [
-            {"event": "message.interim", "text": "A", "seq": 0},
+            {"event": "message.interim", "text": unit({}, "A"), "seq": 0},
             {"event": "message.delta", "delta": batch(({}, "A"), ({}, "B")), "seq": 1},
             {"event": "tool.started", "tool": "todo_list", "seq": 2},
         ])
@@ -172,10 +245,10 @@ class TextProtocolParserTests(unittest.TestCase):
     def test_same_text_across_segments_sends_twice(self) -> None:
         parser = RunsEventParser()
         drained = feed_all(parser, [
-            {"event": "message.delta", "delta": "同一句", "seq": 0},
+            {"event": "message.delta", "delta": unit({}, "同一句"), "seq": 0},
             {"event": "tool.started", "tool": "todo_list", "seq": 1},
             {"event": "tool.completed", "tool": "todo_list", "seq": 2},
-            {"event": "message.delta", "delta": "同一句", "seq": 3},
+            {"event": "message.delta", "delta": unit({}, "同一句"), "seq": 3},
             {"event": "tool.started", "tool": "todo_list", "seq": 4},
         ])
         self.assertEqual([d["body"] for d in drained], ["同一句", "同一句"])
@@ -184,7 +257,7 @@ class TextProtocolParserTests(unittest.TestCase):
         parser = RunsEventParser()
         drained: list[dict] = []
         events = [
-            {"event": "message.delta", "delta": "控制前的正文", "seq": 0},
+            {"event": "message.delta", "delta": unit({}, "控制前的正文"), "seq": 0},
             {"event": "tool.started", "tool": "mcp__hermes__submit_control", "seq": 1},
         ]
         for line in sse_lines(events):
@@ -197,7 +270,7 @@ class TextProtocolParserTests(unittest.TestCase):
     def test_work_tool_frame_bumps_batch(self) -> None:
         parser = RunsEventParser()
         feed_all(parser, [
-            {"event": "message.delta", "delta": "进度", "seq": 0},
+            {"event": "message.delta", "delta": unit({}, "进度"), "seq": 0},
             {"event": "tool.started", "tool": "todo_list", "seq": 1},
         ])
         self.assertEqual(parser.decision_batch, 1)
@@ -205,12 +278,12 @@ class TextProtocolParserTests(unittest.TestCase):
     def test_terminal_ignores_unsealed_delta_tail(self) -> None:
         parser = RunsEventParser()
         drained = feed_all(parser, [
-            {"event": "message.delta", "delta": "未封口的尾巴", "seq": 0},
-            {"event": "run.completed", "output": "真正的终态正文", "seq": 1},
+            {"event": "message.delta", "delta": f"{SEP}\n未闭合的尾巴", "seq": 0},
+            {"event": "run.completed", "output": unit({}, "真正的终态正文"), "seq": 1},
         ])
-        # 终态只认 output：delta 尾巴丢弃，不补发、不猜。
+        # 终态只认 output：delta 里未闭合的尾部丢弃，不补发、不猜。
         self.assertEqual(drained, [])
-        self.assertEqual(parser.output, "真正的终态正文")
+        self.assertEqual(parser.output, unit({}, "真正的终态正文"))
 
     def test_segment_duplicate_suppression_is_observable(self) -> None:
         """段内全文匹配去重必须可观察：原因 + 被跳过的原文。"""
@@ -219,8 +292,8 @@ class TextProtocolParserTests(unittest.TestCase):
         seen: list[tuple[str, str, str]] = []
         parser.on_suppressed = lambda reason, text, source: seen.append((reason, text, source))
         drained = feed_all(parser, [
-            {"event": "message.interim", "text": "好", "seq": 0},
-            {"event": "message.delta", "delta": "好", "seq": 1},
+            {"event": "message.interim", "text": unit({}, "好"), "seq": 0},
+            {"event": "message.delta", "delta": unit({}, "好"), "seq": 1},
             {"event": "tool.started", "tool": "todo_list", "seq": 2},
         ])
         self.assertEqual([d["body"] for d in drained], ["好"])
@@ -230,35 +303,39 @@ class TextProtocolParserTests(unittest.TestCase):
         parser = RunsEventParser()
         seen: list[tuple[str, str, str]] = []
         parser.on_suppressed = lambda reason, text, source: seen.append((reason, text, source))
+        tail = f"{SEP}\n未封口的尾巴"
         feed_all(parser, [
-            {"event": "message.delta", "delta": "未封口的尾巴", "seq": 0},
-            {"event": "run.completed", "output": "真正的终态正文", "seq": 1},
+            {"event": "message.delta", "delta": tail, "seq": 0},
+            {"event": "run.completed", "output": unit({}, "真正的终态正文"), "seq": 1},
         ])
-        self.assertEqual(seen, [("unsealed_delta_tail", "未封口的尾巴", "terminal")])
+        self.assertEqual(seen, [("unsealed_delta_tail", tail, "terminal")])
 
     def test_terminal_repeating_last_segment_reports_no_suppression(self) -> None:
-        """刚删除的 last_sealed 特判不得借观察口恢复：重复段是正常发送。"""
+        """跨段同文照发：终态 output 与上一段同文不是段内重复。"""
         parser = RunsEventParser()
         seen: list[tuple[str, str, str]] = []
         parser.on_suppressed = lambda reason, text, source: seen.append((reason, text, source))
         drained = feed_all(parser, [
-            {"event": "message.delta", "delta": "正文", "seq": 0},
+            {"event": "message.delta", "delta": unit({}, "正文"), "seq": 0},
             {"event": "tool.started", "tool": "submit_control", "seq": 1},
-            {"event": "run.completed", "output": "正文", "seq": 2},
+            {"event": "run.completed", "output": unit({}, "正文"), "seq": 2},
         ])
         self.assertEqual([d["body"] for d in drained], ["正文"])
         self.assertEqual(seen, [])
 
-    def test_legacy_json_output_is_plain_text(self) -> None:
+    def test_legacy_json_is_not_a_body(self) -> None:
         legacy = '{"reply_to":"m:1"}\n{"body":"旧格式正文"}'
-        units = runs_text.units_from_text(legacy)
+        # 旧裸正文不保留兼容层：没有整行 § 就没有正文。
+        self.assertEqual(runs_text.units_from_text(legacy), [])
+        units = runs_text.units_from_text(unit({}, legacy))
         self.assertEqual([u["body"] for u in units], [legacy])
         self.assertEqual([u["reply_to"] for u in units], [""])
 
     def test_overlong_unit_fails_closed_without_emitting(self) -> None:
         parser = RunsEventParser()
         drained = feed_all(parser, [
-            {"event": "message.delta", "delta": "长" * (runs_text.MAX_BODY_CHARS + 1), "seq": 0},
+            {"event": "message.delta",
+             "delta": unit({}, "长" * (runs_text.MAX_BODY_CHARS + 1)), "seq": 0},
             {"event": "tool.started", "tool": "todo_list", "seq": 1},
         ])
         self.assertEqual(drained, [])
@@ -267,8 +344,8 @@ class TextProtocolParserTests(unittest.TestCase):
     def test_feed_never_returns_narration(self) -> None:
         parser = RunsEventParser()
         for line in sse_lines([
-            {"event": "message.interim", "text": "旁白", "seq": 0},
-            {"event": "message.delta", "delta": "正文", "seq": 1},
+            {"event": "message.interim", "text": unit({}, "旁白"), "seq": 0},
+            {"event": "message.delta", "delta": unit({}, "正文"), "seq": 1},
             {"event": "tool.started", "tool": "todo_list", "seq": 2},
         ]):
             self.assertIsNone(parser.feed(line))
@@ -286,11 +363,11 @@ class RunResumeTextHygieneTests(unittest.TestCase):
     def test_feed_consumes_interim_without_returning_text(self) -> None:
         parser = RunsEventParser()
         for line in sse_lines([
-            {"event": "message.interim", "text": "进度", "seq": 0},
-            {"event": "run.completed", "output": "最终正文", "seq": 1},
+            {"event": "message.interim", "text": unit({}, "进度"), "seq": 0},
+            {"event": "run.completed", "output": unit({}, "最终正文"), "seq": 1},
         ]):
             self.assertIsNone(parser.feed(line))
-        self.assertEqual(parser.output, "最终正文")
+        self.assertEqual(parser.output, unit({}, "最终正文"))
 
 
 class SuppressionObservationTests(unittest.TestCase):
@@ -298,8 +375,8 @@ class SuppressionObservationTests(unittest.TestCase):
 
     真实样例：``SAMPLES/runs_terminal_*.json`` 是上游 runs 事件流的真实留存抓包
     （2026-11-09 k3.1-pro 旧 JSON 协议期，40／29 帧，含 4 工具与无工具两条）。
-    局限：文本内容是旧协议产物、且抓包中没有 ``message.interim`` 帧，所以段内
-    去重命中只能由回归场景覆盖；样本量只有 2 条，不能当生产概率。
+    信封协议下这些旧协议正文**不再产生任何发送单元**（不保留兼容层），保留这条
+    用例正是为了证明：真实旧帧在新解析器下零发送、零报错，只是没有正文。
     """
 
     @staticmethod
@@ -325,6 +402,10 @@ class SuppressionObservationTests(unittest.TestCase):
         terminal_units = (
             len(runs_text.decisions_from_text(parser.output)) if parser.output else 0
         )
+        issues = sum(
+            1 for reason, _, _ in suppressed
+            if reason in ("segment_duplicate", "unsealed_delta_tail")
+        )
         return {
             "segments": segments,
             "stream_units": stream_units,
@@ -332,20 +413,21 @@ class SuppressionObservationTests(unittest.TestCase):
             "units": stream_units + terminal_units,
             "dedup": sum(1 for reason, _, _ in suppressed if reason == "segment_duplicate"),
             "tail": sum(1 for reason, _, _ in suppressed if reason == "unsealed_delta_tail"),
+            "issues": issues,
             "suppressed": suppressed,
             "error": parser.text_error,
         }
 
     def test_real_retained_samples(self) -> None:
         cases = {
-            # b4：4 次工具调用；工具前发过 1 份、终态 1 份；终态 output 覆盖未封口 delta。
+            # 旧协议抓包（40／29 帧）：段边界照数，正文一份都不发。
             "runs_terminal_single_b4": {
-                "segments": 2, "stream_units": 1, "terminal_units": 1,
-                "units": 2, "dedup": 0, "tail": 1,
+                "segments": 2, "stream_units": 0, "terminal_units": 0,
+                "units": 0, "dedup": 0, "tail": 1,
             },
             "runs_terminal_multi_b5": {
-                "segments": 1, "stream_units": 0, "terminal_units": 1,
-                "units": 1, "dedup": 0, "tail": 1,
+                "segments": 1, "stream_units": 0, "terminal_units": 0,
+                "units": 0, "dedup": 0, "tail": 1,
             },
         }
         for name, expected in cases.items():
@@ -354,47 +436,44 @@ class SuppressionObservationTests(unittest.TestCase):
             events = json.loads(path.read_text(encoding="utf-8"))["events"]
             with self.subTest(sample=name):
                 got = self._measure(events)
-                # 真实样例无 message.interim：段内去重命中为 0 是样本局限，不是结论。
-                self.assertEqual(
-                    {key: got[key] for key in expected}, expected
-                )
+                self.assertEqual({key: got[key] for key in expected}, expected)
                 self.assertEqual(got["error"], "")
 
     def test_regression_scenarios(self) -> None:
-        same = "甲\n§\n乙"
+        same = batch(({}, "甲"), ({}, "乙"))
         cases = {
             "interim_delta_same_text": (
                 [
-                    {"event": "message.interim", "text": "好", "seq": 0},
-                    {"event": "message.delta", "delta": "好", "seq": 1},
+                    {"event": "message.interim", "text": unit({}, "好"), "seq": 0},
+                    {"event": "message.delta", "delta": unit({}, "好"), "seq": 1},
                     {"event": "tool.started", "tool": "todo_list", "seq": 2},
-                    {"event": "run.completed", "output": "好", "seq": 3},
+                    {"event": "run.completed", "output": unit({}, "好"), "seq": 3},
                 ],
                 {"segments": 1, "stream_units": 1, "terminal_units": 1,
                  "units": 2, "dedup": 1, "tail": 0},
             ),
             "unsealed_delta_tail": (
                 [
-                    {"event": "message.delta", "delta": "未封口的尾巴", "seq": 0},
-                    {"event": "run.completed", "output": "真正的终态正文", "seq": 1},
+                    {"event": "message.delta", "delta": f"{SEP}\n未封口的尾巴", "seq": 0},
+                    {"event": "run.completed", "output": unit({}, "真正的终态正文"), "seq": 1},
                 ],
                 {"segments": 1, "stream_units": 0, "terminal_units": 1,
                  "units": 1, "dedup": 0, "tail": 1},
             ),
             "terminal_repeat_last_segment": (
                 [
-                    {"event": "message.delta", "delta": "正文", "seq": 0},
+                    {"event": "message.delta", "delta": unit({}, "正文"), "seq": 0},
                     {"event": "tool.started", "tool": "submit_control", "seq": 1},
-                    {"event": "run.completed", "output": "正文", "seq": 2},
+                    {"event": "run.completed", "output": unit({}, "正文"), "seq": 2},
                 ],
                 {"segments": 1, "stream_units": 1, "terminal_units": 1,
                  "units": 2, "dedup": 0, "tail": 0},
             ),
             "a_tool_a": (
                 [
-                    {"event": "message.delta", "delta": "甲", "seq": 0},
+                    {"event": "message.delta", "delta": unit({}, "甲"), "seq": 0},
                     {"event": "tool.started", "tool": "lookup", "seq": 1},
-                    {"event": "message.delta", "delta": "甲", "seq": 2},
+                    {"event": "message.delta", "delta": unit({}, "甲"), "seq": 2},
                     {"event": "tool.started", "tool": "lookup", "seq": 3},
                     {"event": "run.completed", "output": "", "seq": 4},
                 ],
@@ -406,7 +485,7 @@ class SuppressionObservationTests(unittest.TestCase):
                     {"event": "message.interim", "text": same, "seq": 0},
                     {"event": "message.delta", "delta": same, "seq": 1},
                     {"event": "tool.started", "tool": "lookup", "seq": 2},
-                    {"event": "run.completed", "output": "丙\n§\n丁", "seq": 3},
+                    {"event": "run.completed", "output": batch(({}, "丙"), ({}, "丁")), "seq": 3},
                 ],
                 {"segments": 1, "stream_units": 2, "terminal_units": 2,
                  "units": 4, "dedup": 2, "tail": 0},
@@ -485,7 +564,7 @@ def real_chat(tracker, events: list[dict], run_id: str = "run-e2-h"):
 
 
 class ClientChainTests(unittest.IsolatedAsyncioTestCase):
-    """真实 client 的终态分支：正文即消息、零额外调用、旧 JSON 不识别。"""
+    """真实 client 的终态分支：闭合才发、零额外调用、旧裸正文不识别。"""
 
     def setUp(self) -> None:
         previous = plugin_config.hermes_api_interface
@@ -511,9 +590,10 @@ class ClientChainTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_single_sentence_zero_extra_calls(self) -> None:
+        text = unit({}, "你好")
         result = await self._chat([
-            {"event": "message.delta", "delta": "你好", "seq": 0},
-            {"event": "run.completed", "output": "你好", "seq": 1},
+            {"event": "message.delta", "delta": text, "seq": 0},
+            {"event": "run.completed", "output": text, "seq": 1},
         ])
         # 终态唯一一份、逐字相等；delta 不额外产出一条。
         self.assertEqual(self.seen, ["你好"])
@@ -529,57 +609,66 @@ class ClientChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.seen, ["甲", "乙", "丙"])
         self.assertEqual([d["body"] for d in result.terminal_decisions], ["甲", "乙", "丙"])
 
-    async def test_legacy_json_sent_exactly_once_verbatim(self) -> None:
-        from nonebot_plugin_hermes_adapter.core import control_intent
-
+    async def test_legacy_json_sends_nothing(self) -> None:
         legacy = '{"reply_to":"m:1"}\n{"body":"旧格式正文"}'
         result = await self._chat([
             {"event": "message.delta", "delta": legacy, "seq": 0},
             {"event": "run.completed", "output": legacy, "seq": 1},
         ])
-        self.assertEqual(self.seen, [legacy])
-        self.assertEqual(result.terminal_decisions[0]["body"], legacy)
-        # 不识别控制语义：reply_to 仍由 submit_control 决定，这里是缺省。
-        self.assertEqual(
-            control_intent.resolve_control(result.terminal_decisions[0])["reply_to"], ""
-        )
-
-    async def test_silent_output_sends_nothing(self) -> None:
-        result = await self._chat([
-            {"event": "run.completed", "output": "", "seq": 0},
-        ])
+        # 旧裸正文不再兼容：零发送、零决策，也不是解析失败（只是没有可发的正文）。
         self.assertEqual(self.seen, [])
         self.assertEqual(result.terminal_decisions, [])
-        self.assertEqual(result.structured, {"should_reply": False})
+        self.assertFalse(result.parse_failed)
+        self.assertFalse(result.structured["should_reply"])
+
+    async def test_silent_output_sends_nothing(self) -> None:
+        for index, output in enumerate(("", f"{SEP}\n{SEP}", f"{SEP} {SEP}", "§§", "§ §")):
+            self.seen.clear()
+            result = await self._chat([
+                {"event": "run.completed", "output": output, "seq": 0},
+            ], run_id=f"run-silent-{index}")
+            self.assertEqual(self.seen, [], output)
+            self.assertEqual(result.terminal_decisions, [], output)
+            self.assertEqual(result.structured, {"should_reply": False}, output)
 
     async def test_interim_progress_then_final(self) -> None:
         result = await self._chat([
-            {"event": "message.interim", "text": "查一下", "seq": 0},
+            {"event": "message.interim", "text": unit({}, "查一下"), "seq": 0},
             {"event": "tool.started", "tool": "todo_list", "seq": 1},
             {"event": "tool.completed", "tool": "todo_list", "seq": 2},
-            {"event": "run.completed", "output": "查到了", "seq": 3},
+            {"event": "run.completed", "output": unit({}, "查到了"), "seq": 3},
         ])
         self.assertEqual(self.seen, ["查一下", "查到了"])
         self.assertEqual([d["body"] for d in result.terminal_decisions], ["查到了"])
 
+    async def test_incomplete_interim_progress_is_not_sent(self) -> None:
+        result = await self._chat([
+            {"event": "message.interim", "text": f"{SEP}\n写到一半", "seq": 0},
+            {"event": "tool.started", "tool": "todo_list", "seq": 1},
+            {"event": "run.completed", "output": unit({}, "查到了"), "seq": 2},
+        ])
+        self.assertEqual(self.seen, ["查到了"])
+        self.assertEqual([d["body"] for d in result.terminal_decisions], ["查到了"])
+
     async def test_control_frame_seals_segment_before_registration(self) -> None:
         result = await self._chat([
-            {"event": "message.delta", "delta": "控制前正文", "seq": 0},
+            {"event": "message.delta", "delta": unit({}, "控制前正文"), "seq": 0},
             {"event": "tool.started", "tool": "submit_control", "seq": 1},
             {"event": "tool.completed", "tool": "submit_control", "seq": 2},
-            {"event": "message.delta", "delta": "控制后正文", "seq": 3},
-            {"event": "run.completed", "output": "控制后正文", "seq": 4},
+            {"event": "message.delta", "delta": unit({}, "控制后正文"), "seq": 3},
+            {"event": "run.completed", "output": unit({}, "控制后正文"), "seq": 4},
         ])
-        # 控制前正文在 tool.started 就已封段发出，控制只会配给「控制后正文」。
+        # 控制前正文在 tool.started 就已封段发出，控制只会配给「控制后正文」；
+        # 最后一段只认 output：delta 与 output 同文只发一份。
         self.assertEqual(self.seen, ["控制前正文", "控制后正文"])
         self.assertEqual([d["body"] for d in result.terminal_decisions], ["控制后正文"])
 
     async def test_terminal_repeating_last_segment_is_resent(self) -> None:
         result = await self._chat([
-            {"event": "message.delta", "delta": "正文", "seq": 0},
+            {"event": "message.delta", "delta": unit({}, "正文"), "seq": 0},
             {"event": "tool.started", "tool": "submit_control", "seq": 1},
             {"event": "tool.completed", "tool": "submit_control", "seq": 2},
-            {"event": "run.completed", "output": "正文", "seq": 3},
+            {"event": "run.completed", "output": unit({}, "正文"), "seq": 3},
         ])
         # 控制帧封段后没有新文本：终态 output 重复上一段也照样作为正文发送，
         # 不做按文本折叠——用户视角的重发就是重发，不靠猜测吞掉。
@@ -588,7 +677,8 @@ class ClientChainTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_overflow_terminal_fails_closed(self) -> None:
         chat = real_chat(self.tracker, [
-            {"event": "run.completed", "output": "长" * (runs_text.MAX_BODY_CHARS + 1), "seq": 0},
+            {"event": "run.completed",
+             "output": unit({}, "长" * (runs_text.MAX_BODY_CHARS + 1)), "seq": 0},
         ])
 
         async def deliver(decision, rid):
@@ -605,14 +695,14 @@ class ClientChainTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.parse_failed_reason, "text_body_overflow")
 
     async def test_stream_break_sends_no_half_content(self) -> None:
-        """断流：未封口的 delta 尾部不发送，run 留给恢复链，不补猜内容。"""
+        """断流：未闭合的 delta 尾部不发送，run 留给恢复链，不补猜内容。"""
         from nonebot_plugin_hermes_adapter.core import hermes_client as hc
         from nonebot_plugin_hermes_adapter import mcp as mcp_module
 
         class _Resp(_ClientChain._Resp):
             async def aiter_lines(self):
                 yield "event: message.delta"
-                yield 'data: {"event":"message.delta","delta":"半截话","seq":0}'
+                yield 'data: {"event":"message.delta","delta":"§\\n半截话","seq":0}'
                 raise RuntimeError("stream reset")
 
         class _Broken(_ClientChain):
@@ -722,11 +812,11 @@ class ReactiveLiveChainTests(_e2._ReactiveHarness):
 
     async def test_progress_then_final_sent_once_each(self) -> None:
         events = [
-            {"event": "message.delta", "delta": "先查一下", "seq": 0},
+            {"event": "message.delta", "delta": unit({}, "先查一下"), "seq": 0},
             {"event": "tool.started", "tool": "todo_list", "seq": 1},
             {"event": "tool.completed", "tool": "todo_list", "seq": 2},
         ]
-        tracker, chat, calls = await self._run_stream(events, output="查到了")
+        tracker, chat, calls = await self._run_stream(events, output=unit({}, "查到了"))
         self.assertEqual([c["text"] for c in calls["send"]], ["先查一下", "查到了"])
         self.assertEqual([c["component"] for c in calls["send"]], ["primary:0", "primary:1"])
         self.assertEqual(chat.sent_at, ["先查一下", "查到了"])
@@ -736,12 +826,13 @@ class ReactiveLiveChainTests(_e2._ReactiveHarness):
 
     async def test_same_text_in_two_segments_sends_both(self) -> None:
         events = [
-            {"event": "message.delta", "delta": "同一句", "seq": 0},
+            {"event": "message.delta", "delta": unit({}, "同一句"), "seq": 0},
             {"event": "tool.started", "tool": "todo_list", "seq": 1},
             {"event": "tool.completed", "tool": "todo_list", "seq": 2},
-            {"event": "message.delta", "delta": "同一句", "seq": 3},
+            {"event": "message.delta", "delta": unit({}, "同一句"), "seq": 3},
         ]
-        tracker, chat, calls = await self._run_stream(events, output="同一句")
+        tracker, chat, calls = await self._run_stream(events, output=unit({}, "同一句"))
+        # 两段同文是两条独立消息：第一段工具边界发出，最后一段由 output 发出。
         self.assertEqual([c["text"] for c in calls["send"]], ["同一句", "同一句"])
         self.assertEqual(chat.sent_at, ["同一句", "同一句"])
 
@@ -750,6 +841,11 @@ class ReactiveLiveChainTests(_e2._ReactiveHarness):
         self.assertEqual(calls["send"], [])
         self.assertEqual(calls["settle"], [("silent", "empty_output")])
         self.assertEqual(calls["control"]["end_window"], 0)
+
+    async def test_silent_envelope_sends_nothing(self) -> None:
+        tracker, chat, calls = await self._run_stream([], output=f"{SEP}\n{SEP}")
+        self.assertEqual(calls["send"], [])
+        self.assertEqual(chat.sent_at, [])
 
     async def test_reply_to_control_bound_to_first_unit(self) -> None:
         from nonebot_plugin_hermes_adapter.core import control_intent
@@ -807,7 +903,9 @@ class ResumeConsistencyTests(unittest.IsolatedAsyncioTestCase):
             adapter="onebotv11", is_private=False, user_id="u1", group_id="g1",
             bot_self_id="999", session_key="s", mode="reactive", expect_structured=True,
         )
-        tracker.record_expected_delivery(run_id="r1", output="A", expect_structured=True)
+        tracker.record_expected_delivery(
+            run_id="r1", output=unit({}, "A"), expect_structured=True
+        )
         stream_unit = units_from_decisions(decisions("A"))[0][1]
         append_stream_unit(tracker=tracker, run_id="r1", unit=stream_unit)
         tracker.mark_component_sent(run_id="r1", component_id="primary:0", msg_ids=["m1"])

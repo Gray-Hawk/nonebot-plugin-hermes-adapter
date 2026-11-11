@@ -52,7 +52,23 @@ def _install_stock_parser_alias() -> type:
 
 A, P, C = "答复A", "查B前的说明", "答复C"
 
+
+def _frame(body: str) -> str:
+    """分节符信封：一份正文 = 独立一行 § + 正文 + 独立一行 §（+ 收尾换行）。"""
+    return f"§\n{body}\n§\n"
+
+
+# 新协议帧序：queued-lane 注入的前序答复与 delta 是同文，必须只发一次。
 FRAMES = [
+    {"event": "message.delta", "delta": _frame(A), "seq": 0},
+    {"event": "message.interim", "text": _frame(A), "seq": 1},
+    {"event": "message.delta", "delta": _frame(P), "seq": 2},
+    {"event": "tool.started", "tool": "lookup", "seq": 3},
+    {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 4},
+]
+
+# 对照用：同一时序的**旧协议**裸正文帧（部署中的 stock 解析器只认这个形状）。
+LEGACY_FRAMES = [
     {"event": "message.delta", "delta": A, "seq": 0},
     {"event": "message.interim", "text": A, "seq": 1},
     {"event": "message.delta", "delta": P, "seq": 2},
@@ -109,21 +125,28 @@ class QueuedLaneInterimClientTest(_ReactiveHarness):
                          ["primary:0", "primary:1", "primary:2"])
         self.assertEqual(calls["settle"], [])
 
-    def test_stock_parser_produces_the_reviewer_gap(self):
+    def test_deployed_parser_still_seals_at_interim(self):
+        """部署中的 stock 解析器已带 R1 段边界修正：旧协议帧序仍不粘连成 A+P。
+
+        注意这里只比前两份：stock 解析器吃的是旧协议裸正文，而终态 output 现在由
+        新信封解析，所以 ``C`` 在**混装**状态下不会被当正文（这正是解析器与提示词
+        必须同批部署的原因之一）。
+        """
         import asyncio
 
         stock = _install_stock_parser_alias()
-        calls = asyncio.run(self._drive(FRAMES, parser=stock))
-        # 同一帧序、同一客户端、同一处理器：只把解析器换回已部署版本。
-        self.assertEqual([c["text"] for c in calls["send"]], [A, A + P, C])
+        calls = asyncio.run(self._drive(LEGACY_FRAMES, parser=stock))
+        sent = [c["text"] for c in calls["send"]]
+        self.assertEqual(sent[:2], [A, P])
+        self.assertNotIn(A + P, sent)
 
     def test_plain_turn_without_interim_is_unchanged(self):
         import asyncio
 
         frames = [
-            {"event": "message.delta", "delta": A, "seq": 0},
+            {"event": "message.delta", "delta": _frame(A), "seq": 0},
             {"event": "tool.started", "tool": "lookup", "seq": 1},
-            {"event": "run.completed", "output": C, "seq": 2},
+            {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 2},
         ]
         calls = asyncio.run(self._drive(frames))
         self.assertEqual([c["text"] for c in calls["send"]], [A, C])

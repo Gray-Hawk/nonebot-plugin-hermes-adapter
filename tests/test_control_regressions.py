@@ -89,13 +89,13 @@ class ControlBindingAtArrivalTests(e2._ReactiveHarness):
         self.addCleanup(control_intent.CONTROL_QUEUE.discard, KEY)
         blocked, resume = asyncio.Event(), asyncio.Event()
         sleeps, quotes, observed = [], [], []
-        output = "甲\n§\n乙\n§\n丙"
+        output = "§\n丙\n§"
         events = [
-            {"event": "message.delta", "delta": "甲\n§\n乙", "seq": 0},
+            {"event": "message.delta", "delta": "§\n甲\n§\n乙\n§\n", "seq": 0},
             {"event": "tool.started", "tool": "mcp__bridge__submit_control", "seq": 1},
             {"event": "tool.completed", "tool": "mcp__bridge__submit_control", "seq": 2},
-            {"event": "message.delta", "delta": "丙", "seq": 3},
-            {"event": "run.completed", "output": "丙", "seq": 4},
+            {"event": "message.delta", "delta": "§\n丙\n§", "seq": 3},
+            {"event": "run.completed", "output": output, "seq": 4},
         ]
         temp = tempfile.TemporaryDirectory(prefix="fifo-regression-")
         self.addCleanup(temp.cleanup)
@@ -432,8 +432,8 @@ class ControlGroupScopeTests(e2._ReactiveHarness):
             calls = await self._run(
                 None, tracker=tracker,
                 chat=real_chat(tracker, [
-                    {"event": "message.delta", "delta": "甲\n§\n乙", "seq": 0},
-                    {"event": "run.completed", "output": "甲\n§\n乙", "seq": 1},
+                    {"event": "message.delta", "delta": "§\n甲\n§\n乙\n§\n", "seq": 0},
+                    {"event": "run.completed", "output": "§\n甲\n§\n乙\n§", "seq": 1},
                 ]),
                 sessions=manager, now_ms=self.now,
                 resolve_reply=MagicMock(side_effect=lambda *a, **kw: resolved.append(kw["reply_to"])),
@@ -467,12 +467,13 @@ class LegacyCompletionEarlyExitTests(e2._ReactiveHarness):
         return manager
 
     def _exit_result(self, text: str = "再见") -> ChatResult:
-        # 纯文本协议：正文即消息，退窗控制来自 submit_control 登记。
+        # 分节符信封：正文即消息（要包在独立整行 § 之间），退窗控制来自 submit_control 登记。
         self.addCleanup(control_intent.CONTROL_QUEUE.discard, KEY)
         control_intent.CONTROL_QUEUE.register(KEY, {"should_exit_active": True})
-        units = decisions_from_text(text) if text.strip() else []
+        framed = f"§\n{text}\n§" if text.strip() else ""
+        units = decisions_from_text(framed) if framed else []
         result = ChatResult(
-            raw_text=text,
+            raw_text=framed,
             structured=units[0] if units else {"should_reply": False},
         )
         result.terminal_decisions = units

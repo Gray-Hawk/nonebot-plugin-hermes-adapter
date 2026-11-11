@@ -58,9 +58,10 @@ PRIVATE_KEY = make_inflight_key("onebotv11", True, "u1", None)
 
 
 def _body_of(text: str) -> str:
-    """测试便利：把旧夹具里的 ``{"body": ...}`` 行摊平成纯文本正文（§ 连发）。
+    """测试便利：把旧夹具里的 ``{"body": ...}`` 行摊平成**分节符信封**正文。
 
-    生产端已不识别旧信封；这里只让既有夹具继续可读，控制一律走 submit_control。
+    生产端已不识别旧信封，且裸正文不再是正文；这里只让既有夹具继续可读，
+    控制一律走 submit_control。
     """
     bodies: list[str] = []
     for line in text.splitlines():
@@ -75,7 +76,9 @@ def _body_of(text: str) -> str:
         if isinstance(obj, dict) and isinstance(obj.get("body"), str):
             if obj["body"].strip():
                 bodies.append(obj["body"])
-    return "\n§\n".join(bodies) if bodies else text
+    if not bodies:
+        return ""
+    return "§\n" + "\n§\n".join(bodies) + "\n§"
 
 
 class ControlIntentQueueTests(unittest.TestCase):
@@ -479,35 +482,47 @@ class BackgroundStatusToolTests(unittest.TestCase):
 class ControlToolBatchBoundaryTests(unittest.TestCase):
     """控制帧只封段、不切批；工作工具另起新批。"""
 
+    def _feed(self, parser, events):
+        drained: list[dict] = []
+        for line in sse_lines(events):
+            parser.feed(line)
+            drained.extend(parser.drain_stream_decisions())
+        return drained
+
     def test_control_tool_seals_without_bumping_batch(self) -> None:
         parser = RunsEventParser()
-        for line in sse_lines([
-            {"event": "message.delta", "delta": "甲", "seq": 0},
+        drained = self._feed(parser, [
+            {"event": "message.delta", "delta": "§\n甲\n§\n", "seq": 0},
             {"event": "tool.started", "tool": "submit_control", "seq": 1},
             {"event": "tool.completed", "tool": "submit_control", "seq": 2},
-            {"event": "message.delta", "delta": "乙", "seq": 3},
-        ]):
-            parser.feed(line)
+            {"event": "message.delta", "delta": "§\n乙\n§\n", "seq": 3},
+            # interim 是段边界：第二份在本批里发出去（批号仍为 0）。
+            {"event": "message.interim", "text": "§\n乙\n§\n", "seq": 4},
+        ])
         self.assertEqual(parser.decision_batch, 0)
         # 控制帧封段：控制前的正文立刻发出；控制只配给之后的正文。
-        self.assertEqual([d["body"] for d in parser.drain_stream_decisions()], ["甲"])
+        self.assertEqual([d["body"] for d in drained], ["甲", "乙"])
+        self.assertEqual([d["_batch"] for d in drained], [0, 0])
 
     def test_work_tool_still_bumps_decision_batch(self) -> None:
         parser = RunsEventParser()
-        for line in sse_lines([
-            {"event": "message.delta", "delta": "甲", "seq": 0},
+        drained = self._feed(parser, [
+            {"event": "message.delta", "delta": "§\n甲\n§\n", "seq": 0},
             {"event": "tool.started", "tool": "lookup", "seq": 1},
             {"event": "tool.completed", "tool": "lookup", "seq": 2},
-            {"event": "message.delta", "delta": "乙", "seq": 3},
-        ]):
-            parser.feed(line)
+            {"event": "message.delta", "delta": "§\n乙\n§\n", "seq": 3},
+            # interim 是段边界：第二份以当前批号（1）发出去。
+            {"event": "message.interim", "text": "§\n乙\n§\n", "seq": 4},
+        ])
         self.assertEqual(parser.decision_batch, 1)
-        self.assertEqual([d["body"] for d in parser.drain_stream_decisions()], ["甲"])
+        # 工作工具另起新批：第一份 0，第二份 1。
+        self.assertEqual([d["body"] for d in drained], ["甲", "乙"])
+        self.assertEqual([d["_batch"] for d in drained], [0, 1])
 
     def test_json_literal_progress_is_not_stripped(self) -> None:
         parser = RunsEventParser()
         for line in sse_lines([
-            {"event": "message.interim", "text": '{"body":"甲"}', "seq": 0},
+            {"event": "message.interim", "text": '§\n{"body":"甲"}\n§', "seq": 0},
             {"event": "tool.started", "tool": "lookup", "seq": 1},
         ]):
             parser.feed(line)

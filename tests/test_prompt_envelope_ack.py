@@ -33,14 +33,19 @@ class PlainTextPromptTests(unittest.TestCase):
                     self.assertIn('用户能看到你输出的正文', prompt)
                     self.assertIn('不要写 JSON、不要写 body 之类的字段', prompt)
                     self.assertIn('整行只有一个 §', prompt)
-                    self.assertIn('没有要说的就什么都不输出', prompt)
-                    self.assertIn('错误：{"body":"你好"}', prompt)  # 反例保留，正例是纯文本
+                    self.assertIn('没有要说的就只输出两行 §（静默）', prompt)
+                    self.assertIn('错误：{"body":"你好"}', prompt)  # 反例保留，正例是分节符正文
                     self.assertNotIn('决策信封', prompt)
 
     def test_separator_rule_is_strict(self):
         for interface in ('runs', 'completions'):
             prompt = self.prompts(interface)['group_reactive']
-            self.assertIn('只有整行严格等于 § 才算分隔', prompt)
+            # 分节符：每份以独立一行 § 开头／结尾，只有完整闭合的段才会发出去。
+            self.assertIn('以独立一行 § 开头，以独立一行 § 结尾', prompt)
+            self.assertIn('只有被两个 § 完整包住的段才会发出去', prompt)
+            self.assertIn('缺开头或缺结尾 § 的段一律不发', prompt)
+            self.assertIn('行内', prompt)
+            self.assertIn('带空格的 §', prompt)
 
     def test_noninstant_tasks_receive_ack_before_lengthy_work(self):
         for interface in ('runs', 'completions'):

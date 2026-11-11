@@ -15,8 +15,10 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
+from nonebot_plugin_hermes_adapter.core import runs_text  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.runs_text import (  # noqa: E402
     MAX_BODY_CHARS,
+    SEPARATOR,
     TextUnitsError,
     decisions_from_text,
     split_text_units,
@@ -32,13 +34,14 @@ from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker  # noqa: E
 
 
 def unit(control: dict | None = None, body: str = "正文") -> str:
-    """纯文本协议：一份正文就是这段文本；control 形参只为保留调用形状。"""
-    return body
+    """分节符信封：一份正文 = 开头一行 § + 正文 + 结尾一行 §（control 只为保留调用形状）。"""
+    return f"{SEPARATOR}\n{body}\n{SEPARATOR}"
 
 
 def batch(*pairs) -> str:
-    """多份正文按协议连发：两份之间一行 ``§``。"""
-    return "\n§\n".join(unit(control, body) for control, body in pairs)
+    """多份正文按协议连发：``§`` A ``§`` B ``§``（相邻两份共享中间那个标记）。"""
+    bodies = [str(body) for _control, body in pairs]
+    return SEPARATOR + "\n" + ("\n" + SEPARATOR + "\n").join(bodies) + "\n" + SEPARATOR
 
 
 def decisions(*bodies) -> list[dict]:
@@ -46,75 +49,133 @@ def decisions(*bodies) -> list[dict]:
     return [{"body": body, "should_reply": True} for body in bodies if str(body).strip()]
 
 
+class _CapturedWarnings:
+    """捕获 nonebot(loguru) 的 WARNING 文本，用来断言不可发送段确实留了可见日志。"""
+
+    def __enter__(self) -> "_CapturedWarnings":
+        from nonebot import logger
+
+        self.messages: list[str] = []
+        self._sink = logger.add(
+            lambda message: self.messages.append(message.record["message"]),
+            level="WARNING",
+        )
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        from nonebot import logger
+
+        logger.remove(self._sink)
+        return False
+
+
 class TextUnitTests(unittest.TestCase):
-    """正文切分：正文即消息，独立整行 § 只作连发分隔。"""
+    """正文切分：分节符信封，只有完整闭合的段才是正文。"""
 
     def test_single_sentence_is_one_unit(self) -> None:
-        self.assertEqual(split_text_units("你好"), ["你好"])
+        self.assertEqual(split_text_units(unit({}, "你好")), ["你好"])
 
     def test_multiline_without_separator_stays_one(self) -> None:
-        text = "第一行\n\n第二段\n第三行"
-        self.assertEqual(split_text_units(text), [text])
+        body = "第一行\n\n第二段\n第三行"
+        self.assertEqual(split_text_units(unit({}, body)), [body])
 
     def test_three_units_in_order(self) -> None:
-        self.assertEqual(split_text_units("甲\n§\n乙\n§\n丙"), ["甲", "乙", "丙"])
+        self.assertEqual(
+            split_text_units(unit({}, "甲") + "\n" + unit({}, "乙") + "\n" + unit({}, "丙")),
+            ["甲", "乙", "丙"],
+        )
+        self.assertEqual(
+            split_text_units(batch(({}, "甲"), ({}, "乙"), ({}, "丙"))), ["甲", "乙", "丙"]
+        )
 
     def test_inline_separator_is_literal(self) -> None:
-        self.assertEqual(split_text_units("第 3 节 §3"), ["第 3 节 §3"])
-        self.assertEqual(split_text_units("§ 内容"), ["§ 内容"])
+        self.assertEqual(split_text_units(unit({}, "第 3 节 §3")), ["第 3 节 §3"])
+        self.assertEqual(split_text_units(unit({}, "§ 内容")), ["§ 内容"])
 
     def test_separator_with_spaces_is_literal(self) -> None:
         # 严格整行匹配：分节符前后只要多一个空格就是普通正文。
         for line in (" §", "§ ", " § "):
-            self.assertEqual(split_text_units(f"甲\n{line}\n乙"), [f"甲\n{line}\n乙"])
-            self.assertEqual(split_text_units(line), [line.strip()])
+            body = f"甲\n{line}\n乙"
+            self.assertEqual(split_text_units(unit({}, body)), [body])
 
     def test_fenced_separator_still_splits(self) -> None:
-        # 唯一规则：整行严格等于 § 就分隔；代码围栏不是例外，也不设转义／豁免。
-        self.assertEqual(split_text_units("```\n§\n```"), ["```", "```"])
-        self.assertEqual(split_text_units("~~~\n§\n~~~"), ["~~~", "~~~"])
+        # 唯一规则：整行严格等于 § 就是标记；代码围栏不是例外，也不设转义／豁免。
+        self.assertEqual(split_text_units(unit({}, "```\n§\n```")), ["```", "```"])
+        self.assertEqual(split_text_units(unit({}, "~~~\n§\n~~~")), ["~~~", "~~~"])
         self.assertEqual(
-            split_text_units("说明\n```\n甲\n§\n乙\n```"),
+            split_text_units(unit({}, "说明\n```\n甲\n§\n乙\n```")),
             ["说明\n```\n甲", "乙\n```"],
         )
 
     def test_backslash_separator_line_is_plain_text(self) -> None:
         # 不设转义协议：`\§` 就是普通正文原样发送。
-        self.assertEqual(split_text_units("\\§"), ["\\§"])
+        self.assertEqual(split_text_units(unit({}, "\\§")), ["\\§"])
 
     def test_leading_trailing_and_repeated_separators_drop_empties(self) -> None:
         self.assertEqual(split_text_units("§\n甲\n§\n§\n乙\n§"), ["甲", "乙"])
 
+    def test_bare_text_is_not_a_body(self) -> None:
+        # 旧裸正文不保留兼容层：没有整行 § 就没有正文。
+        for text in ("你好", "第一行\n第二段", '{"body":"旧信封"}', "第 3 节 §3"):
+            self.assertEqual(split_text_units(text), [])
+            self.assertEqual(runs_text.units_from_text(text), [])
+
+    def test_missing_open_or_close_is_not_a_body(self) -> None:
+        # 缺开头：前导正文丢弃，闭合的 B 照发，并留一条可见 WARNING。
+        with _CapturedWarnings() as logs:
+            self.assertEqual(split_text_units("没开头\n§\nB\n§"), ["B"])
+        self.assertIn("reason=missing_open", "\n".join(logs.messages))
+        # 缺末尾：整段丢弃，同样留可见 WARNING。
+        with _CapturedWarnings() as logs:
+            self.assertEqual(split_text_units("§\nA"), [])
+        self.assertIn("reason=missing_close", "\n".join(logs.messages))
+        # 完全没有标记：既缺开头也缺末尾，报 no_marker 一条。
+        with _CapturedWarnings() as logs:
+            self.assertEqual(split_text_units("裸正文"), [])
+        self.assertIn("reason=no_marker", "\n".join(logs.messages))
+
     def test_blank_and_whitespace_only_text_is_silent(self) -> None:
-        for text in ("", "   ", "\n\n", "§"):
+        for text in ("", "   ", "\n\n", "§", "§\n§", "§\n\n§", "§§", "§ §"):
             self.assertEqual(split_text_units(text), [])
 
+    def test_silence_is_only_separators_and_whitespace(self) -> None:
+        """静默只有一条规则：去掉 § 与空白后没有任何内容。"""
+        # 任何只含 § 与空白的写法都是静默。
+        for text in ("§", "§§", "§ §", "§\n§", " § \n § \n", "§\n\n\n§"):
+            self.assertEqual(split_text_units(text), [], text)
+        # 去掉 § 与空白后还有内容，就不是静默。
+        for text in ("§\n§x\n§", "§\n好\n§"):
+            self.assertEqual(split_text_units(text), ["§x"] if "§x" in text else ["好"], text)
+
     def test_over_limit_fails_closed(self) -> None:
-        self.assertEqual(len(split_text_units("长" * MAX_BODY_CHARS)[0]), MAX_BODY_CHARS)
+        self.assertEqual(len(split_text_units(unit({}, "长" * MAX_BODY_CHARS))[0]), MAX_BODY_CHARS)
         with self.assertRaises(TextUnitsError) as ctx:
-            split_text_units("长" * (MAX_BODY_CHARS + 1))
+            split_text_units(unit({}, "长" * (MAX_BODY_CHARS + 1)))
         self.assertEqual(ctx.exception.reason, "body_overflow")
 
     def test_units_from_output_uses_same_splitter(self) -> None:
-        units = units_from_output("甲\n§\n乙")
+        units = units_from_output(batch(({}, "甲"), ({}, "乙")))
         self.assertEqual([u["body"] for u in units], ["甲", "乙"])
         self.assertEqual([u["reply_to"] for u in units], ["", ""])
         self.assertIsNone(units_from_output("   "))
 
     def test_units_from_output_keeps_legacy_json_verbatim(self) -> None:
-        # 旧 JSON 不再识别：按纯文本原样发送，不拆壳、不消毒。
+        # 旧 JSON 不再识别：它既不是信封也没有 §，因此不产生任何正文。
         legacy = '{"reply_to":"m:1"}\n{"body":"正文"}'
-        units = units_from_output(legacy)
-        self.assertEqual([u["body"] for u in units], [legacy])
+        self.assertEqual(units_from_output(legacy), [])
+        # 但被信封包住时按正文原样发送，不拆壳、不消毒。
+        self.assertEqual(
+            [u["body"] for u in units_from_output(unit({}, legacy))], [legacy]
+        )
 
     def test_units_from_text_extracts_media(self) -> None:
-        units = units_from_text("看这个 MEDIA:/tmp/a.png")
+        units = units_from_text(unit({}, "看这个 MEDIA:/tmp/a.png"))
         self.assertTrue(units[0]["body"].startswith("看这个"))
         self.assertEqual(units[0]["file_paths"], ["/tmp/a.png"])
 
     def test_decisions_from_text_keeps_raw_body(self) -> None:
         self.assertEqual(
-            decisions_from_text("甲\n§\n乙"),
+            decisions_from_text(batch(({}, "甲"), ({}, "乙"))),
             [{"body": "甲", "should_reply": True}, {"body": "乙", "should_reply": True}],
         )
 
@@ -641,7 +702,7 @@ class PassiveMultiControlTests(_PassiveHarness):
         from nonebot_plugin_hermes_adapter.core import control_intent
 
         self._register({"reply_to": "m:3"})
-        output = "单份正文"
+        output = unit({}, "单份正文")
         decisions = decisions_from_text(output)
         result = ChatResult(raw_text=output, structured=decisions[0])
         result.terminal_decisions = decisions
@@ -665,10 +726,10 @@ class NakedMediaRunsTests(_ReactiveHarness):
             path = (Path(tmp) / "noise.png").resolve()
             Image.effect_noise((128, 128), 40).convert("RGB").save(path)
             with patch.object(mw, "allowed_roots", return_value=[Path(tmp).resolve()]):
-                output = mw.inline_local_media_images("生成图片 MEDIA:" + str(path))
+                output = unit({}, mw.inline_local_media_images("生成图片 MEDIA:" + str(path)))
         self.assertGreater(len(output), MAX_BODY_CHARS)
         self.assertIn("data:image/png;base64,", output)
-        # 纯文本切分复用计划器的媒体清洗：内联图片不能撑爆长度计量。
+        # 分节符切分复用计划器的媒体清洗：内联图片不能撑爆长度计量。
         self.assertEqual(units_from_output(output)[0]["body"], "生成图片")
         self.assertEqual(len(units_from_output(output)[0]["media_urls"]), 1)
 
@@ -705,12 +766,14 @@ class NakedMediaRunsTests(_ReactiveHarness):
             object.__setattr__(plugin_config, "hermes_api_interface", previous)
 
     def test_plain_overlong_naked_text_still_rejected(self) -> None:
+        # 信封里的段超长仍 fail-closed；裸正文本身已经不再是正文（零单位）。
         with self.assertRaises(TextUnitsError) as ctx:
-            split_text_units("正" * (MAX_BODY_CHARS + 1))
+            split_text_units(unit({}, "正" * (MAX_BODY_CHARS + 1)))
         self.assertEqual(ctx.exception.reason, "body_overflow")
         with self.assertRaises(TextUnitsError) as ctx:
-            split_text_units(("正" * MAX_BODY_CHARS) + "\n" + "正")
+            split_text_units(unit({}, ("正" * MAX_BODY_CHARS) + "\n" + "正"))
         self.assertEqual(ctx.exception.reason, "body_overflow")
+        self.assertEqual(split_text_units("正" * (MAX_BODY_CHARS + 1)), [])
 
 
 class CompletionsSinglePathRegressionTests(_ReactiveHarness):

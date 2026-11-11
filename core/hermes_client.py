@@ -722,13 +722,16 @@ def _is_control_tool_payload(payload: Any) -> bool:
 class RunsEventParser:
     """runs events SSE 行流 → 正文发送单元 + 终态。纯逻辑无网络依赖,可单测。
 
-    纯文本协议（t_306c4938 v5）：
+    分节符正文信封（t_0ecd8f77，解析见 ``core.runs_text``）：
     - 段 = 一段连续 assistant 文本，边界是轮开始、``tool.started``、``run.completed``；
-    - ``message.interim`` 与工具间隙的 ``message.delta`` 都是同一段正文的来源，
+    - 段内 ``message.delta`` 只累计；``message.interim``、``tool.started`` 与终态 ``output``
+      才是发送点（沿用既有节奏，不逐帧发声）；
+    - 只有完整闭合的段（独立整行 ``§`` 开头、独立整行 ``§`` 结尾）才会进队列，
+      缺开头／缺末尾的段丢弃并留可见日志；
+    - ``message.interim`` 与工具间隙的 ``message.delta`` 是同一段正文的两种切帧，
       按「完整发送单元全文匹配」在段内去重，跨段不去重；
-    - ``§`` 独立整行只作连发分隔（见 ``core.runs_text``），不按行／空行切；
     - ``tool.started`` 封段：普通工具另起新批，``submit_control`` 只封段不切批；
-    - ``run.completed`` 最后一段只认 ``output``，delta 未封口尾部丢弃；
+    - ``run.completed`` 最后一段只认 ``output``，delta 里未闭合的尾部丢弃；
     - 不识别旧 JSON 信封，也不产出旁白通道：用户能看到的就是正文本身。
     其它帧（reasoning.*／approval.* 等）与注释帧（: keepalive 等）不消费
     （approval.request 整帧暂存除外）。runs 帧是 data-only（事件名在
@@ -770,7 +773,7 @@ class RunsEventParser:
             hook(reason, text, source)
 
     def _emit_text(self, text: str) -> None:
-        """把一段正文按纯文本协议切分，段内已发过的完整单元跳过。"""
+        """把一段正文按分节符信封切分，段内已发过的完整单元跳过。"""
         from .runs_text import TextUnitsError, split_text_units
 
         if not text or not text.strip():
