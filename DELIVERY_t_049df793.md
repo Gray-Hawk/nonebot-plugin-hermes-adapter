@@ -23,6 +23,10 @@
 行工具、4 个解析器方法（`_queue_units`、`_ingest_delta`、`_fail_text`、`terminal_decisions`），
 删除 1 个兼容函数（`continue_after_shared_prefix`）；`_RunsReplyQueue` 零改动）。
 
+第三轮复核后的局部修正另计 **3 文件 +215/−26**：`core/runs_text.py` 三个内部判据
+（原样碎片／共享标记左右整行／已闭合尾部覆盖）+ 两个测试文件的新用例；
+`core/hermes_client.py`、`core/runs_terminal.py`、插件、提示词本轮**零改动**。
+
 **没有第二套发送队列／状态机：**
 
 - 全仓只有一个 `_stream_pending`（`RunsEventParser` 原字段），`drain_stream_decisions()` 原样消费；
@@ -38,11 +42,13 @@
 2. **帧尾未终结的 `§` 不是标记**：它可能是下一帧 `§B` 的行首字符。这条同时保证「不逐帧
    发送」与四个行内反例仍是旧结果。
 3. **`_seg_text` 只留未闭合碎片**：从最后一个已终结的整行 `§` 起（它既闭合上一份正文，也
-   可能开启下一份）。完整待发正文不再二次缓冲。
+   可能开启下一份）。完整待发正文不再二次缓冲。碎片是**原输入的原样切片**（不归一化行尾）：
+   帧尾一个孤立 `\r` 与下一帧开头的 `\n` 才能拼回同一个 CRLF，跨帧与整帧得到同一份正文。
 4. **interim 只做完整单位全文去重**：它拆出的单位与 delta 已入队的单位按全文匹配；碎片只在
-   段边界按原输入行结构决定去留（`rebase_after_interim`）——interim 末尾的 `§` 只有右邻
-   是行尾时才留给尾巴当开头（`§B`／`§ ` 绝不补换行造标记）；碎片是 interim 前缀时换成
-   interim 自己的结构剩余，避免半份碎片和下一帧拼成原文没有的正文。
+   段边界按原输入行结构决定去留（`rebase_after_interim`）——interim 末尾的 `§` 只有**左右
+   两侧都是行界**时才留给尾巴当开头（`A§` 的左邻是正文、`§B`／`§ ` 的右邻是正文，都不补
+   换行造标记）；碎片是 interim 前缀、或碎片 `§\n<body>` 正是 interim 已闭合交付的最后一份
+   正文时，换成 interim 自己的结构剩余，避免半份碎片和下一帧拼成原文没有的正文。
 5. **终态 output**：只压掉**本段** delta/interim 已发出的同一份正文（同段文本的两种切帧），
    原因记 `terminal_same_segment`（不是 `segment_duplicate`，不触发贴表情观察口）；跨段同文
    照发、不折叠的既有规则不变。这是 delta 即时入队后必须的适配，否则普通回复会发两遍。
@@ -64,23 +70,43 @@
 | delta `§\nA\n§B\n§` → interim A → tool → C | `[A]` | `[C]` | 行内 §B 不另成正文 |
 | delta `§\nA\n§ \nB\n§` → interim A → tool → C | `[A]` | `[C]` | 带空格 § 同上 |
 | delta `§\nA\n§\nB` → tool | `[A]` | — | B 缺闭合不发 |
+| delta `§\nA\n§\nB` → interim `§\nA\n§\nB\n§` → delta `\nC\n§\n` → tool → D | `[A,B,C]` | `[D]` | interim 补齐第二份尾巴：不重播 B、不合成 B+C（本轮新增） |
+| 跨帧 CRLF：delta `§\r\nA\r` + `\nB\r\n§\r\n` → completed 同文 | `[A\nB]` | `[]` | 与整帧同正文、同去重（本轮新增） |
+| delta `A§\nB\n§` → interim `A§` → tool → C | `[]` | `[C]` | interim 尾部 `§` 左邻是正文，不算开头（本轮新增） |
 | delta `§\n§\n` → tool | `[]` | — | 静默 |
 | delta `§\n你好\n§` → completed 同文 | `[]` | `[你好]` | 帧尾未终结 → 终态发一次 |
 | delta `§\n你好\n§\n` → completed 同文 | `[你好]` | `[]` | 已入队，终态去重 |
 | delta `§\nA\n§\nB\n§\n` → tool(`submit_control`) | `[A,B]`，批号 0 | — | 控制只封段不切批 |
 
+## 3.1 第三轮复核后的局部修正（adcb542 → 本轮 HEAD）
+
+只改 `core/runs_text.py` 的三个内部判据与其测试；`core/hermes_client.py` 本轮**零改动**
+（调用点未变：`take_closed_units(self._seg_text + piece)` 与 `rebase_after_interim(text, fragment)`）。
+
+| 复核发现 | 修法 | 真 client/handler 前后 |
+| --- | --- | --- |
+| ① 跨帧 CRLF 改成 `A\n\nB` 并双发（碎片被归一后丢了帧尾 `\r`） | `take_closed_units` 的 remainder 改成**原输入原样切片**（新增 `_normalize_with_origin` 做归一分析 + 原下标回映）；归一化只用于判据，不写回碎片 | `['A\n\nB','A\nB']` → `['A\nB']`（与整帧一致，终态同段去重恢复命中） |
+| ② `A§` 左邻是正文，切片后 `§` 被当成开头放行 B | 共享标记判据加左界：`§` 必须同时满足「左邻是行首或碎片起点」与「右邻是行尾」；否则按原输入逐字切片，不补换行 | `['B','C']` → `['C']` |
+| ③ interim 补齐第二份尾巴后 B 留在碎片，和下一帧 C 合成 `B\nC` | 新增 `_covers_a_closed_unit`：碎片 `§\n<body>` 正是 interim 已闭合交付的**最后一份**正文时，换成 interim 的结构剩余（`_marker_tail`），与首份半截的处理一致 | `['A','B','B\nC','D']` → `['A','B','C','D']` |
+
+`_marker_tail` 同步改成原样切片（interim 的 CRLF 不再被顺手归一），`_terminate_marker_line`
+的整行判据改在归一文本上做（纯 CR 的 `§\r` 也认得）。判据仍是同一套「独立整行 §」，
+没有新增函数式协议之外的东西。
+
 ## 4. 真实测试输出
 
 | 命令 | 结果 | 证据 |
 | --- | --- | --- |
-| 全量 `tests/`（`unittest discover`） | **697 OK (skipped=1)** | `EVIDENCE/full_tests_structured_queue.txt` |
-| 插件 `queued-lane-interim-thin` | **48 OK** | `EVIDENCE/plugin_suites_structured_queue.txt` |
+| 全量 `tests/`（`unittest discover`） | **703 OK (skipped=1)** | `EVIDENCE/full_tests_round3.txt` |
+| 插件 `queued-lane-interim-thin` | **48 OK** | `EVIDENCE/verify_round3.txt`（verify 闸位） |
 | 插件 `steer-presentation-thin` | **21 OK** | 同上 |
-| 真 client/handler（`tests.test_queued_lane_interim_client`，10 tests） | **OK (skipped=1)** | `EVIDENCE/repo_client_regressions_structured_queue.txt` |
-| 解析器矩阵（本节表格） | 见上 | `EVIDENCE/structured_queue_matrix.txt` |
-| `verify.py` | **22/22 PASS**（清洁树） | `EVIDENCE/verify_structured_queue.txt` |
+| 真 client/handler（`tests.test_queued_lane_interim_client`，13 tests） | **OK (skipped=1)** | `EVIDENCE/r1_round3_parser_client.txt` |
+| 解析器＋client 两组用例（50 tests） | **OK (skipped=1)** | 同上 |
+| 复核方 `test_reviewer_contract.py`（6 tests，adcb542 时 3 failures） | **OK** | `EVIDENCE/r1_round3_reviewer_probe.txt` |
+| 解析器矩阵（本节表格，含本轮三例） | 见上 | `EVIDENCE/structured_queue_matrix_round3.txt` |
+| `verify.py` | **22/22 PASS**（清洁树） | `EVIDENCE/verify_round3.txt` |
 
-`tests/` 的 697 **不含**插件用例；完整口径是 `tests/ 697 OK (skipped=1)` + `queued-lane 48 OK` +
+`tests/` 的 703 **不含**插件用例；完整口径是 `tests/ 703 OK (skipped=1)` + `queued-lane 48 OK` +
 `steer-presentation 21 OK`，由 `verify.py` 的插件闸位单独把关（R2）。唯一 skip 仍是
 `test_deployed_parser_still_seals_at_interim`：部署副本已是信封解析器，该「stock = 裸正文」
 前提不成立，显式 skip（同 t_f9767f18 记录的环境变化，未改弱断言）。
