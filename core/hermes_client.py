@@ -725,14 +725,17 @@ class RunsEventParser:
 
     分节符正文信封（t_0ecd8f77，解析见 ``core.runs_text``）：
     - 段 = 一段连续 assistant 文本，边界是轮开始、``tool.started``、``run.completed``；
-    - 段内 ``message.delta`` 只累计；``message.interim``、``tool.started`` 与终态 ``output``
-      才是发送点（沿用既有节奏，不逐帧发声）；
+    - 段内 ``message.delta`` 增量驱动结构性拆分：每形成一份完整闭合的信封就立刻成为
+      一个独立正文单位进队，``_seg_text`` 只留**未闭合碎片**（下一段正文的开头），
+      不承担完整待发正文的缓冲；不逐帧发送，节奏仍由 ``_RunsReplyQueue`` 控制；
+    - ``message.interim`` 是这一段的权威全文快照，也仍然是发送点：它先按同一条信封
+      协议取单位，再按「完整单位全文匹配」与 delta 拆出的单位去重（两者是同一段文本
+      的两种切帧）；共享 ``§`` 在拆分时一次处理完，不对整串做前缀裁剪；
     - 只有完整闭合的段（独立整行 ``§`` 开头、独立整行 ``§`` 结尾）才会进队列，
       缺开头／缺末尾的段丢弃并留可见日志；
-    - ``message.interim`` 与工具间隙的 ``message.delta`` 是同一段正文的两种切帧，
-      按「完整发送单元全文匹配」在段内去重，跨段不去重；
     - ``tool.started`` 封段：普通工具另起新批，``submit_control`` 只封段不切批；
-    - ``run.completed`` 最后一段只认 ``output``，delta 里未闭合的尾部丢弃；
+    - ``run.completed`` 最后一段只认 ``output``，delta 里未闭合的尾部丢弃；终态与本段
+      已发出的同一份正文不再重发（同一段文本的两种切帧），跨段同文照发；
     - 不识别旧 JSON 信封，也不产出旁白通道：用户能看到的就是正文本身。
     其它帧（reasoning.*／approval.* 等）与注释帧（: keepalive 等）不消费
     （approval.request 整帧暂存除外）。runs 帧是 data-only（事件名在
@@ -751,9 +754,10 @@ class RunsEventParser:
         self.pending_steer = ""
         self.approval: dict | None = None
         self._event = ""
-        # 纯文本协议：段 = 一段连续 assistant 文本。`_seg_text` 是当前段已到达
-        # 但未封口的 delta 文本，`_seg_sent` 是本段**已原样发出**的完整单元文本。
-        # 去重只在段内做全文匹配（interim 与 delta 是同一段文本的两种切帧），
+        # 纯文本协议：段 = 一段连续 assistant 文本。`_seg_text` 只保留当前段**还没闭合
+        # 的碎片**（从最后一个已终结的整行 § 起，或裸开头文本）；完整闭合的正文在 delta
+        # 到达时就拆成单位进队，不在这里二次缓冲。`_seg_sent` 是本段**已原样发出**的完整
+        # 单元文本。去重只在段内做全文匹配（interim 与 delta 是同一段文本的两种切帧），
         # 工具／控制帧封段即清空，跨段同文是两条独立消息——不做任何后缀折叠。
         self._seg_text = ""
         self._seg_sent: list[str] = []
@@ -773,8 +777,28 @@ class RunsEventParser:
         if hook is not None:
             hook(reason, text, source)
 
+    def _queue_units(self, units: list[str]) -> None:
+        """把已闭合的正文单位按顺序放进 ``_stream_pending``（段内全文去重）。"""
+        from .runs_text import TEXT_UNIT_KIND
+
+        for unit in units:
+            if unit in self._seg_sent:
+                self._note_suppressed("segment_duplicate", unit, "segment")
+                continue
+            self._seg_sent.append(unit)
+            # 封段发生在批号自增之前：带上封段时的批号，发送节奏按原批计算。
+            # `kind` 只是发送单元的轻量分类（当前固定 text），复用同一条队列。
+            self._stream_pending.append(
+                {
+                    "body": unit,
+                    "kind": TEXT_UNIT_KIND,
+                    "should_reply": True,
+                    "_batch": self.decision_batch,
+                }
+            )
+
     def _emit_text(self, text: str) -> None:
-        """把一段正文按分节符信封切分，段内已发过的完整单元跳过。"""
+        """把一段完整文本按分节符信封切分，段内已发过的完整单元跳过。"""
         from .runs_text import TextUnitsError, split_text_units
 
         if not text or not text.strip():
@@ -782,18 +806,47 @@ class RunsEventParser:
         try:
             units = split_text_units(text)
         except TextUnitsError as exc:
-            self.text_error = exc.reason
-            logger.error(f"[HERMES] runs 正文单位不合法,本轮停止发送 reason={exc.reason}")
+            self._fail_text(exc)
             return
-        for unit in units:
-            if unit in self._seg_sent:
-                self._note_suppressed("segment_duplicate", unit, "segment")
+        self._queue_units(units)
+
+    def _ingest_delta(self, piece: str) -> None:
+        """delta 增量 → 新闭合的正文单位立刻入队，未闭合碎片留在 ``_seg_text``。"""
+        if not piece:
+            return
+        from .runs_text import TextUnitsError, take_closed_units
+
+        try:
+            units, self._seg_text = take_closed_units(self._seg_text + piece)
+        except TextUnitsError as exc:
+            self._fail_text(exc)
+            return
+        self._queue_units(units)
+
+    def _fail_text(self, exc: Exception) -> None:
+        """单位不合法：本轮停发（fail-closed），由终态链按 text_error 收口。"""
+        self.text_error = str(getattr(exc, "reason", "") or "invalid")
+        logger.error(f"[HERMES] runs 正文单位不合法,本轮停止发送 reason={self.text_error}")
+
+    def terminal_decisions(self) -> list[dict]:
+        """终态 ``output`` → 正文决策；本段 delta/interim 已发出的同一份不再重发。
+
+        终态与上一段同文照发（跨段不去重），这里只压掉**同一段文本**的另一种切帧，
+        原因记 ``terminal_same_segment``——它不是段内重复吞掉，不触发贴表情观察口。
+        单位超长抛 ``TextUnitsError``，由调用方 fail-closed。
+        """
+        from .runs_text import TEXT_UNIT_KIND, decisions_from_text
+
+        decisions = decisions_from_text(self.output or "")
+        kept: list[dict] = []
+        for decision in decisions:
+            body = str(decision.get("body") or "")
+            if body in self._seg_sent:
+                self._note_suppressed("terminal_same_segment", body, "terminal")
                 continue
-            self._seg_sent.append(unit)
-            # 封段发生在批号自增之前：带上封段时的批号，发送节奏按原批计算。
-            self._stream_pending.append(
-                {"body": unit, "should_reply": True, "_batch": self.decision_batch}
-            )
+            decision.setdefault("kind", TEXT_UNIT_KIND)
+            kept.append(decision)
+        return kept
 
     def _seal_segment(self) -> None:
         """封段：补发当前段 delta 里尚未发出的单元，然后开新段（段内去重清零）。"""
@@ -843,38 +896,24 @@ class RunsEventParser:
         if not event:
             event = str(payload.get("event") or "")
         if event == "message.interim":
-            # interim 是工具调用前的完整中途消息，也是本段的**段边界**：本段已到的
-            # delta 必须在这里结清，否则整段文本会在下一个工具边界随 `_seg_text` 再发
-            # 一遍（queued-lane 前答混进后答；实测 [A, A+P, C]）。结清规则只做前缀比对：
-            #   * delta ⊂ interim（含全等）→ 由 interim 代表这一段，delta 丢弃；
-            #   * interim ⊂ delta → 先发 interim，多出的尾部留到下一个工具边界补齐；
-            #   * 两者分叉 → delta 与 interim 各发一次，一段文本都不吞。
+            # interim 是工具调用前的完整中途消息，也是本段的**段边界**：它给出这一段
+            # 到这次 tool 调用为止的权威全文，delta 只是同一段文本的增量切帧。
+            #   * 完整正文单位在 delta 到达时就已经按闭合拆出去入队了，这里只补它自己
+            #     拆出的单位，并按「完整单位全文匹配」段内去重（不吞任何一份正文）；
+            #   * 剩下的是还没闭合的碎片：按原输入行结构判据决定去留（见
+            #     runs_text.rebase_after_interim），不做整串前缀裁剪，也不补标记。
             # 段内去重不清零：interim 与 delta 是同一段文本的两种切帧。
             self.interim_count += 1
             text = str(payload.get("text") or "")
-            pending, self._seg_text = self._seg_text, ""
-            if pending and text:
-                if text.startswith(pending):
-                    pending = ""
-                elif pending.startswith(text):
-                    # 新信封里相邻两份正文共享一个 `§`：裁掉 interim 前缀后剩下的尾巴
-                    # 少了开头标记，会整段被当 missing_open 丢掉（完整 B 丢失）。按原
-                    # 输入把共享标记接回尾巴；裸正文没有标记可接，保持原样。
-                    from .runs_text import continue_after_shared_prefix
-
-                    self._seg_text = continue_after_shared_prefix(
-                        text, pending[len(text):]
-                    )
-                    pending = ""
-            if pending:
-                self._emit_text(pending)
+            fragment, self._seg_text = self._seg_text, ""
             self._emit_text(text)
+            from .runs_text import rebase_after_interim
+
+            self._seg_text = rebase_after_interim(text, fragment)
             return
         if event == "message.delta":
             self.delta_count += 1
-            piece = str(payload.get("delta") or "")
-            if piece:
-                self._seg_text += piece
+            self._ingest_delta(str(payload.get("delta") or ""))
             return
         if event == "run.steered":
             # steer 被接受的信号帧:仅作事件存在性消费(迟到回收等链路不依赖),
@@ -907,7 +946,10 @@ class RunsEventParser:
             # 最后一段只认 output：delta 里未封口的尾部丢弃。终态 output 一律按
             # 正文发送——哪怕它与上一段同文，也不按文本折叠（用户看到的重发就是
             # 重发，不做猜测性吞掉）。
-            if self._seg_text:
+            # 只剩共享标记（`§\n`）的碎片不是正文，不算「吞掉」。
+            from .runs_text import SEPARATOR
+
+            if self._seg_text.replace(SEPARATOR, "").strip():
                 self._note_suppressed("unsealed_delta_tail", self._seg_text, "terminal")
             self._seg_text = ""
             self.terminal = True
@@ -2063,10 +2105,10 @@ class HermesClient:
                         terminal: list[dict] = []
                         if parser.output is not None and decision_callback is not None \
                                 and not parser.text_error:
-                            from .runs_text import TextUnitsError, decisions_from_text
+                            from .runs_text import TextUnitsError
 
                             try:
-                                terminal = decisions_from_text(parser.output)
+                                terminal = parser.terminal_decisions()
                             except TextUnitsError as exc:
                                 parser.text_error = exc.reason
                                 logger.error(

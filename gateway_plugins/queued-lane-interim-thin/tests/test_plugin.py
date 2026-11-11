@@ -649,8 +649,9 @@ class QueuedLaneInterimTest(unittest.TestCase):
     def test_shared_marker_between_units_survives_queued_interim(self):
         """R1（t_049df793）：delta 已到 A、B 两份，queued interim 只是 A → B 仍发一次。
 
-        反例：裸切片 ``pending[len(text):]`` 剩下 ``\n答复B\n§`` 缺开头，完整的 B 被当
-        missing_open 丢掉；修后共享的 § 按原输入接回尾部，B 在工具边界发一次。
+        反例：旧前缀裁剪把共享的 § 切掉，剩下的尾巴缺开头，完整的 B 被当 missing_open
+        丢掉。结构化队列下 A 在 delta 闭合时就已入队，interim 的 A 只是同一段文本的
+        另一种切帧（段内去重），共享标记不会产生 missing_open，B 照发一次。
         """
         patches.install()
         run = Run()
@@ -664,7 +665,9 @@ class QueuedLaneInterimTest(unittest.TestCase):
         self.assertEqual(client.sent, ["答复A", "答复B", "答复C"])
         self.assertEqual(len(client.sent), 3)
         self.assertEqual(client.parser.interim_count, 1)
-        self.assertEqual(client.suppressed, [])          # no missing_open on the shared marker
+        # 只有 interim 重复 A 的段内去重；共享标记不得被记成缺开头。
+        self.assertEqual(client.suppressed, [("segment_duplicate", "答复A")])
+        self.assertNotIn("missing_open", [reason for reason, _text in client.suppressed])
 
     def test_interim_prefix_of_streamed_delta_keeps_the_tail(self):
         patches.install()

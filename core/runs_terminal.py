@@ -46,12 +46,15 @@ def _file_plan_entry(raw: str) -> dict:
 def _text_unit(text: str) -> dict | None:
     """纯正文 output(旧接口／散文) → unit；空内容返回 None。"""
     from .hermes_client import extract_response_media
+    from .runs_text import TEXT_UNIT_KIND
 
     cleaned, media_urls, file_paths = extract_response_media(text)
     if not cleaned and not media_urls and not file_paths:
         return None
     return {
         "body": cleaned,
+        # 轻量分类：当前只有正文；未来工具显示复用同一条发送入口，不另起通道。
+        "kind": TEXT_UNIT_KIND,
         "media_urls": list(media_urls),
         "file_paths": list(file_paths),
         # 空 reply_to 统一用 ""：正常链、恢复链、对账链必须落逐字相同的计划。

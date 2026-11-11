@@ -292,8 +292,9 @@ class RunsReplyPacingTests(unittest.IsolatedAsyncioTestCase):
                         ], deliver), 0.3)
                     except TimeoutError:
                         self.fail('上游取消后仍在等待发送未发出的连发正文。')
-                self.assertEqual(sends, ['甲'])
-                self.assertNotIn('乙', sends)   # 取消后不再补发未封段的正文
+                # 新结构：delta 里已闭合的 乙 到达时就入队，且是新批首份（立即发送）；
+                # 取消只停住被 3 秒节奏挡住的 丙，队列闸照旧释放。
+                self.assertEqual(sends, ['甲', '乙'])
                 self.assertNotIn('丙', sends)   # 被 3 秒节奏挡住的剩余份取消后不再发
                 self.assertFalse(busy[-1])
                 self.assertTrue(result.is_interrupted)

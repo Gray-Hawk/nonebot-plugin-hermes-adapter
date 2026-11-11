@@ -185,6 +185,22 @@ class QueuedLaneInterimClientTest(_ReactiveHarness):
         calls = asyncio.run(self._drive(frames))
         self.assertEqual([c["text"] for c in calls["send"]], [A, C])
 
+    def test_terminal_output_does_not_resend_the_streamed_final_segment(self):
+        """最后一段的完整信封已在 delta 拆成正文发出：终态 output 同文不再发第二次。
+
+        新结构下 delta 的闭合信封即时入队，所以「终态只认 output」必须与「同一段文本
+        的两种切帧」区分开——平台出口只应看到一次 A。
+        """
+        import asyncio
+
+        frames = [
+            {"event": "message.delta", "delta": _frame(A), "seq": 0},
+            {"event": "run.completed", "output": f"§\n{A}\n§", "seq": 1},
+        ]
+        calls = asyncio.run(self._drive(frames))
+        self.assertEqual([c["text"] for c in calls["send"]], [A])
+        self.assertEqual(len(calls["send"]), 1)
+
     # --- R1（t_049df793）：interim-prefix-tail 必须保留两份正文共享的 § -----------
     def test_shared_marker_between_units_survives_interim_prefix(self):
         """delta 已到 A、B 两份，interim 只是 A：完整的 B 仍要发一次。
