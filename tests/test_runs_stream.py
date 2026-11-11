@@ -308,16 +308,38 @@ class TextProtocolParserTests(unittest.TestCase):
                 self.assertEqual([d["body"] for d in drained], expected)
 
     def test_interim_prefix_keeps_marker_only_when_it_was_a_whole_line(self) -> None:
-        """共享标记的判据是原输入里的行结构，不是 interim 自己长什么样。"""
-        # 同一个 interim 文本：剩余片段以换行开始时是真共享标记。
-        shared = runs_text.continue_after_shared_prefix(f"{SEP}\nA\n{SEP}", "\nB\n" + SEP)
-        self.assertEqual(shared, f"{SEP}\nB\n{SEP}")
-        # 剩余片段不以换行开始时，原输入里 § 后面直接是 B：不是标记。
-        inline = runs_text.continue_after_shared_prefix(f"{SEP}\nA\n{SEP}", "B\n" + SEP)
-        self.assertEqual(inline, "B\n" + SEP)
+        """共享标记的判据是原输入里的行结构，不是 interim 自己长什么样。
+
+        新结构下判据落在两处：delta 增量拆分只认**已经被换行终结**的整行 ``§``；
+        段边界处的碎片去留也只看原输入里那个 ``§`` 的右邻。两处都不补换行造标记。
+        """
+        # 帧尾未终结的 § 不是标记：§B\n§ 里没有独立整行标记，拆不出正文。
+        self.assertEqual(
+            runs_text.take_closed_units(f"{SEP}B\n{SEP}"), ([], f"{SEP}B\n{SEP}")
+        )
+        # 同一段文本补上换行终结后仍是行内 §：B 前面没有合法开头。
+        self.assertEqual(
+            runs_text.split_text_units(f"{SEP}\nA\n{SEP}B\n{SEP}"), [f"A\n{SEP}B"]
+        )
+        # 段边界：interim 末尾那个 § 右邻是正文时，原输入里没有共享标记。
+        self.assertEqual(
+            runs_text.rebase_after_interim(f"{SEP}\nA\n{SEP}", f"{SEP}\nA\n{SEP}B\n{SEP}"),
+            f"B\n{SEP}",
+        )
+        # 右邻就是行尾时它是真共享标记，留给尾巴当开头。
+        self.assertEqual(
+            runs_text.rebase_after_interim(
+                f"{SEP}\nA\n{SEP}", f"{SEP}\nA\n{SEP}\nB\n{SEP}"
+            ),
+            f"{SEP}\nB\n{SEP}",
+        )
         # interim 自己吃掉了 § 后的行尾换行：原输入里仍是独立整行标记。
-        consumed = runs_text.continue_after_shared_prefix(f"{SEP}\nA\n{SEP}\n", "B\n" + SEP)
-        self.assertEqual(consumed, f"{SEP}\nB\n{SEP}")
+        self.assertEqual(
+            runs_text.rebase_after_interim(
+                f"{SEP}\nA\n{SEP}\n", f"{SEP}\nA\n{SEP}\nB\n{SEP}"
+            ),
+            f"{SEP}\nB\n{SEP}",
+        )
 
     def test_interim_same_text_as_delta_sends_once(self) -> None:
         parser = RunsEventParser()

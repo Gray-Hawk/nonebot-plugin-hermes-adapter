@@ -15,14 +15,19 @@
 - 单个单位超 ``MAX_BODY_CHARS`` 一律 fail-closed（``TextUnitsError``），绝不发半截。
 
 本模块是正常链／流式链／恢复链／对账链共用的唯一解析器：纯函数（除不可发送段的
-WARNING），不含流式状态机。段内去重由 ``RunsEventParser`` 按「完整单位全文匹配」
-维护，不在这里加第二套协议。
+WARNING），不含流式状态机。:func:`take_closed_units` 是同一协议的增量形式，供
+``RunsEventParser`` 在 delta 到达时按闭合拆单位；:func:`rebase_after_interim` 只在段
+边界决定未闭合碎片的去留——两者都不是第二套协议。段内去重由 ``RunsEventParser``
+按「完整单位全文匹配」维护，不在这里加第二套协议。
 """
 
 from __future__ import annotations
 
 SEPARATOR = "§"
 MAX_BODY_CHARS = 4000
+# 发送单元的轻量分类（主人 2026-11-11 定案）：当前只有正文；未来工具显示可以加
+# ``kind="tool"`` 复用同一条 ``_stream_pending``／发送队列，不另起通道。
+TEXT_UNIT_KIND = "text"
 
 # 不可发送段的原因：只用于日志，永远不参与发送决策。
 _NO_MARKER = "no_marker"          # 整段没有任何独立整行 §（旧裸正文／缺开头也缺末尾）
@@ -57,29 +62,93 @@ def _warn_dropped(reason: str, text: str) -> None:
     )
 
 
-def continue_after_shared_prefix(text: str, remainder: str) -> str:
-    """``text`` 是已缓冲 delta 的前缀时，决定剩余片段怎么接下去。
+def take_closed_units(
+    text: str, *, max_body_chars: int = MAX_BODY_CHARS
+) -> tuple[list[str], str]:
+    """流式增量：取出已经闭合的正文单位，返回 ``(units, remainder)``。
 
-    相邻两份正文共享一个标记：``§\\nA\\n§\\nB\\n§`` 的 ``§\\nA\\n§`` 前缀裁掉后，
-    剩下 ``\\nB\\n§`` 少了开头标记，会被当成 ``missing_open`` 丢掉（完整 B 丢失）。
-    ``text`` 本身以独立整行 ``§`` 结尾（即它是一份完整闭合正文）时，那个标记是
-    两份正文共享的，按原输入接回尾部；尾巴本身仍缺闭合就照旧丢弃。
+    与 :func:`split_text_units` 同一条协议，只做增量：``units`` 是这次新闭合的正文，
+    ``remainder`` 从最后一个**已经被换行终结**的整行 ``§`` 开始 —— 那个标记既是上一份
+    正文的结尾，也是下一份正文的开头。相邻正文共享的 ``§`` 于是只在拆分这一步处理完，
+    调用方既不需要对原串做前缀裁剪，也不需要给它补换行。
 
-    **只还原本就存在的标记**：还要求这个 ``§`` 在原输入里的右邻就是行尾。前缀裁在
-    行内 ``§`` 字符后（``§B``／``§ ``）时原输入里根本没有独立整行标记，此时原样返回，
-    绝不靠新补的换行把它修成合法开头。裸正文同样原样返回，绝不给旧裸正文补信封。
+    帧尾那个还没有换行终结的 ``§`` 不算标记：它可能是下一帧 ``§B`` 的行首字符。
+    这类尾巴原样留在 ``remainder`` 里，等下一帧、interim 或封段时再看。
     """
-    if not remainder.strip():
-        return remainder
-    # 与 split_text_units 同口径：CRLF／CR 先归一，再判最后一行是不是独立整行 §。
-    normalized = text.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
-    if normalized.split("\n")[-1] != SEPARATOR:
-        return remainder
-    # 右邻判据：interim 自己吃掉了 § 后的行尾换行（text 以换行结尾），或剩余片段本身
-    # 以换行开始。两者都不成立时，这个 § 在原输入里是行内/带空格的普通字符。
-    if not (text.endswith(("\n", "\r")) or remainder[0] in ("\n", "\r")):
-        return remainder
-    return SEPARATOR + ("" if remainder[0] in ("\n", "\r") else "\n") + remainder
+    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if not raw:
+        return [], ""
+    lines = raw.split("\n")
+    # 最后一行没有换行终结时不能当整行标记（可能是 §B 的前半截）。
+    ended = len(lines) if raw.endswith("\n") else len(lines) - 1
+    positions = [index for index in range(ended) if lines[index] == SEPARATOR]
+    if not positions:
+        return [], raw
+    head = "\n".join(lines[: positions[0]]).strip()
+    if head:
+        _warn_dropped(_MISSING_OPEN, head)
+    units: list[str] = []
+    for start, end in zip(positions, positions[1:]):
+        body = "\n".join(lines[start + 1 : end]).strip()
+        if not body:
+            continue  # 空段（相邻标记或只有空白）不是正文，也不算违规。
+        if _unit_length(body) > max_body_chars:
+            raise TextUnitsError("body_overflow")
+        units.append(body)
+    return units, "\n".join(lines[positions[-1] :])
+
+
+def _marker_tail(text: str) -> str:
+    """从最后一个独立整行 ``§`` 起（含该标记）的原文；没有整行标记时原样返回。"""
+    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = raw.split("\n")
+    positions = [index for index, line in enumerate(lines) if line == SEPARATOR]
+    return "\n".join(lines[positions[-1]:]) if positions else raw
+
+
+def _terminate_marker_line(text: str) -> str:
+    """保留的共享标记补齐行尾换行，免得下一帧和它拼成同一行的 ``§§``。
+
+    只在最后一行已经是**独立整行 ``§``** 时补；``§B``／``§ `` 这类行内／带空格的
+    行原样返回——绝不把普通正文修成标记（reviewer t_049df793 第二轮的边界）。
+    """
+    if not text or text.endswith(("\n", "\r")):
+        return text
+    return text + "\n" if text.split("\n")[-1] == SEPARATOR else text
+
+
+def rebase_after_interim(interim: str, fragment: str) -> str:
+    """interim（本段到这次 tool 调用为止的全文）之后，delta 碎片还剩什么。
+
+    完整正文单位在 delta 到达时就已经按闭合拆出去入队了，这里只决定**未闭合碎片**
+    的去留，判据全部来自原输入的行结构：
+
+    - interim 文本不是碎片的开头（分叉）时，碎片原样留到封段，缺开头照旧被丢弃；
+    - interim 覆盖到碎片里时，把覆盖过的那截去掉。它末尾那个 ``§`` 只有在原输入里
+      右邻就是行尾才算两份正文共享的标记，才留给尾巴当开头；右邻是正文（``§B``／
+      ``§ ``）时原输入里就没有这个标记，绝不靠新补的换行把它修成合法开头。
+    - 反过来，碎片本身是 interim 的前缀时（delta 截在半份正文里），碎片内容已经被
+      interim 的正文单位完全覆盖：换成 interim 自己的结构剩余（最后一个整行 ``§``
+      起），免得半份碎片和下一帧拼成一份原文里并不存在的完整正文。
+    """
+    if not fragment or not interim:
+        return fragment
+    raw = interim.replace("\r\n", "\n").replace("\r", "\n")
+    text = raw.rstrip("\n")
+    if not text:
+        return fragment
+    if not fragment.startswith(text):
+        if text.startswith(fragment.rstrip("\n")):
+            return _terminate_marker_line(_marker_tail(raw))
+        return fragment
+    end = len(text)
+    if text[-1] == SEPARATOR and (end == len(fragment) or fragment[end] in ("\n", "\r")):
+        remainder = fragment[end - 1 :]
+        # interim 覆盖了整个碎片时，这个共享标记是 interim 自己的完整行：补上它缺的
+        # 行尾换行，下一帧不管是新信封还是同段续写都不会拼成同一行的「§§」。碎片比
+        # interim 长时仍按原输入逐字切片，一个字符都不补。
+        return _terminate_marker_line(remainder) if end == len(fragment) else remainder
+    return fragment[end:]
 
 
 def split_text_units(text: str, *, max_body_chars: int = MAX_BODY_CHARS) -> list[str]:
