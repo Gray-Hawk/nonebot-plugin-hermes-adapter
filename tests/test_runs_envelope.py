@@ -264,6 +264,25 @@ class EnvelopeIncrementalQueueTests(unittest.TestCase):
         ]
         self.assertEqual(sent, ["甲", "乙", "丙", "丁"])
 
+    def test_interim_covering_a_strict_prefix_of_the_second_unit_does_not_glue(self) -> None:
+        """interim 把第二份正文补齐到比碎片更长（``Br`` → ``Bravo``）时同样已覆盖。
+
+        碎片只是同一份正文更早的切帧；留着它就会和下一帧的 ``丙`` 拼成原文里没有的
+        ``Br\\n丙``（reviewer t_049df793 第四轮）。首份正文本来就是这个严格前缀口径。
+        """
+        parser = RunsEventParser()
+        drained = feed(parser, [
+            {"event": "message.delta", "delta": f"{SEP}\n甲\n{SEP}\n乙", "seq": 0},
+            {"event": "message.interim", "text": f"{SEP}\n甲\n{SEP}\n乙完整\n{SEP}", "seq": 1},
+            {"event": "message.delta", "delta": f"\n丙\n{SEP}\n", "seq": 2},
+            {"event": "tool.started", "tool": "lookup", "seq": 3},
+            {"event": "run.completed", "output": unit("丁"), "seq": 4},
+        ])
+        sent = [d["body"] for d in drained] + [
+            d["body"] for d in parser.terminal_decisions()
+        ]
+        self.assertEqual(sent, ["甲", "乙完整", "丙", "丁"])
+
     def test_unclosed_interim_shorter_than_fragment_does_not_reopen_a_body(self) -> None:
         """interim 未闭合（``§\\n甲``）时不能接管已闭合的碎片，否则下一帧拼出「甲\\n乙」。"""
         parser = RunsEventParser()

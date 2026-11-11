@@ -174,6 +174,11 @@ def _covers_a_closed_unit(frag: str, text: str) -> bool:
     碎片形如 ``§\\n<body>``（还没闭合的下一份正文），而 interim 恰好以
     ``§\\n<body>\\n§`` 收尾：body 已经被 interim 当成完整单位发过一次，碎片只是同一份
     正文的另一切帧。留着它就会和下一帧拼成原文里并不存在的「body+下一段」。
+
+    覆盖判据是**严格前缀**，不是逐字相等：切帧可以截在半份正文里（碎片 ``§\\nBr``、
+    interim 最后一份 ``Bravo``），这份正文同样已经由 interim 完整发出。首份正文原本就按
+    这个口径处理（碎片是 interim 前缀 → 换成 interim 的结构剩余），后续份用同一口径，
+    才不会有「首份半截被接管、第二份半截却留成 Br+C」的差别。
     """
     frag_lines = frag.split("\n")
     if len(frag_lines) < 2 or frag_lines[0] != SEPARATOR:
@@ -188,7 +193,7 @@ def _covers_a_closed_unit(frag: str, text: str) -> bool:
     if "\n".join(lines[positions[-1] + 1 :]).strip():
         return False  # interim 末尾标记之后还有正文：最后一份还没闭合
     body = "\n".join(lines[positions[-2] + 1 : positions[-1]]).strip()
-    return bool(body) and body == frag_body
+    return bool(body) and body.startswith(frag_body)
 
 
 def rebase_after_interim(interim: str, fragment: str) -> str:

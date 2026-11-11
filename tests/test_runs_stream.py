@@ -341,6 +341,25 @@ class TextProtocolParserTests(unittest.TestCase):
             f"{SEP}\nB\n{SEP}",
         )
 
+    def test_interim_strict_prefix_of_the_second_unit_is_covered(self) -> None:
+        """碎片是 interim 第二份正文的严格前缀时也已覆盖（与首份半截同一口径）。
+
+        覆盖判据不能退回逐字相等：``Br`` 是 ``Bravo`` 的更早切帧，留着它就会和下一帧
+        拼出原文里没有的 ``Br + 下一段``。不匹配的分叉碎片仍原样留着。
+        """
+        self.assertEqual(
+            runs_text.rebase_after_interim(
+                f"{SEP}\nA\n{SEP}\nBravo\n{SEP}", f"{SEP}\nBr"
+            ),
+            f"{SEP}\n",
+        )
+        self.assertEqual(
+            runs_text.rebase_after_interim(
+                f"{SEP}\nA\n{SEP}\nBravo\n{SEP}", f"{SEP}\nX"
+            ),
+            f"{SEP}\nX",
+        )
+
     def test_interim_same_text_as_delta_sends_once(self) -> None:
         parser = RunsEventParser()
         drained = feed_all(parser, [
