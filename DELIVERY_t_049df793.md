@@ -60,7 +60,7 @@
 
 | 命令 | 结果 | 证据 |
 | --- | --- | --- |
-| 修前 6fbcceb + 本轮新测试（同一命令） | 8 failures / 60（R1 复现） | `EVIDENCE/r1_interim_shared_marker.txt` |
+| 修前 6fbcceb + 本轮新测试（同一命令） | 9 failures / 60（R1 复现） | `EVIDENCE/r1_interim_shared_marker.txt` |
 | 修后同一命令 | 60 OK（skipped=1） | 同上 |
 | 全量 `tests/` | **682 tests OK (skipped=1)** | `EVIDENCE/full_tests_r1_fix.txt` |
 | 插件 `queued-lane-interim-thin` | 修前 46 跑 11 失败 → 修后 **48 OK** | `EVIDENCE/plugin_suite_r1_fix.txt` |
