@@ -204,8 +204,97 @@ class EnvelopeIncrementalQueueTests(unittest.TestCase):
             with self.subTest(newline=repr(newline)):
                 text = batch("甲", "乙").replace("\n", newline) + newline
                 self.assertEqual(
-                    runs_text.take_closed_units(text), (["甲", "乙"], f"{SEP}\n")
+                    runs_text.take_closed_units(text), (["甲", "乙"], f"{SEP}{newline}")
                 )
+                # 碎片保留原输入的行尾（不归一）：帧尾一个孤立 \r 若被改写成 \n，
+                # 下一帧开头的 \n 就会拼出第二个换行，同一份 CRLF 正文变成 A\n\nB。
+                self.assertEqual(
+                    runs_text.take_closed_units(text)[1]
+                    .replace("\r\n", "\n")
+                    .replace("\r", "\n"),
+                    f"{SEP}\n",
+                )
+
+    def test_crlf_split_between_frames_equals_one_frame(self) -> None:
+        """跨帧 CRLF 与整帧同口径：正文不变（A\\nB），也不会双发。"""
+        output = f"{SEP}\r\n甲\r\n乙\r\n{SEP}\r\n"
+        whole = feed(RunsEventParser(), [
+            {"event": "message.delta", "delta": output, "seq": 0},
+            {"event": "run.completed", "output": output, "seq": 1},
+        ])
+        self.assertEqual([d["body"] for d in whole], ["甲\n乙"])
+        parser = RunsEventParser()
+        split = feed(parser, [
+            {"event": "message.delta", "delta": f"{SEP}\r\n甲\r", "seq": 0},
+            {"event": "message.delta", "delta": f"\n乙\r\n{SEP}\r\n", "seq": 1},
+            {"event": "run.completed", "output": output, "seq": 2},
+        ])
+        self.assertEqual([d["body"] for d in split], ["甲\n乙"])
+        self.assertEqual(parser.terminal_decisions(), [])
+
+    def test_inline_marker_left_neighbor_is_not_an_opening(self) -> None:
+        """interim 末尾 § 的左邻是正文（``A§``）：切掉 A 后不得变成开头标记。"""
+        # 原输入 split 判据里根本没有独立整行 §，B 不能因为切片而变成合法正文。
+        from tests import test_runs_terminal as _e2
+
+        with _e2._CapturedWarnings():
+            self.assertEqual(runs_text.split_text_units("A§\nB\n§"), [])
+        parser = RunsEventParser()
+        drained = feed(parser, [
+            {"event": "message.delta", "delta": "A§\nB\n§", "seq": 0},
+            {"event": "message.interim", "text": "A§", "seq": 1},
+            {"event": "tool.started", "tool": "lookup", "seq": 2},
+            {"event": "run.completed", "output": unit("C"), "seq": 3},
+        ])
+        self.assertEqual([d["body"] for d in drained], [])
+        self.assertEqual([d["body"] for d in parser.terminal_decisions()], ["C"])
+
+    def test_interim_completing_second_unit_does_not_replay_or_glue(self) -> None:
+        """interim 补齐第二份尾巴后，碎片换成 interim 的结构剩余，不再合成新正文。"""
+        parser = RunsEventParser()
+        drained = feed(parser, [
+            {"event": "message.delta", "delta": f"{SEP}\n甲\n{SEP}\n乙", "seq": 0},
+            {"event": "message.interim", "text": f"{SEP}\n甲\n{SEP}\n乙\n{SEP}", "seq": 1},
+            {"event": "message.delta", "delta": f"\n丙\n{SEP}\n", "seq": 2},
+            {"event": "tool.started", "tool": "lookup", "seq": 3},
+            {"event": "run.completed", "output": unit("丁"), "seq": 4},
+        ])
+        sent = [d["body"] for d in drained] + [
+            d["body"] for d in parser.terminal_decisions()
+        ]
+        self.assertEqual(sent, ["甲", "乙", "丙", "丁"])
+
+    def test_interim_covering_a_strict_prefix_of_the_second_unit_does_not_glue(self) -> None:
+        """interim 把第二份正文补齐到比碎片更长（``Br`` → ``Bravo``）时同样已覆盖。
+
+        碎片只是同一份正文更早的切帧；留着它就会和下一帧的 ``丙`` 拼成原文里没有的
+        ``Br\\n丙``（reviewer t_049df793 第四轮）。首份正文本来就是这个严格前缀口径。
+        """
+        parser = RunsEventParser()
+        drained = feed(parser, [
+            {"event": "message.delta", "delta": f"{SEP}\n甲\n{SEP}\n乙", "seq": 0},
+            {"event": "message.interim", "text": f"{SEP}\n甲\n{SEP}\n乙完整\n{SEP}", "seq": 1},
+            {"event": "message.delta", "delta": f"\n丙\n{SEP}\n", "seq": 2},
+            {"event": "tool.started", "tool": "lookup", "seq": 3},
+            {"event": "run.completed", "output": unit("丁"), "seq": 4},
+        ])
+        sent = [d["body"] for d in drained] + [
+            d["body"] for d in parser.terminal_decisions()
+        ]
+        self.assertEqual(sent, ["甲", "乙完整", "丙", "丁"])
+
+    def test_unclosed_interim_shorter_than_fragment_does_not_reopen_a_body(self) -> None:
+        """interim 未闭合（``§\\n甲``）时不能接管已闭合的碎片，否则下一帧拼出「甲\\n乙」。"""
+        parser = RunsEventParser()
+        drained = feed(parser, [
+            {"event": "message.delta", "delta": f"{SEP}\n甲\n{SEP}\n", "seq": 0},
+            {"event": "message.interim", "text": f"{SEP}\n甲", "seq": 1},
+            {"event": "message.delta", "delta": f"\n乙\n{SEP}\n", "seq": 2},
+            {"event": "tool.started", "tool": "lookup", "seq": 3},
+            {"event": "run.completed", "output": unit("丙"), "seq": 4},
+        ])
+        self.assertEqual([d["body"] for d in drained], ["甲", "乙"])
+        self.assertEqual([d["body"] for d in parser.terminal_decisions()], ["丙"])
 
     def test_head_before_first_marker_is_missing_open(self) -> None:
         from tests import test_runs_terminal as _e2

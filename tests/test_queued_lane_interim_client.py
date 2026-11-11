@@ -310,6 +310,100 @@ class QueuedLaneInterimClientTest(_ReactiveHarness):
         calls = asyncio.run(self._drive(frames))
         self.assertEqual([c["text"] for c in calls["send"]], [A, C])
 
+    # --- 第三轮（adcb542 复核）：跨帧 CRLF／左邻行内 §／interim 补第二份尾巴 -----
+    def test_crlf_split_between_frames_matches_one_frame(self):
+        """跨帧 CRLF 与整帧同正文：碎片保留原行尾，不能拼出 A\\n\\nB 或双发。"""
+        import asyncio
+
+        body = f"{A}\n{B}"
+        output = f"§\r\n{A}\r\n{B}\r\n§\r\n"
+        frames = [
+            {"event": "message.delta", "delta": f"§\r\n{A}\r", "seq": 0},
+            {"event": "message.delta", "delta": f"\n{B}\r\n§\r\n", "seq": 1},
+            {"event": "run.completed", "output": output, "seq": 2},
+        ]
+        calls = asyncio.run(self._drive(frames))
+        self.assertEqual([c["text"] for c in calls["send"]], [body])
+        self.assertEqual(len(calls["send"]), 1)
+
+        whole = asyncio.run(self._drive([
+            {"event": "message.delta", "delta": output, "seq": 0},
+            {"event": "run.completed", "output": output, "seq": 1},
+        ]))
+        self.assertEqual([c["text"] for c in whole["send"]], [body])
+
+    def test_inline_marker_left_of_interim_tail_is_not_an_opening(self):
+        """interim 末尾 § 的左邻是正文（``A§``）：切掉 A 后不得把 B 放成新正文。"""
+        import asyncio
+
+        frames = [
+            {"event": "message.delta", "delta": f"{A}§\n{B}\n§", "seq": 0},
+            {"event": "message.interim", "text": f"{A}§", "seq": 1},
+            {"event": "tool.started", "tool": "lookup", "seq": 2},
+            {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 3},
+        ]
+        calls = asyncio.run(self._drive(frames))
+        self.assertEqual([c["text"] for c in calls["send"]], [C])
+
+    def test_interim_completing_second_unit_does_not_glue_the_next_delta(self):
+        """interim 补齐第二份尾巴后，不重播 B，也不把 B 和下一帧的 C 合成一份正文。"""
+        import asyncio
+
+        frames = [
+            {"event": "message.delta", "delta": f"§\n{A}\n§\n{B}", "seq": 0},
+            {"event": "message.interim", "text": f"§\n{A}\n§\n{B}\n§", "seq": 1},
+            {"event": "message.delta", "delta": f"\n{C}\n§\n", "seq": 2},
+            {"event": "tool.started", "tool": "lookup", "seq": 3},
+            {"event": "run.completed", "output": f"§\n{B}终\n§", "seq": 4},
+        ]
+        calls = asyncio.run(self._drive(frames))
+        self.assertEqual([c["text"] for c in calls["send"]], [A, B, C, f"{B}终"])
+        self.assertNotIn(f"{B}\n{C}", [c["text"] for c in calls["send"]])
+
+
+    # --- 第四轮（8719f62 复核）：第二份正文的严格前缀同样已被 interim 覆盖 -----
+    def test_interim_covering_a_strict_prefix_of_the_second_unit(self):
+        """第二份正文只到严格前缀时也不能留着和下一帧合成正文。
+
+        复核帧（reviewer_gpt t_049df793 第四轮，真 client/queue/handler/台账）：
+        delta='§\\nA\\n§\\nBr' → interim='§\\nA\\n§\\nBravo\\n§' → delta='\\nC\\n§\\n' →
+        tool.started → completed='§\\nD\\n§'。修前平台出口 [A, Bravo, 'Br\\nC', D]，
+        应为 [A, Bravo, C, D]；首份半截控制本就是 [Bravo, C, D]。
+        """
+        import asyncio
+
+        first = asyncio.run(self._drive([
+            {"event": "message.delta", "delta": "§\nBr", "seq": 0},
+            {"event": "message.interim", "text": "§\nBravo\n§", "seq": 1},
+            {"event": "message.delta", "delta": "\nC\n§\n", "seq": 2},
+            {"event": "tool.started", "tool": "lookup", "seq": 3},
+            {"event": "run.completed", "output": "§\nD\n§", "seq": 4},
+        ]))
+        self.assertEqual([c["text"] for c in first["send"]], ["Bravo", "C", "D"])
+
+        second = asyncio.run(self._drive([
+            {"event": "message.delta", "delta": f"§\n{A}\n§\nBr", "seq": 0},
+            {"event": "message.interim", "text": f"§\n{A}\n§\nBravo\n§", "seq": 1},
+            {"event": "message.delta", "delta": "\nC\n§\n", "seq": 2},
+            {"event": "tool.started", "tool": "lookup", "seq": 3},
+            {"event": "run.completed", "output": "§\nD\n§", "seq": 4},
+        ]))
+        self.assertEqual([c["text"] for c in second["send"]], [A, "Bravo", "C", "D"])
+        self.assertNotIn("Br\nC", [c["text"] for c in second["send"]])
+
+    def test_non_matching_fragment_is_not_covered_by_the_last_unit(self):
+        """分叉碎片（不是 interim 最后一份正文的前缀）仍按原样留在段里，缺闭合照旧丢弃。"""
+        import asyncio
+
+        frames = [
+            {"event": "message.delta", "delta": f"§\n{A}\n§\nX", "seq": 0},
+            {"event": "message.interim", "text": f"§\n{A}\n§\nBravo\n§", "seq": 1},
+            {"event": "tool.started", "tool": "lookup", "seq": 2},
+            {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 3},
+        ]
+        calls = asyncio.run(self._drive(frames))
+        self.assertEqual([c["text"] for c in calls["send"]], [A, "Bravo", C])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
