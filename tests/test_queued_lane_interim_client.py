@@ -72,11 +72,17 @@ def _deployed_parser_is_pre_envelope() -> bool:
 
 
 A, P, C = "答复A", "查B前的说明", "答复C"
+B = "答复B"
 
 
 def _frame(body: str) -> str:
     """分节符信封：一份正文 = 独立一行 § + 正文 + 独立一行 §（+ 收尾换行）。"""
     return f"§\n{body}\n§\n"
+
+
+def _batch(*bodies: str) -> str:
+    """多份正文连发：``§`` A ``§`` B ``§``（相邻两份共享中间那个标记）。"""
+    return "§\n" + "\n§\n".join(bodies) + "\n§"
 
 
 # 新协议帧序：queued-lane 注入的前序答复与 delta 是同文，必须只发一次。
@@ -175,6 +181,115 @@ class QueuedLaneInterimClientTest(_ReactiveHarness):
             {"event": "message.delta", "delta": _frame(A), "seq": 0},
             {"event": "tool.started", "tool": "lookup", "seq": 1},
             {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 2},
+        ]
+        calls = asyncio.run(self._drive(frames))
+        self.assertEqual([c["text"] for c in calls["send"]], [A, C])
+
+    # --- R1（t_049df793）：interim-prefix-tail 必须保留两份正文共享的 § -----------
+    def test_shared_marker_between_units_survives_interim_prefix(self):
+        """delta 已到 A、B 两份，interim 只是 A：完整的 B 仍要发一次。
+
+        复现帧（reviewer t_4a749150）：delta='§\\nA\\n§\\nB\\n§' → interim='§\\nA\\n§'
+        → tool.started → completed='§\\nC\\n§'。修前平台出口只有 [A, C]，B 被误记
+        missing_open；修后是 [A, B, C]，每份一次。
+        """
+        import asyncio
+
+        frames = [
+            {"event": "message.delta", "delta": _batch(A, B), "seq": 0},
+            {"event": "message.interim", "text": _frame(A), "seq": 1},
+            {"event": "tool.started", "tool": "lookup", "seq": 2},
+            {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 3},
+        ]
+        calls = asyncio.run(self._drive(frames))
+        self.assertEqual([c["text"] for c in calls["send"]], [A, B, C])
+        self.assertEqual(len(calls["send"]), 3)
+        self.assertEqual([c["component"] for c in calls["send"]],
+                         ["primary:0", "primary:1", "primary:2"])
+        self.assertEqual(calls["settle"], [])
+
+    def test_interim_first_then_full_delta_still_sends_each_once(self):
+        """反序对照：interim 先到、完整 delta 后到，本来就该是 [A, B, C]。"""
+        import asyncio
+
+        frames = [
+            {"event": "message.interim", "text": _frame(A), "seq": 0},
+            {"event": "message.delta", "delta": _batch(A, B), "seq": 1},
+            {"event": "tool.started", "tool": "lookup", "seq": 2},
+            {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 3},
+        ]
+        calls = asyncio.run(self._drive(frames))
+        self.assertEqual([c["text"] for c in calls["send"]], [A, B, C])
+
+    def test_shared_marker_tail_is_independent_of_trailing_newlines(self):
+        """换行有无不能改变结果：信封标记按行匹配，帧尾换行属于噪声。"""
+        import asyncio
+
+        for delta, interim in (
+            (_batch(A, B) + "\n", _frame(A)),
+            (_batch(A, B), _frame(A).rstrip("\n")),
+            (_batch(A, B) + "\n", _frame(A).rstrip("\n")),
+            # CRLF：与 split_text_units 同口径归一，边界判定不能只在 \n 上成立。
+            (_batch(A, B).replace("\n", "\r\n"), _frame(A).replace("\n", "\r\n")),
+        ):
+            with self.subTest(delta=delta, interim=interim):
+                frames = [
+                    {"event": "message.delta", "delta": delta, "seq": 0},
+                    {"event": "message.interim", "text": interim, "seq": 1},
+                    {"event": "tool.started", "tool": "lookup", "seq": 2},
+                    {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 3},
+                ]
+                calls = asyncio.run(self._drive(frames))
+                self.assertEqual([c["text"] for c in calls["send"]], [A, B, C])
+
+    def test_shared_marker_tail_without_close_is_still_refused(self):
+        """真缺闭合仍拒绝：接回共享标记不表示替尾巴补一个闭合标记。"""
+        import asyncio
+
+        frames = [
+            {"event": "message.delta", "delta": f"§\n{A}\n§\n{B}", "seq": 0},
+            {"event": "message.interim", "text": _frame(A), "seq": 1},
+            {"event": "tool.started", "tool": "lookup", "seq": 2},
+            {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 3},
+        ]
+        calls = asyncio.run(self._drive(frames))
+        self.assertEqual([c["text"] for c in calls["send"]], [A, C])
+        self.assertNotIn(B, [c["text"] for c in calls["send"]])
+
+    def test_inline_marker_prefix_does_not_invent_a_unit(self):
+        """前缀裁在行内/带空格的 § 后：原输入没有合法开头，B 不得被放出来。
+
+        复现帧（reviewer_gpt t_049df793 第二轮，真 client/handler）：候选给剩余片段
+        补了一个新换行，把 ``§B``／``§ ``／``§\\nA\\n§B`` 修成合法开头，平台出口比
+        基线多出 B。基线（6fbcceb）分别是 ``[C]``／``[C]``／``[A, C]``／``[A, C]``。
+        """
+        import asyncio
+
+        cases = (
+            (f"§B\n§", "§", [C]),
+            (f"§ \nB\n§", "§", [C]),
+            (f"§\n{A}\n§B\n§", f"§\n{A}\n§", [A, C]),
+            (f"§\n{A}\n§ \nB\n§", f"§\n{A}\n§", [A, C]),
+        )
+        for delta, interim, expected in cases:
+            with self.subTest(delta=delta, interim=interim):
+                frames = [
+                    {"event": "message.delta", "delta": delta, "seq": 0},
+                    {"event": "message.interim", "text": interim, "seq": 1},
+                    {"event": "tool.started", "tool": "lookup", "seq": 2},
+                    {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 3},
+                ]
+                calls = asyncio.run(self._drive(frames))
+                self.assertEqual([c["text"] for c in calls["send"]], expected)
+
+    def test_same_text_interim_and_delta_sends_once(self):
+        import asyncio
+
+        frames = [
+            {"event": "message.delta", "delta": _frame(A), "seq": 0},
+            {"event": "message.interim", "text": _frame(A), "seq": 1},
+            {"event": "tool.started", "tool": "lookup", "seq": 2},
+            {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 3},
         ]
         calls = asyncio.run(self._drive(frames))
         self.assertEqual([c["text"] for c in calls["send"]], [A, C])

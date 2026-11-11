@@ -857,7 +857,14 @@ class RunsEventParser:
                 if text.startswith(pending):
                     pending = ""
                 elif pending.startswith(text):
-                    self._seg_text = pending[len(text):]
+                    # 新信封里相邻两份正文共享一个 `§`：裁掉 interim 前缀后剩下的尾巴
+                    # 少了开头标记，会整段被当 missing_open 丢掉（完整 B 丢失）。按原
+                    # 输入把共享标记接回尾巴；裸正文没有标记可接，保持原样。
+                    from .runs_text import continue_after_shared_prefix
+
+                    self._seg_text = continue_after_shared_prefix(
+                        text, pending[len(text):]
+                    )
                     pending = ""
             if pending:
                 self._emit_text(pending)
