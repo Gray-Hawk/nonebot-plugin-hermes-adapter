@@ -1,0 +1,37 @@
+test_child_does_not_inherit_api_server_rows (test_plugin.KanbanNotifyGuardTest.test_child_does_not_inherit_api_server_rows) ... ok
+test_explicit_subscription_is_still_allowed (test_plugin.KanbanNotifyGuardTest.test_explicit_subscription_is_still_allowed) ... ok
+test_install_is_idempotent (test_plugin.KanbanNotifyGuardTest.test_install_is_idempotent) ... ok
+test_nb_report_source_still_routes_from_task_session_id (test_plugin.KanbanNotifyGuardTest.test_nb_report_source_still_routes_from_task_session_id) ... ok
+test_new_card_from_api_server_session_gets_no_subscription (test_plugin.KanbanNotifyGuardTest.test_new_card_from_api_server_session_gets_no_subscription) ... ok
+test_new_card_from_telegram_session_keeps_its_subscription (test_plugin.KanbanNotifyGuardTest.test_new_card_from_telegram_session_keeps_its_subscription) ... ok
+test_slash_create_from_api_server_source_is_refused (test_plugin.KanbanNotifyGuardTest.test_slash_create_from_api_server_source_is_refused) ... ok
+test_slash_create_from_telegram_source_still_subscribes (test_plugin.KanbanNotifyGuardTest.test_slash_create_from_telegram_source_still_subscribes) ... ok
+test_manifest_is_discovered_as_a_user_plugin (test_plugin.PluginPackageTest.test_manifest_is_discovered_as_a_user_plugin) ... ok
+test_register_wires_the_api_server_factory (test_plugin.PluginPackageTest.test_register_wires_the_api_server_factory) ... ok
+test_abc_each_once_in_order (test_plugin.QueuedLaneInterimTest.test_abc_each_once_in_order) ... ok
+test_admitted_adapter_owns_the_publication (test_plugin.QueuedLaneInterimTest.test_admitted_adapter_owns_the_publication)
+The seam's delivery adapter may be another instance; the admitting one owns the run. ... ok
+test_allowed_silence_marker_publishes_nothing (test_plugin.QueuedLaneInterimTest.test_allowed_silence_marker_publishes_nothing) ... ok
+test_already_streamed_is_untouched (test_plugin.QueuedLaneInterimTest.test_already_streamed_is_untouched) ... ok
+test_compression_tip_binds_logical_root (test_plugin.QueuedLaneInterimTest.test_compression_tip_binds_logical_root) ... ok
+test_compression_tip_without_live_root_is_visible_and_safe (test_plugin.QueuedLaneInterimTest.test_compression_tip_without_live_root_is_visible_and_safe) ... ok
+test_control_loses_every_queued_answer (test_plugin.QueuedLaneInterimTest.test_control_loses_every_queued_answer) ... ok
+test_distinct_terminal_is_unchanged (test_plugin.QueuedLaneInterimTest.test_distinct_terminal_is_unchanged) ... ok
+test_event_less_pending_event_followup (test_plugin.QueuedLaneInterimTest.test_event_less_pending_event_followup) ... ok
+test_generation_or_epoch_mismatch_is_refused (test_plugin.QueuedLaneInterimTest.test_generation_or_epoch_mismatch_is_refused) ... ok
+test_human_turn_silence_marker_publishes_the_stock_replacement (test_plugin.QueuedLaneInterimTest.test_human_turn_silence_marker_publishes_the_stock_replacement) ... ok
+test_install_is_idempotent_and_shape_checked (test_plugin.QueuedLaneInterimTest.test_install_is_idempotent_and_shape_checked) ... ok
+test_muted_turn_is_untouched (test_plugin.QueuedLaneInterimTest.test_muted_turn_is_untouched) ... ok
+test_no_admission_stamp_is_silent (test_plugin.QueuedLaneInterimTest.test_no_admission_stamp_is_silent) ... ok
+test_non_api_platform_is_untouched (test_plugin.QueuedLaneInterimTest.test_non_api_platform_is_untouched) ... ok
+test_profile_mismatch_is_refused (test_plugin.QueuedLaneInterimTest.test_profile_mismatch_is_refused) ... ok
+test_settled_admission_is_refused (test_plugin.QueuedLaneInterimTest.test_settled_admission_is_refused) ... ok
+test_stale_goal_early_return_does_not_duplicate (test_plugin.QueuedLaneInterimTest.test_stale_goal_early_return_does_not_duplicate) ... ok
+test_terminal_same_text_is_not_repeated (test_plugin.QueuedLaneInterimTest.test_terminal_same_text_is_not_repeated) ... ok
+test_two_runs_bound_one_after_another (test_plugin.QueuedLaneInterimTest.test_two_runs_bound_one_after_another) ... ok
+test_unknown_admission_is_refused (test_plugin.QueuedLaneInterimTest.test_unknown_admission_is_refused) ... ok
+
+----------------------------------------------------------------------
+Ran 31 tests in 1.528s
+
+OK

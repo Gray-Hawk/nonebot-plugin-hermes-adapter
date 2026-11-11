@@ -42,7 +42,7 @@ Ran 31 tests in 1.540s
 OK
 ```
 
-（完整 `-v` 清单在本卡运行日志里；每条都是 `... ok`，31/31，exit 0。）
+（完整 `-v` 清单：`EVIDENCE/queued_lane_interim_thin.txt`；每条都是 `... ok`，31/31，exit 0。）
 
 跑的是真代码：stock `_run_agent_deliver_first_response` /
 `_run_agent_queued_followup`（含 `_deliver_queued_first_response` →
