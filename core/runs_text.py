@@ -163,6 +163,11 @@ def _terminate_marker_line(text: str) -> str:
     return text + "\n" if _normalize(text).split("\n")[-1] == SEPARATOR else text
 
 
+def _ends_with_marker(text: str) -> bool:
+    """归一文本的最后一行是不是独立整行 ``§``（interim 已经闭合到最后一个标记）。"""
+    return bool(text) and text.split("\n")[-1] == SEPARATOR
+
+
 def _covers_a_closed_unit(frag: str, text: str) -> bool:
     """碎片是不是 interim 已经完整交付过的**最后一份正文**的开头。
 
@@ -228,7 +233,13 @@ def rebase_after_interim(interim: str, fragment: str) -> str:
                 _terminate_marker_line(remainder) if end == len(frag) else remainder
             )
         return fragment[frag_origin[end] :]
-    if text.startswith(frag_text) or _covers_a_closed_unit(frag, text):
+    if text.startswith(frag_text):
+        # interim 没闭合（最后一行不是标记）时它不能证明碎片已被交付：碎片原样留着，
+        # 下面一帧照旧按原输入续写即可，绝不把 interim 未闭合的尾巴接管成新碎片。
+        if _ends_with_marker(text):
+            return _terminate_marker_line(_marker_tail(interim))
+        return fragment
+    if _covers_a_closed_unit(frag, text):
         return _terminate_marker_line(_marker_tail(interim))
     return fragment
 

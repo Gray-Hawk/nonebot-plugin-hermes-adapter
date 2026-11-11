@@ -264,6 +264,19 @@ class EnvelopeIncrementalQueueTests(unittest.TestCase):
         ]
         self.assertEqual(sent, ["甲", "乙", "丙", "丁"])
 
+    def test_unclosed_interim_shorter_than_fragment_does_not_reopen_a_body(self) -> None:
+        """interim 未闭合（``§\\n甲``）时不能接管已闭合的碎片，否则下一帧拼出「甲\\n乙」。"""
+        parser = RunsEventParser()
+        drained = feed(parser, [
+            {"event": "message.delta", "delta": f"{SEP}\n甲\n{SEP}\n", "seq": 0},
+            {"event": "message.interim", "text": f"{SEP}\n甲", "seq": 1},
+            {"event": "message.delta", "delta": f"\n乙\n{SEP}\n", "seq": 2},
+            {"event": "tool.started", "tool": "lookup", "seq": 3},
+            {"event": "run.completed", "output": unit("丙"), "seq": 4},
+        ])
+        self.assertEqual([d["body"] for d in drained], ["甲", "乙"])
+        self.assertEqual([d["body"] for d in parser.terminal_decisions()], ["丙"])
+
     def test_head_before_first_marker_is_missing_open(self) -> None:
         from tests import test_runs_terminal as _e2
 
