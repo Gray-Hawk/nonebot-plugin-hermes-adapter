@@ -24,6 +24,7 @@ from nonebot import logger
 
 from ..config import plugin_config
 from ..backends.astrbot import client as astrbot_client
+from . import steer_presentation
 from .decision_contract import (
     NON_ANCHOR_FIELD_NAMES,
     render_en_field_lines,
@@ -1749,20 +1750,30 @@ class HermesClient:
         except Exception:
             return False
 
-    async def steer_run(self, *, tgt: HermesTarget, run_id: str, text: str) -> bool:
+    async def steer_run(
+        self, *, tgt: HermesTarget, run_id: str, text: str, presented: bool = False,
+    ) -> bool:
         """POST /v1/runs/{id}/steer 注入文本(阶段2b)。返回是否被接受。
 
         接受语义(上游 api_server_runs._handle_steer_run):run 在 running 且 agent
         支持 steer → 排队到 _pending_steer,当前工具批次后作为独立 user 行投递;
         run 不在 running(收尾/终态)→ 409 不接受,调用方回退 pending 排队语义。
         任何网络/协议异常都归 False,调用方走同一回退,不区分原因。
+
+        presented=True:文本已是 NB 的聊天区区域块,请求体带结构化呈递标记
+        (core/steer_presentation),网关薄插件据此跳过上游 `[OUT-OF-BAND …]` 外壳。
+        插件未装/不识别该标记时,多出来的字段被上游丢弃、文本照旧被外壳包住——
+        回退安全,不丢内容。默认 False = 上游原样包装(其它调用方不受影响)。
         """
         headers = self.get_headers(api_key=tgt.api_key)
+        body: dict[str, Any] = {"input": text}
+        if presented:
+            body["presentation"] = steer_presentation.presentation_marker()
         try:
             client = _get_http_client()
             resp = await client.post(
                 f"{tgt.base_url}/v1/runs/{run_id}/steer",
-                json={"input": text},
+                json=body,
                 headers=headers,
                 timeout=15,
             )

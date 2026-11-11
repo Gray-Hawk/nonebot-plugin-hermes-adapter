@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
+from tests._regions import region_rows, wrap_region  # noqa: E402
 
 import httpx  # noqa: E402
 
@@ -44,7 +45,10 @@ from nonebot_plugin_hermes_adapter.core.inflight import (  # noqa: E402
 )
 from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.prompt_builder import render_current_rows  # noqa: E402
+from nonebot_plugin_hermes_adapter.core.prompt_builder import (  # noqa: E402
+    render_current_rows,
+    steer_region_decorations,
+)
 from nonebot_plugin_hermes_adapter.core.run_tracker import (  # noqa: E402
     RunTracker,
     make_scope_key,
@@ -58,6 +62,11 @@ TRIGGER = "u1"
 RUN_ID = "run-overlap"
 KEY = make_inflight_key(ADAPTER, False, TRIGGER, GROUP_ID)
 SCOPE_KEY = make_scope_key(ADAPTER, False, TRIGGER, GROUP_ID)
+
+
+def upstream(*rows: str) -> str:
+    """上游 pending_steer 的形态:每批一个聊天区区域块,批与批之间上游用换行拼接。"""
+    return "\n".join(wrap_region(row) for row in rows)
 
 
 def msg(user: str, mid: int, text: str) -> BufferedMessage:
@@ -105,12 +114,18 @@ class _Base(unittest.TestCase):
 
 
 def _legacy_restore(pending_text: str, candidates: list[dict]) -> list[dict]:
-    """负对照:修复前的恢复算法——台账序子串匹配,重复账项各还原一次。"""
+    """负对照:修复前的恢复算法——台账序子串匹配,重复账项各还原一次。
+
+    块框架(区域标签/固定说明/约定行)是发送侧装饰,这里照旧剥掉再判残差:
+    负对照要证明的是**顺序/重复**缺陷,不是框架本身。
+    """
     matched = [c for c in candidates if c.get("steer_text") and c["steer_text"] in pending_text]
     residual = pending_text
     for c in matched:
         residual = residual.replace(c["steer_text"], "", 1)
-    if residual.replace(relay._STEER_REPLY_CONVENTION_LINE, "").strip():
+    for decoration in (*steer_region_decorations(), relay._STEER_REPLY_CONVENTION_LINE):
+        residual = residual.replace(decoration, "")
+    if residual.strip():
         return []
     return matched
 
@@ -155,7 +170,7 @@ class OverlappingFollowupEntryTests(_Base):
         release = asyncio.Event()
         sent: list[str] = []
 
-        async def steer(*, tgt, run_id, text):
+        async def steer(*, tgt, run_id, text, presented=False):
             sent.append(text)
             if len(sent) == 1:
                 started.set()
@@ -205,8 +220,8 @@ class OverlappingFollowupEntryTests(_Base):
         facts = self._run_overlap()
         # 每个原始行各发一次:A 只发 A,B 那批只发 B(不重发已接受/在途的前缀)。
         self.assertEqual(facts["sent"], [
-            "[m:101] [普通用户] [id=u2]:\nalpha",
-            "[m:102] [普通用户] [id=u3]:\nbeta",
+            wrap_region("[m:101] [普通用户] [id=u2]:\nalpha"),
+            wrap_region("[m:102] [普通用户] [id=u3]:\nbeta"),
         ])
         # 同一原始行只入账一次。
         self.assertEqual(facts["ledger"], [("101", "u2"), ("102", "u3")])
@@ -249,7 +264,7 @@ class RepeatedTriggerTests(_Base):
     def _direct(self, row: BufferedMessage) -> tuple[bool, list[str]]:
         sent: list[str] = []
 
-        async def steer(*, tgt, run_id, text):
+        async def steer(*, tgt, run_id, text, presented=False):
             sent.append(text)
             return True
 
@@ -273,7 +288,7 @@ class RepeatedTriggerTests(_Base):
         first_ok, first_sent = self._direct(row)
         second_ok, second_sent = self._direct(row)
         self.assertTrue(first_ok)
-        self.assertEqual(first_sent, ["[m:101] [普通用户] [id=u2]:\nalpha"])
+        self.assertEqual(first_sent, [wrap_region("[m:101] [普通用户] [id=u2]:\nalpha")])
         # 第二次触发算「已呈现」但不重发:调用方不再 dispatch 一遍。
         self.assertTrue(second_ok)
         self.assertEqual(second_sent, [])
@@ -287,7 +302,7 @@ class RepeatedTriggerTests(_Base):
         registry.add_followup(KEY, entry)
         sent: list[str] = []
 
-        async def steer(*, tgt, run_id, text):
+        async def steer(*, tgt, run_id, text, presented=False):
             sent.append(text)
             return True
 
@@ -307,7 +322,7 @@ class RepeatedTriggerTests(_Base):
         entry = PendingEntry(msg=msg("u3", 103, "跟一句"), is_direct=False, original_msg_id=103)
         registry.add_followup(KEY, entry)
 
-        async def steer(*, tgt, run_id, text):
+        async def steer(*, tgt, run_id, text, presented=False):
             return False   # 409 / 网络失败
 
         with patch.object(relay, "_mcp", SimpleNamespace(
@@ -327,7 +342,7 @@ class RepeatedTriggerTests(_Base):
         entry = PendingEntry(msg=msg("u3", 104, "又来一句"), is_direct=False, original_msg_id=104)
         registry.add_followup(KEY, entry)
 
-        async def steer(*, tgt, run_id, text):
+        async def steer(*, tgt, run_id, text, presented=False):
             raise asyncio.CancelledError()
 
         with patch.object(relay, "_mcp", SimpleNamespace(
@@ -349,7 +364,7 @@ class NativeRestoreOrderTests(_Base):
         started = asyncio.Event()
         release = asyncio.Event()
 
-        async def steer(*, tgt, run_id, text):
+        async def steer(*, tgt, run_id, text, presented=False):
             sent.append(text)
             if delay_first and len(sent) == 1:
                 started.set()
@@ -399,7 +414,7 @@ class NativeRestoreOrderTests(_Base):
         sent = self._two_direct_steers(rows, delay_first=True)
         # 上游按 A、B 接受;A 的 HTTP 回应后到。台账是「发送前认领」落的库,
         # 顺序 = 发送/接受序,不再是 HTTP 回应序(旧形态这里会是 B/A)。
-        self.assertEqual(sent, ["[m:201] [普通用户] [id=u1]:\nfirst", "[m:202] [普通用户] [id=u2]:\nsecond"])
+        self.assertEqual(sent, [wrap_region("[m:201] [普通用户] [id=u1]:\nfirst"), wrap_region("[m:202] [普通用户] [id=u2]:\nsecond")])
         self.assertEqual([(r["m_id"], r["sender_id"]) for r in self.ledger()],
                          [("201", "u1"), ("202", "u2")])
         pending = self._parser_pending("\n".join(sent))
@@ -776,7 +791,7 @@ class NativeHandoverTests(_Base):
         started, release = asyncio.Event(), asyncio.Event()
         sent: list[str] = []
 
-        async def steer(*, tgt, run_id, text):
+        async def steer(*, tgt, run_id, text, presented=False):
             sent.append(text)
             started.set()
             await release.wait()
@@ -874,9 +889,9 @@ class NativeHandoverTests(_Base):
     def test_native_before_ack_presents_original_row_once(self) -> None:
         """R4 主场景:回收先到、ACK 晚到,原行只呈递一次(保留原 m:id+媒体身份)。"""
         facts = self._chain(
-            queued=[msg("u2", 101, "alpha")], pending_text="[m:101] [普通用户] [id=u2]:\nalpha",
+            queued=[msg("u2", 101, "alpha")], pending_text=upstream("[m:101] [普通用户] [id=u2]:\nalpha"),
         )
-        self.assertEqual(facts["sent"], ["[m:101] [普通用户] [id=u2]:\nalpha"])
+        self.assertEqual(facts["sent"], [wrap_region("[m:101] [普通用户] [id=u2]:\nalpha")])
         # 槽里已有同一原始行:回收副本被吸收,不再追加第二份。
         self.assertEqual(facts["absorbed"], ("101",))
         self.assertEqual(facts["handover_rows"], [(101, "alpha")])
@@ -888,7 +903,7 @@ class NativeHandoverTests(_Base):
     def test_ack_before_pop_also_presents_once(self) -> None:
         """对照:ACK 先到(结算时已 recovered)→ 槽保留原行,下一轮仍一份。"""
         facts = self._chain(
-            queued=[msg("u2", 101, "alpha")], pending_text="[m:101] [普通用户] [id=u2]:\nalpha",
+            queued=[msg("u2", 101, "alpha")], pending_text=upstream("[m:101] [普通用户] [id=u2]:\nalpha"),
             ack_before_pop=True,
         )
         self.assertEqual(facts["absorbed"], ("101",))
@@ -898,7 +913,7 @@ class NativeHandoverTests(_Base):
     def test_negative_control_plain_add_followup_duplicates_row(self) -> None:
         """负对照:修复前只 add_followup(不看槽内原行),同一原行确实呈递两次。"""
         facts = self._chain(
-            queued=[msg("u2", 101, "alpha")], pending_text="[m:101] [普通用户] [id=u2]:\nalpha",
+            queued=[msg("u2", 101, "alpha")], pending_text=upstream("[m:101] [普通用户] [id=u2]:\nalpha"),
             legacy_handover=True,
         )
         self.assertEqual(facts["absorbed"], ())
@@ -911,7 +926,7 @@ class NativeHandoverTests(_Base):
     def test_409_after_native_keeps_row_for_relay_once(self) -> None:
         """native 归还后 steer 返回 409:撤认领、原行留槽,下一轮一份。"""
         facts = self._chain(
-            queued=[msg("u2", 101, "alpha")], pending_text="[m:101] [普通用户] [id=u2]:\nalpha",
+            queued=[msg("u2", 101, "alpha")], pending_text=upstream("[m:101] [普通用户] [id=u2]:\nalpha"),
             http_ok=False,
         )
         self.assertEqual(facts["absorbed"], ("101",))
@@ -1212,7 +1227,7 @@ class NativeHandoverTests(_Base):
         b = msg("u3", 102, "beta")
         facts = self._chain(
             queued=[a, b],
-            pending_text="[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta",
+            pending_text=upstream("[m:101] [普通用户] [id=u2]:\nalpha", "[m:102] [普通用户] [id=u3]:\nbeta"),
         )
         self.assertEqual(facts["absorbed"], ("101", "102"))
         self.assertEqual(facts["handover_rows"], [(101, "alpha"), (102, "beta")])
@@ -1225,7 +1240,7 @@ class NativeHandoverTests(_Base):
         """不同原始行同文:按 m_id 认行,槽内另一行不被正文去重吞掉。"""
         facts = self._chain(
             queued=[msg("u2", 101, "alpha"), msg("u3", 102, "alpha")],
-            pending_text="[m:101] [普通用户] [id=u2]:\nalpha",
+            pending_text=upstream("[m:101] [普通用户] [id=u2]:\nalpha"),
         )
         self.assertEqual(facts["absorbed"], ("101",))
         self.assertEqual(facts["handover_rows"], [(101, "alpha"), (102, "alpha")])
@@ -1241,10 +1256,10 @@ class NativeHandoverTests(_Base):
         facts = self._chain(
             ledger_prefix=[(101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha")],
             queued=[msg("u3", 102, "beta")],
-            pending_text="[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta",
+            pending_text=upstream("[m:101] [普通用户] [id=u2]:\nalpha", "[m:102] [普通用户] [id=u3]:\nbeta"),
         )
         # 只有 B 走真实入口(它的 ACK 仍在途);A 早已被接受并摘槽。
-        self.assertEqual(facts["sent"], ["[m:102] [普通用户] [id=u3]:\nbeta"])
+        self.assertEqual(facts["sent"], [wrap_region("[m:102] [普通用户] [id=u3]:\nbeta")])
         self.assertEqual(facts["absorbed"], ("102",))
         self.assertEqual(facts["handover_rows"], [(101, "alpha"), (102, "beta")])
         self.assertEqual(
@@ -1264,7 +1279,7 @@ class NativeHandoverTests(_Base):
         facts = self._chain(
             ledger_prefix=[(101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha")],
             queued=[msg("u3", 102, "beta")],
-            pending_text="[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta",
+            pending_text=upstream("[m:101] [普通用户] [id=u2]:\nalpha", "[m:102] [普通用户] [id=u3]:\nbeta"),
             ack_before_pop=True,
         )
         self.assertEqual(facts["absorbed"], ("102",))
@@ -1279,7 +1294,7 @@ class NativeHandoverTests(_Base):
         facts = self._chain(
             ledger_prefix=[(101, "u2", "[m:101] [普通用户] [id=u2]:\nalpha")],
             queued=[msg("u3", 102, "beta")],
-            pending_text="[m:101] [普通用户] [id=u2]:\nalpha\n[m:102] [普通用户] [id=u3]:\nbeta",
+            pending_text=upstream("[m:101] [普通用户] [id=u2]:\nalpha", "[m:102] [普通用户] [id=u3]:\nbeta"),
             legacy_partial_merge=True,
         )
         self.assertEqual(facts["absorbed"], ("102",))

@@ -791,6 +791,21 @@ def _render_notice_region(notices: Sequence[str]) -> str:
     )
 
 
+def render_chat_region(lines: Sequence[str]) -> str:
+    """聊天消息区域唯一构造点:开标签、固定说明、空行分隔的消息行、闭标签。
+
+    聊天区(reactive)与 steer 通道都从这里取外观:两条链路给模型看的是同一种
+    消息块,不存在第二套包壳文法。消息行之间空一行(与 `render_current_region`
+    同一文法);行内多行/冒号/形似标签的字面量原样保留。没有行时整段省略,
+    不输出空壳。调用方传进来的行必须是**已渲染好的聊天行**。
+    """
+    if not lines:
+        return ""
+    return "\n".join([
+        _CHAT_REGION_OPEN, _CHAT_REGION_NOTE, "\n\n".join(lines), _CHAT_REGION_CLOSE,
+    ])
+
+
 def _turn_fact_notices(
     *, addressed_to_bot: bool, sender_blacklisted: bool,
     chat_rows: Sequence[BufferedMessage], identity_ctx: tuple[str, str] | None,
@@ -929,11 +944,7 @@ def _render_chat_region(
             current_rows, is_private=is_private, name_resolver=name_resolver,
             self_id=self_id, adapter=adapter,
         ))
-    if not lines:
-        return ""
-    return "\n".join([
-        _CHAT_REGION_OPEN, _CHAT_REGION_NOTE, "\n\n".join(lines), _CHAT_REGION_CLOSE,
-    ])
+    return render_chat_region(lines)
 
 
 def split_unpushed_messages(
@@ -1157,7 +1168,9 @@ def render_current_rows(
 
 
 # --- steer 行呈递(P-07 + 呈递统一):与 current/recent 走同一个消息行构造函数
-# `_render_chat_line`,前缀文法(`[有人@我] [m:id] [身份] [id=…]: 正文`)逐字节同源。
+# `_render_chat_line`,前缀文法(`[有人@我] [m:id] [身份] [id=…]: 正文`)逐字节同源;
+# 整批外观与聊天区同一个区域构造点 `render_chat_region`——模型看到的是普通的
+# `<聊天消息区域起始>…<聊天消息区域结束>` 块,不是裸露消息行。
 # steer 只保留两处真实差异,且都由参数表达:
 #   1) 媒体形态:steer 走文本通道、媒体不内联,行尾给完整寻址标签
 #      (`[图 m:id#idx]`)与随条读图提示;current/recent 用紧凑清单 `(图#0)`;
@@ -1184,9 +1197,10 @@ class SteerRowPresentation:
 class SteerPresentation:
     """steer 发送、逐行台账与呈现去重共用的唯一值对象。
 
-    rows 保序保存 (source_row, rendered_line);text 是整批发送文本(各行
-    rendered_line 以换行连接,不含尾部约定行——约定行由发送原语在最终文本末尾
-    追加一次,不写进单行账项,否则逐行台账与批次约定行会互相污染)。
+    rows 保序保存 (source_row, rendered_line);text 是整批发送文本——一个与普通
+    消息同一外观的聊天区区域块(`render_steer_batch`),不含尾部约定行——约定行
+    由发送原语在区域块之后追加一次,不写进单行账项,否则逐行台账与批次约定行
+    会互相污染。每行 rendered_line 仍是 text 的连续子串(台账/去重按行结算)。
     """
 
     rows: tuple[SteerRowPresentation, ...]
@@ -1223,6 +1237,29 @@ def _render_steer_message_line(
     )
 
 
+def render_steer_batch(rows: Sequence[SteerRowPresentation]) -> str:
+    """steer 整批呈递文本:与聊天区**同一个**区域构造点。
+
+    steer 是「中途插进来的聊天消息」,给模型看的必须是普通消息那种块:同一对
+    `<聊天消息区域起始>`／`<聊天消息区域结束>`、同一条固定说明、消息之间空一行。
+    这里不手写包壳——直接走 `render_chat_region`,外观由聊天区那一个构造点决定。
+
+    单条只是一元素序列的特例;空序列返回空串(不输出空区域)。
+    """
+    return render_chat_region([item.rendered_line for item in rows])
+
+
+def steer_region_decorations() -> tuple[str, ...]:
+    """steer 批次发送侧加的**块框架**(区域开标签行、固定说明行、闭标签),按出现顺序。
+
+    这些字面量是发送原语加的装饰,不属于任何一条账项的正文。native 回收
+    (`message_turns._match_pending_steer_rows`)按台账把上游还回的 pending_steer
+    逐行还原时,必须在「当前位置没有账项命中」处把它们当分隔符跳过——否则整批
+    认不出,退化成整段原文归属触发者。取字面量只从这里取,不在别处手抄。
+    """
+    return (_CHAT_REGION_OPEN + "\n", _CHAT_REGION_NOTE + "\n", _CHAT_REGION_CLOSE)
+
+
 def render_steer_rows(
     rows: Sequence[BufferedMessage], *, name_resolver=None,
     self_id: str | None = None, adapter: str | None = None,
@@ -1239,6 +1276,9 @@ def render_steer_rows(
 
     is_private 用与普通行同一份判据 `_row_marks`:私聊省略对方身份与 speaker,
     自己的行只留 `[我]`;群聊全带。行与行之间空一行,与聊天区一致。
+
+    整批 text 是**聊天区形态**的区域块(`render_steer_batch` → `render_chat_region`):
+    steer 与普通消息在模型转录里外观相同,不再是一串裸露的消息行。
     """
     if not rows:
         raise ValueError("steer 行序列不得为空")
@@ -1254,10 +1294,7 @@ def render_steer_rows(
             ),
         ))
     items = tuple(items)
-    return SteerPresentation(
-        rows=items,
-        text="\n\n".join(item.rendered_line for item in items),
-    )
+    return SteerPresentation(rows=items, text=render_steer_batch(items))
 
 
 def build_reactive_user_content(

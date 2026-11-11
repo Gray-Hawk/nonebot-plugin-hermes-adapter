@@ -1,0 +1,52 @@
+=== 该用例的前提:被测对象是「已部署」的 site-packages 解析器 ===
+
+    def test_queued_interim_then_next_delta_sends_abc_each_once(self):
+        import asyncio
+
+        calls = asyncio.run(self._drive(FRAMES))
+        self.assertEqual([c["text"] for c in calls["send"]], [A, P, C])
+        self.assertEqual(len(calls["send"]), 3)                  # 平台出口真实调用次数
+        self.assertEqual([c["component"] for c in calls["send"]],
+                         ["primary:0", "primary:1", "primary:2"])
+        self.assertEqual(calls["settle"], [])
+
+    def test_deployed_parser_still_seals_at_interim(self):
+        """部署中的 stock 解析器已带 R1 段边界修正：旧协议帧序仍不粘连成 A+P。
+
+        注意这里只比前两份：stock 解析器吃的是旧协议裸正文，而终态 output 现在由
+        新信封解析，所以 ``C`` 在**混装**状态下不会被当正文（这正是解析器与提示词
+        必须同批部署的原因之一）。
+        """
+        import asyncio
+
+        stock = _install_stock_parser_alias()
+        calls = asyncio.run(self._drive(LEGACY_FRAMES, parser=stock))
+        sent = [c["text"] for c in calls["send"]]
+        self.assertEqual(sent[:2], [A, P])
+        self.assertNotIn(A + P, sent)
+
+
+=== 现场:已部署副本 core/runs_text.py 的 mtime 与首行语义 ===
+-rw-r--r-- 1 neonsky neonsky 5113 11月11日 14:34 /home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot_plugin_hermes_adapter/core/runs_text.py
+"""分节符正文信封：独立整行 `§` 是唯一标记，只有完整闭合的段才可发送。
+
+协议（主人 2026-11-11 定案）：
+
+- 每份回复以独立一行 `§` 开头，以独立一行 `§` 结尾；多条正文之间也用独立一行
+  `§` 分隔。标记是**分隔符**：相邻两个标记之间的内容就是一份正文。
+- 单条 ``§\\n正文\\n§``；两条 ``§\\nA\\n§\\nB\\n§``。
+- 静默：整段只含 `§` 与空白字符（``§``／``§§``／``§\\n§``／``§ §``／多行）——
+  去掉 `§` 与空白后没有任何内容就是静默，不发送、也不报错。
+- 只有完整闭合的段可发送：第一个标记之前的正文（缺开头）与最后一个标记之后的
+  正文（缺末尾）都不是正文，不产生单位，只留一条可见 WARNING。
+- 行内 `§`（``第 3 节 §3``）与带空格的 `§`（`` §``／``§ ``／`` § ``）都是普通
+  正文，不是标记；代码围栏没有豁免——围栏内独立整行 `§` 同样分隔。
+- 旧裸正文不保留兼容层：整段没有任何独立整行 `§` 时不产生单位（``no_marker``）。
+- 单个单位超 ``MAX_BODY_CHARS`` 一律 fail-closed（``TextUnitsError``），绝不发半截。
+
+
+=== 该用例在 clean 工作树(本次改动 stash 后)上的结果 ===
+Ran 3 tests / FAILED (failures=1) —— 与带改动时一致,非本任务引入
+
+=== 本任务没碰的文件哈希对照 ===
+d2952851380bc1c07d0fae5e35e449d8a572d5c5c699a568e6c96cd733388301  /home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot_plugin_hermes_adapter/core/runs_text.py

@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
+from tests._regions import region_rows  # noqa: E402
 
 from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import user_lists  # noqa: E402
@@ -73,7 +74,7 @@ class CrossEntryByteEqualityTests(unittest.TestCase):
     def _both(self, rows, *, is_private: bool):
         cur = pb.render_current_rows(rows, is_private=is_private, **ctx())
         steer = pb.render_steer_rows(rows, is_private=is_private, **ctx()).text
-        return cur, steer
+        return cur, region_rows(steer)
 
     def test_identity_five_classes_equal_across_entries(self) -> None:
         cases = [
@@ -137,7 +138,7 @@ class CrossEntryByteEqualityTests(unittest.TestCase):
         r = row(MASTER, "主人号", mid=61)
         cur = pb.render_current_rows([r], is_private=False)
         steer = pb.render_steer_rows([r]).text
-        self.assertEqual(cur, steer)
+        self.assertEqual(cur, region_rows(steer))
         self.assertEqual(cur, "[m:61] [id=20001 user=主人号]:\n你怎么看")
 
     def test_no_mid_rows_equal_across_entries(self) -> None:
@@ -163,13 +164,14 @@ class MediaDifferenceTests(unittest.TestCase):
         r = row(MASTER, "主人号", mid=81, at=(SELF,), images=("https://x/1.png",))
         cur = pb.render_current_rows([r], is_private=False, self_id=SELF, adapter=ADAPTER)
         steer = pb.render_steer_rows([r], is_private=False, self_id=SELF, adapter=ADAPTER).text
-        self.assertNotEqual(cur, steer)
+        self.assertNotIn("(图#0)", steer)
+        body = region_rows(steer)
         cur_head = cur.split(" (图#0)")[0]
-        steer_head = steer.split(" [图 m:81#0]")[0]
+        steer_head = body.split(" [图 m:81#0]")[0]
         self.assertEqual(cur_head, steer_head)
         self.assertIn("(图#0)", cur)
-        self.assertIn("[图 m:81#0]", steer)
-        self.assertIn("get_message_images", steer)
+        self.assertIn("[图 m:81#0]", body)
+        self.assertIn("get_message_images", body)
 
     def test_media_without_mid_rejected_for_steer_only(self) -> None:
         r = row(MASTER, "主人号", mid=None, images=("https://x/1.png",))

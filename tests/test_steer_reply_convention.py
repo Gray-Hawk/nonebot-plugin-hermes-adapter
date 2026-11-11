@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
+from tests._regions import wrap_region  # noqa: E402
 
 from nonebot_plugin_hermes_adapter import config as plugin_config_module  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import steer_reconcile  # noqa: E402
@@ -33,10 +34,11 @@ from nonebot_plugin_hermes_adapter.core.run_tracker import (  # noqa: E402
 from nonebot_plugin_hermes_adapter.handlers import message_relay as relay  # noqa: E402
 
 RAWS = {
-    # 群聊:身份栏 + speaker(与普通/历史行同一文法,无 m:id 行)
-    "group": "[普通用户] [id=u1 user=小光]:\n你怎么看这个",
-    # 私聊:对方身份与 speaker 均省略,没有 m:id 时整条就是正文本身
-    "private": "你怎么看这个",
+    # 群聊:身份栏 + speaker(与普通/历史行同一文法,无 m:id 行);整批外面是与
+    # 普通消息同一个聊天区区域块(steer 与普通消息同外观)。
+    "group": wrap_region("[普通用户] [id=u1 user=小光]:\n你怎么看这个"),
+    # 私聊:对方身份与 speaker 均省略,没有 m:id 时消息行就是正文本身
+    "private": wrap_region("你怎么看这个"),
 }
 GROUP_ID = "g1"
 USER_ID = "u1"
@@ -65,7 +67,8 @@ class SteerReplyConventionTests(unittest.TestCase):
         """真实 `_maybe_steer_direct` 入口，返回实际注入模型的文本。"""
         captured: list[str] = []
 
-        async def fake_steer_run(*, tgt, run_id, text):
+        async def fake_steer_run(*, tgt, run_id, text, presented=False):
+            self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
             captured.append(text)
             return True
 
@@ -109,7 +112,8 @@ class SteerReplyConventionTests(unittest.TestCase):
 
         captured: list[str] = []
 
-        async def fake_steer_run(*, tgt, run_id, text):
+        async def fake_steer_run(*, tgt, run_id, text, presented=False):
+            self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
             captured.append(text)
             return True
 

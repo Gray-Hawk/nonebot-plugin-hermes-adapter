@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
+from tests._regions import is_region, region_rows, wrap_region  # noqa: E402
 
 from nonebot_plugin_hermes_adapter.core import steer_seen  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.inflight import (  # noqa: E402
@@ -113,7 +114,8 @@ class SteerRowPresentationTests(_TrackerCase):
     def _direct(self, rows, *, image_urls=None, sticker_urls=None) -> tuple[bool, list[str]]:
         captured: list[str] = []
 
-        async def fake_steer_run(*, tgt, run_id, text):
+        async def fake_steer_run(*, tgt, run_id, text, presented=False):
+            self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
             captured.append(text)
             return True
 
@@ -149,8 +151,10 @@ class SteerRowPresentationTests(_TrackerCase):
 
         self.assertTrue(ok)
         self.assertEqual(len(captured), 1)
-        # 媒体寻址只贴本行自己的号与自己的 idx
-        blocks = captured[0].split("\n\n")
+        # 媒体寻址只贴本行自己的号与自己的 idx;整批在聊天区区域块里(同普通消息外观)。
+        sent = captured[0]
+        self.assertTrue(is_region(sent), sent)
+        blocks = region_rows(sent).split("\n\n")
         self.assertEqual(len(blocks), 2, captured[0])
         self.assertTrue(blocks[0].startswith("[m:101] [普通用户] [id=u1 user=小光]:\n"), blocks[0])
         self.assertTrue(blocks[1].startswith("[m:102] [普通用户] [id=u2 user=小李]:\n"), blocks[1])
@@ -195,7 +199,7 @@ class SteerRowPresentationTests(_TrackerCase):
         row = msg(user="u1", nickname="小光", content="同一行", m_id=101)
         ok, captured = self._direct([row, row])
         self.assertTrue(ok)
-        self.assertEqual(captured[0].split("\n\n"),
+        self.assertEqual(region_rows(captured[0]).split("\n\n"),
                          ["[m:101] [普通用户] [id=u1 user=小光]:\n同一行"])
         self.assertEqual(len(self.ledger()), 1)
         self.assertEqual(self.seen_ids(), {101})
@@ -287,7 +291,8 @@ class FollowupSteerGateTests(_TrackerCase):
     def _try(self, *, during_await=None) -> tuple[bool, list[str]]:
         captured: list[str] = []
 
-        async def fake_steer_run(*, tgt, run_id, text):
+        async def fake_steer_run(*, tgt, run_id, text, presented=False):
+            self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
             captured.append(text)
             if during_await is not None:
                 during_await()
@@ -309,7 +314,7 @@ class FollowupSteerGateTests(_TrackerCase):
         )
         ok, captured = self._try()
         self.assertTrue(ok)
-        self.assertEqual(captured, ["[m:103] [普通用户] [id=u3 user=小周]:\n你怎么看"])
+        self.assertEqual(captured, [wrap_region("[m:103] [普通用户] [id=u3 user=小周]:\n你怎么看")])
         self.assertIsNone(self.registry.peek_followup(KEY), "纯文本注入成功后应摘槽")
         self.assertEqual(
             [(r["m_id"], r["sender_id"]) for r in self.ledger()], [("103", "u3")]
@@ -330,7 +335,7 @@ class FollowupSteerGateTests(_TrackerCase):
         )
         ok, captured = self._try()
         self.assertTrue(ok)
-        self.assertEqual(captured, ["[普通用户] [id=u3 user=小周]:\n没有行号的跟帖"])
+        self.assertEqual(captured, [wrap_region("[普通用户] [id=u3 user=小周]:\n没有行号的跟帖")])
         self.assertIsNone(
             self.registry.peek_followup(KEY), "已呈现的无号行必须结算,留槽会重复呈递"
         )
@@ -468,7 +473,7 @@ class FollowupSteerGateTests(_TrackerCase):
         ok, captured = self._try(during_await=merge_notice)
         # 冻结集在 await 前已定:injected 只含真人那一行(系统事件行不冒充 steer 输入);
         # 结算按对象身份发现新 fragment → 槽保留,系统行留给接力轮呈递
-        self.assertEqual(captured, ["[m:114] [普通用户] [id=u3 user=小周]:\n我再补一句"])
+        self.assertEqual(captured, [wrap_region("[m:114] [普通用户] [id=u3 user=小周]:\n我再补一句")])
         self.assertTrue(ok)
         # 槽里只剩系统事件行(未呈现,交由接力轮呈递);已 steer 的真人行已摘。
         self.assertEqual(len(entry.fragments), 1)
@@ -486,7 +491,8 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
         """用真实直注入口记两行台账,返回上游形态的 pending_steer 拼接文本。"""
         captured: list[str] = []
 
-        async def fake_steer_run(*, tgt, run_id, text):
+        async def fake_steer_run(*, tgt, run_id, text, presented=False):
+            self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
             captured.append(text)
             return True
 
@@ -629,7 +635,8 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
         """多条 steer 各自成批(每批都挂约定行)时仍能逐行还原。"""
         captured: list[str] = []
 
-        async def fake_steer_run(*, tgt, run_id, text):
+        async def fake_steer_run(*, tgt, run_id, text, presented=False):
+            self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
             captured.append(text)
             return True
 

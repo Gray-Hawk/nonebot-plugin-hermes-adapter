@@ -1,0 +1,52 @@
+11-11 14:43:31 [SUCCESS] nonebot | NoneBot is initializing...
+11-11 14:43:31 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:103: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.parseArgs(argv)
+11-11 14:43:31 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-11 14:43:31 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-11 14:43:31 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+test_declaration_matrix (tests.test_steer_region_presentation.ContractTests.test_declaration_matrix) ... ok
+test_gateway_plugin_literals_match (tests.test_steer_region_presentation.ContractTests.test_gateway_plugin_literals_match) ... ok
+test_plugin_module_imports_without_gateway (tests.test_steer_region_presentation.ContractTests.test_plugin_module_imports_without_gateway)
+插件顶层只依赖标准库:NB 侧测试进程能直接加载它做契约比对。 ... ok
+test_convention_follows_region_after_blank_line (tests.test_steer_region_presentation.ConventionPlacementTests.test_convention_follows_region_after_blank_line) ... ok
+test_convention_off_keeps_region_untouched (tests.test_steer_region_presentation.ConventionPlacementTests.test_convention_off_keeps_region_untouched) ... ok
+test_final_transcript_with_convention_has_all_three_fixes (tests.test_steer_region_presentation.DirectEntryTests.test_final_transcript_with_convention_has_all_three_fixes)
+截图 m:68490 的三处问题:外壳、缺区域标签、缺空行。 ... 11-11 14:43:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-region len=142 rows=1)
+ok
+test_group_direct_single_row (tests.test_steer_region_presentation.DirectEntryTests.test_group_direct_single_row) ... 11-11 14:43:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-region len=92 rows=1)
+ok
+test_multi_row_blank_line_and_mid_preserved (tests.test_steer_region_presentation.DirectEntryTests.test_multi_row_blank_line_and_mid_preserved) ... 11-11 14:43:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-region len=131 rows=2)
+ok
+test_out_of_band_literal_in_body_survives_the_round_trip (tests.test_steer_region_presentation.DirectEntryTests.test_out_of_band_literal_in_body_survives_the_round_trip) ... 11-11 14:43:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-region len=121 rows=1)
+ok
+test_followup_multi_row (tests.test_steer_region_presentation.FollowupEntryTests.test_followup_multi_row) ... 11-11 14:43:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-11 14:43:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-region len=128 rows=2)
+11-11 14:43:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u3 run_id=run-region len=128)
+ok
+test_followup_single_row_is_region_block (tests.test_steer_region_presentation.FollowupEntryTests.test_followup_single_row_is_region_block) ... 11-11 14:43:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-11 14:43:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-region len=92 rows=1)
+11-11 14:43:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u3 run_id=run-region len=92)
+ok
+test_body_quoting_the_close_tag_is_not_swallowed (tests.test_steer_region_presentation.PendingSteerRestoreTests.test_body_quoting_the_close_tag_is_not_swallowed)
+正文里整行出现闭标签字样:它是账项正文,不能被当装饰跳过。 ... ok
+test_decorations_come_from_one_place (tests.test_steer_region_presentation.PendingSteerRestoreTests.test_decorations_come_from_one_place) ... ok
+test_old_bare_batch_still_restores (tests.test_steer_region_presentation.PendingSteerRestoreTests.test_old_bare_batch_still_restores)
+升级边界:上线瞬间在飞的旧裸正文 pending_steer 仍按原样还原。 ... ok
+test_region_wrapped_batch_restores_rows_in_order (tests.test_steer_region_presentation.PendingSteerRestoreTests.test_region_wrapped_batch_restores_rows_in_order) ... ok
+test_two_batches_joined_like_upstream (tests.test_steer_region_presentation.PendingSteerRestoreTests.test_two_batches_joined_like_upstream) ... ok
+test_body_with_out_of_band_literal_kept_verbatim (tests.test_steer_region_presentation.RegionShapeTests.test_body_with_out_of_band_literal_kept_verbatim) ... ok
+test_each_rendered_line_stays_a_contiguous_substring (tests.test_steer_region_presentation.RegionShapeTests.test_each_rendered_line_stays_a_contiguous_substring)
+台账逐行 / 回收还原都靠这条:渲染行必须仍是实发文本的连续子串。 ... ok
+test_empty_sequence_rejected_and_empty_batch_has_no_region (tests.test_steer_region_presentation.RegionShapeTests.test_empty_sequence_rejected_and_empty_batch_has_no_region) ... ok
+test_media_placeholder_kept_inside_region (tests.test_steer_region_presentation.RegionShapeTests.test_media_placeholder_kept_inside_region) ... ok
+test_multi_row_separated_by_blank_line (tests.test_steer_region_presentation.RegionShapeTests.test_multi_row_separated_by_blank_line) ... ok
+test_single_row_is_one_chat_region_block (tests.test_steer_region_presentation.RegionShapeTests.test_single_row_is_one_chat_region_block) ... ok
+test_default_keeps_upstream_body_unchanged (tests.test_steer_region_presentation.SteerRequestMarkerTests.test_default_keeps_upstream_body_unchanged) ... ok
+test_presented_batch_carries_marker (tests.test_steer_region_presentation.SteerRequestMarkerTests.test_presented_batch_carries_marker) ... ok
+test_rejected_request_still_returns_false (tests.test_steer_region_presentation.SteerRequestMarkerTests.test_rejected_request_still_returns_false) ... ok
+
+----------------------------------------------------------------------
+Ran 25 tests in 0.039s
+
+OK

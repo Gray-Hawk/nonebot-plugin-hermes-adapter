@@ -1,0 +1,28 @@
+test_install_is_idempotent (test_plugin.ChannelNoteTests.test_install_is_idempotent) ... ok
+test_note_keeps_the_marker_contract_and_adds_the_region_shape (test_plugin.ChannelNoteTests.test_note_keeps_the_marker_contract_and_adds_the_region_shape) ... ok
+test_unrecognised_upstream_shape_raises (test_plugin.ChannelNoteTests.test_unrecognised_upstream_shape_raises) ... ok
+test_batch_with_convention_line_is_delivered_verbatim (test_plugin.DeliveryTests.test_batch_with_convention_line_is_delivered_verbatim) ... ok
+test_body_containing_the_shell_literal_is_not_stripped (test_plugin.DeliveryTests.test_body_containing_the_shell_literal_is_not_stripped) ... ok
+test_declared_batch_is_delivered_verbatim (test_plugin.DeliveryTests.test_declared_batch_is_delivered_verbatim) ... ok
+test_two_batches_in_one_tool_batch_are_delivered_verbatim (test_plugin.DeliveryTests.test_two_batches_in_one_tool_batch_are_delivered_verbatim) ... ok
+test_undeclared_steer_keeps_stock_shell (test_plugin.DeliveryTests.test_undeclared_steer_keeps_stock_shell)
+负对照：没被声明的 steer（CLI/桌面/Kanban 注入）逐字节等于上游原样。 ... ok
+test_declared_batch_is_registered_and_body_still_readable (test_plugin.HandlerWrapperTests.test_declared_batch_is_registered_and_body_still_readable) ... ok
+test_normalized_text_is_what_stock_would_deliver (test_plugin.HandlerWrapperTests.test_normalized_text_is_what_stock_would_deliver)
+登记键 = stock 归一后的文本(带 % 空白差异也能对上投递)。 ... ok
+test_rejected_batch_is_forgotten (test_plugin.HandlerWrapperTests.test_rejected_batch_is_forgotten) ... ok
+test_undeclared_request_changes_nothing (test_plugin.HandlerWrapperTests.test_undeclared_request_changes_nothing) ... ok
+test_only_our_schema_and_format_declare (test_plugin.MarkerDeclarationTests.test_only_our_schema_and_format_declare) ... ok
+test_exact_match_consumes_once (test_plugin.PresentedBatchesTests.test_exact_match_consumes_once) ... ok
+test_partial_overlap_is_not_consumed (test_plugin.PresentedBatchesTests.test_partial_overlap_is_not_consumed) ... ok
+test_registry_is_bounded (test_plugin.PresentedBatchesTests.test_registry_is_bounded) ... ok
+test_two_batches_joined_by_newline_are_recognized (test_plugin.PresentedBatchesTests.test_two_batches_joined_by_newline_are_recognized)
+一次 drain 投递多份 steer 时上游用换行拼接：由登记批组成即认可。 ... ok
+test_unknown_text_is_not_consumed (test_plugin.PresentedBatchesTests.test_unknown_text_is_not_consumed) ... ok
+test_install_wraps_the_real_route_delegate_target (test_plugin.RealSeamTests.test_install_wraps_the_real_route_delegate_target) ... ok
+test_literals_match_nb_side (test_plugin.SchemaParityTests.test_literals_match_nb_side) ... ok
+
+----------------------------------------------------------------------
+Ran 20 tests in 0.317s
+
+OK

@@ -42,6 +42,7 @@ from ..core.bg_tasks import spawn_bg_task
 from ..core.prompt_builder import (
     SteerPresentation,
     SteerRowPresentation,
+    render_steer_batch,
     render_steer_rows,
 )
 from ..core.routing import resolve_target
@@ -90,10 +91,14 @@ _STEER_REPLY_CONVENTION_LINE = (
 
 
 def _with_steer_reply_convention(text: str) -> str:
-    """按生效判定给 steer 注入文本挂回应约定行(不生效原样返回)。"""
+    """按生效判定给 steer 注入文本挂回应约定行(不生效原样返回)。
+
+    约定行是**批次级**的系统提示,不属于消息内容:挂在聊天区闭标签之后,用空行
+    与区域块隔开(与「消息之间空一行」同一文法),不再贴着末条消息只隔一个换行。
+    """
     if not steer_reply_push_active():
         return text
-    return f"{text}\n{_STEER_REPLY_CONVENTION_LINE}"
+    return f"{text}\n\n{_STEER_REPLY_CONVENTION_LINE}"
 
 
 # 无号行(拿不到插件 m:id)的台账虚拟锚前缀:只承载原始正文供 native 回收,
@@ -389,8 +394,9 @@ async def _steer_text_into_live_run(
 
     无 live run / 已收尾(409) / 网络异常 → ok=False(调用方落回正常排队,零丢失)。
     scope 感知版发送原语(规划书§3.2/3.3);直注与群聊 followup 槽共用。
-    发送文本 = presentation.text + 末尾一次约定行(若开关开);逐行台账与呈现
-    去重只吃 presentation.rows——发送、台账、seen 是同一份身份事实,没有第二条轨。
+    发送文本 = 本批已认领行的聊天区区域块(render_steer_batch)+ 末尾一次约定行
+    (若开关开);逐行台账与呈现去重只吃 presentation.rows——发送、台账、seen 是
+    同一份身份事实,没有第二条轨。
 
     P-07 跨入口幂等:台账(run_id, m_id)是本 run「这一原始行已经呈现过」的唯一
     身份来源。发送前先按行认领(claim_steer,status='sending'),HTTP 接受后转
@@ -485,14 +491,16 @@ async def _steer_text_into_live_run(
         return SteerInjection(
             True, accepted_m_ids=accepted_ids, in_flight_m_ids=in_flight_ids
         )
-    # 行与行之间空一行:与聊天区同一文法,模型看到的多条消息结构一致。
-    text = "\n\n".join(item.rendered_line for item in send_rows)
+    # 行与行之间空一行、整批包在与聊天区同一个区域构造点里:模型看到的 steer 与
+    # 普通消息是同一外观(`<聊天消息区域起始>…<聊天消息区域结束>`),媒体寻址/身份/
+    # m:id 都在行内原样保留。
+    text = render_steer_batch(send_rows)
     if steer_reply_push_active():
         text = _with_steer_reply_convention(text)
     try:
         ok = await hermes_client.steer_run(
             tgt=resolve_target(adapter_name, is_private, group_id),
-            run_id=live.run_id, text=text,
+            run_id=live.run_id, text=text, presented=True,
         )
     except BaseException:
         # 任务被取消/中断(steer_run 自身把网络异常都归 False):在途认领必须撤销,

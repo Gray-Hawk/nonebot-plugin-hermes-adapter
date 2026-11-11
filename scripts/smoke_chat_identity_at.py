@@ -58,6 +58,19 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         FAILS.append(name)
 
 
+def region_rows(text: str) -> str:
+    """区域块 → 区域内消息行(框架断言不过就抛)。
+
+    steer 与普通消息现在共用 `prompt_builder.render_chat_region` 一个构造点，
+    所以「同一条聊天行」这件事在**区域内消息行**上逐字节比较，框架另行断言。
+    """
+    lines = text.split("\n")
+    assert lines[0] == pb._CHAT_REGION_OPEN, f"缺区域开标签: {lines[0]!r}"
+    assert lines[1] == pb._CHAT_REGION_NOTE, f"缺固定说明: {lines[1]!r}"
+    assert lines[-1] == pb._CHAT_REGION_CLOSE, f"缺区域闭标签: {lines[-1]!r}"
+    return "\n".join(lines[2:-1])
+
+
 def human(uid: str, nick: str, *, mid: int | None = 101, at=(), text="你好", group=GROUP):
     return BufferedMessage(
         ts=1, adapter=ADAPTER, group_id=group, user_id=uid, nickname=nick,
@@ -144,8 +157,9 @@ steer_rows = [
 ]
 steer = pb.render_steer_rows(steer_rows[:2], self_id=SELF, adapter=ADAPTER)
 print(steer.text)
+steer_body = region_rows(steer.text)
 check("steer 主人行与 current 行逐字节一致（同一条聊天行）",
-      steer.text.split("\n\n")[0] == "[有人@我] [m:501] [主人] [id=10001 user=主人]:\n插一句")
+      steer_body.split("\n\n")[0] == "[有人@我] [m:501] [主人] [id=10001 user=主人]:\n插一句")
 check("steer 引用块/伪造 CQ/At 他人不误标",
       "\n\n[m:502] [普通用户] [id=10003 user=路人]:\n" in steer.text
       and "[有人@我] [m:502]" not in steer.text)
@@ -157,7 +171,7 @@ except ValueError:
 legacy_steer = pb.render_steer_rows(steer_rows[:1]).text
 print(legacy_steer)
 check("steer 无 bot 上下文:不贴身份栏，行文法与 current 同源",
-      legacy_steer == "[m:501] [id=10001 user=主人]:\n插一句")
+      region_rows(legacy_steer) == "[m:501] [id=10001 user=主人]:\n插一句")
 
 print("\n== 7. 同一事实跨入口对照（普通 current / steer / 私聊） ==")
 fact = human("10001", "主人", mid=601, at=(SELF,), text="在吗")
@@ -165,13 +179,15 @@ cur_group = pb.render_current_rows([fact], is_private=False, self_id=SELF, adapt
 st_group = pb.render_steer_rows([fact], is_private=False, self_id=SELF, adapter=ADAPTER).text
 print("群 current:", cur_group)
 print("群 steer  :", st_group)
-check("群聊:current 与 steer 逐字节一致", cur_group == st_group)
+check("群聊:current 与 steer 逐字节一致", cur_group == region_rows(st_group))
+check("群聊:steer 是聊天区区域块(同普通消息外观)",
+      st_group.startswith(pb._CHAT_REGION_OPEN + "\n") and st_group.endswith(pb._CHAT_REGION_CLOSE))
 fact_p = human("10001", "主人", mid=602, at=(SELF,), group=None, text="在吗")
 cur_priv = pb.render_current_rows([fact_p], is_private=True, self_id=SELF, adapter=ADAPTER)
 st_priv = pb.render_steer_rows([fact_p], is_private=True, self_id=SELF, adapter=ADAPTER).text
 print("私 current:", cur_priv)
 print("私 steer  :", st_priv)
-check("私聊:current 与 steer 逐字节一致", cur_priv == st_priv)
+check("私聊:current 与 steer 逐字节一致", cur_priv == region_rows(st_priv))
 check("私聊单人行省略 speaker", cur_priv == "[m:602]:\n在吗")
 from nonebot_plugin_hermes_adapter.core import steer_reconcile  # noqa: E402
 stripped = steer_reconcile.original_text_of({"m_id": "401", "raw_text": "插一句\n(引用 主人(10001): 提及2968545011) [CQ:at,qq=2968545011] 我也说"})
