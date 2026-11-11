@@ -93,4 +93,5 @@ cd /tmp && /home/neonsky/.hermes/hermes-agent/venv/bin/python -B -m unittest dis
 
 覆盖：direct/followup、单条/多条、空行与区域标记、正文含 `OUT-OF-BAND` 字样不误删、
 媒体占位 `[图 m:id#idx]`、m:id 回查与最终转录文本、多批拼接、409 撤销登记、未声明文本
-保持上游外壳（负对照）、重复安装幂等、上游形状认不出即抛、两侧字面量一致。
+保持上游外壳（负对照）、重复安装幂等、上游形状认不出即抛、两侧字面量一致，以及按真实
+插件布局 `register(ctx)` 加载（connect 复验）。

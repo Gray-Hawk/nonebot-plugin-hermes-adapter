@@ -13,6 +13,7 @@ test_normalized_text_is_what_stock_would_deliver (test_plugin.HandlerWrapperTest
 test_rejected_batch_is_forgotten (test_plugin.HandlerWrapperTests.test_rejected_batch_is_forgotten) ... ok
 test_undeclared_request_changes_nothing (test_plugin.HandlerWrapperTests.test_undeclared_request_changes_nothing) ... ok
 test_only_our_schema_and_format_declare (test_plugin.MarkerDeclarationTests.test_only_our_schema_and_format_declare) ... ok
+test_register_installs_and_wires_api_server (test_plugin.PluginLoadTests.test_register_installs_and_wires_api_server) ... ok
 test_exact_match_consumes_once (test_plugin.PresentedBatchesTests.test_exact_match_consumes_once) ... ok
 test_partial_overlap_is_not_consumed (test_plugin.PresentedBatchesTests.test_partial_overlap_is_not_consumed) ... ok
 test_registry_is_bounded (test_plugin.PresentedBatchesTests.test_registry_is_bounded) ... ok
@@ -23,6 +24,6 @@ test_install_wraps_the_real_route_delegate_target (test_plugin.RealSeamTests.tes
 test_literals_match_nb_side (test_plugin.SchemaParityTests.test_literals_match_nb_side) ... ok
 
 ----------------------------------------------------------------------
-Ran 20 tests in 0.317s
+Ran 21 tests in 0.305s
 
 OK

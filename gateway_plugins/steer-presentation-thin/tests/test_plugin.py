@@ -18,6 +18,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import importlib.util
 import json
 import logging
 import os
@@ -26,6 +28,7 @@ import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 os.environ.setdefault("HERMES_DISABLE_LAZY_INSTALLS", "1")
 
@@ -208,21 +211,16 @@ class DeliveryTests(unittest.TestCase):
     """真投递路径：``steer()`` → ``_drain_pending_steer()`` → ``apply_pending_steer_to_tool_results``。"""
 
     def setUp(self) -> None:
+        self._stack = contextlib.ExitStack()
+        self.addCleanup(self._stack.close)
+        self._stack.enter_context(_upstream_untouched())
         self.state = patches.install(
             runs_module=SimpleNamespace(_handle_steer_run=lambda *a, **k: None),
             prompt_builder=pb,
             helpers=helpers,
             system_prompt=system_prompt,
         )
-        self.addCleanup(self._restore)
         self.registry = patches._REGISTRY
-        self.registry._texts.clear()
-
-    def _restore(self) -> None:
-        # 把三处包装还原，避免污染同进程后续用例/上游测试
-        pb.steer_user_row = _ORIGINAL_ROW
-        helpers.steer_user_row = _ORIGINAL_ROW
-        system_prompt.STEER_CHANNEL_NOTE = _ORIGINAL_NOTE
         self.registry._texts.clear()
 
     def _agent(self):
@@ -283,28 +281,62 @@ class DeliveryTests(unittest.TestCase):
         self.assertIn(literal, row["content"])
 
 
+class PluginLoadTests(unittest.TestCase):
+    """按真实插件布局加载：目录当包、``register(ctx)`` 起效、重连复验幂等。"""
+
+    def test_register_installs_and_wires_api_server(self) -> None:
+        import importlib.util
+        import types as _types
+
+        name = "steer_presentation_thin_under_test"
+        spec = importlib.util.spec_from_file_location(
+            name, Path(PLUGIN_DIR) / "__init__.py",
+            submodule_search_locations=[PLUGIN_DIR],
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        self.addCleanup(sys.modules.pop, name, None)
+        spec.loader.exec_module(module)  # 执行 `from . import patches`
+
+        wired: list[tuple[str, object]] = []
+
+        class Ctx:
+            def register_platform_handler(self, platform, factory):
+                wired.append((platform, factory))
+
+        with _upstream_untouched(), mock.patch.object(
+            sys.modules[f"{name}.patches"], "install",
+            wraps=sys.modules[f"{name}.patches"].install,
+        ) as install_spy:
+            module.register(Ctx())
+            self.assertEqual([p for p, _f in wired], ["api_server"])
+            self.assertTrue(callable(wired[0][1]))
+            wired[0][1](None, SimpleNamespace())   # api_server.connect()
+        self.assertGreaterEqual(install_spy.call_count, 2, "register 与 connect 都要复验")
+
+
 class RealSeamTests(unittest.TestCase):
     """真 seam：本插件的包装确实装到上游路由层，且签名与调用点一致。"""
 
     def test_install_wraps_the_real_route_delegate_target(self) -> None:
         import inspect
 
-        from gateway.platforms import api_server_runs as runs
-
-        original = runs._handle_steer_run
-        self.addCleanup(setattr, runs, "_handle_steer_run", original)
-        state = patches.install(
-            runs_module=runs, prompt_builder=pb, helpers=helpers, system_prompt=system_prompt,
-        )
-        self.addCleanup(_restore_all)
-        self.assertEqual(state.handler, "installed")
-        self.assertIsNot(runs._handle_steer_run, original)
-        # api_server._run_route_delegate 调用时按名取函数并传 (self, request, _api_server=…)
-        signature = inspect.signature(runs._handle_steer_run)
-        parameters = list(signature.parameters.values())
-        self.assertEqual([p.name for p in parameters[:2]], ["self", "request"])
-        self.assertIn("_api_server", signature.parameters)
-        self.assertEqual(signature.parameters["_api_server"].kind, inspect.Parameter.KEYWORD_ONLY)
+        with _upstream_untouched() as runs:
+            original = runs._handle_steer_run
+            state = patches.install(
+                runs_module=runs, prompt_builder=pb, helpers=helpers,
+                system_prompt=system_prompt,
+            )
+            self.assertEqual(state.handler, "installed")
+            self.assertIsNot(runs._handle_steer_run, original)
+            # api_server._run_route_delegate 调用时按名取函数并传 (self, request, _api_server=…)
+            signature = inspect.signature(runs._handle_steer_run)
+            parameters = list(signature.parameters.values())
+            self.assertEqual([p.name for p in parameters[:2]], ["self", "request"])
+            self.assertIn("_api_server", signature.parameters)
+            self.assertEqual(
+                signature.parameters["_api_server"].kind, inspect.Parameter.KEYWORD_ONLY,
+            )
 
 
 class ChannelNoteTests(unittest.TestCase):
@@ -319,17 +351,17 @@ class ChannelNoteTests(unittest.TestCase):
 
     def test_install_is_idempotent(self) -> None:
         runs = SimpleNamespace(_handle_steer_run=lambda *a, **k: None)
-        first = patches.install(runs_module=runs, prompt_builder=pb,
-                                helpers=helpers, system_prompt=system_prompt)
-        self.addCleanup(_restore_all)
-        second = patches.install(runs_module=runs, prompt_builder=pb,
-                                 helpers=helpers, system_prompt=system_prompt)
-        self.assertEqual(first.describe(), "handler=installed row_builder=installed "
-                                           "channel_note=installed")
-        self.assertEqual(second.describe(), "handler=already row_builder=already "
-                                            "channel_note=already")
-        self.assertEqual(system_prompt.STEER_CHANNEL_NOTE.count(CHAT_OPEN), 1,
-                         "重复安装不得把说明叠加两遍")
+        with _upstream_untouched():
+            first = patches.install(runs_module=runs, prompt_builder=pb,
+                                    helpers=helpers, system_prompt=system_prompt)
+            second = patches.install(runs_module=runs, prompt_builder=pb,
+                                     helpers=helpers, system_prompt=system_prompt)
+            self.assertEqual(first.describe(), "handler=installed row_builder=installed "
+                                                "channel_note=installed")
+            self.assertEqual(second.describe(), "handler=already row_builder=already "
+                                                "channel_note=already")
+            self.assertEqual(system_prompt.STEER_CHANNEL_NOTE.count(CHAT_OPEN), 1,
+                             "重复安装不得把说明叠加两遍")
 
     def test_unrecognised_upstream_shape_raises(self) -> None:
         with self.assertRaises(RuntimeError):
@@ -351,14 +383,23 @@ class SchemaParityTests(unittest.TestCase):
         self.assertIn(f'PRESENTATION_FORMAT = "{patches.PRESENTATION_FORMAT}"', source)
 
 
-_ORIGINAL_ROW = pb.steer_user_row
-_ORIGINAL_NOTE = system_prompt.STEER_CHANNEL_NOTE
+@contextlib.contextmanager
+def _upstream_untouched():
+    """快照/还原四个被包装的上游对象，避免用例之间互相污染。"""
+    from gateway.platforms import api_server_runs as runs
 
-
-def _restore_all() -> None:
-    pb.steer_user_row = _ORIGINAL_ROW
-    helpers.steer_user_row = _ORIGINAL_ROW
-    system_prompt.STEER_CHANNEL_NOTE = _ORIGINAL_NOTE
+    saved = [
+        (runs, "_handle_steer_run", runs._handle_steer_run),
+        (pb, "steer_user_row", pb.steer_user_row),
+        (helpers, "steer_user_row", helpers.steer_user_row),
+        (system_prompt, "STEER_CHANNEL_NOTE", system_prompt.STEER_CHANNEL_NOTE),
+    ]
+    try:
+        yield runs
+    finally:
+        for module, name, value in saved:
+            setattr(module, name, value)
+        patches._REGISTRY._texts.clear()
 
 
 if __name__ == "__main__":

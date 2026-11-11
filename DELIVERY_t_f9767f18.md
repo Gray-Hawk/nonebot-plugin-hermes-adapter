@@ -77,7 +77,7 @@
 | --- | --- | --- | --- |
 | NB 新模块 | `python -m unittest -v tests.test_steer_region_presentation` | **25/25 OK** | `EVIDENCE/steer_region_presentation_nb.txt` |
 | 相关既有模块 | 7 个 steer/聊天行模块 | **128/128 OK** | `EVIDENCE/steer_region_related.txt` |
-| 网关薄插件 | hermes venv `unittest discover …/steer-presentation-thin/tests` | **20/20 OK** | `EVIDENCE/steer_presentation_thin.txt` |
+| 网关薄插件 | hermes venv `unittest discover …/steer-presentation-thin/tests` | **21/21 OK** | `EVIDENCE/steer_presentation_thin.txt` |
 | 全量 | `unittest discover -s tests` | **673 OK（1 skip）** | `EVIDENCE/full_tests_steer_region.txt` |
 | 交付核对 | `verify.py` | **21/21 PASS** | `EVIDENCE/verify_steer_region.txt` |
 | 渲染样例 | `scripts/sample_region_presentation.py` | 区域块/最终文本/负对照 | `EVIDENCE/steer_region_samples.txt` |
@@ -116,6 +116,7 @@
 | m:id 回查与最终转录 | 逐行 `rendered_line` 仍是实发文本连续子串；台账逐行 `steer_text` 对齐；`/steer` 请求体含标记 |
 | native 回收逐行还原 | `PendingSteerRestoreTests`：区域块单批 / 上游拼接双批 / 旧裸正文兼容 / 正文引用闭标签不被吞 |
 | 请求契约双边一致 | NB `ContractTests`（含直接加载插件模块比对）+ 插件 `SchemaParityTests` |
+| 插件按真实布局加载 | 插件 `PluginLoadTests`：目录当包执行 `__init__`、`register(ctx)` 装补丁并登记 `api_server` handler、connect 复验幂等 |
 
 ## 6. 部署边界（本次未做）
 
