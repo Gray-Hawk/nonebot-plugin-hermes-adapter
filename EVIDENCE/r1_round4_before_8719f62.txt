@@ -1,0 +1,7 @@
+# 负控：同一组新测试喂修前 HEAD 8719f62 的 core/runs_text.py（git show 8719f62:core/runs_text.py），跑完立即还原
+# 期望 3 failures：parser 取覆盖、helper 严格前缀、真 client 严格前缀
+FAIL: test_interim_covering_a_strict_prefix_of_the_second_unit_does_not_glue (tests.test_runs_envelope.EnvelopeIncrementalQueueTests.test_interim_covering_a_strict_prefix_of_the_second_unit_does_not_glue)
+FAIL: test_interim_strict_prefix_of_the_second_unit_is_covered (tests.test_runs_stream.TextProtocolParserTests.test_interim_strict_prefix_of_the_second_unit_is_covered)
+FAIL: test_interim_covering_a_strict_prefix_of_the_second_unit (tests.test_queued_lane_interim_client.QueuedLaneInterimClientTest.test_interim_covering_a_strict_prefix_of_the_second_unit)
+Ran 109 tests in 12.503s
+FAILED (failures=3, skipped=1)

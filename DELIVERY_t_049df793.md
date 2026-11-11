@@ -95,20 +95,34 @@
 会让下一帧把甲和乙拼成一份原文没有的正文。判据仍是同一套「独立整行 §」，
 没有新增函数式协议之外的东西。
 
+## 3.2 第四轮复核后的局部修正（8719f62 → 本轮 HEAD）
+
+复核发现上轮 ③ 只修到「正文全部到达、只缺闭合标记」：覆盖判据仍是 `body == frag_body`，
+第二份正文自身只到严格前缀（碎片 `§\nBr`、interim 最后一份 `Bravo`）时碎片留着，和下一帧
+合成原文里没有的 `Br\nC`。首份正文本来就是严格前缀口径（碎片是 interim 前缀 → 换成 interim
+的结构剩余），后续份缺同一口径。
+
+| 复核发现 | 修法 | 真 client/queue/handler 前后 |
+| --- | --- | --- |
+| ③ 残项：`_covers_a_closed_unit` 只认逐字相等 | 覆盖判据改为**严格前缀**（`body.startswith(frag_body)`）；不匹配的分叉碎片仍原样留着，未闭合 interim 仍不接管 | `['A','Bravo','Br\nC','D']` → `['A','Bravo','C','D']`；首份半截控制仍 `['Bravo','C','D']` |
+
+只改 `core/runs_text.py` 一处判据（+5 行文档、1 行代码）与其三个测试文件；`core/hermes_client.py`、
+`core/runs_terminal.py`、插件生产代码、提示词本轮**零改动**。
+
 ## 4. 真实测试输出
 
 | 命令 | 结果 | 证据 |
 | --- | --- | --- |
-| 全量 `tests/`（`unittest discover`） | **704 OK (skipped=1)** | `EVIDENCE/full_tests_round3.txt` |
-| 插件 `queued-lane-interim-thin` | **48 OK** | `EVIDENCE/verify_round3.txt`（verify 闸位） |
+| 全量 `tests/`（`unittest discover`） | **708 OK (skipped=1)** | `EVIDENCE/full_tests_round4.txt` |
+| 插件 `queued-lane-interim-thin` | **48 OK** | `EVIDENCE/plugin_suites_round4.txt` |
 | 插件 `steer-presentation-thin` | **21 OK** | 同上 |
-| 真 client/handler（`tests.test_queued_lane_interim_client`，13 tests） | **OK (skipped=1)** | `EVIDENCE/r1_round3_parser_client.txt` |
-| 解析器＋client 两组用例（51 tests） | **OK (skipped=1)** | 同上 |
-| 复核方 `test_reviewer_contract.py`（6 tests，adcb542 时 3 failures） | **OK** | `EVIDENCE/r1_round3_reviewer_probe.txt` |
-| 解析器矩阵（本节表格，含本轮三例） | 见上 | `EVIDENCE/structured_queue_matrix_round3.txt` |
-| `verify.py` | **22/22 PASS**（清洁树） | `EVIDENCE/verify_round3.txt` |
+| 真 client/handler（`tests.test_queued_lane_interim_client`，17 tests） | **OK (skipped=1)** | `EVIDENCE/r1_round4_parser_client.txt` |
+| 解析器＋client 三组用例（109 tests） | **OK (skipped=1)** | 同上 |
+| 复核方 `test_reviewer_contract.py` + `test_partial_cover.py`（8 tests） | **OK** | `EVIDENCE/r1_round4_reviewer_probe.txt` |
+| 修前负控（同一组新测试喂 8719f62 的 `runs_text.py`） | **3 failures**（parser／helper／真 client 各一） | `EVIDENCE/r1_round4_before_8719f62.txt` |
+| `verify.py` | **22/22 PASS**（清洁树） | `EVIDENCE/verify_round4.txt` |
 
-`tests/` 的 704 **不含**插件用例；完整口径是 `tests/ 704 OK (skipped=1)` + `queued-lane 48 OK` +
+`tests/` 的 708 **不含**插件用例；完整口径是 `tests/ 708 OK (skipped=1)` + `queued-lane 48 OK` +
 `steer-presentation 21 OK`，由 `verify.py` 的插件闸位单独把关（R2）。唯一 skip 仍是
 `test_deployed_parser_still_seals_at_interim`：部署副本已是信封解析器，该「stock = 裸正文」
 前提不成立，显式 skip（同 t_f9767f18 记录的环境变化，未改弱断言）。
