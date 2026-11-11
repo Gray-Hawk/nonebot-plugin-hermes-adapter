@@ -256,6 +256,32 @@ class QueuedLaneInterimClientTest(_ReactiveHarness):
         self.assertEqual([c["text"] for c in calls["send"]], [A, C])
         self.assertNotIn(B, [c["text"] for c in calls["send"]])
 
+    def test_inline_marker_prefix_does_not_invent_a_unit(self):
+        """前缀裁在行内/带空格的 § 后：原输入没有合法开头，B 不得被放出来。
+
+        复现帧（reviewer_gpt t_049df793 第二轮，真 client/handler）：候选给剩余片段
+        补了一个新换行，把 ``§B``／``§ ``／``§\\nA\\n§B`` 修成合法开头，平台出口比
+        基线多出 B。基线（6fbcceb）分别是 ``[C]``／``[C]``／``[A, C]``／``[A, C]``。
+        """
+        import asyncio
+
+        cases = (
+            (f"§B\n§", "§", [C]),
+            (f"§ \nB\n§", "§", [C]),
+            (f"§\n{A}\n§B\n§", f"§\n{A}\n§", [A, C]),
+            (f"§\n{A}\n§ \nB\n§", f"§\n{A}\n§", [A, C]),
+        )
+        for delta, interim, expected in cases:
+            with self.subTest(delta=delta, interim=interim):
+                frames = [
+                    {"event": "message.delta", "delta": delta, "seq": 0},
+                    {"event": "message.interim", "text": interim, "seq": 1},
+                    {"event": "tool.started", "tool": "lookup", "seq": 2},
+                    {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 3},
+                ]
+                calls = asyncio.run(self._drive(frames))
+                self.assertEqual([c["text"] for c in calls["send"]], expected)
+
     def test_same_text_interim_and_delta_sends_once(self):
         import asyncio
 

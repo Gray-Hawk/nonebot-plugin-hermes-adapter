@@ -65,7 +65,9 @@ def continue_after_shared_prefix(text: str, remainder: str) -> str:
     ``text`` 本身以独立整行 ``§`` 结尾（即它是一份完整闭合正文）时，那个标记是
     两份正文共享的，按原输入接回尾部；尾巴本身仍缺闭合就照旧丢弃。
 
-    裸正文没有标记可共享：原样返回，绝不给旧裸正文补信封。
+    **只还原本就存在的标记**：还要求这个 ``§`` 在原输入里的右邻就是行尾。前缀裁在
+    行内 ``§`` 字符后（``§B``／``§ ``）时原输入里根本没有独立整行标记，此时原样返回，
+    绝不靠新补的换行把它修成合法开头。裸正文同样原样返回，绝不给旧裸正文补信封。
     """
     if not remainder.strip():
         return remainder
@@ -73,7 +75,11 @@ def continue_after_shared_prefix(text: str, remainder: str) -> str:
     normalized = text.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
     if normalized.split("\n")[-1] != SEPARATOR:
         return remainder
-    return SEPARATOR + ("" if remainder.startswith(("\n", "\r\n")) else "\n") + remainder
+    # 右邻判据：interim 自己吃掉了 § 后的行尾换行（text 以换行结尾），或剩余片段本身
+    # 以换行开始。两者都不成立时，这个 § 在原输入里是行内/带空格的普通字符。
+    if not (text.endswith(("\n", "\r")) or remainder[0] in ("\n", "\r")):
+        return remainder
+    return SEPARATOR + ("" if remainder[0] in ("\n", "\r") else "\n") + remainder
 
 
 def split_text_units(text: str, *, max_body_chars: int = MAX_BODY_CHARS) -> list[str]:

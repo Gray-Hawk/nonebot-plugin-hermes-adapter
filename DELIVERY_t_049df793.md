@@ -4,16 +4,19 @@
 未覆盖）。只修 reviewer t_4a749150 的三项发现；**未部署、未重启、未上传**，未新增状态机、
 兼容层、逐帧发送或终态折叠。
 
+第二轮（reviewer_gpt 对 9b3e386 的复核）只收紧 R1 的整行判据：共享 `§` 必须原输入里就是独立整行，
+不得靠新补的换行把 `§B`／`§ ` 修成标记。R2／R3 已通过，本轮未再改（插件夹具与部署文案保持原样）。
+
 ## 1. 改动
 
 | 文件 | 改动 |
 | --- | --- |
-| `core/runs_text.py` | 新增 `continue_after_shared_prefix(text, remainder)`：interim 是已缓冲 delta 的前缀时，若 interim 本身以独立整行 `§` 结尾，则把这个**两份正文共享的**标记按原输入接回尾部；裸正文没有标记可共享，原样返回。 |
+| `core/runs_text.py` | 新增 `continue_after_shared_prefix(text, remainder)`：interim 是已缓冲 delta 的前缀时，只有 interim 本身以独立整行 `§` 结尾**且该 `§` 在原输入里的右邻就是行尾**，才把这个**两份正文共享的**标记按原输入接回尾部；行内/带空格的 `§` 与裸正文一律原样返回。 |
 | `core/hermes_client.py` | `message.interim` 的 `pending.startswith(text)` 分支改调上面的函数（原为裸切片 `pending[len(text):]`）。一行调用替换，发送节奏、批号、封段点、段内去重一律未动。 |
-| `tests/test_runs_stream.py` | +4 个解析器用例：共享标记保留（含 interim 尾部换行两种写法）、连续多份、尾巴未闭合仍按 `missing_close` 拒绝、同文只发一次。 |
-| `tests/test_queued_lane_interim_client.py` | +5 个真 client/handler 用例：R1 复现帧 `[A,B,C]`（组件 `primary:0/1/2`）、反序对照、换行有无三变体、尾巴未闭合只 `[A,C]`、同文只发一次。 |
+| `tests/test_runs_stream.py` | +4 个解析器用例：共享标记保留（含 interim 尾部换行两种写法）、连续多份、尾巴未闭合仍按 `missing_close` 拒绝、同文只发一次；第二轮再 +2（行内/带空格/CRLF/CR 的 `§` 不得被补成标记、`continue_after_shared_prefix` 的整行判据）。 |
+| `tests/test_queued_lane_interim_client.py` | +5 个真 client/handler 用例：R1 复现帧 `[A,B,C]`（组件 `primary:0/1/2`）、反序对照、换行有无三变体、尾巴未闭合只 `[A,C]`、同文只发一次；第二轮再 +1（四个行内反例的平台出口回到基线的 `[C]`／`[C]`／`[A,C]`／`[A,C]`）。 |
 | `gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py` | R2：夹具从裸正文迁到分节符信封；stock 对照改成当前事实（部署副本已是信封解析器，不再拼 A+P）；+2 个用例（共享标记边界、尾巴未闭合仍拒绝）。**断言未削、插件生产代码未改。** |
-| `verify.py` | 新增「网关插件独立测试（不在 tests/ 全量里）」：用 Hermes venv、离开仓库根目录、以 48/21 两个用例数下界单独设闸；`check_acceptance_cases` 纳入 `test_queued_lane_interim_client.py` 与本轮两个边界用例名。 |
+| `verify.py` | 新增「网关插件独立测试（不在 tests/ 全量里）」：用 Hermes venv、离开仓库根目录、以 48/21 两个用例数下界单独设闸；`check_acceptance_cases` 纳入 `test_queued_lane_interim_client.py` 与本轮四个边界用例名（含第二轮的行内反例与整行判据）。 |
 | `DELIVERY_t_0ecd8f77.md` | R3：更正「只上提示词会多发一条空消息」的文案（实测见 §3），保留同批部署/回滚、只上新解析器拒绝旧裸正文、在飞旧格式 run 零发送三条结论。 |
 
 ### R1 修正判据（最小、可复核）
@@ -22,10 +25,26 @@
   `§` 还给尾巴 → `§\nB\n§`，完整 B 在工具边界发一次。
 - 行尾与 `split_text_units` 同口径：CRLF／CR 先归一，再判最后一行是不是独立整行 `§`
   （不能让边界判定只在 `\n` 上成立）。
+- **整行判据（复核第二轮收紧）**：光看 interim 自己不够。只有该 `§` 在原输入里的右邻就是行尾
+  （剩余片段以换行/`\r` 开始，或 interim 自己吃掉了那一个行尾换行）才算共享标记。前缀裁在行内
+  字符后（`§B`、`§ `）时原输入里根本没有独立整行标记 → 原样返回，**不靠新补的换行造标记**。
 - 没给旧裸正文补信封：`text` 不以独立整行 `§` 结尾时原样返回（裸正文/半行标记行为不变）。
 - 真缺开头/缺闭合仍拒绝：尾巴本身没闭合（`§\nA\n§\nB`）照旧不发，日志 `reason=missing_close`。
 - 发送节奏未变：interim 仍是发送点、工具边界仍是封段点，B 不是「逐 delta 立即发」，而是在下一个
   封段点随 delta 尾巴发出。
+
+复核反例（真 client/queue/handler/临时台账，每例后接 `tool.started` + `run.completed`＝`§\nC\n§`）：
+
+| delta | interim | 原输入里有整行标记？ | 发送（本轮） | 9b3e386（补换行） |
+| --- | --- | --- | --- | --- |
+| `§B\n§` | `§` | 否 | `[C]` | `[B,C]` ✗ |
+| `§ \nB\n§` | `§` | 否 | `[C]` | `[B,C]` ✗ |
+| `§\nA\n§B\n§` | `§\nA\n§` | 否 | `[A,C]` | `[A,B,C]` ✗ |
+| `§\nA\n§ \nB\n§` | `§\nA\n§` | 否 | `[A,C]` | `[A,B,C]` ✗ |
+| `§\nA\n§\nB\n§` | `§\nA\n§` | 是 | `[A,B,C]` | `[A,B,C]` ✓ |
+
+`§`／CRLF／CR 三种行尾都按同一判据；`[A,B,C]` 与组件 `primary:0/1/2`、裸正文 `AB`/`A` 只 `[C]`、
+共享标记但尾巴缺闭合只 `[A,C]`、反序 interim→delta 的 `[A,B,C]`、queued-lane ABC 正常路径全部保留。
 
 ### R2 迁移口径
 
@@ -60,13 +79,16 @@
 
 | 命令 | 结果 | 证据 |
 | --- | --- | --- |
-| 修前 6fbcceb + 本轮新测试（同一命令） | 9 failures / 60（R1 复现） | `EVIDENCE/r1_interim_shared_marker.txt` |
-| 修后同一命令 | 60 OK（skipped=1） | 同上 |
-| 全量 `tests/` | **682 tests OK (skipped=1)** | `EVIDENCE/full_tests_r1_fix.txt` |
-| 插件 `queued-lane-interim-thin` | 修前 46 跑 11 失败 → 修后 **48 OK** | `EVIDENCE/plugin_suite_r1_fix.txt` |
-| 部署副本对照 `steer-presentation-thin` | 21 OK（verify 闸内） | `EVIDENCE/verify_r1_fix.txt` |
-| `verify.py` | **22/22 PASS**（清洁树） | 同上 |
+| 修前 9b3e386 + 第二轮新测试（同一命令） | 11 failures / 63（6 个 parser 反例 + 1 个 helper 判据 + 4 个真 client 反例） | `EVIDENCE/r1_boundary_round2_before_9b3e386.txt` |
+| 本轮修后同一命令 | **63 OK（skipped=1）** | `EVIDENCE/r1_boundary_round2_after.txt` |
+| 全量 `tests/` | **685 tests OK (skipped=1)** | `EVIDENCE/full_tests_round2.txt` |
+| 插件 `queued-lane-interim-thin` | 修前 46 跑 11 失败 → **48 OK** | `EVIDENCE/plugin_suite_r1_fix.txt` |
+| 部署副本对照 `steer-presentation-thin` | 21 OK（verify 闸内） | `EVIDENCE/verify_round2.txt` |
+| `verify.py` | **22/22 PASS**（清洁树） | `EVIDENCE/verify_round2.txt` |
 | 基线解析器实测（R3） | 见上表 | `EVIDENCE/baseline_parser_f5bbec8.txt` |
+
+`tests/` 的 685 **不含**插件用例；完整口径是 `tests/ 685 OK (skipped=1)` + `queued-lane 48 OK` +
+`steer-presentation 21 OK`，由 `verify.py` 的插件闸位单独把关（R2）。
 
 唯一 skip 是 `tests/test_queued_lane_interim_client.py::test_deployed_parser_still_seals_at_interim`：
 它要求部署副本仍是「裸正文 stock」，而部署副本 14:34 已切信封解析器，前提不成立——显式 skip，

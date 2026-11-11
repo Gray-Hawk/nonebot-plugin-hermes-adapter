@@ -281,6 +281,44 @@ class TextProtocolParserTests(unittest.TestCase):
         self.assertEqual([d["body"] for d in drained], ["A"])
         self.assertIn("reason=missing_close", "\n".join(logs.messages))
 
+    def test_interim_prefix_does_not_invent_a_marker(self) -> None:
+        """前缀裁在行内/带空格的 § 后时，不能靠新补的换行造出合法开头。
+
+        复现帧（reviewer_gpt t_049df793 第二轮）：候选把 ``§B``／``§ `` 修成独立标记，
+        放出原输入里并不存在的正文 B。只有原输入里 § 右邻就是行尾才算共享标记。
+        """
+        cases = (
+            # delta, interim, 期望发出的正文
+            (f"{SEP}B\n{SEP}", SEP, []),
+            (f"{SEP} \nB\n{SEP}", SEP, []),
+            (f"{SEP}\nA\n{SEP}B\n{SEP}", unit({}, "A"), ["A"]),
+            (f"{SEP}\nA\n{SEP} \nB\n{SEP}", unit({}, "A"), ["A"]),
+            # 换行归一不影响判据：CRLF／CR 里的行内 § 同样不是标记。
+            (f"{SEP}\r\nA\r\n{SEP}B\r\n{SEP}", f"{SEP}\r\nA\r\n{SEP}", ["A"]),
+            (f"{SEP}\rA\r{SEP}B\r{SEP}", f"{SEP}\rA\r{SEP}", ["A"]),
+        )
+        for delta, interim, expected in cases:
+            with self.subTest(delta=delta, interim=interim):
+                parser = RunsEventParser()
+                drained = feed_all(parser, [
+                    {"event": "message.delta", "delta": delta, "seq": 0},
+                    {"event": "message.interim", "text": interim, "seq": 1},
+                    {"event": "tool.started", "tool": "todo_list", "seq": 2},
+                ])
+                self.assertEqual([d["body"] for d in drained], expected)
+
+    def test_interim_prefix_keeps_marker_only_when_it_was_a_whole_line(self) -> None:
+        """共享标记的判据是原输入里的行结构，不是 interim 自己长什么样。"""
+        # 同一个 interim 文本：剩余片段以换行开始时是真共享标记。
+        shared = runs_text.continue_after_shared_prefix(f"{SEP}\nA\n{SEP}", "\nB\n" + SEP)
+        self.assertEqual(shared, f"{SEP}\nB\n{SEP}")
+        # 剩余片段不以换行开始时，原输入里 § 后面直接是 B：不是标记。
+        inline = runs_text.continue_after_shared_prefix(f"{SEP}\nA\n{SEP}", "B\n" + SEP)
+        self.assertEqual(inline, "B\n" + SEP)
+        # interim 自己吃掉了 § 后的行尾换行：原输入里仍是独立整行标记。
+        consumed = runs_text.continue_after_shared_prefix(f"{SEP}\nA\n{SEP}\n", "B\n" + SEP)
+        self.assertEqual(consumed, f"{SEP}\nB\n{SEP}")
+
     def test_interim_same_text_as_delta_sends_once(self) -> None:
         parser = RunsEventParser()
         drained = feed_all(parser, [
