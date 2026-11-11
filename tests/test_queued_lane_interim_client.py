@@ -310,6 +310,56 @@ class QueuedLaneInterimClientTest(_ReactiveHarness):
         calls = asyncio.run(self._drive(frames))
         self.assertEqual([c["text"] for c in calls["send"]], [A, C])
 
+    # --- 第三轮（adcb542 复核）：跨帧 CRLF／左邻行内 §／interim 补第二份尾巴 -----
+    def test_crlf_split_between_frames_matches_one_frame(self):
+        """跨帧 CRLF 与整帧同正文：碎片保留原行尾，不能拼出 A\\n\\nB 或双发。"""
+        import asyncio
+
+        body = f"{A}\n{B}"
+        output = f"§\r\n{A}\r\n{B}\r\n§\r\n"
+        frames = [
+            {"event": "message.delta", "delta": f"§\r\n{A}\r", "seq": 0},
+            {"event": "message.delta", "delta": f"\n{B}\r\n§\r\n", "seq": 1},
+            {"event": "run.completed", "output": output, "seq": 2},
+        ]
+        calls = asyncio.run(self._drive(frames))
+        self.assertEqual([c["text"] for c in calls["send"]], [body])
+        self.assertEqual(len(calls["send"]), 1)
+
+        whole = asyncio.run(self._drive([
+            {"event": "message.delta", "delta": output, "seq": 0},
+            {"event": "run.completed", "output": output, "seq": 1},
+        ]))
+        self.assertEqual([c["text"] for c in whole["send"]], [body])
+
+    def test_inline_marker_left_of_interim_tail_is_not_an_opening(self):
+        """interim 末尾 § 的左邻是正文（``A§``）：切掉 A 后不得把 B 放成新正文。"""
+        import asyncio
+
+        frames = [
+            {"event": "message.delta", "delta": f"{A}§\n{B}\n§", "seq": 0},
+            {"event": "message.interim", "text": f"{A}§", "seq": 1},
+            {"event": "tool.started", "tool": "lookup", "seq": 2},
+            {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 3},
+        ]
+        calls = asyncio.run(self._drive(frames))
+        self.assertEqual([c["text"] for c in calls["send"]], [C])
+
+    def test_interim_completing_second_unit_does_not_glue_the_next_delta(self):
+        """interim 补齐第二份尾巴后，不重播 B，也不把 B 和下一帧的 C 合成一份正文。"""
+        import asyncio
+
+        frames = [
+            {"event": "message.delta", "delta": f"§\n{A}\n§\n{B}", "seq": 0},
+            {"event": "message.interim", "text": f"§\n{A}\n§\n{B}\n§", "seq": 1},
+            {"event": "message.delta", "delta": f"\n{C}\n§\n", "seq": 2},
+            {"event": "tool.started", "tool": "lookup", "seq": 3},
+            {"event": "run.completed", "output": f"§\n{B}终\n§", "seq": 4},
+        ]
+        calls = asyncio.run(self._drive(frames))
+        self.assertEqual([c["text"] for c in calls["send"]], [A, B, C, f"{B}终"])
+        self.assertNotIn(f"{B}\n{C}", [c["text"] for c in calls["send"]])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

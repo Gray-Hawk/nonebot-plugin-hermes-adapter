@@ -62,6 +62,44 @@ def _warn_dropped(reason: str, text: str) -> None:
     )
 
 
+def _normalize(text: str) -> str:
+    """与 :func:`split_text_units` 同口径：CRLF／CR 都当 ``\\n``。"""
+    return (text or "").replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _normalize_with_origin(text: str) -> tuple[str, list[int]]:
+    """归一化并记录每个归一字符在原串中的下标（末尾附 ``len(text)``）。
+
+    流式碎片必须保留**原输入**的行尾信息：帧尾一个孤立的 ``\\r`` 如果立刻被改写成
+    ``\\n``，下一帧开头那个 ``\\n`` 就会拼出第二个换行（同一份 CRLF 正文跨帧变成
+    ``A\\n\\nB``）。所以分析在归一文本上做，返回给调用方的切片仍取原串。
+    """
+    chars: list[str] = []
+    origin: list[int] = []
+    index = 0
+    size = len(text)
+    while index < size:
+        char = text[index]
+        if char == "\r":
+            chars.append("\n")
+            origin.append(index)
+            index += 2 if index + 1 < size and text[index + 1] == "\n" else 1
+        else:
+            chars.append(char)
+            origin.append(index)
+            index += 1
+    origin.append(size)
+    return "".join(chars), origin
+
+
+def _line_offsets(lines: list[str]) -> list[int]:
+    """每行行首在归一文本中的字符下标。"""
+    offsets = [0]
+    for line in lines[:-1]:
+        offsets.append(offsets[-1] + len(line) + 1)
+    return offsets
+
+
 def take_closed_units(
     text: str, *, max_body_chars: int = MAX_BODY_CHARS
 ) -> tuple[list[str], str]:
@@ -72,10 +110,14 @@ def take_closed_units(
     正文的结尾，也是下一份正文的开头。相邻正文共享的 ``§`` 于是只在拆分这一步处理完，
     调用方既不需要对原串做前缀裁剪，也不需要给它补换行。
 
+    ``remainder`` 是**原输入的原样切片**（不归一化）：帧尾的 ``\\r`` 原样留着，下一帧
+    开头的 ``\\n`` 才能和它拼回同一个 CRLF，跨帧与整帧得到同一份正文。
+
     帧尾那个还没有换行终结的 ``§`` 不算标记：它可能是下一帧 ``§B`` 的行首字符。
     这类尾巴原样留在 ``remainder`` 里，等下一帧、interim 或封段时再看。
     """
-    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    source = text or ""
+    raw, origin = _normalize_with_origin(source)
     if not raw:
         return [], ""
     lines = raw.split("\n")
@@ -83,7 +125,7 @@ def take_closed_units(
     ended = len(lines) if raw.endswith("\n") else len(lines) - 1
     positions = [index for index in range(ended) if lines[index] == SEPARATOR]
     if not positions:
-        return [], raw
+        return [], source
     head = "\n".join(lines[: positions[0]]).strip()
     if head:
         _warn_dropped(_MISSING_OPEN, head)
@@ -95,15 +137,19 @@ def take_closed_units(
         if _unit_length(body) > max_body_chars:
             raise TextUnitsError("body_overflow")
         units.append(body)
-    return units, "\n".join(lines[positions[-1] :])
+    # 回到原串取切片：保留这里的行尾原样（见 `_normalize_with_origin`）。
+    return units, source[origin[_line_offsets(lines)[positions[-1]]] :]
 
 
 def _marker_tail(text: str) -> str:
-    """从最后一个独立整行 ``§`` 起（含该标记）的原文；没有整行标记时原样返回。"""
-    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    """从最后一个独立整行 ``§`` 起（含该标记）的原样切片；没有整行标记时原样返回。"""
+    source = text or ""
+    raw, origin = _normalize_with_origin(source)
     lines = raw.split("\n")
     positions = [index for index, line in enumerate(lines) if line == SEPARATOR]
-    return "\n".join(lines[positions[-1]:]) if positions else raw
+    if not positions:
+        return source
+    return source[origin[_line_offsets(lines)[positions[-1]]] :]
 
 
 def _terminate_marker_line(text: str) -> str:
@@ -114,7 +160,30 @@ def _terminate_marker_line(text: str) -> str:
     """
     if not text or text.endswith(("\n", "\r")):
         return text
-    return text + "\n" if text.split("\n")[-1] == SEPARATOR else text
+    return text + "\n" if _normalize(text).split("\n")[-1] == SEPARATOR else text
+
+
+def _covers_a_closed_unit(frag: str, text: str) -> bool:
+    """碎片是不是 interim 已经完整交付过的**最后一份正文**的开头。
+
+    碎片形如 ``§\\n<body>``（还没闭合的下一份正文），而 interim 恰好以
+    ``§\\n<body>\\n§`` 收尾：body 已经被 interim 当成完整单位发过一次，碎片只是同一份
+    正文的另一切帧。留着它就会和下一帧拼成原文里并不存在的「body+下一段」。
+    """
+    frag_lines = frag.split("\n")
+    if len(frag_lines) < 2 or frag_lines[0] != SEPARATOR:
+        return False
+    frag_body = "\n".join(frag_lines[1:]).strip()
+    if not frag_body:
+        return False
+    lines = text.split("\n")
+    positions = [index for index, line in enumerate(lines) if line == SEPARATOR]
+    if len(positions) < 2:
+        return False
+    if "\n".join(lines[positions[-1] + 1 :]).strip():
+        return False  # interim 末尾标记之后还有正文：最后一份还没闭合
+    body = "\n".join(lines[positions[-2] + 1 : positions[-1]]).strip()
+    return bool(body) and body == frag_body
 
 
 def rebase_after_interim(interim: str, fragment: str) -> str:
@@ -125,30 +194,43 @@ def rebase_after_interim(interim: str, fragment: str) -> str:
 
     - interim 文本不是碎片的开头（分叉）时，碎片原样留到封段，缺开头照旧被丢弃；
     - interim 覆盖到碎片里时，把覆盖过的那截去掉。它末尾那个 ``§`` 只有在原输入里
-      右邻就是行尾才算两份正文共享的标记，才留给尾巴当开头；右邻是正文（``§B``／
-      ``§ ``）时原输入里就没有这个标记，绝不靠新补的换行把它修成合法开头。
-    - 反过来，碎片本身是 interim 的前缀时（delta 截在半份正文里），碎片内容已经被
-      interim 的正文单位完全覆盖：换成 interim 自己的结构剩余（最后一个整行 ``§``
-      起），免得半份碎片和下一帧拼成一份原文里并不存在的完整正文。
+      **左右两侧都是行界**时才算两份正文共享的标记，才留给尾巴当开头；左邻是正文
+      （``A§``）或右邻是正文（``§B``／``§ ``）时原输入里就没有这个标记，绝不靠新的
+      切片或补换行把它修成合法开头。
+    - 碎片本身是 interim 的前缀时（delta 截在半份正文里），碎片内容已经被 interim
+      的正文单位完全覆盖：换成 interim 自己的结构剩余（最后一个整行 ``§`` 起）。
+    - 碎片是 ``§\\n<body>`` 而 interim 已经以 ``§\\n<body>\\n§`` 收尾时（interim 补齐了
+      第二份及以后的尾巴）：同样换成 interim 的结构剩余，既不重播 body，也不让它和
+      下一帧拼成新正文。
+    - 其余情况碎片原样留着，封段时照旧按缺开头／缺末尾拒绝。
     """
     if not fragment or not interim:
         return fragment
-    raw = interim.replace("\r\n", "\n").replace("\r", "\n")
-    text = raw.rstrip("\n")
+    text = _normalize(interim).rstrip("\n")
     if not text:
         return fragment
-    if not fragment.startswith(text):
-        if text.startswith(fragment.rstrip("\n")):
-            return _terminate_marker_line(_marker_tail(raw))
+    frag, frag_origin = _normalize_with_origin(fragment)
+    frag_text = frag.rstrip("\n")
+    if not frag_text:
         return fragment
-    end = len(text)
-    if text[-1] == SEPARATOR and (end == len(fragment) or fragment[end] in ("\n", "\r")):
-        remainder = fragment[end - 1 :]
-        # interim 覆盖了整个碎片时，这个共享标记是 interim 自己的完整行：补上它缺的
-        # 行尾换行，下一帧不管是新信封还是同段续写都不会拼成同一行的「§§」。碎片比
-        # interim 长时仍按原输入逐字切片，一个字符都不补。
-        return _terminate_marker_line(remainder) if end == len(fragment) else remainder
-    return fragment[end:]
+    if frag.startswith(text):
+        end = len(text)
+        if (
+            text[-1] == SEPARATOR
+            and (end == len(frag) or frag[end] == "\n")
+            and (end - 1 == 0 or frag[end - 2] == "\n")
+        ):
+            remainder = fragment[frag_origin[end - 1] :]
+            # interim 覆盖了整个碎片时，这个共享标记是 interim 自己的完整行：补上它缺的
+            # 行尾换行，下一帧不管是新信封还是同段续写都不会拼成同一行的「§§」。碎片比
+            # interim 长时仍按原输入逐字切片，一个字符都不补。
+            return (
+                _terminate_marker_line(remainder) if end == len(frag) else remainder
+            )
+        return fragment[frag_origin[end] :]
+    if text.startswith(frag_text) or _covers_a_closed_unit(frag, text):
+        return _terminate_marker_line(_marker_tail(interim))
+    return fragment
 
 
 def split_text_units(text: str, *, max_body_chars: int = MAX_BODY_CHARS) -> list[str]:
