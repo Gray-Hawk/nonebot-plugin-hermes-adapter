@@ -167,7 +167,7 @@ cd <repo> && PYTHONDONTWRITEBYTECODE=1 /home/neonsky/NeonBot/.venv/bin/python -B
 
 ## 部署（未执行）
 
-顺序是**先启用、后安装、再交接**；目录发现 ≠ 已加载（R3）。
+顺序是**先安装、后启用、再交接**；目录发现 ≠ 已加载（R3）。
 
 ```bash
 HOME_DIR=/path/to/hermes-home          # 目标 profile 的 HERMES_HOME
@@ -179,8 +179,8 @@ python scripts/install_gateway_plugin.py queued-lane-interim-thin --hermes-home 
 # 2) 目标 profile 显式启用（上游 gate 只认 plugins.enabled；缺省/空 = placeholder）
 HERMES_HOME="$HOME_DIR" hermes plugins enable queued-lane-interim-thin
 HERMES_HOME="$HOME_DIR" hermes plugins list --json | grep -A3 queued-lane-interim-thin
-#    期望 "enabled": true、"error": null；若出现 "not enabled in config" → 回到本步
-#    核对写的是不是**这个 profile** 的 config.yaml（多 profile 机器上常见）
+#    期望 "status": "enabled"；若显示 "not enabled" → 回到本步
+#    status 只证明配置选择；实际 wrapper 安装由下方启动日志核验
 
 # 3) NB 侧同版（R1 的解析器修正随插件包发布：site-packages 里的 core/hermes_client.py
 #    必须是本候选版本），装完后 `hermes` 与 nonebot 都要重启

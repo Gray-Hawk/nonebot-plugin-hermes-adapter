@@ -63,12 +63,12 @@ stock `result` 一字不动（不置 `already_sent`）。
 
 ## 3. R3 — 部署手册 + 真 loader 集成测试
 
-手册（`…/README.md`「部署（未执行）」）改为**先启用、后安装、再交接**：
+手册（`…/README.md`「部署（未执行）」）改为**先安装、后启用、再交接**：
 
 1. `install_gateway_plugin.py … --force` → `--check`（只复制文件，不写 enabled）；
 2. `HERMES_HOME=<目标 profile> hermes plugins enable queued-lane-interim-thin` +
-   `hermes plugins list --json` 期望 `"enabled": true, "error": null`；出现
-   `not enabled in config` 说明写错了 profile；
+   `hermes plugins list --json` 期望 `"status": "enabled"`；`status` 只证明配置选择，
+   实际 wrapper 由目标 gateway 启动日志核验；
 3. NB 侧同版核验（`grep -c "pending, self._seg_text = self._seg_text" …/core/hermes_client.py`
    期望 ≥1，否则 R1 未生效）；4) 重启（有权限方）；5) handover dry-run → `--apply`；
    末尾给"状态核验（只读）"两条命令。
