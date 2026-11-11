@@ -1,0 +1,42 @@
+### R1-repro: delta(A,B) -> interim(A) -> tool -> C
+{"batches": [0, 0], "decision_batch": 1, "drained": ["A", "B"], "kinds": ["text", "text"], "seg_text": "", "suppressed": [["segment_duplicate", "A", "segment"]], "terminal": ["C"], "terminal_error": "", "terminal_kinds": ["text"], "text_error": ""}
+
+### R1-repro+newline: delta(A,B)+\n -> interim(A)+\n -> tool -> C
+{"batches": [0, 0], "decision_batch": 1, "drained": ["A", "B"], "kinds": ["text", "text"], "seg_text": "", "suppressed": [["segment_duplicate", "A", "segment"]], "terminal": ["C"], "terminal_error": "", "terminal_kinds": ["text"], "text_error": ""}
+
+### R1-reverse: interim(A) -> delta(A,B) -> tool -> C
+{"batches": [0, 0], "decision_batch": 1, "drained": ["A", "B"], "kinds": ["text", "text"], "seg_text": "", "suppressed": [["segment_duplicate", "A", "segment"]], "terminal": ["C"], "terminal_error": "", "terminal_kinds": ["text"], "text_error": ""}
+
+### R1-CRLF: delta(A,B) -> interim(A) -> tool -> C
+{"batches": [0, 0], "decision_batch": 1, "drained": ["A", "B"], "kinds": ["text", "text"], "seg_text": "", "suppressed": [["segment_duplicate", "A", "segment"]], "terminal": ["C"], "terminal_error": "", "terminal_kinds": ["text"], "text_error": ""}
+
+### R1-CR: delta(A,B) -> interim(A) -> tool -> C
+{"batches": [0, 0], "decision_batch": 1, "drained": ["A", "B"], "kinds": ["text", "text"], "seg_text": "", "suppressed": [["segment_duplicate", "A", "segment"]], "terminal": ["C"], "terminal_error": "", "terminal_kinds": ["text"], "text_error": ""}
+
+### reject-1: delta(§B\n§) -> interim(§) -> tool -> C
+{"batches": [], "decision_batch": 1, "drained": [], "kinds": [], "seg_text": "", "suppressed": [], "terminal": ["C"], "terminal_error": "", "terminal_kinds": ["text"], "text_error": ""}
+
+### reject-2: delta(§ \nB\n§) -> interim(§) -> tool -> C
+{"batches": [], "decision_batch": 1, "drained": [], "kinds": [], "seg_text": "", "suppressed": [], "terminal": ["C"], "terminal_error": "", "terminal_kinds": ["text"], "text_error": ""}
+
+### reject-3: delta(§\nA\n§B\n§) -> interim(A) -> tool -> C
+{"batches": [0], "decision_batch": 1, "drained": ["A"], "kinds": ["text"], "seg_text": "", "suppressed": [], "terminal": ["C"], "terminal_error": "", "terminal_kinds": ["text"], "text_error": ""}
+
+### reject-4: delta(§\nA\n§ \nB\n§) -> interim(A) -> tool -> C
+{"batches": [0], "decision_batch": 1, "drained": ["A"], "kinds": ["text"], "seg_text": "", "suppressed": [], "terminal": ["C"], "terminal_error": "", "terminal_kinds": ["text"], "text_error": ""}
+
+### unclosed: delta(§\nA\n§\nB) -> tool
+{"batches": [0], "decision_batch": 1, "drained": ["A"], "kinds": ["text"], "seg_text": "", "suppressed": [], "terminal": [], "terminal_error": "", "terminal_kinds": [], "text_error": ""}
+
+### silent: delta(§\n§\n) -> tool
+{"batches": [], "decision_batch": 1, "drained": [], "kinds": [], "seg_text": "", "suppressed": [], "terminal": [], "terminal_error": "", "terminal_kinds": [], "text_error": ""}
+
+### plain-no-newline: delta(§\n你好\n§) -> completed(same)
+{"batches": [], "decision_batch": 0, "drained": [], "kinds": [], "seg_text": "", "suppressed": [["unsealed_delta_tail", "§\n你好\n§", "terminal"]], "terminal": ["你好"], "terminal_error": "", "terminal_kinds": ["text"], "text_error": ""}
+
+### plain-newline: delta(§\n你好\n§\n) -> completed(same)
+{"batches": [0], "decision_batch": 0, "drained": ["你好"], "kinds": ["text"], "seg_text": "", "suppressed": [["terminal_same_segment", "你好", "terminal"]], "terminal": [], "terminal_error": "", "terminal_kinds": [], "text_error": ""}
+
+### control: delta(A,B)+\n -> tool(submit_control)
+{"batches": [0, 0], "decision_batch": 0, "drained": ["A", "B"], "kinds": ["text", "text"], "seg_text": "", "suppressed": [], "terminal": [], "terminal_error": "", "terminal_kinds": [], "text_error": ""}
+
