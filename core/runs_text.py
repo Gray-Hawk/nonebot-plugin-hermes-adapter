@@ -69,9 +69,11 @@ def continue_after_shared_prefix(text: str, remainder: str) -> str:
     """
     if not remainder.strip():
         return remainder
-    if text.rstrip("\n").split("\n")[-1] != SEPARATOR:
+    # 与 split_text_units 同口径：CRLF／CR 先归一，再判最后一行是不是独立整行 §。
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
+    if normalized.split("\n")[-1] != SEPARATOR:
         return remainder
-    return SEPARATOR + ("" if remainder.startswith("\n") else "\n") + remainder
+    return SEPARATOR + ("" if remainder.startswith(("\n", "\r\n")) else "\n") + remainder
 
 
 def split_text_units(text: str, *, max_body_chars: int = MAX_BODY_CHARS) -> list[str]:

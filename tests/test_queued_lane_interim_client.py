@@ -229,6 +229,8 @@ class QueuedLaneInterimClientTest(_ReactiveHarness):
             (_batch(A, B) + "\n", _frame(A)),
             (_batch(A, B), _frame(A).rstrip("\n")),
             (_batch(A, B) + "\n", _frame(A).rstrip("\n")),
+            # CRLF：与 split_text_units 同口径归一，边界判定不能只在 \n 上成立。
+            (_batch(A, B).replace("\n", "\r\n"), _frame(A).replace("\n", "\r\n")),
         ):
             with self.subTest(delta=delta, interim=interim):
                 frames = [
