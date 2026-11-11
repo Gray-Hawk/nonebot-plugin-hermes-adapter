@@ -1,16 +1,16 @@
 interpreter=/home/neonsky/NeonBot/.venv/bin/python
 root=/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109
-HEAD=25d5ef1 feat(steer): steer 呈递区域化 + 网关薄插件去掉上游 OUT-OF-BAND 外壳（候选）
+HEAD=e3073d9 test(steer): 插件按真实布局加载的用例 + 上游快照还原；21/21
 [PASS] 交付树无 pyc／pytest 缓存
-[PASS] 全量既有＋新增测试通过 — exit=0 ran=673 Ran 673 tests in 32.928s /  / OK (skipped=1)
+[PASS] 全量既有＋新增测试通过 — exit=0 ran=673 Ran 673 tests in 32.892s /  / OK (skipped=1)
 [PASS] 已删除的信封模块／符号零引用 — 文件仍在=[] 引用=[]
 [PASS] Runs 终态／流式／恢复／对账共用同一纯文本解析器
-11-11 14:47:10 [SUCCESS] nonebot | NoneBot is initializing...
-11-11 14:47:10 [INFO] nonebot | Current Env: prod
-11-11 14:47:11 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='裸'
-11-11 14:47:11 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='裸'
-11-11 14:47:11 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='你好'
-11-11 14:47:11 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=12 preview='{"body":"旧"}'
+11-11 14:49:03 [SUCCESS] nonebot | NoneBot is initializing...
+11-11 14:49:03 [INFO] nonebot | Current Env: prod
+11-11 14:49:03 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='裸'
+11-11 14:49:03 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='裸'
+11-11 14:49:03 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='你好'
+11-11 14:49:03 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=12 preview='{"body":"旧"}'
 [PASS] 信封解析语义（单条/多条/静默/缺开缺闭/旧裸正文不兼容） — 失败=[]
 [PASS] Runs／completions 提示词同口径写死信封格式
 [PASS] _DECISION_PROTOCOL_BLOCK_COMPLETIONS 纯文本（无信封字段）
