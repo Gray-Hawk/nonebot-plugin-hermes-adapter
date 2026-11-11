@@ -82,7 +82,10 @@ def _adapter_authority(adapter):
 
     ``active_authority`` is the same scope resolution upstream admission uses
     (``session_api_turn.admit_api_steps``); the SessionDB identity check is that door's
-    profile fence: an adapter bound to another profile's store never publishes here.
+    profile fence — the same one ``require_active_authority(runner, store=...)`` enforces:
+    the store must be **provably** the authority's. An adapter that cannot show its store
+    (attribute missing, ``None``, or a raising call) is not proof of anything, so it is
+    refused instead of being let through.
     """
     runner = getattr(adapter, "gateway_runner", None)
     if runner is None:
@@ -93,13 +96,18 @@ def _adapter_authority(adapter):
     if authority is None:
         return None, "no active session authority"
     ensure = getattr(adapter, "_ensure_session_db", None)
-    if callable(ensure):
-        try:
-            db = ensure()
-        except Exception:  # an API adapter without a store cannot be fenced; see below
-            db = None
-        if db is not None and db is not authority.db:
-            return None, "adapter is bound to another profile's SessionDB"
+    if not callable(ensure):
+        return None, ("adapter cannot prove its SessionDB (no callable _ensure_session_db); "
+                      "upstream demand is store identity")
+    try:
+        db = ensure()
+    except Exception as exc:
+        return None, (f"adapter cannot prove its SessionDB (_ensure_session_db raised "
+                      f"{type(exc).__name__})")
+    if db is None:
+        return None, "adapter cannot prove its SessionDB (_ensure_session_db returned None)"
+    if db is not authority.db:
+        return None, "adapter is bound to another profile's SessionDB"
     return authority, ""
 
 

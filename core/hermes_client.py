@@ -839,11 +839,25 @@ class RunsEventParser:
         if not event:
             event = str(payload.get("event") or "")
         if event == "message.interim":
-            # interim 是工具调用前的完整中途消息：作为本段正文参与封段，
-            # 与 delta 产物按段内全文匹配去重（不清空 delta 缓冲，留给工具边界
-            # 补齐 delta 比 interim 多出的部分）。
+            # interim 是工具调用前的完整中途消息，也是本段的**段边界**：本段已到的
+            # delta 必须在这里结清，否则整段文本会在下一个工具边界随 `_seg_text` 再发
+            # 一遍（queued-lane 前答混进后答；实测 [A, A+P, C]）。结清规则只做前缀比对：
+            #   * delta ⊂ interim（含全等）→ 由 interim 代表这一段，delta 丢弃；
+            #   * interim ⊂ delta → 先发 interim，多出的尾部留到下一个工具边界补齐；
+            #   * 两者分叉 → delta 与 interim 各发一次，一段文本都不吞。
+            # 段内去重不清零：interim 与 delta 是同一段文本的两种切帧。
             self.interim_count += 1
-            self._emit_text(str(payload.get("text") or ""))
+            text = str(payload.get("text") or "")
+            pending, self._seg_text = self._seg_text, ""
+            if pending and text:
+                if text.startswith(pending):
+                    pending = ""
+                elif pending.startswith(text):
+                    self._seg_text = pending[len(text):]
+                    pending = ""
+            if pending:
+                self._emit_text(pending)
+            self._emit_text(text)
             return
         if event == "message.delta":
             self.delta_count += 1

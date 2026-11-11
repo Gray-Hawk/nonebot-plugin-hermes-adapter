@@ -1,0 +1,36 @@
+11-11 11:44:07 [SUCCESS] nonebot | NoneBot is initializing...
+11-11 11:44:07 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:142: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.createTests()
+11-11 11:44:07 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-11 11:44:07 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+test_plain_turn_without_interim_is_unchanged (tests.test_queued_lane_interim_client.QueuedLaneInterimClientTest.test_plain_turn_without_interim_is_unchanged) ... 11-11 11:44:07 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/typing.py:103: DeprecationWarning: Failing to pass a value to the 'type_params' parameter of 'typing.ForwardRef._evaluate' is deprecated, as it leads to incorrect behaviour when calling typing.ForwardRef._evaluate on a stringified annotation that references a PEP 695 type parameter. It will be disallowed in Python 3.15.
+  return ref._evaluate(globalns, localns, recursive_guard=frozenset())
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+ok
+test_queued_interim_then_next_delta_sends_abc_each_once (tests.test_queued_lane_interim_client.QueuedLaneInterimClientTest.test_queued_interim_then_next_delta_sends_abc_each_once) ... 11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=6 media=0 files=0
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+ok
+test_stock_parser_produces_the_reviewer_gap (tests.test_queued_lane_interim_client.QueuedLaneInterimClientTest.test_stock_parser_produces_the_reviewer_gap) ... 11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=9 media=0 files=0
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-11 11:44:08 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.268s
+
+OK

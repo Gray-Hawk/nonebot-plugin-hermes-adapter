@@ -26,7 +26,9 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import types
@@ -34,6 +36,7 @@ import unittest
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 os.environ.setdefault("HERMES_DISABLE_LAZY_INSTALLS", "1")
 
@@ -63,26 +66,47 @@ from hermes_state_runtime import (  # noqa: E402
     admit_session_input, begin_runtime_epoch, claim_session_input, get_session_admission,
 )
 
-# The installed adapter's real parser, importable outside NoneBot through three shims that touch
-# none of the code under test (same shims the accepted PoC used).
+# Real parsers, importable outside NoneBot through shims that touch none of the code under test.
+# Two copies on purpose:
+#   * ``nonebot_plugin_hermes_adapter``  → this repository (the **candidate** code being delivered);
+#   * ``qlt_stock_nonebot_adapter``      → the deployed site-packages copy (**stock as installed**),
+#     so a test can replay what the instance runs today against the candidate's frames.
 _NB_PKG = "nonebot_plugin_hermes_adapter"
-if _NB_PKG not in sys.modules:
+_NB_STOCK_PKG = "qlt_stock_nonebot_adapter"
+_NB_ROOT = str(Path(__file__).resolve().parents[3])
+_NB_STOCK_ROOT = os.path.join(NB_SITE, _NB_PKG)
+
+
+def _install_nb_package(name: str, root: str) -> None:
+    """A synthetic package object pinned to *root*: ``__init__`` never runs, submodules do."""
+    if name in sys.modules:
+        return
+    _pkg = types.ModuleType(name)
+    _pkg.__path__ = [root]
+    sys.modules[name] = _pkg
+    _cfg = types.ModuleType(name + ".config")
+    _cfg.plugin_config = SimpleNamespace()
+    _cfg.__getattr__ = lambda attr: (_cfg.plugin_config if attr == "plugin_config"
+                                     else (lambda *a, **k: None))
+    sys.modules[name + ".config"] = _cfg
+
+
+if "json5" not in sys.modules:
     sys.modules["json5"] = json
+if "nonebot" not in sys.modules:
     _nb = types.ModuleType("nonebot")
     _nb.logger = logging.getLogger("nonebot")
     _nb.__getattr__ = lambda name: (lambda *args, **kwargs: None)
     sys.modules["nonebot"] = _nb
-    _pkg = types.ModuleType(_NB_PKG)
-    _pkg.__path__ = [os.path.join(NB_SITE, _NB_PKG)]
-    sys.modules[_NB_PKG] = _pkg
-    _cfg = types.ModuleType(_NB_PKG + ".config")
-    _cfg.plugin_config = SimpleNamespace()
-    _cfg.__getattr__ = lambda name: (_cfg.plugin_config if name == "plugin_config"
-                                     else (lambda *a, **k: None))
-    sys.modules[_NB_PKG + ".config"] = _cfg
+
+_install_nb_package(_NB_PKG, _NB_ROOT)
+_install_nb_package(_NB_STOCK_PKG, _NB_STOCK_ROOT)
 
 from nonebot_plugin_hermes_adapter.core.hermes_client import RunsEventParser  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text  # noqa: E402
+from qlt_stock_nonebot_adapter.core.hermes_client import (  # noqa: E402
+    RunsEventParser as StockRunsEventParser,
+)
 
 import kanban_notify_guard  # noqa: E402
 import patches  # noqa: E402
@@ -238,12 +262,22 @@ def term(run: Run, output: str) -> None:
                                          owner=run.adapter), event)
 
 
-class NbClient:
-    """The installed adapter's real parser, fed the run's SSE frames; units = platform sends."""
+def frame(run: Run, name: str, **fields) -> None:
+    """One SSE frame as the run's own publisher emits it (real ``_run_event`` + ``put_event``).
 
-    def __init__(self, stream: _RunStream):
+    ``_execute_run`` publishes ``message.delta`` through exactly this pair
+    (``loop.call_soon_threadsafe(run.put_event, _run_event(run_id, "message.delta", delta=…))``).
+    """
+    _RunLaunch.put_event(SimpleNamespace(run_id=run.run_id, queue=run.stream, owner=run.adapter),
+                         _run_event(run.run_id, name, **fields))
+
+
+class NbClient:
+    """The adapter's real parser, fed the run's SSE frames; units = platform sends."""
+
+    def __init__(self, stream: _RunStream, parser_cls=RunsEventParser):
         self.stream, self.cursor = stream, 0
-        self.parser = RunsEventParser()
+        self.parser = parser_cls()
         self.sent: list[str] = []
         self.suppressed: list[tuple[str, str]] = []
         self.parser.on_suppressed = lambda reason, text, src: self.suppressed.append((reason, text))
@@ -528,6 +562,122 @@ class QueuedLaneInterimTest(unittest.TestCase):
         completed = [e for _, e in run.stream.backlog if e and e.get("event") == "run.completed"]
         self.assertEqual(completed[0]["output"], "答复C")
 
+    # ---------------------------------------------------------------- R1: segment boundary
+    def test_queued_interim_closes_the_preceding_delta_segment(self):
+        """delta(A) → queued interim(A) → delta(P before its tool) → terminal C must be [A, P, C]."""
+        patches.install()
+        run = Run()
+        self._exec(run)
+        client = NbClient(run.stream)                 # candidate parser (this repository)
+        runner = make_runner()
+        frame(run, "message.delta", delta="答复A")
+        asyncio.run(deliver(run, runner, "答复A"))
+        frame(run, "message.delta", delta="查B前的说明")
+        frame(run, "tool.started", tool="lookup")
+        term(run, "答复C")
+        client.pump()
+        self.assertEqual(client.sent, ["答复A", "查B前的说明", "答复C"])
+        self.assertEqual(len(client.sent), 3)         # platform outlet counted, not observed
+        self.assertEqual(client.parser.interim_count, 1)
+        self.assertEqual(client.parser.delta_count, 2)
+
+    def test_stock_parser_replays_the_reviewer_gap(self):
+        """The same frames through the deployed (stock) parser still give [A, A+P, C].
+
+        This is the exact finding R1 closes: the interim alone only sends text, it does not close
+        the delta segment the previous turn left buffered.
+        """
+        patches.install()
+        run = Run()
+        self._exec(run)
+        client = NbClient(run.stream, parser_cls=StockRunsEventParser)
+        runner = make_runner()
+        frame(run, "message.delta", delta="答复A")
+        asyncio.run(deliver(run, runner, "答复A"))
+        frame(run, "message.delta", delta="查B前的说明")
+        frame(run, "tool.started", tool="lookup")
+        term(run, "答复C")
+        client.pump()
+        self.assertEqual(client.sent, ["答复A", "答复A查B前的说明", "答复C"])
+
+    def test_partial_delta_before_interim_is_not_resent(self):
+        patches.install()
+        run = Run()
+        self._exec(run)
+        client = NbClient(run.stream)
+        frame(run, "message.delta", delta="答复")
+        asyncio.run(deliver(run, make_runner(), "答复A"))
+        frame(run, "tool.started", tool="lookup")
+        term(run, "答复C")
+        client.pump()
+        # The streamed prefix is covered by the interim: one message, no [答复, 答复A] pair.
+        self.assertEqual(client.sent, ["答复A", "答复C"])
+
+    def test_interim_prefix_of_streamed_delta_keeps_the_tail(self):
+        patches.install()
+        run = Run()
+        self._exec(run)
+        client = NbClient(run.stream)
+        frame(run, "message.delta", delta="答复A查B前")
+        asyncio.run(deliver(run, make_runner(), "答复A"))
+        frame(run, "tool.started", tool="lookup")
+        term(run, "答复C")
+        client.pump()
+        # The delta already ran past the interim: the covered head is not repeated, the tail is
+        # still delivered at the tool boundary.
+        self.assertEqual(client.sent, ["答复A", "查B前", "答复C"])
+
+    def test_interim_without_any_delta_still_sends_once(self):
+        patches.install()
+        run = Run()
+        self._exec(run)
+        client = NbClient(run.stream)
+        asyncio.run(deliver(run, make_runner(), "答复A"))
+        frame(run, "tool.started", tool="lookup")
+        term(run, "答复C")
+        client.pump()
+        self.assertEqual(client.sent, ["答复A", "答复C"])
+        self.assertEqual(client.parser.delta_count, 0)
+
+    # ---------------------------------------------------------------- R2: SessionDB proof
+    def _refused_for_store(self, break_store):
+        patches.install()
+        run = Run()
+        break_store(run.adapter)
+        self._exec(run)
+        with self.assertLogs("patches", level="WARNING") as logs:
+            result = asyncio.run(deliver(run, make_runner(), "答复A"))
+        self.assertEqual(list(run.stream.backlog), [])           # nothing reaches the run stream
+        log = "\n".join(logs.output)
+        self.assertIn("NOT published", log)
+        self.assertIn("cannot prove its SessionDB", log)
+        self.assertEqual(result.get("final_response"), "答复A")   # stock result, untouched
+        self.assertNotIn("already_sent", result)
+        return run
+
+    def test_unprovable_session_db_none_is_refused(self):
+        self._refused_for_store(lambda adapter: setattr(adapter, "_ensure_session_db", lambda: None))
+
+    def test_unprovable_session_db_raises_is_refused(self):
+        def boom():
+            raise RuntimeError("state.db is locked")
+
+        self._refused_for_store(lambda adapter: setattr(adapter, "_ensure_session_db", boom))
+
+    def test_missing_session_db_accessor_is_refused(self):
+        def drop(adapter):
+            del adapter._ensure_session_db
+
+        self._refused_for_store(drop)
+
+    def test_same_session_db_object_is_accepted(self):
+        patches.install()
+        run = Run()
+        self._exec(run)
+        asyncio.run(deliver(run, make_runner(), "答复A"))
+        frames = [e for _, e in run.stream.backlog if e and e.get("event") == "message.interim"]
+        self.assertEqual([f["text"] for f in frames], ["答复A"])
+
     def test_event_less_pending_event_followup(self):
         patches.install()
         run = Run()
@@ -744,8 +894,169 @@ class KanbanNotifyGuardTest(unittest.TestCase):
                          "auto_subscribe=already-installed inherit=already-installed "
                          "slash=already-installed")
 
+    # ------------------------------------------------------- R4: every automatic entry point
+    def test_late_link_inheritance_is_guarded(self):
+        """``kb.link_tasks`` copies parent rows too — the same single owner must be guarded."""
+        parent = self._create("parent")
+        self.kbn.add_notify_sub(self.conn, task_id=parent, platform="api_server",
+                                chat_id="hermes-onebotv11+private+10086-gabcd", user_id="api",
+                                notifier_profile="default")
+        self.kbn.add_notify_sub(self.conn, task_id=parent, platform="telegram",
+                                chat_id="424242", user_id="u1", notifier_profile="default")
+        child = self._create("child")
+        self.kb.link_tasks(self.conn, parent, child)
+        self.assertEqual({(s["platform"], s["chat_id"]) for s in self._subs(child)},
+                         {("telegram", "424242")})
+
+    def test_creator_origin_inheritance_is_guarded(self):
+        """``kanban_db_graph.inherit_creator_origin`` (create_task ``creator_task_id``) copies too."""
+        from hermes_cli import kanban_db_graph as graph
+
+        creator = self._create("creator")
+        self.kbn.add_notify_sub(self.conn, task_id=creator, platform="api_server",
+                                chat_id="hermes-onebotv11+private+10086-gabcd", user_id="api",
+                                notifier_profile="default")
+        task = self._create("spawned")
+        graph.inherit_creator_origin(self.conn, task, creator, created_at=0)
+        self.assertEqual(self._subs(task), [])
+
+
+class IndependentCliCreateTest(unittest.TestCase):
+    """R4 的收窄契约：独立 CLI 进程不加载用户插件（上游对 kanban 内建命令跳过插件发现），
+    所以继承围栏在那里**不存在**。可证明的闭合点是：自动订阅需要调用会话平台，独立 CLI
+    没有；继承只复制已存在的行，而部署步骤（既有 handover，公开 CLI 注销）之后不存在
+    api_server 行可继承。本类用真 ``hermes kanban create`` 子进程前后对照。
+    """
+
+    HERMES = "/home/neonsky/.hermes/hermes-agent/venv/bin/hermes"
+    CHAT = "hermes-onebotv11+private+10086-gabcd"
+
+    def setUp(self):
+        from hermes_cli import kanban_db as kb
+        from hermes_cli import kanban_db_connect as kbc
+
+        self.kb, self.kbn = kb, None
+        self.home = Path(tempfile.mkdtemp(prefix="qlt-cli-home-"))
+        self.db_path = self.home / "kanban.db"
+        self.conn = sqlite3.connect(self.db_path, isolation_level=None)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript(kb.SCHEMA_SQL)
+        kbc._migrate_add_optional_columns(self.conn)
+        self.addCleanup(self.conn.close)
+        from hermes_cli import kanban_db_notify as kbn
+
+        self.kbn = kbn
+        # The ambient worker markers are already cleared at import: the subprocess must look
+        # like an operator CLI, not like a dispatcher worker.
+        self.env = dict(os.environ, HERMES_HOME=str(self.home),
+                        HERMES_KANBAN_DB=str(self.db_path), HERMES_DISABLE_LAZY_INSTALLS="1")
+
+    def _cli(self, *argv):
+        return subprocess.run([self.HERMES, "kanban", *argv], capture_output=True, text=True,
+                              env=self.env, timeout=180)
+
+    def _create_cli(self, title, parent):
+        proc = self._cli("create", title, "--parent", parent, "--assignee", "coder_deepseek",
+                         "--json")
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+        return json.loads(proc.stdout)["id"]
+
+    def _subs(self, task_id):
+        return [(s["platform"], s["chat_id"]) for s in self.kbn.list_notify_subs(self.conn, task_id)]
+
+    def test_independent_cli_inherits_only_what_still_exists(self):
+        parent = self.kb.create_task(self.conn, title="parent", assignee="coder_deepseek",
+                                     initial_status="running")
+        self.kbn.add_notify_sub(self.conn, task_id=parent, platform="api_server",
+                                chat_id=self.CHAT, user_id="api", notifier_profile="default")
+
+        # Before handover: the plugin is not in that process, so the legacy row is inherited.
+        # (Narrowed contract, not a claim of coverage: reproduced, not papered over.)
+        legacy_child = self._create_cli("cli-child-before", parent)
+        self.assertEqual(self._subs(legacy_child), [("api_server", self.CHAT)])
+
+        # The deployment handover runs through the same public CLI the docs name.
+        unsub = self._cli("notify-unsubscribe", parent, "--platform", "api_server",
+                          "--chat-id", self.CHAT)
+        self.assertEqual(unsub.returncode, 0, unsub.stderr[-400:])
+        self.assertEqual(self._subs(parent), [])
+
+        # After handover there is no automatic api_server row left to inherit — and the CLI itself
+        # never creates one (auto-subscribe needs a session platform, which this process has not).
+        clean_child = self._create_cli("cli-child-after", parent)
+        self.assertEqual(self._subs(clean_child), [])
+
 
 # --------------------------------------------------------------------------- packaging
+class PluginEnabledAtLoadTest(unittest.TestCase):
+    """Temp home + the real ``PluginManager.discover_and_load()``: a discovered directory is not a
+    loaded plugin. ``plugins.enabled`` must name the plugin explicitly (upstream gate), and only
+    then do the wrappers exist in-process.
+    """
+
+    def setUp(self):
+        restore_stock()
+        self.addCleanup(restore_stock)
+        self.home = Path(tempfile.mkdtemp(prefix="qlt-home-"))
+        target = self.home / "plugins" / "queued-lane-interim-thin"
+        shutil.copytree(PLUGIN_DIR, target,
+                        ignore=shutil.ignore_patterns("tests", "__pycache__"))
+        env = mock.patch.dict(os.environ, {"HERMES_HOME": str(self.home),
+                                           "HERMES_DISABLE_LAZY_INSTALLS": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+        self.config = self.home / "config.yaml"
+
+    def _write_config(self, enabled: bool) -> None:
+        body = ("plugins:\n  enabled:\n    - queued-lane-interim-thin\n" if enabled
+                else "plugins:\n  enabled: []\n")
+        self.config.write_text(body, encoding="utf-8")
+
+    def _discover(self, *, force: bool = False):
+        from hermes_cli.plugins import PluginManager
+
+        manager = PluginManager(scope_key=str(self.home))
+        manager.discover_and_load(force=force)
+        return manager
+
+    def _loaded(self, manager):
+        return manager._plugins.get("queued-lane-interim-thin")
+
+    def _patch_mark(self):
+        return getattr(GatewayTurnMixin._run_agent_deliver_first_response, patches._MARK, None)
+
+    def test_directory_alone_is_not_loaded(self):
+        self._write_config(enabled=False)
+        manager = self._discover()
+        loaded = self._loaded(manager)
+        self.assertIsNotNone(loaded)
+        self.assertFalse(loaded.enabled)
+        self.assertIn("not enabled in config", loaded.error or "")
+        self.assertIsNone(self._patch_mark())          # first_response keeps its stock body
+
+    def test_enabled_profile_loads_and_wraps(self):
+        self._write_config(enabled=True)
+        manager = self._discover()
+        loaded = self._loaded(manager)
+        self.assertTrue(loaded.enabled, f"not loaded: {loaded.error!r}")
+        self.assertFalse(loaded.error)
+        self.assertEqual(self._patch_mark(), patches.PATCH_ID)
+        from tools import kanban_tools as kt
+
+        self.assertEqual(getattr(kt._maybe_auto_subscribe,
+                                 kanban_notify_guard._MARK, None),
+                         kanban_notify_guard.PATCH_ID)
+
+    def test_enabling_then_rediscovering_installs_the_wrappers(self):
+        self._write_config(enabled=False)
+        self._discover()
+        self.assertIsNone(self._patch_mark())
+        self._write_config(enabled=True)
+        manager = self._discover(force=True)
+        self.assertTrue(self._loaded(manager).enabled)
+        self.assertEqual(self._patch_mark(), patches.PATCH_ID)
+
+
 class PluginPackageTest(unittest.TestCase):
     """The candidate must be a plugin Hermes actually discovers and registers."""
 

@@ -26,12 +26,13 @@ python scripts/install_gateway_plugin.py --hermes-home /path/to/hermes-home --fo
 python scripts/install_gateway_plugin.py startup-recovery-thin
 ```
 
-## queued-lane-interim-thin（候选，未部署）
+## queued-lane-interim-thin（候选 v2，未部署）
 
 Runs 回合里 queued-lane 的前序答复（stock 交给 `ApiServerAdapter.send()` 必然失败的那一份）
 转成本 run 的 `message.interim`，并让同文的 `run.completed` 不重复；同时堵住新卡产生
-`api_server` 自投订阅的三个自动入口（NB 汇报信箱照旧从 `tasks.session_id` 路由）。两处都是
-窄补丁，不改上游。候选状态、绑定规则、测试与部署/回滚见
+`api_server` 自投订阅的自动入口（NB 汇报信箱照旧从 `tasks.session_id` 路由）。网关侧是窄
+补丁、不改上游；**R1 的段边界修正落在 NB 解析器**（本仓库 `core/hermes_client.py`），部署
+时 NB 侧必须同版。候选状态、绑定规则、收窄契约（独立 CLI 不继承补丁）、测试与部署/回滚见
 [`queued-lane-interim-thin/README.md`](queued-lane-interim-thin/README.md)。
 
 ```bash
