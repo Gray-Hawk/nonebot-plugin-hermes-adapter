@@ -30,6 +30,7 @@ from .decision_contract import (
     render_en_field_lines,
 )
 from .control_intent import CONTROL_TOOL_NAME
+from .inline_media_cap import cap_inline_image_parts
 from .media_patterns import _MD_IMAGE_PATTERN, _MEDIA_TAG_PATTERN
 from .media_whitelist import inline_local_media_images
 from .message_context import render_message_context_head
@@ -1989,8 +1990,13 @@ class HermesClient:
         - 提交阶段错误沿原异常面上抛。run 登记后的订阅异常返回 is_run_detached,
           不 stop、不清台账,由 slot 收尾或启动恢复 reattach;只有未登记 run
           才在异常时 stop 止损,避免无人投递的孤儿执行;
-        - 图片等 content parts 原样透传(实测 runs 转发给 provider)。
+        - 图片等 content parts 原样透传(实测 runs 转发给 provider);唯一例外是
+          data 内联图片数量闸(见 core/inline_media_cap):上游按次最多 10 张,
+          超限整轮 400 invalid_params,故提交前保留最新 10 张、文本与寻址标记不动。
         """
+        # 上游 commit_api_images 对 data 图片设 _IMAGE_LIMIT=10，超一张即 400；
+        # 截断必须发生在提交意图落账之前，reclaim 才能重放同一个合规请求体。
+        content = cap_inline_image_parts(content)
         body = {
             "input": [{"role": "user", "content": content}],
             "instructions": system_prompt,
