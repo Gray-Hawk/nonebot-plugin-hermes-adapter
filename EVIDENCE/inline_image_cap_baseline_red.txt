@@ -1,0 +1,212 @@
+11-12 14:43:08 [SUCCESS] nonebot | NoneBot is initializing...
+11-12 14:43:08 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:142: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.createTests()
+11-12 14:43:08 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-12 14:43:08 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+test_dropped_images_keep_recall_labels (tests.test_inline_image_limit_runs.InlineImageCapTests.test_dropped_images_keep_recall_labels)
+被移除的图片仍留 `[图 m:id#idx]` 文本标记：用户与模型可按 m:id 召回。 ... 11-12 14:43:08 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+Executing <Task finished name='Task-2' coro=<InlineImageCapTests.test_dropped_images_keep_recall_labels() done, defined at /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/nph-baseline-cap2/tests/test_inline_image_limit_runs.py:160> exception=AssertionError("Lists differ: ['dat[18 chars],IMG00', 'data:image/png;base64,IMG01', 'data:[298 chars]G11'] != ['dat[18 chars],IMG02', 'data:image/png;base64,IMG03', 'data:[236 chars]G11']\n\nFirst differing element 0:\n'data:image/png;base64,IMG00'\n'data:image/png;base64,IMG02'\n\nFirst list contains 2 additional elements.\nFirst extra element 10:\n'data:image/png;base64,IMG10'\n\n- ['data:image/png;base64,IMG00',\n?                             ^\n\n+ ['data:image/png;base64,IMG02',\n?                             ^\n\n-  'data:image/png;base64,IMG01',\n-  'data:image/png;base64,IMG02',\n   'data:image/png;base64,IMG03',\n   'data:image/png;base64,IMG04',\n   'data:image/png;base64,IMG05',\n   'data:image/png;base64,IMG06',\n   'data:image/png;base64,IMG07',\n   'data:image/png;base64,IMG08',\n   'data:image/png;base64,IMG09',\n   'data:image/png;base64,IMG10',\n   'data:image/png;base64,IMG11']") created at /usr/lib/python3.13/asyncio/runners.py:100> took 0.157 seconds
+FAIL
+test_exactly_ten_images_pass_through_untouched (tests.test_inline_image_limit_runs.InlineImageCapTests.test_exactly_ten_images_pass_through_untouched) ... ok
+test_mixed_images_and_stickers_keep_the_last_ten (tests.test_inline_image_limit_runs.InlineImageCapTests.test_mixed_images_and_stickers_keep_the_last_ten)
+普通图与表情包混合超限时按 parts 旧→新统一截断，两类寻址标签都保留。 ... FAIL
+test_over_limit_logs_counts_without_payload (tests.test_inline_image_limit_runs.InlineImageCapTests.test_over_limit_logs_counts_without_payload)
+WARNING 只报丢弃/保留数量；不打印 data URL、图片字节或提示词正文。 ... FAIL
+test_plain_text_passes_through_untouched (tests.test_inline_image_limit_runs.InlineImageCapTests.test_plain_text_passes_through_untouched) ... ok
+test_remote_url_parts_are_not_counted_or_dropped (tests.test_inline_image_limit_runs.InlineImageCapTests.test_remote_url_parts_are_not_counted_or_dropped)
+远程 URL 图片 part 不受内联数量闸约束（上限只管 data: 内联字节）。 ... FAIL
+test_twelve_inline_images_keep_the_last_ten (tests.test_inline_image_limit_runs.InlineImageCapTests.test_twelve_inline_images_keep_the_last_ten) ... FAIL
+
+======================================================================
+FAIL: test_dropped_images_keep_recall_labels (tests.test_inline_image_limit_runs.InlineImageCapTests.test_dropped_images_keep_recall_labels)
+被移除的图片仍留 `[图 m:id#idx]` 文本标记：用户与模型可按 m:id 召回。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/nph-baseline-cap2/tests/test_inline_image_limit_runs.py", line 168, in test_dropped_images_keep_recall_labels
+    self.assertEqual(inline_images(content), [data_image(i) for i in range(2, 12)])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['dat[18 chars],IMG00', 'data:image/png;base64,IMG01', 'data:[298 chars]G11'] != ['dat[18 chars],IMG02', 'data:image/png;base64,IMG03', 'data:[236 chars]G11']
+
+First differing element 0:
+'data:image/png;base64,IMG00'
+'data:image/png;base64,IMG02'
+
+First list contains 2 additional elements.
+First extra element 10:
+'data:image/png;base64,IMG10'
+
+- ['data:image/png;base64,IMG00',
+?                             ^
+
++ ['data:image/png;base64,IMG02',
+?                             ^
+
+-  'data:image/png;base64,IMG01',
+-  'data:image/png;base64,IMG02',
+   'data:image/png;base64,IMG03',
+   'data:image/png;base64,IMG04',
+   'data:image/png;base64,IMG05',
+   'data:image/png;base64,IMG06',
+   'data:image/png;base64,IMG07',
+   'data:image/png;base64,IMG08',
+   'data:image/png;base64,IMG09',
+   'data:image/png;base64,IMG10',
+   'data:image/png;base64,IMG11']
+
+======================================================================
+FAIL: test_mixed_images_and_stickers_keep_the_last_ten (tests.test_inline_image_limit_runs.InlineImageCapTests.test_mixed_images_and_stickers_keep_the_last_ten)
+普通图与表情包混合超限时按 parts 旧→新统一截断，两类寻址标签都保留。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/nph-baseline-cap2/tests/test_inline_image_limit_runs.py", line 226, in test_mixed_images_and_stickers_keep_the_last_ten
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        inline_images(content), [data_image(i) for i in range(3, 13)]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: ['dat[18 chars],IMG00', 'data:image/png;base64,IMG01', 'data:[329 chars]G12'] != ['dat[18 chars],IMG03', 'data:image/png;base64,IMG04', 'data:[236 chars]G12']
+
+First differing element 0:
+'data:image/png;base64,IMG00'
+'data:image/png;base64,IMG03'
+
+First list contains 3 additional elements.
+First extra element 10:
+'data:image/png;base64,IMG10'
+
+- ['data:image/png;base64,IMG00',
+?                             ^
+
++ ['data:image/png;base64,IMG03',
+?                             ^
+
+-  'data:image/png;base64,IMG01',
+-  'data:image/png;base64,IMG02',
+-  'data:image/png;base64,IMG03',
+   'data:image/png;base64,IMG04',
+   'data:image/png;base64,IMG05',
+   'data:image/png;base64,IMG06',
+   'data:image/png;base64,IMG07',
+   'data:image/png;base64,IMG08',
+   'data:image/png;base64,IMG09',
+   'data:image/png;base64,IMG10',
+   'data:image/png;base64,IMG11',
+   'data:image/png;base64,IMG12']
+
+======================================================================
+FAIL: test_over_limit_logs_counts_without_payload (tests.test_inline_image_limit_runs.InlineImageCapTests.test_over_limit_logs_counts_without_payload)
+WARNING 只报丢弃/保留数量；不打印 data URL、图片字节或提示词正文。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/nph-baseline-cap2/tests/test_inline_image_limit_runs.py", line 183, in test_over_limit_logs_counts_without_payload
+    self.assertEqual(len(inline_images(body["input"][0]["content"])), 10)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 12 != 10
+
+======================================================================
+FAIL: test_remote_url_parts_are_not_counted_or_dropped (tests.test_inline_image_limit_runs.InlineImageCapTests.test_remote_url_parts_are_not_counted_or_dropped)
+远程 URL 图片 part 不受内联数量闸约束（上限只管 data: 内联字节）。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/nph-baseline-cap2/tests/test_inline_image_limit_runs.py", line 247, in test_remote_url_parts_are_not_counted_or_dropped
+    self.assertEqual(inline_images(content), [data_image(i) for i in range(2, 12)])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['dat[18 chars],IMG00', 'data:image/png;base64,IMG01', 'data:[298 chars]G11'] != ['dat[18 chars],IMG02', 'data:image/png;base64,IMG03', 'data:[236 chars]G11']
+
+First differing element 0:
+'data:image/png;base64,IMG00'
+'data:image/png;base64,IMG02'
+
+First list contains 2 additional elements.
+First extra element 10:
+'data:image/png;base64,IMG10'
+
+- ['data:image/png;base64,IMG00',
+?                             ^
+
++ ['data:image/png;base64,IMG02',
+?                             ^
+
+-  'data:image/png;base64,IMG01',
+-  'data:image/png;base64,IMG02',
+   'data:image/png;base64,IMG03',
+   'data:image/png;base64,IMG04',
+   'data:image/png;base64,IMG05',
+   'data:image/png;base64,IMG06',
+   'data:image/png;base64,IMG07',
+   'data:image/png;base64,IMG08',
+   'data:image/png;base64,IMG09',
+   'data:image/png;base64,IMG10',
+   'data:image/png;base64,IMG11']
+
+======================================================================
+FAIL: test_twelve_inline_images_keep_the_last_ten (tests.test_inline_image_limit_runs.InlineImageCapTests.test_twelve_inline_images_keep_the_last_ten)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/nph-baseline-cap2/tests/test_inline_image_limit_runs.py", line 157, in test_twelve_inline_images_keep_the_last_ten
+    self.assertEqual(inline_images(content), [data_image(i) for i in range(2, 12)])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['dat[18 chars],IMG00', 'data:image/png;base64,IMG01', 'data:[298 chars]G11'] != ['dat[18 chars],IMG02', 'data:image/png;base64,IMG03', 'data:[236 chars]G11']
+
+First differing element 0:
+'data:image/png;base64,IMG00'
+'data:image/png;base64,IMG02'
+
+First list contains 2 additional elements.
+First extra element 10:
+'data:image/png;base64,IMG10'
+
+- ['data:image/png;base64,IMG00',
+?                             ^
+
++ ['data:image/png;base64,IMG02',
+?                             ^
+
+-  'data:image/png;base64,IMG01',
+-  'data:image/png;base64,IMG02',
+   'data:image/png;base64,IMG03',
+   'data:image/png;base64,IMG04',
+   'data:image/png;base64,IMG05',
+   'data:image/png;base64,IMG06',
+   'data:image/png;base64,IMG07',
+   'data:image/png;base64,IMG08',
+   'data:image/png;base64,IMG09',
+   'data:image/png;base64,IMG10',
+   'data:image/png;base64,IMG11']
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.187s
+
+FAILED (failures=5)

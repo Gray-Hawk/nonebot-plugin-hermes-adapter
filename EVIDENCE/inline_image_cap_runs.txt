@@ -1,0 +1,28 @@
+11-12 14:43:07 [SUCCESS] nonebot | NoneBot is initializing...
+11-12 14:43:07 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:142: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.createTests()
+11-12 14:43:07 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-12 14:43:07 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+test_dropped_images_keep_recall_labels (tests.test_inline_image_limit_runs.InlineImageCapTests.test_dropped_images_keep_recall_labels)
+被移除的图片仍留 `[图 m:id#idx]` 文本标记：用户与模型可按 m:id 召回。 ... 11-12 14:43:07 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+11-12 14:43:07 [WARNING] nonebot_plugin_hermes_adapter | [media] 单轮内联图片超限：丢弃最早 2 张，保留最新 10 张（上限 10，文本与寻址标记保留）
+Executing <Task finished name='Task-2' coro=<InlineImageCapTests.test_dropped_images_keep_recall_labels() done, defined at /home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/tests/test_inline_image_limit_runs.py:160> result=None created at /usr/lib/python3.13/asyncio/runners.py:100> took 0.156 seconds
+ok
+test_exactly_ten_images_pass_through_untouched (tests.test_inline_image_limit_runs.InlineImageCapTests.test_exactly_ten_images_pass_through_untouched) ... ok
+test_mixed_images_and_stickers_keep_the_last_ten (tests.test_inline_image_limit_runs.InlineImageCapTests.test_mixed_images_and_stickers_keep_the_last_ten)
+普通图与表情包混合超限时按 parts 旧→新统一截断，两类寻址标签都保留。 ... 11-12 14:43:07 [WARNING] nonebot_plugin_hermes_adapter | [media] 单轮内联图片超限：丢弃最早 3 张，保留最新 10 张（上限 10，文本与寻址标记保留）
+ok
+test_over_limit_logs_counts_without_payload (tests.test_inline_image_limit_runs.InlineImageCapTests.test_over_limit_logs_counts_without_payload)
+WARNING 只报丢弃/保留数量；不打印 data URL、图片字节或提示词正文。 ... ok
+test_plain_text_passes_through_untouched (tests.test_inline_image_limit_runs.InlineImageCapTests.test_plain_text_passes_through_untouched) ... ok
+test_remote_url_parts_are_not_counted_or_dropped (tests.test_inline_image_limit_runs.InlineImageCapTests.test_remote_url_parts_are_not_counted_or_dropped)
+远程 URL 图片 part 不受内联数量闸约束（上限只管 data: 内联字节）。 ... 11-12 14:43:07 [WARNING] nonebot_plugin_hermes_adapter | [media] 单轮内联图片超限：丢弃最早 2 张，保留最新 10 张（上限 10，文本与寻址标记保留）
+ok
+test_twelve_inline_images_keep_the_last_ten (tests.test_inline_image_limit_runs.InlineImageCapTests.test_twelve_inline_images_keep_the_last_ten) ... 11-12 14:43:07 [WARNING] nonebot_plugin_hermes_adapter | [media] 单轮内联图片超限：丢弃最早 2 张，保留最新 10 张（上限 10，文本与寻址标记保留）
+ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.184s
+
+OK

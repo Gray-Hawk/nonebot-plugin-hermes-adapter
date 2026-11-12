@@ -1,0 +1,13 @@
+11-12 14:44:00 [SUCCESS] nonebot | NoneBot is initializing...
+11-12 14:44:00 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:149: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.test = loader.discover(self.start, self.pattern, self.top)
+11-12 14:44:00 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-12 14:44:00 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-12 14:44:00 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+...11-12 14:44:00 [ERROR] nonebot_plugin_hermes_adapter | [HERMES passive] 正文协议失败,本轮零发送 reason='text_body_overflow' (group=None)
+...
+----------------------------------------------------------------------
+Ran 6 tests in 0.051s
+
+OK
