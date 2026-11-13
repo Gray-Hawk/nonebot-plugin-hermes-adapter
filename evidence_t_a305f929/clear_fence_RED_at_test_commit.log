@@ -1,0 +1,118 @@
+11-13 16:04:13 [SUCCESS] nonebot | NoneBot is initializing...
+11-13 16:04:13 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:153: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.test = self.testLoader.loadTestsFromNames(self.testNames,
+11-13 16:04:13 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-13 16:04:13 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-13 16:04:13 [INFO] nonebot_plugin_hermes_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-config-afzlxldq/memory/onebotv11/groups/100.md
+11-13 16:04:13 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3277766 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-0n6z74ay
+11-13 16:04:13 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] /clear 未取到命令 db id，本轮不设置前文截断 (adapter=onebotv11)
+11-13 16:04:13 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+group+100 (generation=1)
+11-13 16:04:13 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3277768 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-kxettuhq
+11-13 16:04:13 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] /clear 未取到命令 db id，本轮不设置前文截断 (adapter=onebotv11)
+11-13 16:04:13 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+group+100 (generation=1)
+11-13 16:04:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-13 16:04:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-13 16:04:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3277770 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-a87_mhfv
+11-13 16:04:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3277772 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-06arrlo6
+11-13 16:04:14 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+private+123 (generation=1)
+======================================================================
+FAIL: test_group_passive_clear_fences_inflight_old_body (tests.test_antigravity_clear_fence.ClearFenceTests.test_group_passive_clear_fences_inflight_old_body)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/redwt_3277760/tests/test_antigravity_clear_fence.py", line 246, in test_group_passive_clear_fences_inflight_old_body
+    await self._assert_clear_fence("passive")
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/redwt_3277760/tests/test_antigravity_clear_fence.py", line 268, in _assert_clear_fence
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        self.platform[before_release:],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        [],
+        ^^^
+        "clear 完成后仍在途的旧代正文不得到达平台发送边界",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: ['OLD'] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+'OLD'
+
+- ['OLD']
++ [] : clear 完成后仍在途的旧代正文不得到达平台发送边界
+
+======================================================================
+FAIL: test_group_reactive_clear_fences_inflight_old_body (tests.test_antigravity_clear_fence.ClearFenceTests.test_group_reactive_clear_fences_inflight_old_body)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/redwt_3277760/tests/test_antigravity_clear_fence.py", line 249, in test_group_reactive_clear_fences_inflight_old_body
+    await self._assert_clear_fence("reactive")
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/redwt_3277760/tests/test_antigravity_clear_fence.py", line 268, in _assert_clear_fence
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        self.platform[before_release:],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        [],
+        ^^^
+        "clear 完成后仍在途的旧代正文不得到达平台发送边界",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: ['OLD'] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+'OLD'
+
+- ['OLD']
++ [] : clear 完成后仍在途的旧代正文不得到达平台发送边界
+
+======================================================================
+FAIL: test_private_clear_fences_inflight_old_body (tests.test_antigravity_clear_fence.ClearFenceTests.test_private_clear_fences_inflight_old_body)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/redwt_3277760/tests/test_antigravity_clear_fence.py", line 243, in test_private_clear_fences_inflight_old_body
+    await self._assert_clear_fence("private")
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/redwt_3277760/tests/test_antigravity_clear_fence.py", line 268, in _assert_clear_fence
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        self.platform[before_release:],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        [],
+        ^^^
+        "clear 完成后仍在途的旧代正文不得到达平台发送边界",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: ['OLD'] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+'OLD'
+
+- ['OLD']
++ [] : clear 完成后仍在途的旧代正文不得到达平台发送边界
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.133s
+
+FAILED (failures=3)

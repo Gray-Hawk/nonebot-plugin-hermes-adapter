@@ -1,0 +1,22 @@
+11-13 16:03:17 [SUCCESS] nonebot | NoneBot is initializing...
+11-13 16:03:17 [INFO] nonebot | Current Env: prod
+11-13 16:03:17 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+<sys>:0: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+11-13 16:03:17 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-13 16:03:18 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-13 16:03:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3277274 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/review-acp-chain-oi0hr1u2
+CHAIN_RESULT {"private": true, "clear_during_prompt": false, "sends": ["CHAIN-A", "CHAIN-B"], "transport_error": false, "parse_failed": false, "old_key": "hermes-onebotv11+private+user", "current_key": "hermes-onebotv11+private+user", "methods": ["initialize", "session/new", "session/prompt"], "has_system_extension": true, "question_in_wire": true}
+11-13 16:03:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/review-acp-chain-ztcja2jy/memory/onebotv11/groups/room.md
+11-13 16:03:18 [INFO] nonebot_plugin_hermes_adapter | [identity] 自动创建身份表: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/review-acp-chain-ztcja2jy/memory/onebotv11/identities.csv
+11-13 16:03:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3277276 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/review-acp-chain-ztcja2jy
+CHAIN_RESULT {"private": false, "clear_during_prompt": false, "sends": ["CHAIN-A", "CHAIN-B"], "transport_error": false, "parse_failed": false, "old_key": "hermes-onebotv11+group+room", "current_key": "hermes-onebotv11+group+room", "methods": ["initialize", "session/new", "session/prompt"], "has_system_extension": true, "question_in_wire": true}
+11-13 16:03:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3277278 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/review-acp-chain-y0s88ww4
+11-13 16:03:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] 终态没有正文 (user=user)
+CHAIN_RESULT {"private": true, "clear_during_prompt": false, "sends": [], "transport_error": false, "parse_failed": false, "old_key": "hermes-onebotv11+private+user", "current_key": "hermes-onebotv11+private+user", "methods": ["initialize", "session/new", "session/prompt"], "has_system_extension": true, "question_in_wire": true}
+11-13 16:03:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3277280 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/review-acp-chain-fdun52vl
+11-13 16:03:18 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 调用失败 code=-32603: ACPError
+11-13 16:03:18 [WARNING] nonebot_plugin_hermes_adapter | [HERMES passive] transport error fallback (group=None, is_private=True, fallback=silent); upstream raw_text suppressed (len=40)
+CHAIN_RESULT {"private": true, "clear_during_prompt": false, "sends": [], "transport_error": true, "parse_failed": true, "old_key": "hermes-onebotv11+private+user", "current_key": "hermes-onebotv11+private+user", "methods": ["initialize", "session/new", "session/prompt"], "has_system_extension": true, "question_in_wire": true}
+11-13 16:03:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3277282 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/review-acp-chain-ll2jmzu9
+11-13 16:03:18 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+private+user (generation=1)
+CHAIN_RESULT {"private": true, "clear_during_prompt": true, "sends": ["CHAIN-A", "CHAIN-B"], "transport_error": false, "parse_failed": false, "old_key": "hermes-onebotv11+private+user", "current_key": "hermes-onebotv11+private+user-g1", "methods": ["initialize", "session/new", "session/prompt"], "has_system_extension": true, "question_in_wire": true}

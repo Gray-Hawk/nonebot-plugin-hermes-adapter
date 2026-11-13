@@ -1,0 +1,34 @@
+11-13 16:03:13 [SUCCESS] nonebot | NoneBot is initializing...
+11-13 16:03:13 [INFO] nonebot | Current Env: prod
+<sys>:0: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+11-13 16:03:13 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-13 16:03:13 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+test_normal_real_outbound (__main__.ClearFence.test_normal_real_outbound) ... 11-13 16:03:13 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3277197 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-case-0o8r_pl0
+REAL_OUTBOUND {"route": "private", "clear": false, "generation": 0, "command_receipts": [], "late_old_body_sends": ["OLD"], "all_platform_sends": ["OLD"], "acp_session_ids": ["sess-1"], "new_sessions": 1, "run_ids": [null]}
+ok
+test_private_clear_fence (__main__.ClearFence.test_private_clear_fence) ... 11-13 16:03:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3277199 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-case-juhiw7l3
+11-13 16:03:14 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+private+123 (generation=1)
+11-13 16:03:14 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] 交付组件按台账取消出站 run= component=primary: stale generation: run=-
+REAL_OUTBOUND {"route": "private", "clear": true, "generation": 1, "command_receipts": ["✅ 会话已重置，开始新的对话。"], "late_old_body_sends": [], "all_platform_sends": ["✅ 会话已重置，开始新的对话。", "OLD"], "acp_session_ids": ["sess-1", "sess-2"], "new_sessions": 2, "run_ids": [null, null]}
+ok
+test_group_passive_clear_fence (__main__.ClearFence.test_group_passive_clear_fence) ... 11-13 16:03:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-entry-review-pa7b1a30/memory/onebotv11/groups/100.md
+11-13 16:03:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3277202 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-case-1te8umw8
+11-13 16:03:14 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] /clear 未取到命令 db id，本轮不设置前文截断 (adapter=onebotv11)
+11-13 16:03:14 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+group+100 (generation=1)
+11-13 16:03:14 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] 交付组件按台账取消出站 run= component=primary: stale generation: run=-
+REAL_OUTBOUND {"route": "passive", "clear": true, "generation": 1, "command_receipts": ["[at]\n✅ 会话已重置，开始新的对话。"], "late_old_body_sends": [], "all_platform_sends": ["[at]\n✅ 会话已重置，开始新的对话。", "OLD"], "acp_session_ids": ["sess-1", "sess-2"], "new_sessions": 2, "run_ids": [null, null]}
+ok
+test_group_reactive_clear_fence (__main__.ClearFence.test_group_reactive_clear_fence) ... 11-13 16:03:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3277205 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-case-c9_h9uvt
+11-13 16:03:14 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] /clear 未取到命令 db id，本轮不设置前文截断 (adapter=onebotv11)
+11-13 16:03:14 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+group+100 (generation=1)
+11-13 16:03:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-13 16:03:14 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] 交付组件按台账取消出站 run= component=primary: stale generation: run=-
+11-13 16:03:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-13 16:03:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+REAL_OUTBOUND {"route": "reactive", "clear": true, "generation": 1, "command_receipts": ["[at]\n✅ 会话已重置，开始新的对话。"], "late_old_body_sends": [], "all_platform_sends": ["[at]\n✅ 会话已重置，开始新的对话。", "OLD"], "acp_session_ids": ["sess-1", "sess-2"], "new_sessions": 2, "run_ids": [null, null]}
+ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.141s
+
+OK
