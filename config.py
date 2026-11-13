@@ -40,8 +40,8 @@ class Config(BaseModel):
     hermes_antigravity_model: str = Field(default="", alias="agent_antigravity_model")
     """AGENT_ANTIGRAVITY_MODEL：显式 ACP 模型 id（如 gemini-3.8-flash-high）；空串用账号默认模型。"""
 
-    hermes_antigravity_agent: str = Field(default="", alias="agent_antigravity_agent")
-    """AGENT_ANTIGRAVITY_AGENT：显式 ACP 自定义 agent 名（`agy --agent <名>`）；空串保持官方默认 agent。"""
+    hermes_antigravity_persona: str = Field(default="", alias="agent_antigravity_persona")
+    """AGENT_ANTIGRAVITY_PERSONA：显式 ACP 自定义 agent 名（`agy --agent <名>`）；空串保持官方默认 agent。"""
 
     hermes_mcp_enabled: bool = Field(default=False, alias="agent_mcp_enabled")
     """AGENT_MCP_ENABLED：是否启动反向 MCP server。"""

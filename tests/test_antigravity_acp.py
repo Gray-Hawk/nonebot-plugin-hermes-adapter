@@ -129,26 +129,26 @@ class ACPAgentArgvTests(unittest.TestCase):
 
 
 class AntigravityAgentConfigTests(unittest.TestCase):
-    """配置面：AGENT_ANTIGRAVITY_AGENT 缺省空串，并接到 ACP 客户端。"""
+    """配置面：AGENT_ANTIGRAVITY_PERSONA 缺省空串，并接到 ACP 客户端。"""
 
     def test_config_exposes_agent_with_empty_default(self) -> None:
         from nonebot_plugin_hermes_adapter.config import Config
 
         defaults = Config()
-        self.assertEqual(defaults.hermes_antigravity_agent, "")
-        field = Config.model_fields["hermes_antigravity_agent"]
-        self.assertEqual(field.alias, "agent_antigravity_agent")
-        validated = Config.model_validate({"agent_antigravity_agent": "nano"})
-        self.assertEqual(validated.hermes_antigravity_agent, "nano")
+        self.assertEqual(defaults.hermes_antigravity_persona, "")
+        field = Config.model_fields["hermes_antigravity_persona"]
+        self.assertEqual(field.alias, "agent_antigravity_persona")
+        validated = Config.model_validate({"agent_antigravity_persona": "nano"})
+        self.assertEqual(validated.hermes_antigravity_persona, "nano")
 
     def test_get_client_passes_configured_agent_to_the_acp_client(self) -> None:
         from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
         from nonebot_plugin_hermes_adapter.config import plugin_config
 
-        previous = plugin_config.hermes_antigravity_agent
-        object.__setattr__(plugin_config, "hermes_antigravity_agent", "nano")
+        previous = plugin_config.hermes_antigravity_persona
+        object.__setattr__(plugin_config, "hermes_antigravity_persona", "nano")
         self.addCleanup(
-            object.__setattr__, plugin_config, "hermes_antigravity_agent", previous
+            object.__setattr__, plugin_config, "hermes_antigravity_persona", previous
         )
         previous_client = ag._client
         ag._client = None

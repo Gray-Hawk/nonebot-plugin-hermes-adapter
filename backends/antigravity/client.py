@@ -552,7 +552,7 @@ def get_client() -> AntigravityACPClient:
         _client = AntigravityACPClient(
             cli_path=plugin_config.hermes_antigravity_cli,
             model=plugin_config.hermes_antigravity_model,
-            agent=plugin_config.hermes_antigravity_agent,
+            agent=plugin_config.hermes_antigravity_persona,
             workspace=_acp_workspace(),
             prompt_timeout=float(plugin_config.hermes_api_timeout),
         )
