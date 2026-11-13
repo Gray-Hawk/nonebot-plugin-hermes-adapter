@@ -34,6 +34,18 @@ _SCHEMA_STATEMENTS = [
         internal_id  TEXT    PRIMARY KEY
     )
     """,
+    # Antigravity ACP 会话映射:同一插件 session key 的 ACP sessionId 与
+    # 系统上下文哈希(变化时 session/resume 重新注入),外加会话当前模型。
+    # 与 session_keys 同库不同表:都是「重启必须还在」的运行时状态,不新增数据库。
+    """
+    CREATE TABLE IF NOT EXISTS acp_sessions (
+        session_key    TEXT    PRIMARY KEY,
+        acp_session_id TEXT    NOT NULL,
+        system_hash    TEXT    NOT NULL,
+        model          TEXT    NOT NULL DEFAULT '',
+        updated_at     REAL    NOT NULL
+    )
+    """,
 ]
 
 
@@ -102,6 +114,44 @@ class SessionKeyStore:
             )
         except Exception as exc:
             _log_store_failure("持久化 session key", exc, f" ({internal_id})")
+
+    # --- Antigravity ACP session 映射 ---
+
+    def load_acp_session(self, session_key: str) -> tuple[str, str, str] | None:
+        """返回 (acp_session_id, system_hash, model)；无映射或读失败返回 None。"""
+        try:
+            row = self._conn.execute(
+                "SELECT acp_session_id, system_hash, model FROM acp_sessions WHERE session_key=?",
+                (session_key,),
+            ).fetchone()
+        except Exception as exc:
+            _log_store_failure("读取 ACP session 映射", exc, f" ({session_key})")
+            return None
+        if row is None:
+            return None
+        return (row["acp_session_id"], row["system_hash"], row["model"])
+
+    def put_acp_session(
+        self,
+        session_key: str,
+        acp_session_id: str,
+        system_hash: str,
+        model: str,
+        *,
+        now: float,
+    ) -> None:
+        try:
+            self._conn.execute(
+                "INSERT INTO acp_sessions "
+                "(session_key, acp_session_id, system_hash, model, updated_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(session_key) DO UPDATE SET "
+                "acp_session_id=excluded.acp_session_id, system_hash=excluded.system_hash, "
+                "model=excluded.model, updated_at=excluded.updated_at",
+                (session_key, acp_session_id, system_hash, model, now),
+            )
+        except Exception as exc:
+            _log_store_failure("持久化 ACP session 映射", exc, f" ({session_key})")
 
     # --- /delay 暂停状态持久化 ---
 

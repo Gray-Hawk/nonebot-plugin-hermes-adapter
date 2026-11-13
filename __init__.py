@@ -12,7 +12,7 @@ require("nonebot_plugin_alconna")
 require("nonebot_plugin_apscheduler")
 require("nonebot_plugin_localstore")
 
-from .config import Config, plugin_config
+from .config import Config, background_report_enabled, plugin_config
 
 __version__ = "0.1.0"
 
@@ -83,8 +83,16 @@ async def _hermes_m1_startup():
     from .core.prompt_dump import init_prompt_dump
 
     init_prompt_dump()
-    await start_mcp_server()
-    _driver.on_shutdown(stop_mcp_server)
+    if plugin_config.hermes_api_interface == "antigravity":
+        # 首片不开放 MCP/submit_control：antigravity 不连 Hermes 控制面，
+        # 反向 MCP server 也不起；ACP 进程随插件关闭清理。
+        from .backends.antigravity.client import close_client
+
+        logger.info("[HERMES MCP] antigravity 首片不开放 MCP，跳过反向 MCP server")
+        _driver.on_shutdown(close_client)
+    else:
+        await start_mcp_server()
+        _driver.on_shutdown(stop_mcp_server)
     _driver.on_shutdown(stop_storage)
     # 挂起审批装回后延迟重发管理员通知(本部署补丁:best-effort):
     # 通知随旧进程死了,装回的条目管理员可能从没见过;条目本身已在,/approve 可答。
@@ -110,7 +118,7 @@ async def _hermes_m1_startup():
     register_storage_vacuum()
     register_session_idle_reset()
     register_proactive_activation()
-    if plugin_config.hermes_api_interface != "astrbot":
+    if background_report_enabled():
         register_background_report()
     from .core.misc_config import load_misc_config
 

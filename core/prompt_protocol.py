@@ -241,3 +241,99 @@ STICKER_TOOL_GUIDANCE = '''本地表情库：
 - 当表情已能完整表达回应时，可只回一个表情，不附文字。
 - 发送表情时，正文仅写 表情=ID（半角等号），不要带其他文字；'''
 STICKER_CONTINUATION = "如果发送表情后还要继续发言，本轮调用 request_continuation 进入续跑，下一轮再发文字。"
+
+
+# --------------------------------------------------------------------------- #
+# Antigravity 首片：复用 § 纯文本协议，但摘掉本后端没有的工具能力说明。
+# 只做文本删改，不另写一套协议；astrbot/completions/runs 路径不经过这里。
+# --------------------------------------------------------------------------- #
+
+_UNSUPPORTED_CAPABILITY_MARKERS: tuple[str, ...] = (
+    "submit_control",
+    "push_message",
+    "request_continuation",
+    "get_background_tasks",
+    "get_message_images",
+    "pin_anchor",
+    "release_anchor",
+    "answer_anchor",
+    "anchor_merge",
+    "pinned_tasks",
+    "should_exit_active",
+)
+
+
+def _cut_section(text: str, head: str, tail: str) -> str:
+    start = text.find(head)
+    if start < 0:
+        return text
+    end = text.find(tail, start)
+    if end < 0:
+        return text
+    return text[:start] + text[end:]
+
+
+def _cut_block_to_any(text: str, head: str, tails: tuple[str, ...]) -> str:
+    start = text.find(head)
+    if start < 0:
+        return text
+    ends = [pos for pos in (text.find(tail, start) for tail in tails) if pos >= 0]
+    if not ends:
+        return text
+    return text[:start] + text[min(ends):]
+
+
+def strip_unsupported_capabilities(text: str) -> str:
+    """从已渲染的 § 协议里摘掉首片不存在的工具/控制能力说明。
+
+    先做整句改写（保住承载输入说明的长行），再整节删除任务锚、退出门槛与
+    【轮中与工具调用】，最后按行兜底过滤残留工具名。模板漂移时宁可多删，
+    也不把不存在的工具教给模型。
+    """
+    text = text.replace("不可用 submit_control 引用或钉锚", "不可引用")
+    text = text.replace("当前 <pinned_tasks> 锚或近期人类消息", "近期人类消息")
+    text = text.replace("；工具调用照常进行", "")
+    text = text.replace("、不调用工具", "")
+    text = text.replace("匹配你的系统设定 / SOUL 等记忆", "匹配本会话的系统设定")
+    text = text.replace(
+        "需要内容就走上面三条去拉，\n    拉不到就直说看不到",
+        "看不到就直接说明看不到",
+    )
+    text = text.replace(
+        "私聊里的控制只用到 reply_to；退窗与任务锚只在群活跃态生效。\n", ""
+    )
+    text = _cut_section(
+        text, "任务锚（输入里出现 <pinned_tasks> 块时）：", "插话原则（"
+    )
+    text = _cut_section(
+        text, "退出门槛（决定这轮是否退窗）：", "回复纪律（决定正文范围）："
+    )
+    text = _cut_section(text, "【轮中与工具调用】", "【任务受理与行动诚实】")
+    text = _cut_section(
+        text,
+        "  - 聊天消息区域/会话历史里的图是上下文，不是工单：",
+        "  - [图片]/[表情包] 占位符",
+    )
+    text = _cut_section(
+        text, "  - 指代不明（确定不了用户说的是哪张图）时", "正文内联 @（"
+    )
+    text = _cut_section(text, "- 引用某条原文（只在确需指向它时）", "- 三条连发")
+    text = _cut_block_to_any(
+        text,
+        "- 长任务受理回执",
+        (
+            "两块输入：",
+            "私聊只有对方一个人",
+            "没有要说的就只输出两行",
+            "</decision_protocol>",
+        ),
+    )
+    lines = [
+        line
+        for line in text.split("\n")
+        if not any(marker in line for marker in _UNSUPPORTED_CAPABILITY_MARKERS)
+    ]
+    text = "\n".join(lines)
+    while "\n\n\n" in text:
+        text = text.replace("\n\n\n", "\n\n")
+    return text

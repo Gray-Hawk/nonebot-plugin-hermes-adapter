@@ -24,6 +24,7 @@ from nonebot import logger
 
 from ..config import plugin_config
 from ..backends.astrbot import client as astrbot_client
+from ..backends.antigravity import client as antigravity_client
 from . import steer_presentation
 from .decision_contract import (
     NON_ANCHOR_FIELD_NAMES,
@@ -1111,6 +1112,23 @@ def classify_persistence_error(text: str) -> PersistenceCause:
     return "unknown"
 
 
+def _antigravity_text_content(content: Any) -> str | None:
+    """Antigravity 首片只接受纯文本：任一段非文本即返回 None，由调用方本地拒绝。"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        pieces: list[str] = []
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "text":
+                return None
+            text = part.get("text")
+            if not isinstance(text, str):
+                return None
+            pieces.append(text)
+        return "\n".join(piece for piece in pieces if piece)
+    return None
+
+
 @dataclass
 class ChatResult:
     raw_text: str
@@ -1353,7 +1371,7 @@ class HermesClient:
         if (
             expect_structured
             and structured_tool_name == "submit_decision"
-            and plugin_config.hermes_api_interface not in {"completions", "runs"}
+            and plugin_config.hermes_api_interface not in {"completions", "runs", "antigravity"}
         ):
             system_prompt = system_prompt + _decision_hint()
 
@@ -1390,6 +1408,13 @@ class HermesClient:
                 "user_content": content,
             }
             _dump_note = "astrbot 后端:图片另经附件上传,本转储为本地侧请求视图"
+        elif _dump_iface == "antigravity":
+            # ACP 只发纯文本 prompt；转储保留本地侧系统提示与用户内容视图。
+            _dump_request = {
+                "system_prompt": system_prompt,
+                "user_content": content,
+            }
+            _dump_note = "antigravity 后端:仅文本经 ACP 发送,本转储为本地侧请求视图"
         else:
             _dump_request = payload
         maybe_dump_request(
@@ -1433,6 +1458,36 @@ class HermesClient:
             非 2xx 一律抛 StreamHttpError(含非流式分支——原本直接 return
             _transport_failure),让 429 自动重试只写一个点(阶段2d)。
             """
+            if plugin_config.hermes_api_interface == "antigravity":
+                user_text = _antigravity_text_content(content)
+                if user_text is None:
+                    notice = (
+                        "⚠️ Antigravity 后端首片仅支持文本消息；"
+                        "图片或文件请改用其他后端"
+                    )
+                    return "", None, ChatResult(
+                        raw_text=notice, is_local_refusal=True
+                    ), ""
+                from .. import mcp as mcp_module
+
+                try:
+                    text = await antigravity_client.get_client().prompt(
+                        session_key=session_key,
+                        system_prompt=system_prompt,
+                        user_text=user_text,
+                        store=mcp_module.session_key_store,
+                    )
+                except antigravity_client.ACPError as exc:
+                    # 只记异常类别/码，不记提示词或用户正文；有副作用的 prompt 不自动重放。
+                    logger.error(
+                        f"[HERMES antigravity] ACP 调用失败 code={exc.code}: {type(exc).__name__}"
+                    )
+                    return "", None, ChatResult(
+                        raw_text=f"⚠️ Antigravity 调用失败: {exc}",
+                        parse_failed=True,
+                        is_transport_error=True,
+                    ), ""
+                return text, None, None, ""
             if plugin_config.hermes_api_interface == "astrbot":
                 try:
                     normalized = astrbot_client.normalize_user_content(content)
@@ -1619,7 +1674,7 @@ class HermesClient:
             return result
 
         # Hermes 专属文案识别不套用到其他后端的正常模型输出。
-        hermes_error_text_enabled = plugin_config.hermes_api_interface != "astrbot"
+        hermes_error_text_enabled = plugin_config.hermes_api_interface in ("completions", "runs")
         # 检查是否为上游持久化失败错误(Hermes 返回 200 但 content 为 Session DB 错误提示)
         if hermes_error_text_enabled and is_persistence_error_text(raw_text):
             cause = classify_persistence_error(raw_text)
@@ -1678,7 +1733,7 @@ class HermesClient:
         # 独立整行 § 只作连发分隔，不要求也不解析 {"body":...}。
         # 非流式 Runs 与 completions 共用这一支；astrbot 走下面的旧协议。
         if expect_structured and structured_tool_name == "submit_decision" \
-                and plugin_config.hermes_api_interface in ("runs", "completions"):
+                and plugin_config.hermes_api_interface in ("runs", "completions", "antigravity"):
             from .runs_text import TextUnitsError, decisions_from_text
 
             try:
@@ -2253,6 +2308,12 @@ class HermesClient:
         不同后端各自使用需要鉴权的轻量端点，服务不可达与凭据错误都返回 False。
         """
         tgt = target or default_target()
+        if plugin_config.hermes_api_interface == "antigravity":
+            # /ping 对 ACP 后端只做握手探活，绝不发 Hermes HTTP 请求。
+            try:
+                return await antigravity_client.get_client().healthy()
+            except Exception:
+                return False
         try:
             client = _get_http_client()
             if plugin_config.hermes_api_interface == "astrbot":

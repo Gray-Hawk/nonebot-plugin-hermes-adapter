@@ -105,9 +105,18 @@ def _inline_media_window(window_msgs: list[BufferedMessage]) -> list[BufferedMes
     有效模式，清空会让半内联门恒判未命中、连当前消息图一起丢掉。故保留同长浅拷贝、
     仅清 image_urls，原消息对象一律不动（缓冲里的历史仍可召回）。
     """
-    if plugin_config.hermes_api_interface == "astrbot":
+    if plugin_config.hermes_api_interface in ("astrbot", "antigravity"):
         return [replace(m, image_urls=[]) for m in window_msgs]
     return window_msgs
+
+
+def _passive_decision_enabled(is_private: bool) -> bool:
+    """passive 是否走正文决策通道。
+
+    私聊天然要决策；antigravity 群 passive 也走同一通道——系统提示只教 § 协议，
+    不解析就会把 § 标记原样发进群里。其余后端的群 passive 仍是 raw_text 直发。
+    """
+    return is_private or plugin_config.hermes_api_interface == "antigravity"
 
 
 def _observe_silence(path: str, adapter_name: str, group_id: str | None, is_private: bool) -> None:
@@ -1128,7 +1137,7 @@ async def _run_passive_turn(
     # 本部署补丁: 私聊挂 submit_decision 决策信封
     # (全隐式化:私聊不再「硬必回」,模型按私聊版协议自决,无实质内容可静默)。
     # 群聊 passive(active_session=off 的旧部署形态)维持 raw_text 直发不动。
-    use_private_decision = is_private
+    use_private_decision = _passive_decision_enabled(is_private)
     # 本部署补丁:计算记忆根路径,用于路由提示动态跟随配置
     _custom_dir = resolve_custom_dir()
     _memory_root = str(_custom_dir / "memory" / adapter_name) if _custom_dir else None

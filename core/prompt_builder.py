@@ -590,6 +590,20 @@ def _build_private_profile_routing_note(memory_root: str) -> str:
     )
 
 
+def _antigravity_backend() -> bool:
+    from ..config import plugin_config
+
+    return getattr(plugin_config, "hermes_api_interface", "") == "antigravity"
+
+
+def _antigravity_protocol_block(*, private: bool) -> str:
+    """首片 System Prompt：复用 § 纯文本协议，摘掉本后端没有的工具能力。"""
+    from .prompt_protocol import strip_unsupported_capabilities
+
+    base = _JSON_LINES_PRIVATE_BLOCK_RUNS if private else _DECISION_PROTOCOL_BLOCK_RUNS
+    return strip_unsupported_capabilities(base)
+
+
 def _render_session_context(
     *,
     adapter: str,
@@ -637,6 +651,22 @@ def build_reactive_system_prompt(
     任务锚总开关(chat_config.task_anchor_enabled)关闭时选去锚协议块:
     锚说明与锚操作示例一并消失,其余协议逐字节不变。
     """
+    if _antigravity_backend():
+        # 首片只搬会话上下文 + § 协议；文件/表情/记忆路由等工具说明一律不教。
+        parts = [_antigravity_protocol_block(private=False)]
+        if adapter and self_id:
+            parts.append(
+                _render_session_context(
+                    adapter=adapter,
+                    group_id=group_id,
+                    self_id=self_id,
+                    self_nickname=self_nickname,
+                )
+            )
+        if profile_block:
+            parts.append(profile_block)
+        return "\n\n".join(parts)
+
     protocol_block = _reactive_protocol_block()
     parts = [protocol_block, _FILE_TOOL_GUIDANCE]
     if sticker_feature_enabled():
@@ -991,6 +1021,15 @@ def build_passive_system_prompt(
     private_decision(本部署补丁): 私聊挂决策信封时
     在 Message Context 头后追加私聊版决策协议块(字节稳定 per session,缓存友好)。
     """
+    if _antigravity_backend():
+        head = render_message_context_head(
+            adapter=adapter, is_private=is_private, user_id=user_id, group_id=group_id
+        )
+        head += "\n\n" + _antigravity_protocol_block(private=is_private)
+        if profile_block:
+            head += "\n\n" + profile_block
+        return head
+
     head = render_message_context_head(
         adapter=adapter, is_private=is_private, user_id=user_id, group_id=group_id
     )

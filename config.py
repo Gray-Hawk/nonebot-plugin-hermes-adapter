@@ -15,7 +15,7 @@ PLUGIN_MODULE_NAME = "nonebot_plugin_hermes_adapter"
 
 
 class Config(BaseModel):
-    """进程启动时读取的 8 个配置项；修改后重启生效。"""
+    """进程启动时读取的 10 个配置项；修改后重启生效。"""
 
     hermes_api_key: str = Field(default="", alias="agent_api_key")
     """AGENT_API_KEY：默认 Hermes API Server 的 Bearer 凭据。空串仅用于无鉴权开发环境。"""
@@ -29,10 +29,16 @@ class Config(BaseModel):
     hermes_api_timeout: int = Field(default=300, alias="agent_api_timeout")
     """AGENT_API_TIMEOUT：单次上游请求超时秒数。"""
 
-    hermes_api_interface: Literal["completions", "runs", "astrbot"] = Field(
+    hermes_api_interface: Literal["completions", "runs", "astrbot", "antigravity"] = Field(
         default="completions", alias="agent_api_interface"
     )
-    """AGENT_API_INTERFACE：turn 使用 completions、runs 或 AstrBot；后两者控制能力按各自后端支持面启用。"""
+    """AGENT_API_INTERFACE：turn 使用 completions、runs、AstrBot 或官方 agy ACP；各后端能力按支持面启用。"""
+
+    hermes_antigravity_cli: str = Field(default="agy", alias="agent_antigravity_cli")
+    """AGENT_ANTIGRAVITY_CLI：官方 Antigravity CLI 可执行文件路径；缺省 agy。凭据/OAuth 由它自己管理。"""
+
+    hermes_antigravity_model: str = Field(default="", alias="agent_antigravity_model")
+    """AGENT_ANTIGRAVITY_MODEL：显式 ACP 模型 id（如 gemini-3.8-flash-high）；空串用账号默认模型。"""
 
     hermes_mcp_enabled: bool = Field(default=False, alias="agent_mcp_enabled")
     """AGENT_MCP_ENABLED：是否启动反向 MCP server。"""
@@ -51,7 +57,16 @@ plugin_config = get_plugin_config(Config)
 
 def hermes_control_plane_enabled() -> bool:
     """是否开放依赖 Hermes 专属会话、runs 与 CLI 的控制面。"""
-    return plugin_config.hermes_api_interface != "astrbot"
+    return plugin_config.hermes_api_interface in ("completions", "runs")
+
+
+def background_report_enabled() -> bool:
+    """后台完成事件轮询只在 Hermes 服务侧后端启用；astrbot/antigravity 不误开。"""
+    return plugin_config.hermes_api_interface in ("completions", "runs")
+
+
+def antigravity_backend_active() -> bool:
+    return plugin_config.hermes_api_interface == "antigravity"
 
 
 def steer_reply_push_active() -> bool:
