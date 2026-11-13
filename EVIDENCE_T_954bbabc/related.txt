@@ -1,0 +1,522 @@
+11-13 22:12:17 [SUCCESS] nonebot | NoneBot is initializing...
+11-13 22:12:17 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:153: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.test = self.testLoader.loadTestsFromNames(self.testNames,
+11-13 22:12:18 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-13 22:12:18 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+test_agent_with_spaces_and_specials_stays_a_single_argv_item (tests.test_antigravity_acp.ACPAgentArgvTests.test_agent_with_spaces_and_specials_stays_a_single_argv_item) ... ok
+test_blank_agent_config_keeps_official_default (tests.test_antigravity_acp.ACPAgentArgvTests.test_blank_agent_config_keeps_official_default) ... ok
+test_configured_agent_is_appended_as_a_separate_argv_pair (tests.test_antigravity_acp.ACPAgentArgvTests.test_configured_agent_is_appended_as_a_separate_argv_pair) ... ok
+test_default_args_have_no_agent_flag (tests.test_antigravity_acp.ACPAgentArgvTests.test_default_args_have_no_agent_flag) ... ok
+test_configured_agent_is_passed_to_the_real_command_line (tests.test_antigravity_acp.ACPAgentSpawnTests.test_configured_agent_is_passed_to_the_real_command_line) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387936 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpyjrppdcn
+ok
+test_default_command_line_is_unchanged (tests.test_antigravity_acp.ACPAgentSpawnTests.test_default_command_line_is_unchanged) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387938 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpmtn56igd
+ok
+test_special_agent_stays_one_argv_item_on_the_real_command_line (tests.test_antigravity_acp.ACPAgentSpawnTests.test_special_agent_stays_one_argv_item_on_the_real_command_line) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387940 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp0wypysad
+ok
+test_clear_generation_opens_a_new_acp_session (tests.test_antigravity_acp.ACPClearSessionTests.test_clear_generation_opens_a_new_acp_session) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387942 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpwhwk_6do
+11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+private+10001 (generation=1)
+ok
+test_lazy_process_then_initialize_new_session_and_prompt (tests.test_antigravity_acp.ACPHandshakeTests.test_lazy_process_then_initialize_new_session_and_prompt) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387945 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp9qluh42z
+ok
+test_thought_and_plan_updates_never_reach_body (tests.test_antigravity_acp.ACPHandshakeTests.test_thought_and_plan_updates_never_reach_body) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387947 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp4d33u3kt
+ok
+test_configured_model_is_set_through_acp (tests.test_antigravity_acp.ACPModelTests.test_configured_model_is_set_through_acp) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387949 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmprk3xg3um
+ok
+test_empty_model_keeps_agent_default (tests.test_antigravity_acp.ACPModelTests.test_empty_model_keeps_agent_default) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387951 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpg7f7impc
+ok
+test_permission_is_rejected_once_at_the_original_rpc_id (tests.test_antigravity_acp.ACPPermissionTests.test_permission_is_rejected_once_at_the_original_rpc_id) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387953 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpf93wuojc
+ok
+test_changed_system_prompt_resumes_with_append_and_updates_hash (tests.test_antigravity_acp.ACPResumeTests.test_changed_system_prompt_resumes_with_append_and_updates_hash) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387955 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpsvoblub8
+ok
+test_same_system_prompt_resumes_without_reappending (tests.test_antigravity_acp.ACPResumeTests.test_same_system_prompt_resumes_without_reappending) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387958 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp12rj42hx
+ok
+test_stale_resume_falls_back_to_a_new_session (tests.test_antigravity_acp.ACPResumeTests.test_stale_resume_falls_back_to_a_new_session) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387961 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpqgyi001_
+11-13 22:12:18 [WARNING] nonebot_plugin_hermes_adapter | [HERMES antigravity] session/resume 失败 code=-32602，重建会话
+ok
+test_acp_session_mapping_roundtrip_survives_reopen (tests.test_antigravity_acp.ACPSessionMappingTests.test_acp_session_mapping_roundtrip_survives_reopen) ... ok
+test_missing_key_returns_none (tests.test_antigravity_acp.ACPSessionMappingTests.test_missing_key_returns_none) ... ok
+test_timeout_cancels_the_prompt_and_raises_timeout (tests.test_antigravity_acp.ACPTimeoutTests.test_timeout_cancels_the_prompt_and_raises_timeout) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387963 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp7w_u6kio
+ok
+test_config_exposes_agent_with_empty_default (tests.test_antigravity_acp.AntigravityAgentConfigTests.test_config_exposes_agent_with_empty_default) ... ok
+test_get_client_passes_configured_agent_to_the_acp_client (tests.test_antigravity_acp.AntigravityAgentConfigTests.test_get_client_passes_configured_agent_to_the_acp_client) ... ok
+test_antigravity_passive_uses_decision_channel (tests.test_antigravity_acp.AntigravityConfigGateTests.test_antigravity_passive_uses_decision_channel) ... ok
+test_background_reporting_is_closed_for_antigravity (tests.test_antigravity_acp.AntigravityConfigGateTests.test_background_reporting_is_closed_for_antigravity) ... ok
+test_config_accepts_antigravity_with_minimal_new_fields (tests.test_antigravity_acp.AntigravityConfigGateTests.test_config_accepts_antigravity_with_minimal_new_fields) ... ok
+test_control_plane_is_closed_for_antigravity (tests.test_antigravity_acp.AntigravityConfigGateTests.test_control_plane_is_closed_for_antigravity) ... ok
+test_history_media_is_not_inlined_for_text_only_backend (tests.test_antigravity_acp.AntigravityMediaGateTests.test_history_media_is_not_inlined_for_text_only_backend) ... ok
+test_passive_prompt_keeps_private_rules_without_tools (tests.test_antigravity_acp.AntigravityPromptTests.test_passive_prompt_keeps_private_rules_without_tools) ... ok
+test_reactive_prompt_keeps_group_rules_without_tools (tests.test_antigravity_acp.AntigravityPromptTests.test_reactive_prompt_keeps_group_rules_without_tools) ... ok
+test_chat_returns_all_final_section_units_without_http (tests.test_antigravity_acp.HermesAntigravityChatTests.test_chat_returns_all_final_section_units_without_http) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387965 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmphqisutg4
+ok
+test_hermes_error_text_detectors_do_not_run_on_model_text (tests.test_antigravity_acp.HermesAntigravityChatTests.test_hermes_error_text_detectors_do_not_run_on_model_text) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387967 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp9mt3v_o5
+ok
+test_image_content_is_refused_before_any_acp_call (tests.test_antigravity_acp.HermesAntigravityChatTests.test_image_content_is_refused_before_any_acp_call) ... ok
+test_process_exit_is_normalized_without_replay (tests.test_antigravity_acp.HermesAntigravityChatTests.test_process_exit_is_normalized_without_replay) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387969 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp8_t5p0tr
+11-13 22:12:18 [WARNING] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程结束 code=7
+11-13 22:12:18 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 调用失败 code=None: ACPProcessError
+ok
+test_rpc_error_is_normalized_without_replay (tests.test_antigravity_acp.HermesAntigravityChatTests.test_rpc_error_is_normalized_without_replay) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387971 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp_qe_ybnu
+11-13 22:12:18 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 调用失败 code=-32603: ACPError
+ok
+test_timeout_is_normalized_without_replay (tests.test_antigravity_acp.HermesAntigravityChatTests.test_timeout_is_normalized_without_replay) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387973 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpu9vu8i8n
+11-13 22:12:18 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 调用失败 code=None: ACPTimeoutError
+ok
+test_ping_uses_acp_handshake_not_hermes_http (tests.test_antigravity_acp.HermesAntigravityHealthTests.test_ping_uses_acp_handshake_not_hermes_http) ... 11-13 22:12:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387980 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpzvif3_h1
+ok
+test_boundary_seal_never_promotes_unclosed_tail (tests.test_antigravity_stream_steer.ACPSteerTakeoverTests.test_boundary_seal_never_promotes_unclosed_tail)
+护栏（修复前基线同样通过）：边界封段不得把缺末尾标记的正文补造成单位。 ... 11-13 22:12:19 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387981 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-fonvvs_3
+11-13 22:12:19 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+11-13 22:12:19 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=13 preview='TAIL-NO-CLOSE'
+11-13 22:12:19 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=13 preview='TAIL-NO-CLOSE'
+ok
+test_consecutive_b_c_steer_keeps_arrival_order (tests.test_antigravity_stream_steer.ACPSteerTakeoverTests.test_consecutive_b_c_steer_keeps_arrival_order) ... 11-13 22:12:19 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387983 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-jc74vu6u
+11-13 22:12:19 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+11-13 22:12:19 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+ok
+test_fast_b_c_before_b_echo_keeps_each_turn_boundary (tests.test_antigravity_stream_steer.ACPSteerTakeoverTests.test_fast_b_c_before_b_echo_keeps_each_turn_boundary)
+B 的回显到来前已提交 C：两份同文正文按提交轮序各自归属，不跨轮吞并。 ... 11-13 22:12:19 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387986 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-4d3r5yxo
+11-13 22:12:19 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+11-13 22:12:19 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+ok
+test_permission_reject_does_not_block_streamed_body (tests.test_antigravity_stream_steer.ACPSteerTakeoverTests.test_permission_reject_does_not_block_streamed_body) ... 11-13 22:12:20 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387993 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-lmdf39g2
+ok
+test_prior_turn_terminal_marker_surfaces_before_new_turn (tests.test_antigravity_stream_steer.ACPSteerTakeoverTests.test_prior_turn_terminal_marker_surfaces_before_new_turn)
+旧轮末份正文以「无末尾换行」的合法 `§` 收尾时，steer 边界先封旧轮再进新轮。 ... 11-13 22:12:20 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387995 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-zy6ywmu9
+11-13 22:12:20 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+ok
+test_same_body_in_a_new_turn_is_delivered_again (tests.test_antigravity_stream_steer.ACPSteerTakeoverTests.test_same_body_in_a_new_turn_is_delivered_again) ... 11-13 22:12:20 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387997 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-8mr6l_wl
+11-13 22:12:20 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+ok
+test_steer_early_end_turn_keeps_old_stream_and_new_prompt_owns_terminal (tests.test_antigravity_stream_steer.ACPSteerTakeoverTests.test_steer_early_end_turn_keeps_old_stream_and_new_prompt_owns_terminal) ... 11-13 22:12:21 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388000 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-u89m4a6e
+11-13 22:12:21 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+ok
+test_steer_without_active_turn_returns_false (tests.test_antigravity_stream_steer.ACPSteerTakeoverTests.test_steer_without_active_turn_returns_false) ... ok
+test_closed_units_arrive_before_the_prompt_rpc_returns (tests.test_antigravity_stream_steer.ACPStreamingTests.test_closed_units_arrive_before_the_prompt_rpc_returns)
+闭合 § 单位在 RPC 收尾前就进入回调；终态只补未投递的那一份。 ... 11-13 22:12:21 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388005 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-n2d1gm8n
+ok
+test_duplicate_chunks_within_a_turn_are_deduped (tests.test_antigravity_stream_steer.ACPStreamingTests.test_duplicate_chunks_within_a_turn_are_deduped) ... 11-13 22:12:21 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388008 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-9m4aanj9
+ok
+test_late_chunk_after_turn_is_not_attributed_to_next_round (tests.test_antigravity_stream_steer.ACPStreamingTests.test_late_chunk_after_turn_is_not_attributed_to_next_round) ... 11-13 22:12:21 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388010 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-uv1rglmr
+ok
+test_streamed_units_are_not_replayed_at_terminal (tests.test_antigravity_stream_steer.ACPStreamingTests.test_streamed_units_are_not_replayed_at_terminal) ... 11-13 22:12:21 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388012 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-qmplifv5
+ok
+test_clear_fences_remaining_stream_units_of_old_generation (tests.test_antigravity_stream_steer.HandlerStreamTests.test_clear_fences_remaining_stream_units_of_old_generation) ... 11-13 22:12:22 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] AGENT_PLUGIN_CUSTOM_DIR 指向的目录不可用: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-4eyn59jy/config;定制功能(规则/群档案/媒体配置等)将回退内置默认
+11-13 22:12:22 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388014 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-4eyn59jy
+11-13 22:12:22 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+11-13 22:12:22 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+private+123 (generation=1)
+11-13 22:12:22 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] 交付组件按台账取消出站 run= component=primary: stale generation: run=-
+11-13 22:12:22 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=False text_len=4 wrote_history=False
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388017 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-4eyn59jy
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+ok
+test_fast_b_c_before_echo_all_routes (tests.test_antigravity_stream_steer.HandlerStreamTests.test_fast_b_c_before_echo_all_routes)
+三路真实 handler：B 回显前已提交 C 时，两份同文正文都要出站。 ... 11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388019 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-hjr88mx7
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=68
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] ACP 接管在跑轮 (scope=private:123) rows=1 len=68
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=68
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] ACP 接管在跑轮 (scope=private:123) rows=1 len=68
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-hjr88mx7/config/memory/onebotv11/groups/100.md
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388022 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-hjr88mx7
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=100
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=100
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=100
+11-13 22:12:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=100
+11-13 22:12:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=4 wrote_history=True
+11-13 22:12:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=4 wrote_history=True
+11-13 22:12:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388025 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-hjr88mx7
+11-13 22:12:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES antigravity] session/resume 失败 code=-32602，重建会话
+11-13 22:12:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=100
+11-13 22:12:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=100
+11-13 22:12:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=100
+11-13 22:12:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=100
+11-13 22:12:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=4 wrote_history=True
+11-13 22:12:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=4 wrote_history=True
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+ok
+test_group_passive_stream_is_delivered_once (tests.test_antigravity_stream_steer.HandlerStreamTests.test_group_passive_stream_is_delivered_once) ... 11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-wnpppug1/config/memory/onebotv11/groups/100.md
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388028 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-wnpppug1
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+ok
+test_group_reactive_stream_and_b_c_steer_keep_order (tests.test_antigravity_stream_steer.HandlerStreamTests.test_group_reactive_stream_and_b_c_steer_keep_order) ... 11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-1p8fqpjt/config/memory/onebotv11/groups/100.md
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388030 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-1p8fqpjt
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=98
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=98
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=98
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=98
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+ok
+test_prior_turn_marker_precedes_steer_turn_all_routes (tests.test_antigravity_stream_steer.HandlerStreamTests.test_prior_turn_marker_precedes_steer_turn_all_routes)
+私有/群 passive/群 reactive 三路真实 handler：旧轮末份先出站，再出新轮。 ... 11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388034 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-figw1qwo
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=70
+11-13 22:12:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] ACP 接管在跑轮 (scope=private:123) rows=1 len=70
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-figw1qwo/config/memory/onebotv11/groups/100.md
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388036 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-figw1qwo
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=102
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=102
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388038 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-figw1qwo
+11-13 22:12:26 [WARNING] nonebot_plugin_hermes_adapter | [HERMES antigravity] session/resume 失败 code=-32602，重建会话
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=102
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=102
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+ok
+test_private_steer_b_takes_over_the_same_acp_session (tests.test_antigravity_stream_steer.HandlerStreamTests.test_private_steer_b_takes_over_the_same_acp_session) ... 11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388040 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-qi6e58r3
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=68
+11-13 22:12:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] ACP 接管在跑轮 (scope=private:123) rows=1 len=68
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+ok
+test_private_stream_reaches_platform_before_turn_end (tests.test_antigravity_stream_steer.HandlerStreamTests.test_private_stream_reaches_platform_before_turn_end) ... 11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388043 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-ghi6ct59
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+ok
+test_silent_turn_sends_nothing (tests.test_antigravity_stream_steer.HandlerStreamTests.test_silent_turn_sends_nothing) ... 11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388045 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-2uc_uqih
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] 终态没有正文 (user=123)
+ok
+test_group_passive_clear_fences_inflight_old_body (tests.test_antigravity_clear_fence.ClearFenceTests.test_group_passive_clear_fences_inflight_old_body) ... 11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-config-pssn6sqp/memory/onebotv11/groups/100.md
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388047 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-h4x854g9
+11-13 22:12:27 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] /clear 未取到命令 db id，本轮不设置前文截断 (adapter=onebotv11)
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+group+100 (generation=1)
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] 交付组件按台账取消出站 run= component=primary: stale generation: run=-
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=False text_len=3 wrote_history=False
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=3 wrote_history=True
+ok
+test_group_reactive_clear_fences_inflight_old_body (tests.test_antigravity_clear_fence.ClearFenceTests.test_group_reactive_clear_fences_inflight_old_body) ... 11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388050 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-vny_58yj
+11-13 22:12:27 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] /clear 未取到命令 db id，本轮不设置前文截断 (adapter=onebotv11)
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+group+100 (generation=1)
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] 交付组件按台账取消出站 run= component=primary: stale generation: run=-
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=False text_len=3 wrote_history=False
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=3 wrote_history=True
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+ok
+test_normal_turn_reaches_platform_once (tests.test_antigravity_clear_fence.ClearFenceTests.test_normal_turn_reaches_platform_once) ... 11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388053 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-bw5bi9_0
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+ok
+test_private_clear_fences_inflight_old_body (tests.test_antigravity_clear_fence.ClearFenceTests.test_private_clear_fences_inflight_old_body) ... 11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388055 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-31j_7vqd
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+private+123 (generation=1)
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] 交付组件按台账取消出站 run= component=primary: stale generation: run=-
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=False text_len=3 wrote_history=False
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+ok
+test_deny_answers_reject_once_and_keeps_body_flowing (tests.test_antigravity_permission.ACPApprovalHandlerTests.test_deny_answers_reject_once_and_keeps_body_flowing) ... 11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388058 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-7cztlwwf
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #1 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+ok
+test_group_reactive_permission_uses_the_group_scope_and_answers_once (tests.test_antigravity_permission.ACPApprovalHandlerTests.test_group_reactive_permission_uses_the_group_scope_and_answers_once) ... 11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388060 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-38_gqg67
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #2 run=- backend=antigravity scope=群 100 通知管理员 1 人
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=3 wrote_history=True
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=3 wrote_history=True
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+ok
+test_non_admin_approve_is_silent_and_never_answers (tests.test_antigravity_permission.ACPApprovalHandlerTests.test_non_admin_approve_is_silent_and_never_answers) ... 11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388062 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-lxfl751j
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #3 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+ok
+test_notification_failure_keeps_entry_answerable (tests.test_antigravity_permission.ACPApprovalHandlerTests.test_notification_failure_keeps_entry_answerable) ... 11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388064 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-ax4kb86b
+11-13 22:12:27 [WARNING] nonebot_plugin_hermes_adapter | [HERMES approval] 审批通知发送失败 admin=123: qq down
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #4 run=- backend=antigravity scope=私聊 123 通知管理员 0 人
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+ok
+test_once_answers_allow_once_and_deletes_only_after_success (tests.test_antigravity_permission.ACPApprovalHandlerTests.test_once_answers_allow_once_and_deletes_only_after_success) ... 11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388066 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-9u7a_i4z
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #5 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+ok
+test_other_choice_replies_acp_usage_only_and_keeps_entry (tests.test_antigravity_permission.ACPApprovalHandlerTests.test_other_choice_replies_acp_usage_only_and_keeps_entry) ... 11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388068 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-5h6bvb76
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #6 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+ok
+test_cancelled_permission_settles_entry_so_next_scope_can_answer (tests.test_antigravity_permission.ACPApprovalSettleRegressionTests.test_cancelled_permission_settles_entry_so_next_scope_can_answer) ... 11-13 22:12:27 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388070 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-v5lfh2jc
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #7 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388072 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-v5lfh2jc
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #8 run=- backend=antigravity scope=群 100 通知管理员 1 人
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+ok
+test_settle_keeps_entry_when_reject_write_fails (tests.test_antigravity_permission.ACPApprovalSettleRegressionTests.test_settle_keeps_entry_when_reject_write_fails)
+真正写帧失败不能当已结清：条目留单可重试，Runs 条目一律不动。 ... 11-13 22:12:28 [WARNING] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限应答写入失败（请求保持挂起）
+ok
+test_deny_answers_reject_once (tests.test_antigravity_permission.ACPPermissionClientTests.test_deny_answers_reject_once) ... 11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388074 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-hacumq16
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+ok
+test_duplicate_unknown_and_wrong_scope_answers_fail_closed (tests.test_antigravity_permission.ACPPermissionClientTests.test_duplicate_unknown_and_wrong_scope_answers_fail_closed) ... 11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388076 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-mqry8vfs
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+ok
+test_expired_permission_is_rejected_and_late_answer_fails (tests.test_antigravity_permission.ACPPermissionClientTests.test_expired_permission_is_rejected_and_late_answer_fails) ... 11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388078 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-daryyz6p
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限请求超时，已安全拒绝
+ok
+test_missing_callback_is_safely_rejected_without_registration (tests.test_antigravity_permission.ACPPermissionClientTests.test_missing_callback_is_safely_rejected_without_registration) ... 11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388080 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-pgeeej4m
+ok
+test_once_waits_for_admin_and_answers_allow_once_at_the_original_id (tests.test_antigravity_permission.ACPPermissionClientTests.test_once_waits_for_admin_and_answers_allow_once_at_the_original_id) ... 11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388082 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-v7rug_sq
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+ok
+test_options_without_allow_once_kind_cannot_be_answered_as_once (tests.test_antigravity_permission.ACPPermissionClientTests.test_options_without_allow_once_kind_cannot_be_answered_as_once) ... 11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388084 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-eynsaqc2
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+ok
+test_acp_entry_is_persisted_with_backend_and_scope_but_runs_is_unchanged (tests.test_antigravity_permission.ApprovalQueueBackendTests.test_acp_entry_is_persisted_with_backend_and_scope_but_runs_is_unchanged) ... ok
+test_acp_notice_lists_only_once_and_deny (tests.test_antigravity_permission.ApprovalQueueBackendTests.test_acp_notice_lists_only_once_and_deny) ... ok
+test_restart_does_not_restore_acp_entries (tests.test_antigravity_permission.ApprovalQueueBackendTests.test_restart_does_not_restore_acp_entries) ... 11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 从存档装回 1 条未过期挂起审批
+ok
+test_runs_approve_backend_failure_keeps_entry (tests.test_antigravity_permission.RunsApprovalRegressionTests.test_runs_approve_backend_failure_keeps_entry) ... ok
+test_runs_approve_usage_and_failure_keep_entry (tests.test_antigravity_permission.RunsApprovalRegressionTests.test_runs_approve_usage_and_failure_keep_entry) ... ok
+test_runs_run_stop_prompt_and_flow_unchanged (tests.test_antigravity_permission.RunsApprovalRegressionTests.test_runs_run_stop_prompt_and_flow_unchanged) ... ok
+test_runs_run_stop_without_live_run_keeps_old_prompt (tests.test_antigravity_permission.RunsApprovalRegressionTests.test_runs_run_stop_without_live_run_keeps_old_prompt) ... ok
+test_cancel_running_turn_sends_id_less_notice_and_reports_cancelled (tests.test_antigravity_cancel.ACPCancelClientTests.test_cancel_running_turn_sends_id_less_notice_and_reports_cancelled) ... 11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388086 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-htqymij0
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+ok
+test_cancel_while_waiting_for_permission_rejects_and_ends_the_turn (tests.test_antigravity_cancel.ACPCancelClientTests.test_cancel_while_waiting_for_permission_rejects_and_ends_the_turn) ... 11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388088 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-5_bn9j2z
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+ok
+test_cancel_without_a_running_turn_returns_false (tests.test_antigravity_cancel.ACPCancelClientTests.test_cancel_without_a_running_turn_returns_false) ... 11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388090 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-z0fwl4zb
+ok
+test_prompt_after_cancel_reuses_the_same_process_and_session (tests.test_antigravity_cancel.ACPCancelClientTests.test_prompt_after_cancel_reuses_the_same_process_and_session) ... 11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388093 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-yd_7der5
+11-13 22:12:28 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+ok
+test_prompt_timeout_rejects_pending_permission_before_cleanup (tests.test_antigravity_cancel.ACPCancelClientTests.test_prompt_timeout_rejects_pending_permission_before_cleanup)
+prompt 超时收尾必须先用既有安全 reject 结清原权限 RPC。 ... 11-13 22:12:29 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388096 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-5h8_mbp8
+ok
+test_steer_b_and_c_in_flight_cancel_ends_the_whole_wait_chain (tests.test_antigravity_cancel.ACPCancelClientTests.test_steer_b_and_c_in_flight_cancel_ends_the_whole_wait_chain) ... 11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388098 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-5v6akhy_
+11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=1
+11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=1
+11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+ok
+test_body_overflow_without_cancel_stays_transport_error (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_body_overflow_without_cancel_stays_transport_error)
+未取消的普通超长正文仍原样 fail-closed（不放宽协议）。 ... 11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388101 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-tpofdkjt
+11-13 22:12:30 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 流式正文单位不合法 reason=body_overflow
+11-13 22:12:30 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 终态正文单位不合法 reason=body_overflow
+11-13 22:12:30 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 调用失败 code=None: ACPError
+11-13 22:12:30 [WARNING] nonebot_plugin_hermes_adapter | [HERMES passive] transport error fallback (group=None, is_private=True, fallback=friendly_text); upstream raw_text suppressed (len=43)
+ok
+test_group_run_stop_does_not_cancel_a_private_turn (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_group_run_stop_does_not_cancel_a_private_turn) ... 11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388103 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-0xr93zeo
+11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+ok
+test_new_prompt_after_run_stop_reuses_the_acp_session (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_new_prompt_after_run_stop_reuses_the_acp_session) ... 11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388105 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-81gmj2pl
+11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+11-13 22:12:30 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-13 22:12:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+ok
+test_run_stop_after_body_overflow_drops_paced_queue (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_run_stop_after_body_overflow_drops_paced_queue)
+已有 SENT + 被节奏挡住的 QUEUED 时取消：等 ACP 收尾后 QUEUED 仍不得出站。 ... 11-13 22:12:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388109 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-m0q5bok0
+11-13 22:12:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+11-13 22:12:31 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 流式正文单位不合法 reason=body_overflow
+11-13 22:12:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:12:31 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 取消收尾时忽略正文单位错误 reason=body_overflow
+11-13 22:12:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-13 22:12:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+ok
+test_run_stop_after_body_overflow_keeps_interrupted_semantics (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_run_stop_after_body_overflow_keeps_interrupted_semantics)
+正文错误不得覆盖之后的真实 cancelled。 ... 11-13 22:12:31 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388112 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-t3z6kkq_
+11-13 22:12:32 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 流式正文单位不合法 reason=body_overflow
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:12:32 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 取消收尾时忽略正文单位错误 reason=body_overflow
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+ok
+test_run_stop_cancels_running_turn_and_hard_silences_it (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_run_stop_cancels_running_turn_and_hard_silences_it) ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3388115 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-c3b54hjg
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+ok
+test_run_stop_without_running_turn_reports_no_object (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_run_stop_without_running_turn_reports_no_object) ... ok
+test_control_before_first_body_still_goes_to_first (tests.test_control_regressions.ControlBindingAtArrivalTests.test_control_before_first_body_still_goes_to_first) ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+ok
+test_control_registered_while_second_body_waits_goes_to_third (tests.test_control_regressions.ControlBindingAtArrivalTests.test_control_registered_while_second_body_waits_goes_to_third) ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+ok
+test_anchor_control_runs_once_on_first_message (tests.test_control_regressions.ControlGroupScopeTests.test_anchor_control_runs_once_on_first_message) ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] pin_anchor pinned (group=g1 user=u1 msg_id=None)
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+ok
+test_legacy_control_line_is_plain_text_now (tests.test_control_regressions.ControlGroupScopeTests.test_legacy_control_line_is_plain_text_now)
+旧控制行不再有任何控制语义：整段按纯文本发出，控制只来自 submit_control。 ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=57 salvaged=False
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+ok
+test_live_streamed_group_same_scope (tests.test_control_regressions.ControlGroupScopeTests.test_live_streamed_group_same_scope) ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+ok
+test_reply_to_first_only_and_exit_after_last (tests.test_control_regressions.ControlGroupScopeTests.test_reply_to_first_only_and_exit_after_last) ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+ok
+test_bounce_early_exit_closes_window (tests.test_control_regressions.LegacyCompletionEarlyExitTests.test_bounce_early_exit_closes_window) ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+ok
+test_exit_close_is_idempotent_per_turn (tests.test_control_regressions.LegacyCompletionEarlyExitTests.test_exit_close_is_idempotent_per_turn)
+尾部与早退共用同一个收窗点：本 turn 只尝试一次，不重复 end。 ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+ok
+test_normal_single_reply_still_closes_after_send (tests.test_control_regressions.LegacyCompletionEarlyExitTests.test_normal_single_reply_still_closes_after_send) ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+ok
+test_silent_turn_does_not_close_window (tests.test_control_regressions.LegacyCompletionEarlyExitTests.test_silent_turn_does_not_close_window)
+纯文本协议：没有正文就是静默，未配对控制在轮末丢弃，不静默退窗。 ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+ok
+test_refire_exception_exit_drops_leftover_control (tests.test_control_regressions.RefireControlCleanupTests.test_refire_exception_exit_drops_leftover_control) ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+11-13 22:12:32 [ERROR] nonebot_plugin_hermes_adapter | [HERMES] refire raised at depth 1; dropping pending for ('onebotv11', 'group:g1')
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/usr/lib/python3.13/unittest/__main__.py", line 18, in <module>
+    main(module=None)
+  File "/usr/lib/python3.13/unittest/main.py", line 104, in __init__
+    self.runTests()
+  File "/usr/lib/python3.13/unittest/main.py", line 270, in runTests
+    self.result = testRunner.run(self.test)
+  File "/usr/lib/python3.13/unittest/runner.py", line 240, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/case.py", line 707, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/async_case.py", line 135, in run
+    return super().run(result)
+  File "/usr/lib/python3.13/unittest/case.py", line 651, in run
+    self._callTestMethod(testMethod)
+  File "/usr/lib/python3.13/unittest/async_case.py", line 94, in _callTestMethod
+    if self._callMaybeAsync(method) is not None:
+  File "/usr/lib/python3.13/unittest/async_case.py", line 116, in _callMaybeAsync
+    return self._asyncioRunner.run(
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 712, in run_until_complete
+    self.run_forever()
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 683, in run_forever
+    self._run_once()
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 2034, in _run_once
+    handle._run()
+  File "/usr/lib/python3.13/asyncio/events.py", line 89, in _run
+    self._context.run(self._callback, *self._args)
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_control_regressions.py", line 260, in test_refire_exception_exit_drops_leftover_control
+    await relay._refire(
+> File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/handlers/message_relay.py", line 1386, in _refire
+    result = await _run_reactive_turn(
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_control_regressions.py", line 256, in exploding_turn
+    raise RuntimeError("refire boom")
+RuntimeError: refire boom
+ok
+test_refire_handoff_discards_before_spawning_next_hop (tests.test_control_regressions.RefireControlCleanupTests.test_refire_handoff_discards_before_spawning_next_hop) ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+ok
+test_refire_leftover_control_does_not_leak_to_next_turn (tests.test_control_regressions.RefireControlCleanupTests.test_refire_leftover_control_does_not_leak_to_next_turn) ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=2
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=19 salvaged=False
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+ok
+test_acp_dispatch_chat_no_longer_injects_steer (tests.test_steer_pre_debounce.PreDebounceSteerACPTests.test_acp_dispatch_chat_no_longer_injects_steer)
+E（ACP）：`_dispatch_chat` 不再把消息重复直注进在跑 ACP 轮。 ... ok
+test_acp_group_unaddressed_message_never_steers (tests.test_steer_pre_debounce.PreDebounceSteerACPTests.test_acp_group_unaddressed_message_never_steers)
+D（ACP）：群聊非 @ 消息即便有在跑 ACP 轮也不直注。 ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=True mode=reactive
+ok
+test_acp_running_turn_steers_before_debounce_without_dispatch (tests.test_steer_pre_debounce.PreDebounceSteerACPTests.test_acp_running_turn_steers_before_debounce_without_dispatch)
+B（ACP）：在跑 ACP 轮存在时，B 在防抖到期前形成同一 session 的后续 prompt。 ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] ACP 接管在跑轮 (scope=private:A) rows=1 len=68
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 防抖前直注在跑轮,本消息不再走防抖 (scope=private:A)
+ok
+test_dispatch_chat_no_longer_injects_steer (tests.test_steer_pre_debounce.PreDebounceSteerTests.test_dispatch_chat_no_longer_injects_steer)
+E：`_dispatch_chat` 不再重复直注，同一消息只在 pre-debounce 入口试一次。 ... ok
+test_first_message_without_live_run_keeps_order_and_debounce (tests.test_steer_pre_debounce.PreDebounceSteerTests.test_first_message_without_live_run_keeps_order_and_debounce)
+A：A 尚未发车且无在跑轮，B 不得注入，A/B 维持原顺序与防抖。 ... ok
+test_group_ineligible_sender_never_steers (tests.test_steer_pre_debounce.PreDebounceSteerTests.test_group_ineligible_sender_never_steers)
+D：群聊 @bot 但发送者不在资格集合时不直注，仍走原防抖。 ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES] active_session triggered/renewed: onebotv11/g1 by B
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=True in_active=False mode=reactive
+ok
+test_group_unaddressed_message_never_steers (tests.test_steer_pre_debounce.PreDebounceSteerTests.test_group_unaddressed_message_never_steers)
+D：群聊非 @ 消息即便有在跑轮也不直注，保持原防抖。 ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=True mode=reactive
+ok
+test_private_bot_source_keeps_old_private_eligibility (tests.test_steer_pre_debounce.PreDebounceSteerTests.test_private_bot_source_keeps_old_private_eligibility)
+D：bot 来源仍守旧规则——私聊恒资格，有在跑轮即直注。 ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=private:BOT run_id=run-1 len=67 rows=1)
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 防抖前直注在跑轮,本消息不再走防抖 (scope=private:BOT)
+ok
+test_private_other_scope_never_steers (tests.test_steer_pre_debounce.PreDebounceSteerTests.test_private_other_scope_never_steers)
+D：跨 scope（别人在跑）不直注，保持原防抖。 ... ok
+test_running_turn_steers_before_debounce_without_dispatch (tests.test_steer_pre_debounce.PreDebounceSteerTests.test_running_turn_steers_before_debounce_without_dispatch)
+B：在跑轮存在时，B 在 3 秒防抖到期前完成直注，不调用防抖 dispatch。 ... 11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=private:A run_id=run-1 len=68 rows=1)
+11-13 22:12:32 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 防抖前直注在跑轮,本消息不再走防抖 (scope=private:A)
+ok
+test_steer_exception_falls_back_without_swallowing (tests.test_steer_pre_debounce.PreDebounceSteerTests.test_steer_exception_falls_back_without_swallowing)
+C：steer 抛异常，消息仍按原防抖发车一次。 ... 11-13 22:12:32 [WARNING] nonebot_plugin_hermes_adapter | [HERMES steer] 防抖前直注异常,回落原防抖 (scope=private:A)
+ok
+test_steer_false_falls_back_to_original_debounce (tests.test_steer_pre_debounce.PreDebounceSteerTests.test_steer_false_falls_back_to_original_debounce)
+C：steer 返回 False，消息落回原防抖，不吞、不重复。 ... ok
+
+----------------------------------------------------------------------
+Ran 118 tests in 14.273s
+
+OK

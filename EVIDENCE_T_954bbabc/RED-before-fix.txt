@@ -1,0 +1,132 @@
+11-13 22:11:58 [SUCCESS] nonebot | NoneBot is initializing...
+11-13 22:11:58 [INFO] nonebot | Current Env: prod
+test_cancelled_permission_settles_entry_so_next_scope_can_answer (tests.test_antigravity_permission.ACPApprovalSettleRegressionTests.test_cancelled_permission_settles_entry_so_next_scope_can_answer) ... 11-13 22:11:59 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] AGENT_PLUGIN_CUSTOM_DIR 指向的目录不可用: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-x2_jq40b/config;定制功能(规则/群档案/媒体配置等)将回退内置默认
+/usr/lib/python3.13/unittest/async_case.py:135: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  return super().run(result)
+11-13 22:11:59 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-13 22:11:59 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/typing.py:103: DeprecationWarning: Failing to pass a value to the 'type_params' parameter of 'typing.ForwardRef._evaluate' is deprecated, as it leads to incorrect behaviour when calling typing.ForwardRef._evaluate on a stringified annotation that references a PEP 695 type parameter. It will be disallowed in Python 3.15.
+  return ref._evaluate(globalns, localns, recursive_guard=frozenset())
+11-13 22:11:59 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387719 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-x2_jq40b
+11-13 22:11:59 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #1 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-13 22:11:59 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:11:59 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-13 22:11:59 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+FAIL
+test_settle_keeps_entry_when_reject_write_fails (tests.test_antigravity_permission.ACPApprovalSettleRegressionTests.test_settle_keeps_entry_when_reject_write_fails)
+真正写帧失败不能当已结清：条目留单可重试，Runs 条目一律不动。 ... 11-13 22:11:59 [WARNING] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限应答写入失败（请求保持挂起）
+ERROR
+test_prompt_timeout_rejects_pending_permission_before_cleanup (tests.test_antigravity_cancel.ACPCancelClientTests.test_prompt_timeout_rejects_pending_permission_before_cleanup)
+prompt 超时收尾必须先用既有安全 reject 结清原权限 RPC。 ... 11-13 22:11:59 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387721 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-p3socws2
+FAIL
+test_run_stop_after_body_overflow_keeps_interrupted_semantics (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_run_stop_after_body_overflow_keeps_interrupted_semantics)
+正文错误不得覆盖之后的真实 cancelled。 ... 11-13 22:11:59 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387724 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-mm48nj5j
+11-13 22:11:59 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 流式正文单位不合法 reason=body_overflow
+11-13 22:11:59 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:12:00 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 调用失败 code=None: ACPError
+11-13 22:12:00 [WARNING] nonebot_plugin_hermes_adapter | [HERMES passive] transport error fallback (group=None, is_private=True, fallback=friendly_text); upstream raw_text suppressed (len=43)
+FAIL
+test_run_stop_after_body_overflow_drops_paced_queue (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_run_stop_after_body_overflow_drops_paced_queue)
+已有 SENT + 被节奏挡住的 QUEUED 时取消：等 ACP 收尾后 QUEUED 仍不得出站。 ... 11-13 22:12:00 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387726 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-3j_bgdv5
+11-13 22:12:00 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+11-13 22:12:00 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 流式正文单位不合法 reason=body_overflow
+11-13 22:12:00 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:12:00 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 调用失败 code=None: ACPError
+11-13 22:12:00 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=6 wrote_history=True
+11-13 22:12:00 [WARNING] nonebot_plugin_hermes_adapter | [HERMES passive] 传输失败兜底跳过:本轮已有 2 份即时发送 (group=None is_private=True)
+FAIL
+test_body_overflow_without_cancel_stays_transport_error (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_body_overflow_without_cancel_stays_transport_error)
+未取消的普通超长正文仍原样 fail-closed（不放宽协议）。 ... 11-13 22:12:00 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387729 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-gy3q61ho
+11-13 22:12:00 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 流式正文单位不合法 reason=body_overflow
+11-13 22:12:00 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 终态正文单位不合法 reason=body_overflow
+11-13 22:12:00 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 调用失败 code=None: ACPError
+11-13 22:12:00 [WARNING] nonebot_plugin_hermes_adapter | [HERMES passive] transport error fallback (group=None, is_private=True, fallback=friendly_text); upstream raw_text suppressed (len=43)
+ok
+
+======================================================================
+ERROR: test_settle_keeps_entry_when_reject_write_fails (tests.test_antigravity_permission.ACPApprovalSettleRegressionTests.test_settle_keeps_entry_when_reject_write_fails)
+真正写帧失败不能当已结清：条目留单可重试，Runs 条目一律不动。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2b-fix-t_954bbabc/red-head-1/tests/test_antigravity_permission.py", line 629, in test_settle_keeps_entry_when_reject_write_fails
+    self.approvals.settle_permission(session_key="k1", request_id="fail-req"), 1
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'nonebot_plugin_hermes_adapter.core.approvals' has no attribute 'settle_permission'
+
+======================================================================
+FAIL: test_cancelled_permission_settles_entry_so_next_scope_can_answer (tests.test_antigravity_permission.ACPApprovalSettleRegressionTests.test_cancelled_permission_settles_entry_so_next_scope_can_answer)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2b-fix-t_954bbabc/red-head-1/tests/test_antigravity_permission.py", line 563, in test_cancelled_permission_settles_entry_so_next_scope_can_answer
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        self.approvals.pending_count(), 0, "已结清的旧单不得继续占 FIFO 队首"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: 1 != 0 : 已结清的旧单不得继续占 FIFO 队首
+
+======================================================================
+FAIL: test_prompt_timeout_rejects_pending_permission_before_cleanup (tests.test_antigravity_cancel.ACPCancelClientTests.test_prompt_timeout_rejects_pending_permission_before_cleanup)
+prompt 超时收尾必须先用既有安全 reject 结清原权限 RPC。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2b-fix-t_954bbabc/red-head-1/tests/test_antigravity_cancel.py", line 265, in test_prompt_timeout_rejects_pending_permission_before_cleanup
+    self.assertEqual(len(answers), 1, f"原权限 RPC 必须收到一次安全拒绝: {answers}")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : 原权限 RPC 必须收到一次安全拒绝: []
+
+======================================================================
+FAIL: test_run_stop_after_body_overflow_keeps_interrupted_semantics (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_run_stop_after_body_overflow_keeps_interrupted_semantics)
+正文错误不得覆盖之后的真实 cancelled。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2b-fix-t_954bbabc/red-head-1/tests/test_antigravity_cancel.py", line 354, in test_run_stop_after_body_overflow_keeps_interrupted_semantics
+    self.assertTrue(result.is_interrupted, "取消结果必须优先于正文错误")
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : 取消结果必须优先于正文错误
+
+======================================================================
+FAIL: test_run_stop_after_body_overflow_drops_paced_queue (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_run_stop_after_body_overflow_drops_paced_queue)
+已有 SENT + 被节奏挡住的 QUEUED 时取消：等 ACP 收尾后 QUEUED 仍不得出站。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2b-fix-t_954bbabc/red-head-1/tests/test_antigravity_cancel.py", line 390, in test_run_stop_after_body_overflow_drops_paced_queue
+    self.assertTrue(result.is_interrupted)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+----------------------------------------------------------------------
+Ran 6 tests in 1.767s
+
+FAILED (failures=4, errors=1)

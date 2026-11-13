@@ -1,0 +1,89 @@
+11-13 22:10:24 [SUCCESS] nonebot | NoneBot is initializing...
+11-13 22:10:24 [INFO] nonebot | Current Env: prod
+test_blocked_admin_notify_does_not_block_cancel_reader (__main__.ReviewAcceptance.test_blocked_admin_notify_does_not_block_cancel_reader) ... 11-13 22:10:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] AGENT_PLUGIN_CUSTOM_DIR 指向的目录不可用: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-ojf0r8gc/config;定制功能(规则/群档案/媒体配置等)将回退内置默认
+/usr/lib/python3.13/unittest/async_case.py:135: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  return super().run(result)
+11-13 22:10:24 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-13 22:10:24 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/typing.py:103: DeprecationWarning: Failing to pass a value to the 'type_params' parameter of 'typing.ForwardRef._evaluate' is deprecated, as it leads to incorrect behaviour when calling typing.ForwardRef._evaluate on a stringified annotation that references a PEP 695 type parameter. It will be disallowed in Python 3.15.
+  return ref._evaluate(globalns, localns, recursive_guard=frozenset())
+11-13 22:10:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387294 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-ojf0r8gc
+11-13 22:10:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:10:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-13 22:10:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+11-13 22:10:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #1 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+ok
+test_cancel_discards_truly_queued_unsent_units (__main__.ReviewAcceptance.test_cancel_discards_truly_queued_unsent_units) ... 11-13 22:10:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387296 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-azkhelfw
+11-13 22:10:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+11-13 22:10:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:10:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-13 22:10:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+ok
+test_cancel_parse_error_must_not_drain_queued_body (__main__.ReviewAcceptance.test_cancel_parse_error_must_not_drain_queued_body) ... 11-13 22:10:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387298 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-qvroig6i
+11-13 22:10:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+11-13 22:10:25 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 流式正文单位不合法 reason=body_overflow
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:10:25 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 取消收尾时忽略正文单位错误 reason=body_overflow
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+ok
+test_cancel_wins_over_prior_text_parse_error (__main__.ReviewAcceptance.test_cancel_wins_over_prior_text_parse_error) ... CANCEL_PARSE_QUEUE_RESULT {"interrupted": true, "platform": ["SENT", "🛑 已取消当前 ACP 会话正在执行的轮(协作式,正在收尾)"]}
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387300 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-d6trfa0t
+11-13 22:10:25 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 流式正文单位不合法 reason=body_overflow
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:10:25 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 取消收尾时忽略正文单位错误 reason=body_overflow
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+ok
+test_cancelled_permission_does_not_block_next_fifo_entry (__main__.ReviewAcceptance.test_cancelled_permission_does_not_block_next_fifo_entry) ... CANCEL_PARSE_RESULT {"is_interrupted": true, "is_transport_error": false, "raw_text": "", "platform": ["🛑 已取消当前 ACP 会话正在执行的轮(协作式,正在收尾)"]}
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387303 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-f3fldg5c
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #2 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-f3fldg5c/config/memory/onebotv11/groups/100.md
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #3 run=- backend=antigravity scope=群 100 通知管理员 1 人
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-2
+FIFO_RESULT {"old": 2, "new": 3, "pending": 0, "oldest": null, "platform": ["🛑 已取消当前 ACP 会话正在执行的轮(协作式,正在收尾)", "✅ 审批 #3 已应答: 已放行一次"]}
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+ok
+test_concurrent_admin_answers_share_original_lock (__main__.ReviewAcceptance.test_concurrent_admin_answers_share_original_lock) ... 11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387306 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-zi4k94ez
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #4 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+ok
+test_invalid_choices_leave_pending_and_zero_wire_calls (__main__.ReviewAcceptance.test_invalid_choices_leave_pending_and_zero_wire_calls) ... 11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387308 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-dbfz60hf
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #5 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+ok
+test_nonadmin_stop_is_silent_and_does_not_cancel (__main__.ReviewAcceptance.test_nonadmin_stop_is_silent_and_does_not_cancel) ... 11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387310 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-lz4pf1x5
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+11-13 22:10:25 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-13 22:10:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-13 22:10:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+ok
+test_normal_body_overflow_remains_transport_error (__main__.ReviewAcceptance.test_normal_body_overflow_remains_transport_error) ... 11-13 22:10:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387312 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-yh4zuz_e
+11-13 22:10:26 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 流式正文单位不合法 reason=body_overflow
+11-13 22:10:26 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] 终态正文单位不合法 reason=body_overflow
+11-13 22:10:26 [ERROR] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 调用失败 code=None: ACPError
+11-13 22:10:26 [WARNING] nonebot_plugin_hermes_adapter | [HERMES passive] transport error fallback (group=None, is_private=True, fallback=friendly_text); upstream raw_text suppressed (len=43)
+ok
+test_numeric_rpc_id_preserved_through_real_approve (__main__.ReviewAcceptance.test_numeric_rpc_id_preserved_through_real_approve) ... 11-13 22:10:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387314 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-fffwnowz
+11-13 22:10:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #6 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-13 22:10:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-13 22:10:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+ok
+test_option_kind_not_option_literal_controls_allow (__main__.ReviewAcceptance.test_option_kind_not_option_literal_controls_allow) ... 11-13 22:10:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387316 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-qb04ueh7
+11-13 22:10:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #7 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-13 22:10:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-13 22:10:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+ok
+test_prompt_timeout_keeps_permission_safely_answered (__main__.ReviewAcceptance.test_prompt_timeout_keeps_permission_safely_answered) ... 11-13 22:10:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3387318 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-lp71y4to
+ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 2.429s
+
+OK
+TIMEOUT_PERMISSION_RESULT {"answers": [{"jsonrpc": "2.0", "id": "timeout-id", "result": {"outcome": {"outcome": "selected", "optionId": "reject-once"}}}], "permissions": 0}

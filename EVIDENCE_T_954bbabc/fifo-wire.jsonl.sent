@@ -1,0 +1,8 @@
+{"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": 1, "agentCapabilities": {"loadSession": true}, "agentInfo": {"name": "fake-agy", "version": "0"}}}
+{"jsonrpc": "2.0", "id": 2, "result": {"sessionId": "sess-1", "models": {"currentModelId": "default-model", "availableModels": [{"modelId": "default-model", "name": "Default"}, {"modelId": "gemini-3.8-flash-high", "name": "Gemini 3.8 Flash High"}]}}}
+{"jsonrpc": "2.0", "id": "original-request", "method": "session/request_permission", "params": {"sessionId": "sess-1", "toolCall": {"toolCallId": "tc-1", "title": "write_file", "rawInput": {"CommandLine": "pwd"}}, "options": [{"optionId": "allow-once", "name": "Allow", "kind": "allow_once"}, {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"}]}}
+{"jsonrpc": "2.0", "id": 3, "result": {"stopReason": "cancelled"}}
+{"jsonrpc": "2.0", "id": 4, "result": {"sessionId": "sess-2", "models": {"currentModelId": "default-model", "availableModels": [{"modelId": "default-model", "name": "Default"}, {"modelId": "gemini-3.8-flash-high", "name": "Gemini 3.8 Flash High"}]}}}
+{"jsonrpc": "2.0", "id": "original-request", "method": "session/request_permission", "params": {"sessionId": "sess-2", "toolCall": {"toolCallId": "tc-1", "title": "write_file", "rawInput": {"CommandLine": "pwd"}}, "options": [{"optionId": "allow-once", "name": "Allow", "kind": "allow_once"}, {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"}]}}
+{"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "sess-2", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "§\nOK\n§\n"}}}}
+{"jsonrpc": "2.0", "id": 5, "result": {"stopReason": "end_turn"}}
