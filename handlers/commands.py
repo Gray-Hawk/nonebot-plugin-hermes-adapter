@@ -16,6 +16,7 @@ from nonebot.adapters import Bot, Event
 from nonebot.matcher import Matcher
 
 from .. import mcp as _mcp
+from ..backends.antigravity import client as antigravity_client
 from ..config import hermes_control_plane_enabled, plugin_config
 from ..core.hermes_client import hermes_client
 from ..core.log_throttle import throttled_info
@@ -502,10 +503,27 @@ async def handle_run_stop(bot: Bot, event: Event, matcher: Matcher):
     if not _is_admin(adapter_name, user_id):
         logger.debug(f"[HERMES] /run-stop silent skip for {adapter_name}:{user_id}")
         return
+    group_id = None if target.private else target.id
+    if plugin_config.hermes_api_interface == "antigravity":
+        # ACP 没有 Runs 台账身份：按当前会话的 session_key 对真实在跑轮发无 id
+        # `session/cancel`，回执写当前 ACP 会话，不伪造 run_id。
+        session_key = session_manager.get_session_key(
+            adapter_name, target.private, user_id, group_id
+        )
+        cancelled = await antigravity_client.get_client().cancel(session_key)
+        if cancelled:
+            # 被停 turn 自身走 interrupted 硬静默，本条命令回执即唯一通知
+            await alconna.UniMessage(
+                "🛑 已取消当前 ACP 会话正在执行的轮(协作式,正在收尾)"
+            ).send(target=target, bot=bot)
+        else:
+            await alconna.UniMessage(
+                "当前会话没有在跑的 ACP 轮,没有可取消的对象"
+            ).send(target=target, bot=bot)
+        return
     if not hermes_control_plane_enabled():
         await alconna.UniMessage(_HERMES_CONTROL_UNAVAILABLE).send(target=target, bot=bot)
         return
-    group_id = None if target.private else target.id
     live = _scope_live_run(adapter_name, target.private, user_id, group_id)
     if live is None:
         await alconna.UniMessage("当前会话没有在跑的 run,没有可终止的对象").send(target=target, bot=bot)
@@ -795,10 +813,47 @@ async def handle_reload_config(bot: Bot, event: Event, matcher: Matcher):
 # --- /approve(阶段3c,管理员应答挂起审批) ---
 approve_command = on_command(_cmd("approve"), force_whitespace=True, priority=88, block=True)
 
+# 命令面按后端分支：ACP 权限请求的真实 options 只有 allow_once／reject_once，
+# 不展示也不接受 session／always（不能把一次授权冒充成永久放行）。
+_APPROVE_CHOICES: dict[str, tuple[str, ...]] = {
+    "runs": ("once", "session", "always", "deny"),
+    "antigravity": ("once", "deny"),
+}
+
+
+def _approve_backend() -> str:
+    """当前后端的审批命令面（无挂起条目时用它决定用法文案）。"""
+    return "antigravity" if plugin_config.hermes_api_interface == "antigravity" else "runs"
+
+
+def _approve_usage_text(backend: str, pending: int) -> str:
+    """当前后端正确用法（纯函数，便于离线测）。"""
+    choices = _APPROVE_CHOICES.get(backend, _APPROVE_CHOICES["runs"])
+    return f"用法: {_display_cmd('approve')} <{'|'.join(choices)}>(当前挂起 {pending} 条)"
+
+
+async def _answer_approval(entry, choice: str) -> tuple[bool, str]:
+    """按条目来源后端应答：ACP 回原权限 RPC，Runs 走既有 HTTP。"""
+    if entry.backend == "antigravity":
+        ok = await antigravity_client.get_client().answer_permission(
+            session_key=entry.session_key or "",
+            request_id=entry.request_id,
+            choice=choice,
+        )
+        if not ok:
+            return False, "权限请求已失效或无法应答"
+        return True, "已放行一次" if choice == "once" else "已拒绝"
+    return await hermes_client.respond_approval(
+        tgt=resolve_target(entry.adapter, entry.is_private, entry.group_id),
+        run_id=entry.run_id,
+        choice=choice,
+        request_id=entry.request_id,
+    )
+
 
 @approve_command.handle()
 async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna.UniMessage | None = None):
-    """应答挂起审批(管理员):/approve <once|session|always|deny>,答最旧一条"""
+    """应答挂起审批(管理员):/approve <choice>,答最旧一条;可选项按后端分支。"""
     target = alconna.get_target()
     if not check_isolation(event, target):
         matcher.skip()
@@ -807,7 +862,10 @@ async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna
     if not _is_admin(adapter_name, user_id):
         logger.debug(f"[HERMES] /approve silent skip for {adapter_name}:{user_id}")
         return
-    if not hermes_control_plane_enabled():
+    if (
+        plugin_config.hermes_api_interface != "antigravity"
+        and not hermes_control_plane_enabled()
+    ):
         await alconna.UniMessage(_HERMES_CONTROL_UNAVAILABLE).send(target=target, bot=bot)
         return
     # nonebot on_command 的参数在 event 余文里;手剥比引 CommandArg 少一层适配器依赖
@@ -818,31 +876,32 @@ async def handle_approve(bot: Bot, event: Event, matcher: Matcher, args: alconna
         pass
     # get_plaintext 含命令本体(/approve xxx),剥掉命令头与寻址前缀取余文
     choice = _tail_args(raw).lower()
-    if choice not in {"once", "session", "always", "deny"}:
-        await alconna.UniMessage(
-            f"用法: {_display_cmd('approve')} <once|session|always|deny>(当前挂起 {approvals_pending_count()} 条)"
-        ).send(target=target, bot=bot)
-        return
     # 看→答→删全程持锁,两把并发 /approve 不会 peek 到同一条目
     async with approvals_answer_lock:
         entry = approvals_peek_oldest()
-        if entry is not None:
-            ok, msg = await hermes_client.respond_approval(
-                tgt=resolve_target(entry.adapter, entry.is_private, entry.group_id),
-                run_id=entry.run_id,
-                choice=choice,
-                request_id=entry.request_id,
-            )
-            if ok:
-                # 先应答后删单——失败留单,管理员可重试
-                approvals_acknowledge(entry.approval_id)
-    if entry is None:
-        await alconna.UniMessage("当前没有挂起的审批(可能已超时自动拒绝)").send(target=target, bot=bot)
-        return
-    if ok:
-        await alconna.UniMessage(f"✅ 审批 #{entry.approval_id} 已应答: {msg}").send(target=target, bot=bot)
-    else:
-        await alconna.UniMessage(f"审批 #{entry.approval_id} 应答失败: {msg}(可能已超时或已被应答;条目保留,可重试)").send(target=target, bot=bot)
+        if entry is None:
+            backend = _approve_backend()
+            if choice not in _APPROVE_CHOICES[backend]:
+                notice = _approve_usage_text(backend, approvals_pending_count())
+            else:
+                notice = "当前没有挂起的审批(可能已超时自动拒绝)"
+        else:
+            allowed = _APPROVE_CHOICES.get(entry.backend, _APPROVE_CHOICES["runs"])
+            if choice not in allowed:
+                # 只回当前后端的正确用法：不报“不支持”、不调后端、不删挂起条目。
+                notice = _approve_usage_text(entry.backend, approvals_pending_count())
+            else:
+                ok, msg = await _answer_approval(entry, choice)
+                if ok:
+                    # 先应答后删单——失败留单,管理员可重试
+                    approvals_acknowledge(entry.approval_id)
+                    notice = f"✅ 审批 #{entry.approval_id} 已应答: {msg}"
+                else:
+                    notice = (
+                        f"审批 #{entry.approval_id} 应答失败: {msg}"
+                        "(可能已超时或已被应答;条目保留,可重试)"
+                    )
+    await alconna.UniMessage(notice).send(target=target, bot=bot)
 
 # --- 裸指令吞没(本部署补丁: 寻址前缀启用时) ---
 # 带前缀命令由上面各 matcher 接走(命令名不同互不冲突);裸形态(无前缀)到这里

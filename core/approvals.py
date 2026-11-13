@@ -49,6 +49,10 @@ class PendingApproval:
     # v0.22 authority 形态应答三键之一,来自审批通知帧(request_id);老形态用不到,
     # 老存档/老 gateway 无此值时为空串,应答时从 run 状态 pending_controls 兜底。
     request_id: str = ""
+    # 阶段2B:审批来源后端。runs = Hermes runs 台账(缺省,行为不变);
+    # antigravity = ACP 权限请求,run_id 恒空、按 session_key+request_id 回答原 RPC。
+    backend: str = "runs"
+    session_key: str | None = None
     ts: float = field(default_factory=time.time)
 
     @property
@@ -95,9 +99,15 @@ def bind_storage(path: Path) -> int:
                 is_private=bool(row.get("is_private", False)),
                 group_id=(str(row["group_id"]) if row.get("group_id") is not None else None),
                 request_id=str(row.get("request_id") or ""),
+                backend=str(row.get("backend") or "runs"),
+                session_key=(str(row["session_key"]) if row.get("session_key") is not None else None),
                 ts=float(row["ts"]),
             )
         except Exception:
+            continue
+        if entry.backend != "runs":
+            # 阶段2B:ACP 权限请求绑定旧 ACP 子进程；NB 重启后原 RPC 已失效,
+            # 不能装回成"可审批"再重通知。Runs 持久恢复行为不变。
             continue
         if entry.expired:
             continue
@@ -127,6 +137,8 @@ def _persist() -> None:
                 "is_private": e.is_private,
                 "group_id": e.group_id,
                 "request_id": e.request_id,
+                "backend": e.backend,
+                "session_key": e.session_key,
                 "ts": e.ts,
             }
             for e in _pending.values()
@@ -146,12 +158,17 @@ answer_lock = asyncio.Lock()
 def add_pending(
     *, run_id: str, adapter: str, scope_desc: str, command: str, choices: list[str],
     is_private: bool = False, group_id: str | None = None, request_id: str = "",
+    backend: str = "runs", session_key: str | None = None,
 ) -> PendingApproval:
-    """登记一条挂起审批,返回条目(通知文本引用其序号)。"""
+    """登记一条挂起审批,返回条目(通知文本引用其序号)。
+
+    backend/session_key 只有 ACP 权限请求会传；Runs 调用保持原签名与行为。
+    """
     entry = PendingApproval(
         approval_id=next(_seq), run_id=run_id, adapter=adapter,
         scope_desc=scope_desc, command=command, choices=choices,
         is_private=is_private, group_id=group_id, request_id=request_id,
+        backend=backend, session_key=session_key,
     )
     _pending[entry.approval_id] = entry
     _persist()
@@ -226,7 +243,21 @@ def drop_expired() -> int:
 
 
 def build_admin_notice(entry: PendingApproval) -> str:
-    """管理员私聊通知文本(纯函数,离线可测)。"""
+    """管理员私聊通知文本(纯函数,离线可测)。
+
+    命令面按后端分支：ACP 权限只有 allow_once/reject_once，绝不出现 session/always
+    （真实 options 没有这些等级，展示出来等于暗示不存在的授权）。
+    """
+    if entry.backend != "runs":
+        choices = " / ".join(entry.choices) if entry.choices else "once / deny"
+        return (
+            f"⚠️ 审批请求 #{entry.approval_id}\n"
+            f"来源: {entry.scope_desc}\n"
+            f"命令: {entry.command or '(无命令详情)'}\n"
+            f"选项: {choices}\n"
+            f"回复 /approve once 批准一次;/approve deny 拒绝。"
+            f"(约 {_approval_expiry_sec()}s 不答自动超时拒绝)"
+        )
     choices = " / ".join(entry.choices) if entry.choices else "once / session / always / deny"
     return (
         f"⚠️ 审批请求 #{entry.approval_id}\n"
@@ -289,6 +320,9 @@ async def renotify_pending(*, admin_users: set[str], delay_sec: float = 20.0) ->
     sent = 0
     for aid in sorted(_pending):
         entry = _pending[aid]
+        if entry.backend != "runs":
+            # ACP 权限请求不跨重启；万一内存里还有也不重发通知。
+            continue
         if entry.expired:
             continue
         sent += await notify_admins(bot=bots[0], adapter_name="onebotv11", entry=entry, admin_users=admin_users)

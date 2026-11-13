@@ -1404,7 +1404,7 @@ async def _run_passive_turn(
                 f"私聊 {user_id}" if is_private else f"群 {group_id}",
                 is_private=is_private, group_id=group_id,
             )
-            if plugin_config.hermes_api_interface == "runs" else None
+            if plugin_config.hermes_api_interface in ("runs", "antigravity") else None
         ),
         overwritten_reply_callback=partial(
             deliver_recovered_replies,
@@ -2128,7 +2128,7 @@ async def _run_reactive_turn(
         ),
         approval_callback=(
             _make_approval_notify(bot, adapter_name, f"群 {group_id}", is_private=False, group_id=group_id)
-            if plugin_config.hermes_api_interface == "runs" else None
+            if plugin_config.hermes_api_interface in ("runs", "antigravity") else None
         ),
         overwritten_reply_callback=partial(
             deliver_recovered_replies,

@@ -54,6 +54,14 @@ class ACPTimeoutError(ACPError):
     """单次 JSON-RPC 或整轮 prompt 超时。"""
 
 
+class ACPCancelledError(ACPError):
+    """本轮被 `/run-stop` 取消：原 prompt 以 `stopReason=cancelled` 收尾。
+
+    单独一类异常让 HermesClient 能映射 `ChatResult.is_interrupted=True`（被停 turn 走
+    既有硬静默），不落成“调用失败”错误面。进程本身仍可继续复用。
+    """
+
+
 def system_prompt_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -83,6 +91,25 @@ class ACPTurn:
     pending: str = ""
     sent: list[str] = field(default_factory=list)
     superseded: bool = False
+    # 权限请求只认本轮的 approval_callback（steer 轮继承同轮回调）。
+    approval_callback: Callable[[dict[str, Any]], Any] | None = None
+    cancelled: bool = False
+
+
+@dataclass
+class ACPPendingPermission:
+    """一条等待管理员应答的 `session/request_permission`。
+
+    `request_id` 保留原始 RPC id 对象（真实 agy 是字符串 `jetski-acp-front:2`）：
+    应答必须逐字节回同一个 id，不能转成整数或重新编号。
+    """
+
+    session_key: str
+    session_id: str
+    request_id: Any
+    options: list[dict[str, Any]]
+    expires_at: float
+    timer: asyncio.Task | None = None
 
 
 class AntigravityACPClient:
@@ -98,6 +125,7 @@ class AntigravityACPClient:
         workspace: Path,
         prompt_timeout: float = 300.0,
         rpc_timeout: float = 60.0,
+        permission_timeout: float | None = None,
     ) -> None:
         self._cli_path = cli_path or "agy"
         self._cli_args = tuple(DEFAULT_ACP_ARGS if cli_args is None else cli_args)
@@ -108,6 +136,8 @@ class AntigravityACPClient:
         self._workspace = Path(workspace)
         self._prompt_timeout = float(prompt_timeout)
         self._rpc_timeout = float(rpc_timeout)
+        # None = 现读既有审批过期秒数（与 /approve 同源），测试可注入更短窗口。
+        self._permission_timeout = None if permission_timeout is None else float(permission_timeout)
 
         self._proc: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task | None = None
@@ -123,6 +153,10 @@ class AntigravityACPClient:
         self._streaming_turn: dict[str, ACPTurn] = {}
         self._session_key_by_id: dict[str, str] = {}
         self._finishing: set[str] = set()
+        # 阶段2B：等待管理员应答的权限请求（内存态，key=(session_key, str(原 RPC id))）。
+        # 旧 ACP 请求随子进程失效；这里不持久化、不跨重启恢复。
+        self._permissions: dict[tuple[str, str], ACPPendingPermission] = {}
+        self._permission_tasks: set[asyncio.Task] = set()
         self._turn_seq = 0
         self._text_errors: dict[str, str] = {}
         # 没有 session_keys.db 时的纯内存降级（单测/初始化前）；生产走持久映射。
@@ -245,24 +279,34 @@ class AntigravityACPClient:
                     code=error.get("code") if isinstance(error.get("code"), int) else None,
                 )
             )
-        else:
-            future.set_result(message.get("result"))
+            return
+        result = message.get("result")
+        future.set_result(result)
+        if isinstance(result, dict) and str(result.get("stopReason") or "") == "cancelled":
+            # /run-stop 的真实协议证据：原 prompt 以 stopReason=cancelled 收尾。
+            # 在派发点识别，steer 的并行 prompt（B/C）未在 await 时也能一并结束等待。
+            turn = self._turn_for_request(request_id)
+            if turn is not None:
+                self._mark_cancelled(turn)
+
+    def _turn_for_request(self, request_id: Any) -> "ACPTurn | None":
+        for turns in self._turns.values():
+            for turn in turns:
+                if turn.request_id == request_id:
+                    return turn
+        return None
 
     async def _answer_agent_request(self, message: dict) -> None:
         method = message.get("method")
         request_id = message.get("id")
         if method == "session/request_permission":
             params = message.get("params") or {}
-            options = params.get("options") or []
-            chosen = self._reject_option(options)
-            if chosen is None:
-                outcome = {"outcome": "cancelled"}
-            else:
-                outcome = {"outcome": "selected", "optionId": chosen}
-            # 必须在原 RPC id 回复，否则 agent 侧会一直挂起等权限。
-            await self._send(
-                {"jsonrpc": "2.0", "id": request_id, "result": {"outcome": outcome}}
-            )
+            options = [
+                item for item in (params.get("options") or []) if isinstance(item, dict)
+            ]
+            if not self._register_permission(message, options):
+                # 无 callback／未知会话：安全自动拒绝（不做永久授权），绝不挂起 reader。
+                await self._reply_permission(request_id, options, allow=False)
             return
         # 首片没有开放任何工具；未知 agent 请求一律按方法不存在拒绝，防止卡死。
         await self._send(
@@ -272,6 +316,234 @@ class AntigravityACPClient:
                 "error": {"code": -32601, "message": f"unsupported client method: {method}"},
             }
         )
+
+    # --- 权限审批（阶段2B） ------------------------------------------------
+
+    @staticmethod
+    def _permission_key(session_key: str, request_id: Any) -> tuple[str, str]:
+        return (session_key, str(request_id))
+
+    @staticmethod
+    def _allow_once_option(options: list[dict]) -> str | None:
+        """按真实 options 的 kind 取 allow_once 的 optionId（不猜 id 字面量）。"""
+        for option in options:
+            option_id = option.get("optionId")
+            if str(option.get("kind") or "") == "allow_once" and isinstance(option_id, str) and option_id:
+                return option_id
+        return None
+
+    def _permission_expiry_sec(self) -> float:
+        """审批过期秒数：与 /approve 同源（misc_config），测试可注入更短窗口。"""
+        if self._permission_timeout is not None:
+            return self._permission_timeout
+        try:
+            from ...core.misc_config import load_misc_config
+
+            return float(load_misc_config().approval_expiry_sec)
+        except Exception:
+            return 300.0
+
+    async def _reply_permission(
+        self, request_id: Any, options: list[dict], *, allow: bool
+    ) -> bool:
+        """在原 RPC id 上回答权限请求；写管道失败只留日志（调用方决定是否留单）。"""
+        option_id = (
+            self._allow_once_option(options) if allow else self._reject_option(options)
+        )
+        outcome = (
+            {"outcome": "selected", "optionId": option_id}
+            if option_id
+            else {"outcome": "cancelled"}
+        )
+        try:
+            await self._send(
+                {"jsonrpc": "2.0", "id": request_id, "result": {"outcome": outcome}}
+            )
+        except ACPError:
+            logger.warning("[HERMES antigravity] 权限应答写入失败（请求保持挂起）")
+            return False
+        return True
+
+    def _register_permission(self, message: dict, options: list[dict]) -> bool:
+        """登记 pending 并把规范化后的请求交给本轮 approval_callback。
+
+        返回 False 表示本轮没有可用的审批通道（无 callback／未知会话／无 id），
+        调用方按安全拒绝收尾。通知在独立任务里跑，reader 继续读取（取消能立即生效）。
+        """
+        params = message.get("params") or {}
+        session_id = params.get("sessionId")
+        request_id = message.get("id")
+        if request_id is None or not isinstance(session_id, str):
+            return False
+        session_key = self._session_key_by_id.get(session_id)
+        if session_key is None:
+            return False
+        turn = self._streaming_turn.get(session_id) or self._latest_turn.get(session_key)
+        callback = getattr(turn, "approval_callback", None) if turn is not None else None
+        if callback is None:
+            return False
+
+        pending = ACPPendingPermission(
+            session_key=session_key,
+            session_id=session_id,
+            request_id=request_id,
+            options=options,
+            expires_at=time.monotonic() + self._permission_expiry_sec(),
+        )
+        self._permissions[self._permission_key(session_key, request_id)] = pending
+        pending.timer = asyncio.create_task(
+            self._expire_permission(self._permission_key(session_key, request_id), pending)
+        )
+        self._spawn_permission_notify(callback, pending, params)
+        return True
+
+    def _spawn_permission_notify(self, callback, pending: ACPPendingPermission, params: dict) -> None:
+        tool_call = params.get("toolCall")
+        tool_call = tool_call if isinstance(tool_call, dict) else {}
+        raw_input = tool_call.get("rawInput")
+        payload = {
+            "backend": "antigravity",
+            "run_id": "",
+            "session_key": pending.session_key,
+            "session_id": pending.session_id,
+            "request_id": str(pending.request_id),
+            "title": str(tool_call.get("title") or ""),
+            "raw_input": raw_input if isinstance(raw_input, dict) else {},
+            "options": [
+                {
+                    "optionId": str(item.get("optionId") or ""),
+                    "kind": str(item.get("kind") or ""),
+                    "name": str(item.get("name") or ""),
+                }
+                for item in pending.options
+            ],
+        }
+
+        async def _run() -> None:
+            try:
+                await callback(payload)
+            except Exception:
+                # 审批是附属通道：通知/登记失败不拖垮主 turn，管理员仍可重试或等超时。
+                logger.warning("[HERMES antigravity] 权限审批通知失败", exc_info=True)
+
+        task = asyncio.create_task(_run())
+        self._permission_tasks.add(task)
+        task.add_done_callback(self._permission_tasks.discard)
+
+    async def _expire_permission(
+        self, key: tuple[str, str], pending: ACPPendingPermission
+    ) -> None:
+        """超时安全拒绝：管理员一直不答时 agent 不能永久挂起。"""
+        try:
+            await asyncio.sleep(max(0.0, pending.expires_at - time.monotonic()))
+        except asyncio.CancelledError:
+            return
+        if self._permissions.get(key) is not pending:
+            return
+        self._permissions.pop(key, None)
+        await self._reply_permission(pending.request_id, pending.options, allow=False)
+        logger.info("[HERMES antigravity] 权限请求超时，已安全拒绝")
+
+    @staticmethod
+    def _cancel_permission_timer(pending: ACPPendingPermission) -> None:
+        task = pending.timer
+        pending.timer = None
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+
+    async def _settle_permission(
+        self, key: tuple[str, str], pending: ACPPendingPermission
+    ) -> None:
+        """取消语义：先按 reject_once 关掉挂起权限，再让轮次收尾。"""
+        self._permissions.pop(key, None)
+        self._cancel_permission_timer(pending)
+        await self._reply_permission(pending.request_id, pending.options, allow=False)
+
+    async def _reject_permissions(self, session_key: str) -> None:
+        for key, pending in [
+            (k, p) for k, p in self._permissions.items() if p.session_key == session_key
+        ]:
+            await self._settle_permission(key, pending)
+
+    def _drop_permissions(self, session_key: str | None = None) -> None:
+        """丢弃等待中的权限（轮次收尾/进程关闭）；不写帧，仅清理内存与定时器。"""
+        for key, pending in list(self._permissions.items()):
+            if session_key is not None and pending.session_key != session_key:
+                continue
+            self._permissions.pop(key, None)
+            self._cancel_permission_timer(pending)
+
+    async def answer_permission(
+        self, *, session_key: str, request_id: Any, choice: str
+    ) -> bool:
+        """管理员应答一条挂起权限请求；True 只在原 RPC id 写帧成功后返回。
+
+        未知 request／已过期／重复应答／真实 options 没有对应 kind／写管道失败都返回
+        False（失败关闭），调用方据此保留审批条目供重试。
+        """
+        key = self._permission_key(session_key, request_id)
+        pending = self._permissions.get(key)
+        if pending is None:
+            return False
+        if time.monotonic() >= pending.expires_at:
+            await self._settle_permission(key, pending)
+            return False
+        if choice == "once":
+            option_id = self._allow_once_option(pending.options)
+        elif choice == "deny":
+            option_id = self._reject_option(pending.options)
+        else:
+            return False
+        if option_id is None:
+            # 真实 options 里没有该 kind：不硬猜 optionId，条目继续挂着。
+            return False
+
+        self._permissions.pop(key, None)
+        self._cancel_permission_timer(pending)
+        try:
+            await self._send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": pending.request_id,
+                    "result": {"outcome": {"outcome": "selected", "optionId": option_id}},
+                }
+            )
+        except ACPError:
+            self._permissions[key] = pending
+            logger.warning("[HERMES antigravity] 权限应答写入失败，条目保留可重试")
+            return False
+        logger.info(
+            f"[HERMES antigravity] 权限已应答 choice={choice} session={pending.session_id}"
+        )
+        return True
+
+    async def cancel(self, session_key: str) -> bool:
+        """`/run-stop`：对真实在跑轮发无 id `session/cancel`，不伪造 run_id。
+
+        没有在跑轮（进程未起／已收尾／正在收尾）返回 False，调用方只回执不重试。
+        权限等待中的轮先按 reject_once 关掉挂起请求，否则 agent 可能读不到取消。
+        """
+        if session_key in self._finishing or not self._reader_loop_started():
+            return False
+        turn = self._latest_turn.get(session_key)
+        if turn is None:
+            return False
+        try:
+            await self._send(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session/cancel",
+                    "params": {"sessionId": turn.session_id},
+                }
+            )
+        except ACPError:
+            logger.warning("[HERMES antigravity] session/cancel 写入失败")
+            return False
+        # 先发取消（无 id 通知），再按 reject_once 关掉挂起的权限 RPC：
+        # agent 可能正卡在权限应答上，不关掉这条 RPC 就不能处理取消。
+        await self._reject_permissions(session_key)
+        logger.info(f"[HERMES antigravity] 已发送 session/cancel session={turn.session_id}")
+        return True
 
     @staticmethod
     def _reject_option(options: list) -> str | None:
@@ -411,6 +683,7 @@ class AntigravityACPClient:
         on_unit: Callable[[dict[str, Any]], None] | None,
         meta: dict[str, Any] | None,
         stream_here: bool,
+        approval_callback: Callable[[dict[str, Any]], Any] | None = None,
     ) -> ACPTurn:
         self._turn_seq += 1
         turn = ACPTurn(
@@ -419,6 +692,7 @@ class AntigravityACPClient:
             seq=self._turn_seq,
             on_unit=on_unit,
             meta=dict(meta or {}),
+            approval_callback=approval_callback,
         )
         self._turns.setdefault(session_key, []).append(turn)
         self._latest_turn[session_key] = turn
@@ -429,6 +703,8 @@ class AntigravityACPClient:
 
     def _finalize_turns(self, session_key: str, *, emit: bool = True) -> str:
         """收尾本 scope 的全部轮：只补发各轮尚未投递的闭合单位，返回完整正文。"""
+        # 轮次结束（正常/取消/异常）都不再等待权限应答：请求已随本轮结束失效。
+        self._drop_permissions(session_key)
         turns = self._turns.pop(session_key, [])
         self._latest_turn.pop(session_key, None)
         for session_id, turn in list(self._streaming_turn.items()):
@@ -492,7 +768,10 @@ class AntigravityACPClient:
             await asyncio.wait_for(asyncio.shield(future), timeout=self._prompt_timeout)
         except asyncio.CancelledError:
             # steer 提交失败回退时该轮已被撤销：交给 prompt 循环重新看 newest 轮，
-            # 不能把内部撤销误当成整个 chat 被取消。
+            # 不能把内部撤销误当成整个 chat 被取消。取消传播的轮（cancelled=True）
+            # 同样直接返回，由 prompt 循环按 cancelled 语义收尾。
+            if turn.cancelled:
+                return
             if self._latest_turn.get(turn.session_key) is not turn or turn.future is not future:
                 return
             raise
@@ -508,6 +787,12 @@ class AntigravityACPClient:
             except ACPError:
                 pass
             raise ACPTimeoutError("ACP session/prompt 超时") from exc
+
+    def _mark_cancelled(self, turn: ACPTurn) -> None:
+        for item in self._turns.get(turn.session_key) or []:
+            item.cancelled = True
+            if item.future is not None and not item.future.done():
+                item.future.cancel()
 
     def _fail_pending(self, exc: Exception) -> None:
         for future in list(self._pending.values()):
@@ -627,12 +912,16 @@ class AntigravityACPClient:
         store: SessionKeyStore | None = None,
         on_unit: Callable[[dict[str, Any]], None] | None = None,
         turn_meta: dict[str, Any] | None = None,
+        approval_callback: Callable[[dict[str, Any]], Any] | None = None,
     ) -> str:
         """跑一轮文本 prompt，返回最终 assistant 正文（含模型自己写的 §）。
 
         on_unit：每形成一份完整闭合的 § 正文单位就同步回调一次（流式投递）。
         终态只补发这一轮尚未回调过的单位；steer 接管的后续 prompt 也共用同一回调。
-        返回的正文是这一轮所有 prompt 段（含被 steer 接管的旧段）的完整拼接。
+        approval_callback：本轮 `session/request_permission` 的登记/通知通道；空则不登记、
+        按 reject_once 安全拒绝（无管理员可答时不扩大授权）。
+        返回的正文是这一轮所有 prompt 段（含被 steer 接管的旧段）的完整拼接；
+        被 `/run-stop` 取消时抛 `ACPCancelledError`，不返回半截正文。
         """
         async with self._session_lock(session_key):
             await self._ensure_started()
@@ -701,8 +990,10 @@ class AntigravityACPClient:
                 on_unit=on_unit,
                 meta=turn_meta,
                 stream_here=True,
+                approval_callback=approval_callback,
             )
             failed = True
+            cancelled = False
             try:
                 await self._submit_prompt(turn, user_text)
                 while True:
@@ -715,13 +1006,19 @@ class AntigravityACPClient:
                         continue
                     self._finishing.add(session_key)
                     break
-                failed = False
+                cancelled = any(
+                    item.cancelled for item in self._turns.get(session_key) or []
+                )
+                # 取消语义：已生成但尚未出站的余量按 interrupted 丢弃，不等终态补发。
+                failed = cancelled
             finally:
                 self._finishing.discard(session_key)
                 text = self._finalize_turns(session_key, emit=not failed)
             error = self._text_errors.pop(session_key, "")
             if error:
                 raise ACPError(f"正文单位不合法: {error}")
+            if cancelled:
+                raise ACPCancelledError("ACP turn 已被 /run-stop 取消")
             return text
 
     async def steer(self, *, session_key: str, text: str) -> bool:
@@ -744,6 +1041,7 @@ class AntigravityACPClient:
             on_unit=latest.on_unit,
             meta=latest.meta,
             stream_here=False,
+            approval_callback=latest.approval_callback,
         )
         # 先接管再提交：prompt 循环在下一次醒来时必须看到 newest 轮，不能把旧 RPC
         # 的 end_turn 当作整轮结束。
@@ -798,6 +1096,11 @@ class AntigravityACPClient:
         self._reader_task = None
         self._stderr_task = None
         self._fail_pending(ACPProcessError("agy acp 进程已关闭"))
+        # 权限等待随子进程失效：清内存与定时器，不跨重启/不重通知。
+        self._drop_permissions()
+        for task in list(self._permission_tasks):
+            if not task.done():
+                task.cancel()
 
     async def close(self) -> None:
         if self._closed:

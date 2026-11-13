@@ -10,6 +10,10 @@ Usage:
 
 reply-json is a JSON string (e.g. '"§\\n你好\\n§"'); flags:
     --permission       send session/request_permission before the second chunk
+    --permission-id=<v>        permission RPC id（可给字符串，验证原 id 类型保留）
+    --permission-title=<t>     toolCall.title（缺省 write_file）
+    --permission-raw=<json>    toolCall.rawInput（缺省 {"CommandLine": "pwd"}）
+    --permission-options=<json> 权限 options 数组（缺省 allow_once/reject_once）
     --exit-on-prompt   exit(7) as soon as session/prompt arrives
     --exit-after-chunk exit(8) after the first agent_message_chunk
     --hang-prompt      never answer session/prompt
@@ -46,13 +50,73 @@ _write_lock = threading.Lock()
 _sessions: dict[str, dict] = {}
 _count_lock = threading.Lock()
 _perm_lock = threading.Lock()
-_permissions: dict[int, dict] = {}
+_permissions: dict[object, dict] = {}
+# 无 id 的 `session/cancel` 通知：把该 session 的驱动线程按 cancelled 收尾。
+_cancel_lock = threading.Lock()
+_cancelled_sessions: dict[str, bool] = {}
+
+
+def _permission_id() -> object:
+    """权限请求的 RPC id；字符串形态用于验证客户端保留原 id 类型。"""
+    value = _flag_value("--permission-id=")
+    return value if value is not None else 9000
+
+
+def _permission_title() -> str:
+    return _flag_value("--permission-title=") or "write_file"
+
+
+def _permission_raw() -> dict:
+    raw = _flag_value("--permission-raw=")
+    if raw is None:
+        return {"CommandLine": "pwd"}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _permission_options() -> list:
+    raw = _flag_value("--permission-options=")
+    if raw is None:
+        return [
+            {"optionId": "allow-once", "name": "Allow", "kind": "allow_once"},
+            {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"},
+        ]
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _cancel_requested(session_id: str) -> bool:
+    with _cancel_lock:
+        return bool(_cancelled_sessions.get(session_id))
+
+
+def _mark_cancelled(session_id: str) -> None:
+    with _cancel_lock:
+        _cancelled_sessions[session_id] = True
+
+
+def _clear_cancelled(session_id: str) -> None:
+    with _cancel_lock:
+        _cancelled_sessions.pop(session_id, None)
 
 
 def send(payload: dict) -> None:
     with _write_lock:
         sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
         sys.stdout.flush()
+        # 记录真实出站帧（测试断言 cancelled／权限应答时不依赖客户端内部状态）。
+        try:
+            with open(LOG_PATH + ".sent", "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                handle.flush()
+        except OSError:
+            pass
 
 
 def log(payload: dict) -> None:
@@ -128,10 +192,11 @@ _script_states: dict[str, dict] = {}
 def _recv_scripted_prompt(session_id: str, message: dict) -> None:
     """流式脚本：所有 prompt 进同一队列，单条驱动线程按到达顺序推进。"""
     state = _script_states.setdefault(
-        session_id, {"queue": [], "driver": False, "steer_index": 0}
+        session_id, {"queue": [], "driver": False, "steer_index": 0, "requests": []}
     )
     with _script_lock:
         state["queue"].append(message)
+        state["requests"].append(message)
         start = not state["driver"]
         state["driver"] = True
     if start:
@@ -140,18 +205,19 @@ def _recv_scripted_prompt(session_id: str, message: dict) -> None:
         ).start()
 
 
-def _ack(request: dict) -> None:
+def _ack(request: dict, stop_reason: str = "end_turn") -> None:
     send(
         {
             "jsonrpc": "2.0",
             "id": request.get("id"),
-            "result": {"stopReason": "end_turn"},
+            "result": {"stopReason": stop_reason},
         }
     )
 
 
-def _ask_permission(session_id: str, permission_id: int = 9000) -> None:
-    """流式脚本里的权限请求：客户端必须按 reject_once 在原 RPC id 回复。"""
+def _ask_permission(session_id: str, permission_id: object | None = None) -> None:
+    """流式脚本里的权限请求：原 RPC id 等待管理员应答。"""
+    permission_id = _permission_id() if permission_id is None else permission_id
     event = threading.Event()
     with _perm_lock:
         _permissions[permission_id] = {"event": event, "response": None}
@@ -162,11 +228,12 @@ def _ask_permission(session_id: str, permission_id: int = 9000) -> None:
             "method": "session/request_permission",
             "params": {
                 "sessionId": session_id,
-                "toolCall": {"toolCallId": "tc-1", "title": "write_file"},
-                "options": [
-                    {"optionId": "allow-once", "name": "Allow", "kind": "allow_once"},
-                    {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"},
-                ],
+                "toolCall": {
+                    "toolCallId": "tc-1",
+                    "title": _permission_title(),
+                    "rawInput": _permission_raw(),
+                },
+                "options": _permission_options(),
             },
         }
     )
@@ -186,6 +253,7 @@ def _drive_script(session_id: str) -> None:
     if first is None:
         state["driver"] = False
         return
+    _clear_cancelled(session_id)
     if "--permission" in FLAGS:
         _ask_permission(session_id)
     round_ = {"request": first, "chunks": first_chunks, "pos": 0, "next": None}
@@ -194,8 +262,29 @@ def _drive_script(session_id: str) -> None:
         with _script_lock:
             return state["queue"].pop(0) if state["queue"] else None
 
+    def abort_cancelled() -> bool:
+        """无 id 的 session/cancel：本会话所有在等 prompt 以 cancelled 收尾并停流。
+
+        真实 agy 只回原 prompt id；steer 让多条 prompt 同一时刻在等，因此按到达顺序
+        逐条回 cancelled（已 end_turn 过的重复帧由客户端自行忽略）。
+        """
+        if not _cancel_requested(session_id):
+            return False
+        with _script_lock:
+            waiting = list(state["requests"])
+            state["requests"].clear()
+            state["queue"].clear()
+            state["driver"] = False
+        for request in waiting:
+            _ack(request, "cancelled")
+        return True
+
     while True:
+        if abort_cancelled():
+            return
         while round_["pos"] < len(round_["chunks"]):
+            if abort_cancelled():
+                return
             text = round_["chunks"][round_["pos"]]
             round_["pos"] += 1
             update(session_id, "agent_message_chunk", text)
@@ -276,26 +365,11 @@ def run_prompt(request: dict) -> None:
     update(session_id, "agent_message_chunk", REPLY[:split_at])
 
     if "--permission" in FLAGS:
-        permission_id = 9000
-        event = threading.Event()
-        with _perm_lock:
-            _permissions[permission_id] = {"event": event, "response": None}
-        send(
-            {
-                "jsonrpc": "2.0",
-                "id": permission_id,
-                "method": "session/request_permission",
-                "params": {
-                    "sessionId": session_id,
-                    "toolCall": {"toolCallId": "tc-1", "title": "write_file"},
-                    "options": [
-                        {"optionId": "allow-once", "name": "Allow", "kind": "allow_once"},
-                        {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"},
-                    ],
-                },
-            }
-        )
-        event.wait(5)
+        _ask_permission(session_id)
+
+    if _cancel_requested(session_id):
+        _ack(request, "cancelled")
+        return
 
     if "--exit-after-chunk" in FLAGS:
         os._exit(8)
@@ -383,7 +457,9 @@ def handle_request(message: dict) -> None:
         return
 
     if method == "session/cancel":
-        send({"jsonrpc": "2.0", "id": request_id, "result": {}})
+        # 无 id 通知：真实 agy 用它把在跑 prompt 以 stopReason=cancelled 收尾，
+        # 自身不回帧。驱动线程在下一次检查时按 cancelled 结束当前 RPC。
+        _mark_cancelled(params.get("sessionId") or "")
         return
 
     send(

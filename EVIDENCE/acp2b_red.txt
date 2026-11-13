@@ -1,0 +1,453 @@
+11-13 21:35:54 [SUCCESS] nonebot | NoneBot is initializing...
+11-13 21:35:54 [INFO] nonebot | Current Env: prod
+11-13 21:35:54 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] AGENT_PLUGIN_CUSTOM_DIR 指向的目录不可用: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-q0luz7q6/config;定制功能(规则/群档案/媒体配置等)将回退内置默认
+/usr/lib/python3.13/unittest/async_case.py:135: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  return super().run(result)
+11-13 21:35:54 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-13 21:35:54 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/typing.py:103: DeprecationWarning: Failing to pass a value to the 'type_params' parameter of 'typing.ForwardRef._evaluate' is deprecated, as it leads to incorrect behaviour when calling typing.ForwardRef._evaluate on a stringified annotation that references a PEP 695 type parameter. It will be disallowed in Python 3.15.
+  return ref._evaluate(globalns, localns, recursive_guard=frozenset())
+11-13 21:35:55 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 从存档装回 2 条未过期挂起审批
+======================================================================
+ERROR: test_deny_answers_reject_once_and_keeps_body_flowing (tests.test_antigravity_permission.ACPApprovalHandlerTests.test_deny_answers_reject_once_and_keeps_body_flowing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 414, in test_deny_answers_reject_once_and_keeps_body_flowing
+    self._client(
+    ~~~~~~~~~~~~^
+        reply="§\n第一句\n§\n第二句\n§",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        flags=("--permission", "--permission-id=p-deny"),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/acp_2b_harness.py", line 187, in _client
+    client = ag.AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<4 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+ERROR: test_non_admin_approve_is_silent_and_never_answers (tests.test_antigravity_permission.ACPApprovalHandlerTests.test_non_admin_approve_is_silent_and_never_answers)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 455, in test_non_admin_approve_is_silent_and_never_answers
+    self._client(
+    ~~~~~~~~~~~~^
+        reply="§\n第一句\n§\n第二句\n§",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        flags=("--permission", "--permission-id=p-silent"),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/acp_2b_harness.py", line 187, in _client
+    client = ag.AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<4 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+ERROR: test_notification_failure_keeps_entry_answerable (tests.test_antigravity_permission.ACPApprovalHandlerTests.test_notification_failure_keeps_entry_answerable)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 473, in test_notification_failure_keeps_entry_answerable
+    self._client(
+    ~~~~~~~~~~~~^
+        reply="§\n第一句\n§\n第二句\n§",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        flags=("--permission", "--permission-id=p-nonotify"),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/acp_2b_harness.py", line 187, in _client
+    client = ag.AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<4 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+ERROR: test_once_answers_allow_once_and_deletes_only_after_success (tests.test_antigravity_permission.ACPApprovalHandlerTests.test_once_answers_allow_once_and_deletes_only_after_success)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 372, in test_once_answers_allow_once_and_deletes_only_after_success
+    self._client(
+    ~~~~~~~~~~~~^
+        reply="§\n第一句\n§\n第二句\n§",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        flags=("--permission", "--permission-id=jetski-acp-front:2"),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/acp_2b_harness.py", line 187, in _client
+    client = ag.AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<4 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+ERROR: test_other_choice_replies_acp_usage_only_and_keeps_entry (tests.test_antigravity_permission.ACPApprovalHandlerTests.test_other_choice_replies_acp_usage_only_and_keeps_entry)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 431, in test_other_choice_replies_acp_usage_only_and_keeps_entry
+    self._client(
+    ~~~~~~~~~~~~^
+        reply="§\n第一句\n§\n第二句\n§",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        flags=("--permission", "--permission-id=p-usage"),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/acp_2b_harness.py", line 187, in _client
+    client = ag.AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<4 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+ERROR: test_deny_answers_reject_once (tests.test_antigravity_permission.ACPPermissionClientTests.test_deny_answers_reject_once)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 139, in test_deny_answers_reject_once
+    client = self.make_client(flags=("--permission", "--permission-id=p-9"))
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 66, in make_client
+    client = AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<9 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+ERROR: test_duplicate_unknown_and_wrong_scope_answers_fail_closed (tests.test_antigravity_permission.ACPPermissionClientTests.test_duplicate_unknown_and_wrong_scope_answers_fail_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 175, in test_duplicate_unknown_and_wrong_scope_answers_fail_closed
+    client = self.make_client(flags=("--permission", "--permission-id=p-7"))
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 66, in make_client
+    client = AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<9 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+ERROR: test_expired_permission_is_rejected_and_late_answer_fails (tests.test_antigravity_permission.ACPPermissionClientTests.test_expired_permission_is_rejected_and_late_answer_fails)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 205, in test_expired_permission_is_rejected_and_late_answer_fails
+    client = self.make_client(
+        flags=("--permission", "--permission-id=p-exp"),
+        permission_timeout=0.05,
+    )
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 66, in make_client
+    client = AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<9 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+ERROR: test_missing_callback_is_safely_rejected_without_registration (tests.test_antigravity_permission.ACPPermissionClientTests.test_missing_callback_is_safely_rejected_without_registration)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 160, in test_missing_callback_is_safely_rejected_without_registration
+    client = self.make_client(flags=("--permission", "--permission-id=p-3"))
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 66, in make_client
+    client = AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<9 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+ERROR: test_once_waits_for_admin_and_answers_allow_once_at_the_original_id (tests.test_antigravity_permission.ACPPermissionClientTests.test_once_waits_for_admin_and_answers_allow_once_at_the_original_id)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 95, in test_once_waits_for_admin_and_answers_allow_once_at_the_original_id
+    client = self.make_client(
+        flags=("--permission", "--permission-id=jetski-acp-front:2")
+    )
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 66, in make_client
+    client = AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<9 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+ERROR: test_options_without_allow_once_kind_cannot_be_answered_as_once (tests.test_antigravity_permission.ACPPermissionClientTests.test_options_without_allow_once_kind_cannot_be_answered_as_once)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 232, in test_options_without_allow_once_kind_cannot_be_answered_as_once
+    client = self.make_client(
+        flags=(
+    ...<3 lines>...
+        )
+    )
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 66, in make_client
+    client = AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<9 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+ERROR: test_acp_entry_is_persisted_with_backend_and_scope_but_runs_is_unchanged (tests.test_antigravity_permission.ApprovalQueueBackendTests.test_acp_entry_is_persisted_with_backend_and_scope_but_runs_is_unchanged)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 285, in test_acp_entry_is_persisted_with_backend_and_scope_but_runs_is_unchanged
+    entry = self.approvals.add_pending(
+        run_id="",
+    ...<6 lines>...
+        session_key="hermes-onebotv11+private+123",
+    )
+TypeError: add_pending() got an unexpected keyword argument 'backend'
+
+======================================================================
+ERROR: test_acp_notice_lists_only_once_and_deny (tests.test_antigravity_permission.ApprovalQueueBackendTests.test_acp_notice_lists_only_once_and_deny)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 311, in test_acp_notice_lists_only_once_and_deny
+    entry = self.approvals.add_pending(
+        run_id="", adapter="onebotv11", scope_desc="私聊 123", command="pwd",
+        choices=["once", "deny"], backend="antigravity",
+        session_key="hermes-onebotv11+private+123",
+    )
+TypeError: add_pending() got an unexpected keyword argument 'backend'
+
+======================================================================
+ERROR: test_cancel_running_turn_sends_id_less_notice_and_reports_cancelled (tests.test_antigravity_cancel.ACPCancelClientTests.test_cancel_running_turn_sends_id_less_notice_and_reports_cancelled)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_cancel.py", line 98, in test_cancel_running_turn_sends_id_less_notice_and_reports_cancelled
+    from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        ACPCancelledError,
+    )
+ImportError: cannot import name 'ACPCancelledError' from 'nonebot_plugin_hermes_adapter.backends.antigravity.client' (/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/backends/antigravity/client.py)
+
+======================================================================
+ERROR: test_cancel_while_waiting_for_permission_rejects_and_ends_the_turn (tests.test_antigravity_cancel.ACPCancelClientTests.test_cancel_while_waiting_for_permission_rejects_and_ends_the_turn)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_cancel.py", line 138, in test_cancel_while_waiting_for_permission_rejects_and_ends_the_turn
+    from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        ACPCancelledError,
+    )
+ImportError: cannot import name 'ACPCancelledError' from 'nonebot_plugin_hermes_adapter.backends.antigravity.client' (/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/backends/antigravity/client.py)
+
+======================================================================
+ERROR: test_cancel_without_a_running_turn_returns_false (tests.test_antigravity_cancel.ACPCancelClientTests.test_cancel_without_a_running_turn_returns_false)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_cancel.py", line 124, in test_cancel_without_a_running_turn_returns_false
+    self.assertFalse(await client.cancel("k1"))
+                           ^^^^^^^^^^^^^
+AttributeError: 'AntigravityACPClient' object has no attribute 'cancel'
+
+======================================================================
+ERROR: test_prompt_after_cancel_reuses_the_same_process_and_session (tests.test_antigravity_cancel.ACPCancelClientTests.test_prompt_after_cancel_reuses_the_same_process_and_session)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_cancel.py", line 198, in test_prompt_after_cancel_reuses_the_same_process_and_session
+    from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        ACPCancelledError,
+    )
+ImportError: cannot import name 'ACPCancelledError' from 'nonebot_plugin_hermes_adapter.backends.antigravity.client' (/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/backends/antigravity/client.py)
+
+======================================================================
+ERROR: test_steer_b_and_c_in_flight_cancel_ends_the_whole_wait_chain (tests.test_antigravity_cancel.ACPCancelClientTests.test_steer_b_and_c_in_flight_cancel_ends_the_whole_wait_chain)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_cancel.py", line 174, in test_steer_b_and_c_in_flight_cancel_ends_the_whole_wait_chain
+    from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        ACPCancelledError,
+    )
+ImportError: cannot import name 'ACPCancelledError' from 'nonebot_plugin_hermes_adapter.backends.antigravity.client' (/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/backends/antigravity/client.py)
+
+======================================================================
+ERROR: test_new_prompt_after_run_stop_reuses_the_acp_session (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_new_prompt_after_run_stop_reuses_the_acp_session)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_cancel.py", line 265, in test_new_prompt_after_run_stop_reuses_the_acp_session
+    self._client(chunks=["§\nA1\n§\n", "A2\n", "§\n"], delay=0.2)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/acp_2b_harness.py", line 187, in _client
+    client = ag.AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<4 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+ERROR: test_run_stop_cancels_running_turn_and_hard_silences_it (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_run_stop_cancels_running_turn_and_hard_silences_it)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_cancel.py", line 237, in test_run_stop_cancels_running_turn_and_hard_silences_it
+    self._client(chunks=["§\nA1\n§\n", "A2\n", "§\n"], delay=0.2)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/acp_2b_harness.py", line 187, in _client
+    client = ag.AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<4 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+ERROR: test_run_stop_without_running_turn_reports_no_object (tests.test_antigravity_cancel.ACPRunStopHandlerTests.test_run_stop_without_running_turn_reports_no_object)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_cancel.py", line 258, in test_run_stop_without_running_turn_reports_no_object
+    self._client(chunks=["§\nA1\n§\n"])
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/acp_2b_harness.py", line 187, in _client
+    client = ag.AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<4 lines>...
+        permission_timeout=permission_timeout,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'permission_timeout'
+
+======================================================================
+FAIL: test_restart_does_not_restore_acp_entries (tests.test_antigravity_permission.ApprovalQueueBackendTests.test_restart_does_not_restore_acp_entries)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2b-20261113/tests/test_antigravity_permission.py", line 357, in test_restart_does_not_restore_acp_entries
+    self.assertEqual(restored, 1, "旧 ACP 请求随旧子进程失效，重启不得装回")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 1 : 旧 ACP 请求随旧子进程失效，重启不得装回
+
+----------------------------------------------------------------------
+Ran 26 tests in 0.370s
+
+FAILED (failures=1, errors=21)

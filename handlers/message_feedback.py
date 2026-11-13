@@ -4,6 +4,7 @@
 """
 
 import time
+from dataclasses import dataclass
 
 from nonebot import logger
 from nonebot.adapters import Bot
@@ -287,32 +288,89 @@ def _check_interim_feedback(key: tuple[str, str], segment: str) -> None:
             )
 
 
+_ACP_APPROVAL_CHOICES = ("once", "deny")
+# rawInput 里只认真实命令行原语；其余参数（路径、env、凭据）不进通知与存档。
+_ACP_COMMAND_KEYS = ("CommandLine", "command")
+_ACP_COMMAND_MAX_LEN = 200
+
+
+@dataclass(frozen=True)
+class _ACPApprovalSummary:
+    """ACP 权限请求规范化后的登记视图（只留审批需要的字段）。"""
+
+    request_id: str
+    session_key: str
+    command: str
+
+
+def _acp_command_summary(title: str, raw_input: object) -> str:
+    """从 rawInput 里只取命令行文本，绝不整段回显（可能含无关参数或凭据）。"""
+    command = ""
+    if isinstance(raw_input, dict):
+        for key in _ACP_COMMAND_KEYS:
+            value = raw_input.get(key)
+            if isinstance(value, str) and value.strip():
+                command = value.strip()
+                break
+    return (command or title or "").strip()[:_ACP_COMMAND_MAX_LEN]
+
+
+def _normalize_acp_approval(approval: dict) -> _ACPApprovalSummary:
+    """规范化 ACP title／rawInput／options／request_id／session_key。
+
+    options 只用于判断真实能力：ACP 的 allow_once／reject_once 对应命令面 once／deny，
+    因此条目 choices 固定 once／deny（真实 options 由客户端应答时再按 kind 选 optionId）。
+    """
+    title = str(approval.get("title") or "").strip()
+    return _ACPApprovalSummary(
+        request_id=str(approval.get("request_id") or ""),
+        session_key=str(approval.get("session_key") or ""),
+        command=_acp_command_summary(title, approval.get("raw_input")),
+    )
+
+
 def _make_approval_notify(
     bot: Bot, adapter_name: str, scope_desc: str, *, is_private: bool, group_id: str | None
 ):
     """阶段3c:approval_callback 工厂——登记挂起审批并私聊通知管理员。
 
     群聊侧不发任何消息(审批是管理员私事);通知失败只记日志,不拖垮主 turn。
+    runs 与 antigravity(ACP 权限)共用同一 FIFO、锁与通知,只在登记字段上分支。
     """
     async def _notify(approval: dict) -> None:
-        entry = approvals_add_pending(
-            run_id=str(approval.get("run_id") or ""),
-            adapter=adapter_name,
-            scope_desc=scope_desc,
-            command=str(approval.get("command") or approval.get("preview") or ""),
-            choices=[str(c) for c in (approval.get("choices") or [])],
-            is_private=is_private,
-            group_id=group_id,
-            # v0.22 authority 应答三键之一;通知帧自带,老形态没有则为空串
-            request_id=str(approval.get("request_id") or ""),
-        )
+        if str(approval.get("backend") or "runs") == "antigravity":
+            summary = _normalize_acp_approval(approval)
+            entry = approvals_add_pending(
+                run_id="",  # ACP 没有 Runs 台账身份，不伪造 run_id
+                adapter=adapter_name,
+                scope_desc=scope_desc,
+                command=summary.command,
+                choices=list(_ACP_APPROVAL_CHOICES),
+                is_private=is_private,
+                group_id=group_id,
+                request_id=summary.request_id,
+                backend="antigravity",
+                session_key=summary.session_key,
+            )
+        else:
+            entry = approvals_add_pending(
+                run_id=str(approval.get("run_id") or ""),
+                adapter=adapter_name,
+                scope_desc=scope_desc,
+                command=str(approval.get("command") or approval.get("preview") or ""),
+                choices=[str(c) for c in (approval.get("choices") or [])],
+                is_private=is_private,
+                group_id=group_id,
+                # v0.22 authority 应答三键之一;通知帧自带,老形态没有则为空串
+                request_id=str(approval.get("request_id") or ""),
+            )
         sent = await approvals_notify_admins(
             bot=bot, adapter_name=adapter_name, entry=entry,
             admin_users=set(load_user_lists().admin_users),
         )
         logger.info(
-            f"[HERMES approval] 审批挂起 #{entry.approval_id} run={entry.run_id} "
-            f"scope={scope_desc} 通知管理员 {sent} 人"
+            f"[HERMES approval] 审批挂起 #{entry.approval_id} run={entry.run_id or '-'} "
+            f"backend={entry.backend} scope={scope_desc} 通知管理员 {sent} 人"
         )
 
     return _notify

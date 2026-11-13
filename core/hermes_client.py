@@ -1490,6 +1490,7 @@ class HermesClient:
                     if reply_queue is not None:
                         reply_queue.put(decision, int(decision.get("_turn_seq") or 0))
 
+                cancelled = False
                 try:
                     text = await antigravity_client.get_client().prompt(
                         session_key=session_key,
@@ -1505,7 +1506,14 @@ class HermesClient:
                             "bot_self_id": bot_self_id or "",
                             "delivery_generation": delivery_generation,
                         },
+                        # 阶段2B：ACP 权限请求复用本轮已有审批回调（登记+私聊通知）。
+                        approval_callback=approval_callback,
                     )
+                except antigravity_client.ACPCancelledError:
+                    # /run-stop：被停 turn 走既有硬静默；未发的队列余量按取消丢弃。
+                    cancelled = True
+                    logger.info("[HERMES antigravity] 本轮已被 /run-stop 取消")
+                    return "", None, ChatResult(raw_text="", is_interrupted=True), ""
                 except antigravity_client.ACPError as exc:
                     # 只记异常类别/码，不记提示词或用户正文；有副作用的 prompt 不自动重放。
                     logger.error(
@@ -1518,7 +1526,7 @@ class HermesClient:
                     ), ""
                 finally:
                     if reply_queue is not None:
-                        await reply_queue.finish()
+                        await reply_queue.finish(cancelled=cancelled)
                 return text, None, None, ""
             if plugin_config.hermes_api_interface == "astrbot":
                 try:
