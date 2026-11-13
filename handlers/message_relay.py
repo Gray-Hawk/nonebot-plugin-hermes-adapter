@@ -333,6 +333,12 @@ def _steer_eligible_ids(
         live = tracker.get_by_scope(make_scope_key(adapter_name, is_private, user_id, group_id))
         if live is not None:
             ids.add(live.user_id)
+    # 无 Runs 台账(antigravity ACP):在跑 ACP 轮的触发者同样是资格来源。
+    turn = _acp_active_turn(adapter_name, is_private, user_id, group_id)
+    if turn is not None and isinstance(turn.meta, dict):
+        trigger = str(turn.meta.get("user_id") or "")
+        if trigger:
+            ids.add(trigger)
     if not is_private and group_id is not None and _mcp.active_sessions is not None:
         ids.update(
             _mcp.active_sessions.pinned_participant_ids(
@@ -386,6 +392,116 @@ def _start_late_accept_reconcile(tracked: TrackedRun) -> None:
         )
 
 
+def _steer_rows_for_send(
+    presentation,
+) -> tuple[list[tuple[str | None, SteerRowPresentation]] | None, bool]:
+    """本批呈递行的发送集合（按 m:id 去重，保序）。
+
+    返回 ``(ordered, conflict)``：``ordered`` 是 ``(m:id 或 None, 行)`` 序列；
+    同号异发送人/异正文是身份事实矛盾，整批回退（``conflict=True``）。无号行
+    没有转录锚点，每批按原样呈递。
+    """
+    ordered: list[tuple[str | None, SteerRowPresentation]] = []
+    by_mid: dict[str, dict[str, str]] = {}
+    for item in presentation.rows:
+        mid = item.source_row.id
+        if mid is None:
+            ordered.append((None, item))
+            continue
+        key = str(mid)
+        existing = by_mid.get(key)
+        if existing is not None:
+            if (
+                existing["sender_id"] != str(item.source_row.user_id)
+                or existing["text"] != item.rendered_line
+            ):
+                return None, True
+            continue
+        by_mid[key] = {
+            "sender_id": str(item.source_row.user_id),
+            "text": item.rendered_line,
+        }
+        ordered.append((key, item))
+    return ordered, False
+
+
+def _acp_active_turn(adapter_name: str, is_private: bool, user_id: str, group_id: str | None):
+    """本 scope 正在跑的 ACP 轮（antigravity 专用）；其它后端/无轮返回 None。
+
+    只读运行时单例，不启动进程：`get_client()` 是懒构造，`active_turn()` 在没有
+    进程/轮次时直接返回 None。接口判定读本模块的 `plugin_config`，与既有
+    steer 能力分发同一处配置事实。
+    """
+    if getattr(plugin_config, "hermes_api_interface", "") != "antigravity":
+        return None
+    manager = getattr(_mcp, "session_manager", None)
+    if manager is None:
+        return None
+    try:
+        session_key = manager.get_session_key(
+            adapter_name=adapter_name, is_private=is_private,
+            user_id=user_id, group_id=group_id,
+        )
+    except Exception:
+        return None
+    from ..backends.antigravity import client as ag
+
+    try:
+        return ag.get_client().active_turn(session_key)
+    except Exception:
+        return None
+
+
+async def _steer_text_into_acp_turn(
+    adapter_name: str, is_private: bool, user_id: str, group_id: str | None, *,
+    presentation, turn=None,
+) -> SteerInjection:
+    """把同一份 steer 呈递发到在跑 ACP 轮（同 session 的后续 session/prompt）。
+
+    没有在跑轮 / 已收尾 / 提交失败 → ok=False，调用方按既有排队语义重投（零丢失）。
+    不写 Runs 台账：ACP 没有 run 身份，不伪造 run_id；呈现去重仍走既有的
+    steer_seen，正文与身份事实仍由 render_steer_batch 唯一构造。
+    """
+    if turn is None:
+        turn = _acp_active_turn(adapter_name, is_private, user_id, group_id)
+    if turn is None:
+        return SteerInjection(False)
+    ordered, conflict = _steer_rows_for_send(presentation)
+    if conflict or ordered is None:
+        logger.warning(
+            f"[HERMES steer] ACP 同号身份/正文冲突,整批回退 "
+            f"(scope={'private' if is_private else 'group'}:{user_id if is_private else group_id})"
+        )
+        return SteerInjection(False)
+    send_rows = [item for _key, item in ordered]
+    if not send_rows:
+        return SteerInjection(True)
+    text = render_steer_batch(send_rows)
+    if steer_reply_push_active():
+        text = _with_steer_reply_convention(text)
+    manager = getattr(_mcp, "session_manager", None)
+    if manager is None:
+        return SteerInjection(False)
+    session_key = manager.get_session_key(
+        adapter_name=adapter_name, is_private=is_private,
+        user_id=user_id, group_id=group_id,
+    )
+    from ..backends.antigravity import client as ag
+
+    ok = await ag.get_client().steer(session_key=session_key, text=text)
+    if not ok:
+        return SteerInjection(False)
+    scope = make_inflight_key(adapter_name, is_private, user_id, group_id)
+    for item in send_rows:
+        if item.source_row.id is not None:
+            _steer_seen_mark(scope, item.source_row.id)
+    logger.info(
+        f"[HERMES steer] ACP 接管在跑轮 (scope={'private' if is_private else 'group'}:"
+        f"{user_id if is_private else group_id}) rows={len(send_rows)} len={len(text)}"
+    )
+    return SteerInjection(True, sent_rows=tuple(item.source_row for item in send_rows))
+
+
 async def _steer_text_into_live_run(
     adapter_name: str, is_private: bool, user_id: str, group_id: str | None, *,
     presentation,
@@ -405,6 +521,13 @@ async def _steer_text_into_live_run(
     被吞内容仍由台账 pending 行在终态 pending_steer 回收里补投,不靠重发兜底。
     """
     tracker = _mcp.run_tracker
+    # 能力分发：有在跑的 ACP 轮才走 ACP（不伪造 run_id）；否则保持既有 Runs 台账路径。
+    turn = _acp_active_turn(adapter_name, is_private, user_id, group_id)
+    if turn is not None:
+        return await _steer_text_into_acp_turn(
+            adapter_name, is_private, user_id, group_id,
+            presentation=presentation, turn=turn,
+        )
     if tracker is None:
         return SteerInjection(False)
     inflight = getattr(_mcp, "inflight", None)
@@ -414,14 +537,17 @@ async def _steer_text_into_live_run(
     live = tracker.get_by_scope(make_scope_key(adapter_name, is_private, user_id, group_id))
     if live is None:
         return SteerInjection(False)
-    # 同一批内同号同值只呈递一次(发送正文也只保留首次出现的那一行);同号异
-    # sender/正文是身份事实矛盾,整批回退,绝不先发送一份无法可靠对账的文本。
-    ordered: list[tuple[str | None, SteerRowPresentation]] = []
+    # 同一批内同号同值只呈递一次；同号异 sender/正文是身份事实矛盾，整批回退。
+    ordered, conflict = _steer_rows_for_send(presentation)
+    if conflict or ordered is None:
+        logger.warning(
+            f"[HERMES steer] 同号身份/正文冲突,发送前整批回退 "
+            f"(run_id={live.run_id})"
+        )
+        return SteerInjection(False)
     items: list[dict] = []
-    by_mid: dict[str, dict] = {}
-    for item in presentation.rows:
-        mid = item.source_row.id
-        if mid is None:
+    for key, item in ordered:
+        if key is None:
             # 无号行没有转录对账锚点(永不参与跨批去重、每批按原样呈递),但仍以
             # 虚拟锚把原始正文随行入账:native 回收只能从台账取原文,不记就只能把
             # 渲染文本当正文。虚拟锚不参与转录对账(见 claim_steers_for_reconcile
@@ -432,32 +558,14 @@ async def _steer_text_into_live_run(
                 "steer_text": item.rendered_line,
                 "raw_text": item.source_row.content or "",
             })
-            ordered.append((None, item))
             continue
-        key = str(mid)
-        existing = by_mid.get(key)
-        if existing is not None:
-            if (
-                existing["sender_id"] != str(item.source_row.user_id)
-                or existing["steer_text"] != item.rendered_line
-            ):
-                logger.warning(
-                    f"[HERMES steer] 同号身份/正文冲突,发送前整批回退 m:id={key} "
-                    f"(run_id={live.run_id} 既有 sender={existing['sender_id']} "
-                    f"冲突 sender={item.source_row.user_id})"
-                )
-                return SteerInjection(False)
-            continue
-        entry = {
+        items.append({
             "m_id": key,
             "sender_id": str(item.source_row.user_id),
             "steer_text": item.rendered_line,
             # 原始正文随行入账:恢复/对账改投直接用它,绝不从渲染后的行反推。
             "raw_text": item.source_row.content or "",
-        }
-        by_mid[key] = entry
-        items.append(entry)
-        ordered.append((key, item))
+        })
     try:
         claim = tracker.claim_steer(
             run_id=live.run_id, scope_key=live.scope_key,
@@ -647,6 +755,11 @@ def _render_steer_presentation_for_scope(
     if live is None:
         live = _scope_live_run(adapter_name, is_private, user_id, group_id)
     self_id = getattr(live, "bot_self_id", None) if live is not None else None
+    if self_id is None:
+        # ACP 无 Runs 台账：bot 身份来自在跑轮登记的 turn_meta（与 current 行同源）。
+        turn = _acp_active_turn(adapter_name, is_private, user_id, group_id)
+        if turn is not None and isinstance(turn.meta, dict):
+            self_id = turn.meta.get("bot_self_id")
     # 只认真实账号 id:替身/缺字段(非 str/int)与空串一律按「拿不到 bot 上下文」
     # 处理,绝不拿对象 repr 去比 user_id 或冒充身份事实。
     if not isinstance(self_id, (str, int)) or self_id == "":

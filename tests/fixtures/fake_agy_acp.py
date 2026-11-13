@@ -17,6 +17,17 @@ reply-json is a JSON string (e.g. '"§\\n你好\\n§"'); flags:
     --error-model      answer session/set_model with JSON-RPC error -32602
     --gate-prompt=<p>  hold the prompt reply until file <p> exists (clear-fence
                        tests keep a normal prompt in flight while /clear runs)
+
+Streaming / steer scripts（阶段2A，离线夹具）:
+    --chunks=<json>         首条 prompt 的 agent_message_chunk 序列
+    --steer-chunks=<json>   第二条及以后 prompt 的分段序列（list of list）
+    --chunk-delay=<sec>     相邻 chunk 间隔（真实流式顺序可被测试观察）
+    --ack-wait=<sec>        最后一条 chunk 之后、回复 end_turn 之前的等待，
+                            用于让测试在「正文流完但 RPC 未收尾」窗口插入 steer
+    --late-chunk=<text>     整轮收尾后再发一条游离 agent_message_chunk
+    --steer-ack-mode=early  收到后续 prompt 时先给上一条 RPC 回 end_turn，
+                            再继续流出旧正文、随后 user_message_chunk 与新正文
+                            （主人实测语义；默认即此形态）
 """
 
 from __future__ import annotations
@@ -90,6 +101,140 @@ def wait_gate() -> None:
         if time.monotonic() > deadline:
             raise RuntimeError("fake agy gate release timed out")
         time.sleep(0.01)
+
+
+def _flag_value(prefix: str) -> str | None:
+    for flag in FLAGS:
+        if flag.startswith(prefix):
+            return flag[len(prefix) :]
+    return None
+
+
+def _prompt_text(request: dict) -> str:
+    params = request.get("params") or {}
+    blocks = params.get("prompt") or []
+    parts = [
+        str(block.get("text") or "")
+        for block in blocks
+        if isinstance(block, dict)
+    ]
+    return "".join(parts)
+
+
+_script_lock = threading.Lock()
+_script_states: dict[str, dict] = {}
+
+
+def _recv_scripted_prompt(session_id: str, message: dict) -> None:
+    """流式脚本：所有 prompt 进同一队列，单条驱动线程按到达顺序推进。"""
+    state = _script_states.setdefault(
+        session_id, {"queue": [], "driver": False, "steer_index": 0}
+    )
+    with _script_lock:
+        state["queue"].append(message)
+        start = not state["driver"]
+        state["driver"] = True
+    if start:
+        threading.Thread(
+            target=_drive_script, args=(session_id,), daemon=True
+        ).start()
+
+
+def _ack(request: dict) -> None:
+    send(
+        {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "result": {"stopReason": "end_turn"},
+        }
+    )
+
+
+def _ask_permission(session_id: str, permission_id: int = 9000) -> None:
+    """流式脚本里的权限请求：客户端必须按 reject_once 在原 RPC id 回复。"""
+    event = threading.Event()
+    with _perm_lock:
+        _permissions[permission_id] = {"event": event, "response": None}
+    send(
+        {
+            "jsonrpc": "2.0",
+            "id": permission_id,
+            "method": "session/request_permission",
+            "params": {
+                "sessionId": session_id,
+                "toolCall": {"toolCallId": "tc-1", "title": "write_file"},
+                "options": [
+                    {"optionId": "allow-once", "name": "Allow", "kind": "allow_once"},
+                    {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"},
+                ],
+            },
+        }
+    )
+    event.wait(5)
+
+
+def _drive_script(session_id: str) -> None:
+    """实测 steer 语义：新 prompt 到达 → 上一条 RPC 提前 end_turn，旧正文继续流出，
+    随后 user_message_chunk 与新正文，终态归最新 prompt。"""
+    state = _script_states[session_id]
+    first_chunks = json.loads(_flag_value("--chunks=") or "[]")
+    steer_chunks = json.loads(_flag_value("--steer-chunks=") or "[]")
+    delay = float(_flag_value("--chunk-delay=") or 0)
+    ack_wait = float(_flag_value("--ack-wait=") or 0)
+    with _script_lock:
+        first = state["queue"].pop(0) if state["queue"] else None
+    if first is None:
+        state["driver"] = False
+        return
+    if "--permission" in FLAGS:
+        _ask_permission(session_id)
+    round_ = {"request": first, "chunks": first_chunks, "pos": 0, "next": None}
+
+    def take_pending() -> dict | None:
+        with _script_lock:
+            return state["queue"].pop(0) if state["queue"] else None
+
+    while True:
+        while round_["pos"] < len(round_["chunks"]):
+            text = round_["chunks"][round_["pos"]]
+            round_["pos"] += 1
+            update(session_id, "agent_message_chunk", text)
+            if delay:
+                time.sleep(delay)
+            pending = take_pending()
+            if pending is not None and round_["next"] is None:
+                _ack(round_["request"])
+                round_["next"] = pending
+        if round_["next"] is None:
+            pending = take_pending()
+            if pending is not None:
+                _ack(round_["request"])
+                round_["next"] = pending
+        if round_["next"] is None and ack_wait:
+            time.sleep(ack_wait)
+            pending = take_pending()
+            if pending is not None:
+                _ack(round_["request"])
+                round_["next"] = pending
+        if round_["next"] is None:
+            _ack(round_["request"])
+            break
+        nxt = round_["next"]
+        with _script_lock:
+            index = state["steer_index"]
+            state["steer_index"] += 1
+        chunks = steer_chunks[index] if index < len(steer_chunks) else (
+            steer_chunks[-1] if steer_chunks else []
+        )
+        update(session_id, "user_message_chunk", _prompt_text(nxt))
+        round_ = {"request": nxt, "chunks": chunks, "pos": 0, "next": None}
+
+    late = _flag_value("--late-chunk=")
+    if late:
+        time.sleep(delay or 0.05)
+        update(session_id, "agent_message_chunk", late)
+    with _script_lock:
+        state["driver"] = False
 
 
 def run_prompt(request: dict) -> None:
@@ -231,6 +376,9 @@ def handle_request(message: dict) -> None:
         return
 
     if method == "session/prompt":
+        if _flag_value("--chunks=") is not None:
+            _recv_scripted_prompt(params.get("sessionId") or "", message)
+            return
         threading.Thread(target=run_prompt, args=(message,), daemon=True).start()
         return
 

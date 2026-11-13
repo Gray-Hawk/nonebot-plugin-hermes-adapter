@@ -1477,12 +1477,34 @@ class HermesClient:
                     ), ""
                 from .. import mcp as mcp_module
 
+                # 阶段2A：闭合 § 单位一到就进既有结构化正文队列（同一 3 秒节奏、
+                # 段内全文去重与交付代际栅栏）；终态只补剩余单位。没有即时发送器
+                # （非 handler 直调/未接决策通道）时不挂队列，正文仍走终态解析。
+                reply_queue = None
+                if live_decision_callback is not None:
+                    reply_queue = _RunsReplyQueue(
+                        live_decision_callback, "", runs_streamed
+                    )
+
+                def _on_unit(decision: dict) -> None:
+                    if reply_queue is not None:
+                        reply_queue.put(decision, int(decision.get("_turn_seq") or 0))
+
                 try:
                     text = await antigravity_client.get_client().prompt(
                         session_key=session_key,
                         system_prompt=system_prompt,
                         user_text=user_text,
                         store=mcp_module.session_key_store,
+                        on_unit=_on_unit if reply_queue is not None else None,
+                        turn_meta={
+                            "adapter": adapter_name,
+                            "is_private": is_private,
+                            "user_id": user_id,
+                            "group_id": group_id,
+                            "bot_self_id": bot_self_id or "",
+                            "delivery_generation": delivery_generation,
+                        },
                     )
                 except antigravity_client.ACPError as exc:
                     # 只记异常类别/码，不记提示词或用户正文；有副作用的 prompt 不自动重放。
@@ -1494,6 +1516,9 @@ class HermesClient:
                         parse_failed=True,
                         is_transport_error=True,
                     ), ""
+                finally:
+                    if reply_queue is not None:
+                        await reply_queue.finish()
                 return text, None, None, ""
             if plugin_config.hermes_api_interface == "astrbot":
                 try:
@@ -1746,6 +1771,13 @@ class HermesClient:
         if expect_structured and structured_tool_name == "submit_decision" \
                 and plugin_config.hermes_api_interface in ("runs", "completions", "antigravity"):
             from .runs_text import TextUnitsError, decisions_from_text
+
+            # 阶段2A：ACP 流式正文已在轮内按同一队列投递；终态不再重解析整段，
+            # 只把同一批决策顺序交给 handler 做控制/收口（正文不重发）。
+            if runs_streamed and plugin_config.hermes_api_interface == "antigravity":
+                result = ChatResult(raw_text=raw_text, structured=runs_streamed[0])
+                result.terminal_decisions = list(runs_streamed)
+                return _out(result)
 
             try:
                 decisions = decisions_from_text(raw_text)

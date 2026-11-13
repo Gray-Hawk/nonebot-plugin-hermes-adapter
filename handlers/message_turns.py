@@ -429,7 +429,7 @@ async def _dispatch_chat(
     # 带媒体但行号缺失/行来源不合法在 _maybe_steer_direct 内整批失败关闭,
     # 落回内联帧路径。逐行身份/媒体/台账/去重全部从同一份 fragments 派生。
     if (
-        plugin_config.hermes_api_interface == "runs"
+        plugin_config.hermes_api_interface in ("runs", "antigravity")
         and not ephemeral
         and await _maybe_steer_direct(
             target=target, adapter_name=adapter_name, user_id=user_id, nickname=nickname,
@@ -785,14 +785,8 @@ def _terminal_delivery(result, index: int, **kwargs):
     return _prepare_delivery(result, **kwargs)
 
 
-def _generation_fenced_delivery(result, *, adapter_name, is_private, user_id, group_id):
-    """无 Runs 台账的终态(antigravity ACP)沿用会话代际做旧代出站围栏。
-
-    /clear(T1 空闲重置同理)已推进 generation 时,在途轮次即使拿到回复也不得再调
-    平台。判定点与失败语义和 runs 路 generation_guard 相同;没有 run 身份,
-    因此不做组件认领与台账回执,只核一次既有 SessionManager 代际。
-    """
-    generation = getattr(result, "delivery_generation", None)
+def _generation_guard_context(generation, *, adapter_name, is_private, user_id, group_id):
+    """只带代际栅栏的出站上下文（无 Runs 台账）；generation=None 时无上下文。"""
     if generation is None:
         return None
     getter = getattr(session_manager, "get_delivery_generation", None)
@@ -802,6 +796,20 @@ def _generation_fenced_delivery(result, *, adapter_name, is_private, user_id, gr
         tracker=None,
         run_id="",
         generation_guard=lambda: getter(adapter_name, is_private, user_id, group_id) <= generation,
+    )
+
+
+def _generation_fenced_delivery(result, *, adapter_name, is_private, user_id, group_id):
+    """无 Runs 台账的终态(antigravity ACP)沿用会话代际做旧代出站围栏。
+
+    /clear(T1 空闲重置同理)已推进 generation 时,在途轮次即使拿到回复也不得再调
+    平台。判定点与失败语义和 runs 路 generation_guard 相同;没有 run 身份,
+    因此不做组件认领与台账回执,只核一次既有 SessionManager 代际。
+    """
+    return _generation_guard_context(
+        getattr(result, "delivery_generation", None),
+        adapter_name=adapter_name, is_private=is_private,
+        user_id=user_id, group_id=group_id,
     )
 
 
@@ -1077,6 +1085,109 @@ def _make_runs_live_decisions(
     return deliver, state
 
 
+def _make_acp_live_decisions(
+    *,
+    bot,
+    target,
+    adapter_name: str,
+    user_id: str,
+    group_id: str | None,
+    is_private: bool,
+    fb_key,
+    nickname: str,
+    session=None,
+    mark_replied: bool = False,
+    delivery_generation: int | None = None,
+    suppresses_feedback: bool = False,
+):
+    """ACP 流式正文的即时发送器（无 Runs 台账，不伪造 run_id）。
+
+    与 runs 版共用同一套 outbound／历史／反馈原语，只去掉台账组件认领与回执；
+    clear 代际仍由 DeliveryContext.generation_guard 在每次出站前复核。这里不设置
+    reply_batch_busy：ACP steer 的实测语义允许生成中再发 prompt，闸门由 turn 状态
+    （active_turn / finishing）负责。
+    """
+    state = {"sent_any": False, "suppressed_any": False, "last_reply_at": 0, "outcomes": {}}
+    key = make_inflight_key(adapter_name, is_private, user_id, group_id)
+
+    def prepare(decision: dict, run_id: str) -> None:
+        control_intent.bind_control(decision, key)
+
+    async def deliver(decision: dict, run_id: str = "") -> None:
+        body = str(decision.get("body") or "").strip()
+        if not body:
+            return
+        # 与 runs 版同口径：一份决策消费一份登记控制（空 body 也占一份）。
+        control_intent.bind_control(decision, key)
+        if await _maybe_intercept_bounce(
+            key=fb_key, reply_text=body, bot=bot, target=target,
+            adapter_name=adapter_name, user_id=user_id, group_id=group_id,
+            is_private=is_private,
+        ):
+            state["suppressed_any"] = True
+            state["outcomes"][id(decision)] = ("suppressed", None)
+            return
+        resolved_reply = resolve_reply(
+            _mcp.message_buffer,
+            adapter=adapter_name,
+            group_id=None if is_private else group_id,
+            owner_user_id=user_id if is_private else None,
+            reply_to=control_intent.control_value(decision, "reply_to"),
+            log_tag="HERMES acp live",
+        )
+        state["sent_any"] = True  # 与 E2 同口径：尝试过发送就不在收口时记 silent
+        delivery = _generation_guard_context(
+            delivery_generation,
+            adapter_name=adapter_name, is_private=is_private,
+            user_id=user_id, group_id=group_id,
+        )
+        sent = await send_text_with_media(
+            bot=bot, target=target, text=body,
+            reply_qq_message_id=resolved_reply.qq_message_id if resolved_reply else None,
+            reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
+            adapter_name=adapter_name,
+            **({"delivery": delivery} if delivery is not None else {}),
+        )
+        wrote_history = False
+        if sent and _mcp.message_buffer is not None:
+            _mcp.message_buffer.append(
+                BufferedMessage(
+                    ts=_now_ms(), adapter=adapter_name,
+                    group_id=None if is_private else group_id,
+                    user_id=str(bot.self_id), nickname=nickname,
+                    content=send_result_history(sent, body), origin=MessageOrigin.bot_output(),
+                    image_urls=[], is_bot=True,
+                    qq_message_id=getattr(sent, "primary_qq_message_id", None),
+                    private_owner_id=user_id if is_private else None,
+                )
+            )
+            wrote_history = True
+        if sent and mark_replied and session is not None and not is_private \
+                and group_id is not None and _mcp.active_sessions is not None:
+            _mcp.active_sessions.mark_bot_replied(
+                adapter_name, group_id, now_ms=_now_ms(),
+                media_count=send_result_sticker_count(sent), text=body,
+            )
+            state["last_reply_at"] = getattr(session, "last_bot_reply_at", 0)
+        if sent:
+            await _post_send_feedback(
+                key=fb_key, reply_text=body, bot=bot, target=target,
+                adapter_name=adapter_name, user_id=user_id, group_id=group_id,
+                is_private=is_private, suppress_recursion=suppresses_feedback,
+                not_final=bool(decision.get("not_final")),
+            )
+        state["outcomes"][id(decision)] = ("sent" if sent else "failed", sent)
+        logger.info(
+            f"[HERMES acp live] 即时发送 adapter={adapter_name} "
+            f"group={group_id} private={is_private} ok={bool(sent)} "
+            f"text_len={len(body)} wrote_history={wrote_history}"
+        )
+
+    setattr(deliver, "has_sent", lambda: bool(state["sent_any"]))
+    setattr(deliver, "prepare", prepare)
+    return deliver, state
+
+
 def _live_callback_has_sent(callback) -> bool:
     """E3: 本轮即时发送器是否已经真正尝试过发送（重试前防重复投递的闸门）。"""
     checker = getattr(callback, "has_sent", None)
@@ -1253,20 +1364,34 @@ async def _run_passive_turn(
 
     # 纯文本正文协议：正文（含工具前的进度）走 Runs 决策通道，
     # 不再有独立旁白通道——interim echo 整路停用，避免同文发两遍。
-    # E3: 私聊 passive 的 runs 决策同样即时发送；群 passive 是普通文本路径，不接。
+    # E3: 私聊 passive 的 runs 决策同样即时发送；runs 的群 passive 是普通文本路径，
+    # 不接。antigravity 的私聊/群 passive 都走 § 决策通道（见 _live_enabled）。
     _live_fb_key = _feedback_scope_key(adapter_name, is_private, user_id, group_id)
     # 续跑请求按会话键登记：轮开始先清掉上一轮残留（本轮工具会重新登记）。
     continuation.discard_continuation(_live_fb_key)
-    _live_enabled = use_private_decision and plugin_config.hermes_api_interface == "runs"
-    _passive_nickname = await get_bot_nickname(bot) if _live_enabled else ""
-    _live_deliver, _live_state = _make_runs_live_decisions(
-        bot=bot, target=target, adapter_name=adapter_name, user_id=user_id,
-        group_id=group_id, is_private=is_private, fb_key=_live_fb_key,
-        nickname=_passive_nickname, session=None, mark_replied=False,
-        suppresses_feedback=(
-            current_buffered is not None and current_buffered.origin.suppresses_feedback
-        ),
+    _live_enabled = use_private_decision and plugin_config.hermes_api_interface in (
+        "runs", "antigravity",
     )
+    _passive_nickname = await get_bot_nickname(bot) if _live_enabled else ""
+    if plugin_config.hermes_api_interface == "antigravity":
+        _live_deliver, _live_state = _make_acp_live_decisions(
+            bot=bot, target=target, adapter_name=adapter_name, user_id=user_id,
+            group_id=group_id, is_private=is_private, fb_key=_live_fb_key,
+            nickname=_passive_nickname, session=None, mark_replied=False,
+            delivery_generation=delivery_generation,
+            suppresses_feedback=(
+                current_buffered is not None and current_buffered.origin.suppresses_feedback
+            ),
+        )
+    else:
+        _live_deliver, _live_state = _make_runs_live_decisions(
+            bot=bot, target=target, adapter_name=adapter_name, user_id=user_id,
+            group_id=group_id, is_private=is_private, fb_key=_live_fb_key,
+            nickname=_passive_nickname, session=None, mark_replied=False,
+            suppresses_feedback=(
+                current_buffered is not None and current_buffered.origin.suppresses_feedback
+            ),
+        )
 
     result = await _chat_with_overflow_recovery(
         "passive",
@@ -1949,18 +2074,31 @@ async def _run_reactive_turn(
     )
     source_event_id = current_buffered.source_event_id if current_buffered is not None else None
     hermes_target = resolve_target(adapter_name, False, group_id)
-    # E3: runs 轮内即时决策发送器。只对 runs 通道启用；completions 保持 E1 原路。
+    # E3:轮内即时决策发送器。runs 走台账；antigravity 走无台账的 ACP 版（同一
+    # outbound／队列语义，delivery_generation 栅栏照旧）；completions 保持 E1 原路。
     _live_fb_key = _feedback_scope_key(adapter_name, False, user_id, group_id)
     # 续跑请求是本轮工具调用时登记的：轮开始先清掉上一轮残留，避免陈旧标记
     # 让本轮的静默/早退分支凭空续跑一次。
     continuation.discard_continuation(_live_fb_key)
-    _live_deliver, _live_state = _make_runs_live_decisions(
-        bot=bot, target=target, adapter_name=adapter_name, user_id=user_id,
-        group_id=group_id, is_private=False, fb_key=_live_fb_key,
-        nickname=self_nickname or user_id, session=session, mark_replied=True,
-        suppresses_feedback=(
-            current_buffered is not None and current_buffered.origin.suppresses_feedback
-        ),
+    _live_deliver, _live_state = (
+        _make_acp_live_decisions(
+            bot=bot, target=target, adapter_name=adapter_name, user_id=user_id,
+            group_id=group_id, is_private=False, fb_key=_live_fb_key,
+            nickname=self_nickname or user_id, session=session, mark_replied=True,
+            delivery_generation=delivery_generation,
+            suppresses_feedback=(
+                current_buffered is not None and current_buffered.origin.suppresses_feedback
+            ),
+        )
+        if plugin_config.hermes_api_interface == "antigravity"
+        else _make_runs_live_decisions(
+            bot=bot, target=target, adapter_name=adapter_name, user_id=user_id,
+            group_id=group_id, is_private=False, fb_key=_live_fb_key,
+            nickname=self_nickname or user_id, session=session, mark_replied=True,
+            suppresses_feedback=(
+                current_buffered is not None and current_buffered.origin.suppresses_feedback
+            ),
+        )
     )
     # 注:user_content_override 已携带 user message 的全部内容(text + 多模态);
     # text/image_urls 在 chat() 中会被忽略(见 hermes_client.chat 文档),此处显式传 ""
@@ -2001,7 +2139,9 @@ async def _run_reactive_turn(
         user_content_override=user_content,
         target=hermes_target,
         decision_callback=(
-            _live_deliver if plugin_config.hermes_api_interface == "runs" else None
+            _live_deliver
+            if plugin_config.hermes_api_interface in ("runs", "antigravity")
+            else None
         ),
         approval_callback=(
             _make_approval_notify(bot, adapter_name, f"群 {group_id}", is_private=False, group_id=group_id)
@@ -2599,6 +2739,18 @@ async def _run_reactive_turn(
     live_sent = False
     for decision in decisions:
         _fb_key = _feedback_scope_key(adapter_name, False, user_id, group_id)
+        # E3(无台账后端, antigravity ACP):正文已在轮内即时发送；终态只补轮级控制
+        # 与历史/收口，不得重发同一份正文。即时发送失败的份落到正常发送路径重试。
+        if not batch_mode and id(decision) in streamed_ids:
+            outcome = (_live_state.get("outcomes") or {}).get(id(decision))
+            if outcome and outcome[0] == "sent" and outcome[1]:
+                await _apply_sent_controls(
+                    decision, outcome[1], _decision_body(decision).strip(), [],
+                    _now_ms(), write_history=False,
+                )
+                continue
+            if not decision.get("_live_delivery_failed"):
+                continue
         # release_anchor 处理移在 answer_anchor 之后(alive/103):同轮 answer+release
         # 必须先让合法 answer 标记生效再松锚,否则锚被提前 release 后 answer 校验
         # 落空,模型反收「非法值」便签。见 turn 尾部。
