@@ -422,26 +422,9 @@ async def _dispatch_chat(
         delivery_generation = _current_delivery_generation(
             adapter_name, target.private, user_id, group_id
         )
-    # 任务锚+steer(规划书§3):资格内直注在跑 turn——私聊恒资格,
-    # 群聊仅委托且发送者在资格集合(在跑 turn 触发者 ∪ 在钉锚全体参与者)。
-    # 直注成功即 return;注不进去落回正常 dispatch,零丢失。
-    # 媒体不再一票否决:文字＋图/表情走降级注入(寻址引用＋读图提示),
-    # 带媒体但行号缺失/行来源不合法在 _maybe_steer_direct 内整批失败关闭,
-    # 落回内联帧路径。逐行身份/媒体/台账/去重全部从同一份 fragments 派生。
-    if (
-        plugin_config.hermes_api_interface in ("runs", "antigravity")
-        and not ephemeral
-        and await _maybe_steer_direct(
-            target=target, adapter_name=adapter_name, user_id=user_id, nickname=nickname,
-            group_id=group_id, msg_text=msg_text, is_direct=is_direct,
-            now_ms=now_ms, origin=MessageOrigin.human(),
-            event_msg_id=getattr(event, "message_id", None),
-            image_urls=image_urls,
-            sticker_urls=sticker_urls,
-            rows=fragments,
-        )
-    ):
-        return
+    # 任务锚+steer(规划书§3):资格内直注已前移到 `message.handle_message` 的
+    # 防抖等待之前(定案 118,同 scope 有真实在跑轮/ACP 轮时直注)。dispatch 阶段
+    # 不再重复尝试,避免同一消息被处理两次;未直注的消息在这里照常开 passive/reactive 轮。
     if target.private:
         # 原 v0.1.6 等价路径:passive 模式,raw_text 直接当回复
         await _handle_passive_path(
@@ -3031,5 +3014,4 @@ from .message_feedback import (
 from .message_relay import (
     _handle_passive_path,
     _handle_reactive_path,
-    _maybe_steer_direct,
 )
