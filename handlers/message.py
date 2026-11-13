@@ -16,6 +16,7 @@ from nonebot.matcher import Matcher
 from nonebot.rule import Rule
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
+from ..config import plugin_config
 from ..core import user_lists
 from ..core.chat_config import load_chat_config
 from ..core.inflight import make_inflight_key
@@ -49,7 +50,7 @@ from ..core.message_origin import MessageOrigin
 from ..core.session import session_manager
 
 from .message_turns import _dispatch_chat
-from .message_relay import route_synthesized_input
+from .message_relay import _maybe_steer_direct, route_synthesized_input
 
 
 receive_message = on_message(rule=Rule(_ignore_rule), priority=98, block=True)
@@ -451,11 +452,57 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         # max_wait 的 0=不限语义优先:仅原本有上限时才抬升,0 严格保持不限
         if max_wait_sec > 0:
             max_wait_sec = max(max_wait_sec, chat_cfg.reply_delay_for_bot_sec)
+    # 合成(ephemeral)触发的判定:防抖关闭时旧路径只把 keyword-soft 点火当合成输入;
+    # 防抖开着时 keyword 首条与防抖期内的非委托续发同样按合成触发(原 payload 口径)。
+    keyword_context = keyword_soft_hit or (
+        in_debounce_window and not is_direct and not in_active_window
+    )
+    ephemeral = (
+        keyword_context if debounce_sec > 0 else keyword_soft_hit
+    ) and not in_active_window
+
+    # --- 运行中 steer 前移到防抖之前(定案 118) ---
+    # 有真实在跑轮且资格内的消息必须在防抖等待之前直注:短输出流 + 私聊防抖会把
+    # 跟帖的实际处理拖到流结束,那时已无在跑轮可接管(20:13:39 生产实测)。
+    # 入口与后置直注同一条(_maybe_steer_direct),身份资格/§ 呈递/ledger/Runs 分发
+    # 全部不变;未命中(无在跑轮、不具资格)或异常一律落回原防抖与排队,零丢失。
+    # 同一消息只在这里试一次——_dispatch_chat 里的旧后置直注已移除。
+    if plugin_config.hermes_api_interface == "runs" and not ephemeral:
+        try:
+            steered = await _maybe_steer_direct(
+                target=target,
+                adapter_name=adapter_name,
+                user_id=user_id,
+                nickname=nickname,
+                group_id=group_id,
+                msg_text=msg_text,
+                is_direct=is_direct,
+                now_ms=now,
+                origin=MessageOrigin.human(),
+                event_msg_id=getattr(event, "message_id", None),
+                image_urls=image_urls,
+                sticker_urls=sticker_urls,
+                rows=[fragment],
+            )
+        except Exception:
+            # 直注是时机优化,不是消息通路:异常同样落回原防抖,不吞消息。
+            logger.warning(
+                f"[HERMES steer] 防抖前直注异常,回落原防抖 "
+                f"(scope={'private' if target.private else 'group'}:"
+                f"{user_id if target.private else group_id})",
+                exc_info=True,
+            )
+            steered = False
+        if steered:
+            logger.info(
+                f"[HERMES steer] 防抖前直注在跑轮,本消息不再走防抖 "
+                f"(scope={'private' if target.private else 'group'}:"
+                f"{user_id if target.private else group_id})"
+            )
+            return
+
     # 0 关闭群/私聊普通防抖；已知 bot 专用延迟仍可独立开窗。
     if debounce_sec > 0:
-        keyword_context = keyword_soft_hit or (
-            in_debounce_window and not is_direct and not in_active_window
-        )
         debounce_key = make_inflight_key(adapter_name, target.private, user_id, group_id)
         payload = dict(
             bot=bot,
@@ -473,7 +520,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
             addressed_to_bot=addressed_to_bot,
             now_ms=now,
             replied_msg_id=replied_msg_id,
-            ephemeral=keyword_context and not in_active_window,
+            ephemeral=ephemeral,
             context_limit=chat_cfg.history_message_limit if keyword_context else None,
             fragments=[fragment],
         )
@@ -543,7 +590,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         addressed_to_bot=addressed_to_bot,
         now_ms=now,
         replied_msg_id=replied_msg_id,
-        ephemeral=keyword_soft_hit and not in_active_window,
+        ephemeral=ephemeral,
         context_limit=chat_cfg.history_message_limit if keyword_soft_hit else None,
         fragments=[fragment],
     )
