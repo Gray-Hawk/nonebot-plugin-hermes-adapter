@@ -225,8 +225,15 @@ def drop_expired() -> int:
     return len(expired)
 
 
+def _approve_prefix() -> str:
+    """与 handlers.commands 注册前缀一致，通知里的命令必须能直接照抄执行。"""
+    parts = load_misc_config().bot_name.strip().split()
+    return f"/{parts[0]} " if parts else "/"
+
+
 def build_admin_notice(entry: PendingApproval) -> str:
     """管理员私聊通知文本(纯函数,离线可测)。"""
+    prefix = _approve_prefix()
     choices = " / ".join(entry.choices) if entry.choices else "once / session / always / deny"
     return (
         f"⚠️ 审批请求 #{entry.approval_id}\n"
@@ -234,8 +241,9 @@ def build_admin_notice(entry: PendingApproval) -> str:
         f"来源: {entry.scope_desc}\n"
         f"命令: {entry.command or '(无命令详情)'}\n"
         f"选项: {choices}\n"
-        f"回复 /approve once 批准一次;/approve deny 拒绝;/approve session 本会话放行;"
-        f"/approve always 永久放行。(约 {_approval_expiry_sec()}s 不答自动超时拒绝)"
+        f"回复 {prefix}approve once 批准一次;{prefix}approve deny 拒绝;"
+        f"{prefix}approve session 本会话放行;{prefix}approve always 永久放行。"
+        f"(约 {_approval_expiry_sec()}s 不答自动超时拒绝)"
     )
 
 
