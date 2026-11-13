@@ -15,6 +15,8 @@ reply-json is a JSON string (e.g. '"§\\n你好\\n§"'); flags:
     --hang-prompt      never answer session/prompt
     --error-prompt     answer session/prompt with JSON-RPC error -32603
     --error-model      answer session/set_model with JSON-RPC error -32602
+    --gate-prompt=<p>  hold the prompt reply until file <p> exists (clear-fence
+                       tests keep a normal prompt in flight while /clear runs)
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import json
 import os
 import sys
 import threading
+import time
 
 LOG_PATH = sys.argv[1]
 REPLY = json.loads(sys.argv[2]) if len(sys.argv) > 2 else "§\n你好\n§"
@@ -63,12 +66,32 @@ def update(session_id: str, kind: str, text: str) -> None:
     )
 
 
+def _gate_file() -> str:
+    for flag in FLAGS:
+        if flag.startswith("--gate-prompt="):
+            return flag.partition("=")[2]
+    return ""
+
+
+def wait_gate() -> None:
+    """Clear-fence 夹具:普通 prompt 先挂起,等测试跑完 /clear 再放行回复。"""
+    gate = _gate_file()
+    if not gate:
+        return
+    deadline = time.monotonic() + 10
+    while not os.path.exists(gate):
+        if time.monotonic() > deadline:
+            raise RuntimeError("fake agy gate release timed out")
+        time.sleep(0.01)
+
+
 def run_prompt(request: dict) -> None:
     params = request.get("params") or {}
     session_id = params.get("sessionId") or ""
     request_id = request.get("id")
     if "--hang-prompt" in FLAGS:
         return
+    wait_gate()
     if "--exit-on-prompt" in FLAGS:
         os._exit(7)
     if "--error-prompt" in FLAGS:
