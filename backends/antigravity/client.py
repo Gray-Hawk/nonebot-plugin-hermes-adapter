@@ -303,11 +303,17 @@ class AntigravityACPClient:
         kind = update.get("sessionUpdate")
         if kind == "user_message_chunk":
             # steer 的实测语义：新 prompt 到达后旧正文先继续流出，随后一条
-            # user_message_chunk 才是轮次边界。边界之后的新 chunk 归最新 prompt，
-            # 边界之前的未闭合尾部随旧轮丢弃（不能拼进下一轮）。
+            # user_message_chunk 才是轮次边界。边界之前旧轮已流出的正文（含帧尾
+            # 无末尾换行的合法 `§`）必须先在边界封出，边界之后的新 chunk 才归新 prompt；
+            # 旧轮真正缺闭合的碎片仍按协议丢弃（不能拼进下一轮）。
             key = self._session_key_by_id.get(session_id)
             if key is not None and key in self._latest_turn:
-                self._streaming_turn[session_id] = self._latest_turn[key]
+                current = self._streaming_turn.get(session_id)
+                target = self._boundary_turn(key, session_id)
+                if target is not None and target is not current:
+                    if current is not None:
+                        self._seal_turn_remainder(current)
+                    self._streaming_turn[session_id] = target
             return
         # 只消费 agent_message_chunk 的正文本；thought/plan/工具状态不进 QQ。
         if kind != "agent_message_chunk":
@@ -335,6 +341,46 @@ class AntigravityACPClient:
             reason = str(getattr(exc, "reason", "") or "invalid")
             self._text_errors[turn.session_key] = reason
             logger.error(f"[HERMES antigravity] 流式正文单位不合法 reason={reason}")
+            return
+        self._emit_units(turn, units)
+
+    def _boundary_turn(self, session_key: str, session_id: str) -> ACPTurn | None:
+        """本次 `user_message_chunk` 归属哪一轮：按已提交 prompt 的轮序取最早待接管轮。
+
+        steer 允许多条 prompt 同时在跑，回显可能晚到：B 的回显到来前 C 已提交时，
+        `_latest_turn` 是 C，但边界属于 B。轮次列表本身按提交顺序追加，因此「当前正文轮
+        之后的第一轮」就是此次开始的轮；只有它之后没有待接管轮时（首条 prompt 自己的
+        回显）才沿用最新轮。不按正文哈希或时间猜身份，也不另建身份台账。
+        """
+        turns = self._turns.get(session_key) or []
+        current = self._streaming_turn.get(session_id)
+        start = 0
+        if current is not None:
+            try:
+                start = turns.index(current) + 1
+            except ValueError:
+                start = 0
+        for turn in turns[start:]:
+            if turn.session_id == session_id:
+                return turn
+        return self._latest_turn.get(session_key)
+
+    def _seal_turn_remainder(self, turn: ACPTurn) -> None:
+        """轮次边界封段：把本轮尚存尾部按完整单位发出，不足一份的仍丢弃。
+
+        边界由 `user_message_chunk` 确定，因此帧尾那个没有换行终结的独立整行 `§`
+        此刻就是旧轮正文的合法结尾（同一 `split_text_units` 协议，不补造缺标记正文）。
+        """
+        if not turn.pending or self._text_errors.get(turn.session_key):
+            return
+        from ...core.runs_text import TextUnitsError, split_text_units
+
+        try:
+            units = split_text_units(turn.pending)
+        except TextUnitsError as exc:
+            reason = str(getattr(exc, "reason", "") or "invalid")
+            self._text_errors[turn.session_key] = reason
+            logger.error(f"[HERMES antigravity] 边界正文单位不合法 reason={reason}")
             return
         self._emit_units(turn, units)
 

@@ -1,0 +1,13 @@
+11-13 19:02:13 [SUCCESS] nonebot | NoneBot is initializing...
+11-13 19:02:13 [INFO] nonebot | Current Env: prod
+test_boundary_seal_never_promotes_unclosed_tail (tests.test_antigravity_stream_steer.ACPSteerTakeoverTests.test_boundary_seal_never_promotes_unclosed_tail)
+护栏（修复前基线同样通过）：边界封段不得把缺末尾标记的正文补造成单位。 ... 11-13 19:02:13 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3324639 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-6k0jnsr7
+11-13 19:02:13 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+11-13 19:02:13 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=13 preview='TAIL-NO-CLOSE'
+11-13 19:02:13 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=13 preview='TAIL-NO-CLOSE'
+ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.327s
+
+OK

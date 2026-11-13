@@ -258,6 +258,95 @@ class ACPSteerTakeoverTests(ACPStreamTestBase):
             units, ["SAME", "SAME"], "段内去重不等于跨轮去重：新一轮同文是两条消息"
         )
 
+    async def test_prior_turn_terminal_marker_surfaces_before_new_turn(self) -> None:
+        """旧轮末份正文以「无末尾换行」的合法 `§` 收尾时，steer 边界先封旧轮再进新轮。"""
+        units: list[str] = []
+        first = asyncio.Event()
+
+        def on_unit(decision: dict) -> None:
+            units.append(decision["body"])
+            if decision["body"] == "A1":
+                first.set()
+
+        client = self.make_client(
+            chunks=["§\nA1\n§\n", "A2\n§"],
+            steer_chunks=[["§\nB1\n§\n"]],
+            delay=0.1,
+        )
+        task = asyncio.create_task(
+            client.prompt(
+                session_key="k1", system_prompt="SYS", user_text="A",
+                store=self.store, on_unit=on_unit,
+            )
+        )
+        await asyncio.wait_for(first.wait(), 3)
+        self.assertTrue(await client.steer(session_key="k1", text="STEER-B"))
+        await asyncio.wait_for(task, 5)
+
+        self.assertEqual(units, ["A1", "A2", "B1"], "旧轮 A2 必须先于新轮 B1 出站")
+
+    async def test_boundary_seal_never_promotes_unclosed_tail(self) -> None:
+        """护栏（修复前基线同样通过）：边界封段不得把缺末尾标记的正文补造成单位。"""
+        units: list[str] = []
+        first = asyncio.Event()
+
+        def on_unit(decision: dict) -> None:
+            units.append(decision["body"])
+            if decision["body"] == "A1":
+                first.set()
+
+        client = self.make_client(
+            chunks=["§\nA1\n§\n", "A2\n§\nTAIL-NO-CLOSE"],
+            steer_chunks=[["§\nB1\n§\n"]],
+            delay=0.1,
+        )
+        task = asyncio.create_task(
+            client.prompt(
+                session_key="k1", system_prompt="SYS", user_text="A",
+                store=self.store, on_unit=on_unit,
+            )
+        )
+        await asyncio.wait_for(first.wait(), 3)
+        self.assertTrue(await client.steer(session_key="k1", text="STEER-B"))
+        await asyncio.wait_for(task, 5)
+
+        self.assertEqual(
+            units, ["A1", "A2", "B1"],
+            "合法闭合的 A2 先出站；缺末尾标记的 TAIL-NO-CLOSE 不得被补造成正文",
+        )
+
+    async def test_fast_b_c_before_b_echo_keeps_each_turn_boundary(self) -> None:
+        """B 的回显到来前已提交 C：两份同文正文按提交轮序各自归属，不跨轮吞并。"""
+        units: list[tuple[str, int]] = []
+        first = asyncio.Event()
+
+        def on_unit(decision: dict) -> None:
+            units.append((decision["body"], decision["_turn_seq"]))
+            if len(units) == 1:
+                first.set()
+
+        client = self.make_client(
+            chunks=["§\nA1\n§\n"],
+            steer_chunks=[["§\nSAME\n§\n"], ["§\nSAME\n§\n"]],
+            delay=0.2,
+        )
+        task = asyncio.create_task(
+            client.prompt(
+                session_key="k1", system_prompt="SYS", user_text="A",
+                store=self.store, on_unit=on_unit,
+            )
+        )
+        await asyncio.wait_for(first.wait(), 3)
+        self.assertTrue(await client.steer(session_key="k1", text="STEER-B"))
+        self.assertTrue(await client.steer(session_key="k1", text="STEER-C"))
+        await asyncio.wait_for(task, 5)
+
+        self.assertEqual(
+            [body for body, _ in units], ["A1", "SAME", "SAME"],
+            "B、C 各自的 agent 更新都必须出站（回显晚到不是合并理由）",
+        )
+        self.assertNotEqual(units[1][1], units[2][1], "两份同文属于不同 prompt 轮")
+
     async def test_permission_reject_does_not_block_streamed_body(self) -> None:
         units: list[str] = []
         client = self.make_client(
@@ -590,6 +679,55 @@ class HandlerStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("插 B", texts[1])
         self.assertIn("插 C", texts[2])
         self.assertEqual(len({p["params"]["sessionId"] for p in prompts}), 1)
+
+    async def test_prior_turn_marker_precedes_steer_turn_all_routes(self) -> None:
+        """私有/群 passive/群 reactive 三路真实 handler：旧轮末份先出站，再出新轮。"""
+        for route in ["private", "passive", "reactive"]:
+            with self.subTest(route=route):
+                self.platform.clear()
+                self._client(
+                    chunks=["§\nA1\n§\n", "A2\n§"],
+                    steer_chunks=[["§\nB1\n§\n"]],
+                    delay=0.1,
+                )
+                task = asyncio.create_task(
+                    self._turn(route, self._row(private=route == "private", content="A"))
+                )
+                await self._wait_for(lambda: self.platform == ["A1"], task=task, what="A1")
+                self.assertTrue(
+                    await self._steer(private=route == "private", content="插一句 B", mid=102)
+                )
+                await asyncio.wait_for(task, 8)
+                self.assertEqual(
+                    self.platform, ["A1", "A2", "B1"],
+                    f"{route}: 旧轮末份合法正文必须先于新轮出站",
+                )
+
+    async def test_fast_b_c_before_echo_all_routes(self) -> None:
+        """三路真实 handler：B 回显前已提交 C 时，两份同文正文都要出站。"""
+        for route in ["private", "passive", "reactive"]:
+            with self.subTest(route=route):
+                self.platform.clear()
+                self._client(
+                    chunks=["§\nA1\n§\n"],
+                    steer_chunks=[["§\nSAME\n§\n"], ["§\nSAME\n§\n"]],
+                    delay=0.2,
+                )
+                task = asyncio.create_task(
+                    self._turn(route, self._row(private=route == "private", content="A"))
+                )
+                await self._wait_for(lambda: self.platform == ["A1"], task=task, what="A1")
+                self.assertTrue(
+                    await self._steer(private=route == "private", content="插 B", mid=202)
+                )
+                self.assertTrue(
+                    await self._steer(private=route == "private", content="插 C", mid=203)
+                )
+                await asyncio.wait_for(task, 8)
+                self.assertEqual(
+                    self.platform, ["A1", "SAME", "SAME"],
+                    f"{route}: B、C 各自的正文都必须出站，跨轮同文不得吞并",
+                )
 
     async def test_silent_turn_sends_nothing(self) -> None:
         self._client(chunks=["§\n§"], delay=0.02)
