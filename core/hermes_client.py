@@ -1217,6 +1217,13 @@ class ChatResult:
     """本部署补丁(alive/108):runs 路本轮的 run 身份,供交付台账贯通到出站边界。
     成功、失败与 detached 结果都尽量携带;completions／AstrBot 等其他接口恒 None。"""
 
+    delivery_generation: int | None = None
+    """本部署补丁(阶段1 R1):无 Runs 台账后端(antigravity ACP)本轮入场的会话代际。
+
+    ACP 结果没有 run 身份,出站前要拿它复核 SessionManager 当前代际:/clear 已换代
+    时在途旧代正文不得出站。runs 路仍以台账 run_id／generation_guard 为准,
+    其他后端不设置(恒 None),既有行为不变。"""
+
     is_context_overflow: bool = False
     """上游上下文溢出,且它那边关掉了自动压缩(compression.enabled: false)。
 
@@ -1661,6 +1668,10 @@ class HermesClient:
             """给本轮所有出口统一挂上有效 session id(轮换才有值)。"""
             result.effective_session_key = rotated
             result.run_id = runs_run_id[0]
+            if plugin_config.hermes_api_interface == "antigravity":
+                # R1:ACP 没有 Runs 台账身份,把入场代际带到出站侧,由 handler 在
+                # 最终发送前用既有 SessionManager 代际复核(clear 后旧代不出站)。
+                result.delivery_generation = delivery_generation
             if runs_streamed:
                 result.streamed_decisions = list(runs_streamed)
             if runs_pending_steer:

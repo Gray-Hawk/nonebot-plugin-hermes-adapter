@@ -41,7 +41,11 @@ from .sticker_library import (
 
 @dataclass(frozen=True)
 class DeliveryContext:
-    """一次出站发送的交付台账身份;tracker 只依赖 run_tracker 的公开方法。"""
+    """一次出站发送的交付台账身份;tracker 只依赖 run_tracker 的公开方法。
+
+    tracker=None 是 R1 的窄形态:没有 Runs 台账(antigravity ACP),
+    只带 generation_guard 在出站前核一次会话代际,不做组件认领与回执。
+    """
 
     tracker: Any
     run_id: str
@@ -75,13 +79,17 @@ def _delivery_begin(delivery: DeliveryContext | None) -> tuple[str, list, str | 
             current = False
         if not current:
             # clear 与旧 run 晚完成/状态回写并发时,仍不得让旧答复穿透。
-            try:
-                delivery.tracker.set_expected_state(
-                    delivery.run_id, "cancelled", cancel_reason="generation_cleared"
-                )
-            except Exception:
-                logger.warning(f"[OUTBOUND] 旧代销账失败 run={delivery.run_id}", exc_info=True)
-            raise DeliveryClaimBusy(f"stale generation: run={delivery.run_id}")
+            if delivery.tracker is not None:
+                try:
+                    delivery.tracker.set_expected_state(
+                        delivery.run_id, "cancelled", cancel_reason="generation_cleared"
+                    )
+                except Exception:
+                    logger.warning(f"[OUTBOUND] 旧代销账失败 run={delivery.run_id}", exc_info=True)
+            raise DeliveryClaimBusy(f"stale generation: run={delivery.run_id or '-'}")
+    if delivery.tracker is None:
+        # 仅代际栅栏(无 Runs 台账,antigravity ACP):没有组件可认领或回写。
+        return "send", [], None
     claim = delivery.tracker.claim_component_attempt(
         run_id=delivery.run_id, component_id=delivery.component_id,
         owner=delivery.owner, lease_sec=delivery.lease_sec,
@@ -107,7 +115,7 @@ def _delivery_raise_if_busy(outcome: str, delivery: DeliveryContext) -> None:
 def _delivery_mark_unknown(
     delivery: DeliveryContext | None, error, token: str | None = None
 ) -> None:
-    if delivery is None:
+    if delivery is None or delivery.tracker is None:
         return
     try:
         delivery.tracker.mark_component_unknown(
@@ -491,7 +499,7 @@ async def send_local_files(
         )
         path = validate_local_file(raw, max_bytes=max_bytes)
         if path is None:
-            if ctx is not None:
+            if ctx is not None and ctx.tracker is not None:
                 ctx.tracker.mark_component_failed(
                     run_id=ctx.run_id, component_id=ctx.component_id,
                     error="whitelist rejected or missing",
@@ -517,7 +525,7 @@ async def send_local_files(
                 await bot.call_api("upload_private_file", user_id=int(target.id), file=str(path), name=path.name)
             else:
                 await bot.call_api("upload_group_file", group_id=int(target.id), file=str(path), name=path.name)
-            if ctx is not None:
+            if ctx is not None and ctx.tracker is not None:
                 # 文件上传没有 QQ 消息 id;以组件事实作为回执。
                 ctx.tracker.mark_component_sent(
                     run_id=ctx.run_id, component_id=ctx.component_id, msg_ids=[], token=token,
@@ -598,7 +606,7 @@ async def _send_unimsg(
         _delivery_mark_unknown(delivery, exc, token)
         raise
     msg_ids = _receipt_msg_ids(receipt)
-    if delivery is not None:
+    if delivery is not None and delivery.tracker is not None:
         delivery.tracker.mark_component_sent(
             run_id=delivery.run_id, component_id=delivery.component_id, msg_ids=msg_ids,
             token=token,
@@ -683,7 +691,7 @@ async def send_text_with_media(
             return SendResult(ok=False, msg_ids=[])
         msg_id = _extract_msg_id(response)
         msg_ids = [msg_id] if msg_id else []
-        if delivery is not None:
+        if delivery is not None and delivery.tracker is not None:
             delivery.tracker.mark_component_sent(
                 run_id=delivery.run_id, component_id=delivery.component_id, msg_ids=msg_ids,
                 token=token,

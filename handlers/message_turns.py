@@ -69,6 +69,7 @@ from ..core import control_intent, continuation
 from ..core.chat_config import load_chat_config
 from ..core.misc_config import load_misc_config
 from ..core.outbound import (
+    DeliveryContext,
     get_bot_nickname,
     send_local_files,
     send_result_history,
@@ -782,6 +783,26 @@ def _terminal_delivery(result, index: int, **kwargs):
     if contexts is not None:
         return contexts[index] if index < len(contexts) else None
     return _prepare_delivery(result, **kwargs)
+
+
+def _generation_fenced_delivery(result, *, adapter_name, is_private, user_id, group_id):
+    """无 Runs 台账的终态(antigravity ACP)沿用会话代际做旧代出站围栏。
+
+    /clear(T1 空闲重置同理)已推进 generation 时,在途轮次即使拿到回复也不得再调
+    平台。判定点与失败语义和 runs 路 generation_guard 相同;没有 run 身份,
+    因此不做组件认领与台账回执,只核一次既有 SessionManager 代际。
+    """
+    generation = getattr(result, "delivery_generation", None)
+    if generation is None:
+        return None
+    getter = getattr(session_manager, "get_delivery_generation", None)
+    if getter is None:
+        return None
+    return DeliveryContext(
+        tracker=None,
+        run_id="",
+        generation_guard=lambda: getter(adapter_name, is_private, user_id, group_id) <= generation,
+    )
 
 
 def _history_component(index: int) -> str:
@@ -1577,6 +1598,13 @@ async def _run_passive_turn(
             reply_to=reply_to, reply_qq_message_id=reply_qq_message_id,
             reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
         )
+        if delivery is None:
+            # ACP 等无 Runs 台账的终态:沿用会话代际,clear 后旧代正文不得出站。
+            delivery = _generation_fenced_delivery(
+                result,
+                adapter_name=adapter_name, is_private=is_private,
+                user_id=user_id, group_id=group_id,
+            )
         if passive_batch_units is not None and delivery is None:
             # 整批计划已落库却拿不到该份上下文：宁可失败也不做无台账发送。
             logger.error(
@@ -2750,6 +2778,13 @@ async def _run_reactive_turn(
             reply_to=control_intent.control_value(decision, "reply_to"), reply_qq_message_id=reply_qq_message_id,
             reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
         )
+        if delivery is None:
+            # ACP 等无 Runs 台账的终态:沿用会话代际,clear 后旧代正文不得出站。
+            delivery = _generation_fenced_delivery(
+                result,
+                adapter_name=adapter_name, is_private=False,
+                user_id=user_id, group_id=group_id,
+            )
         if batch_mode and delivery is None:
             # 整批计划已落库却拿不到该份上下文：宁可失败也不做无台账发送。
             logger.error(
