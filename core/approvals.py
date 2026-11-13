@@ -224,6 +224,30 @@ def acknowledge(approval_id: int) -> None:
         _persist()
 
 
+def settle_permission(*, session_key: str | None, request_id: str) -> int:
+    """ACP 权限请求已在原 RPC 上确认安全结清(取消/超时拒绝写帧成功),精确删单。
+
+    只删 backend 非 runs 且 session_key 与 request_id 完全匹配的条目:已结清的旧单
+    不能继续占 FIFO 队首,否则后面所有 scope 的新审批都答不到自己。
+    真正写帧失败/状态未知的请求**不**走这里(条目留下懒过期,管理员可重试),
+    不能把「拿不到成功结果」当成已结清。Runs 台账条目一律不动。
+    """
+    if not session_key or not request_id:
+        # 缺键等于可能匹配到别人的条目:Runs 老存档 request_id 为空,宁可不动。
+        return 0
+    removed = 0
+    for aid, entry in list(_pending.items()):
+        if entry.backend == "runs":
+            continue
+        if entry.session_key != session_key or entry.request_id != request_id:
+            continue
+        del _pending[aid]
+        removed += 1
+    if removed:
+        _persist()
+    return removed
+
+
 def pending_count() -> int:
     return len(_pending)
 

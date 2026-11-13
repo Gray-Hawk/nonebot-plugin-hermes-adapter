@@ -440,9 +440,8 @@ class AntigravityACPClient:
             return
         if self._permissions.get(key) is not pending:
             return
-        self._permissions.pop(key, None)
-        await self._reply_permission(pending.request_id, pending.options, allow=False)
-        logger.info("[HERMES antigravity] 权限请求超时，已安全拒绝")
+        if await self._settle_permission(key, pending):
+            logger.info("[HERMES antigravity] 权限请求超时，已安全拒绝")
 
     @staticmethod
     def _cancel_permission_timer(pending: ACPPendingPermission) -> None:
@@ -451,13 +450,35 @@ class AntigravityACPClient:
         if task is not None and task is not asyncio.current_task() and not task.done():
             task.cancel()
 
+    @staticmethod
+    def _settle_shared_approval(pending: ACPPendingPermission) -> None:
+        """原 RPC 上已拒绝成功 → 同步删掉共享审批条目。
+
+        取消/超时结清后旧条目若留在 FIFO 队首，后面所有 scope 的新审批都会被
+        `/approve` 打到这条死单上，直到懒过期。只在写帧成功后调用：写失败要留单。
+        """
+        from ...core.approvals import settle_permission
+
+        settle_permission(
+            session_key=pending.session_key, request_id=str(pending.request_id)
+        )
+
     async def _settle_permission(
         self, key: tuple[str, str], pending: ACPPendingPermission
-    ) -> None:
-        """取消语义：先按 reject_once 关掉挂起权限，再让轮次收尾。"""
+    ) -> bool:
+        """取消/超时语义：先按 reject_once 关掉挂起权限，再让轮次收尾。
+
+        返回原 RPC 是否真的写出了应答帧；True 才算「已确认结清」，此时共享审批
+        条目一并删除。写失败保持条目留单（管理员可重试或等懒过期）。
+        """
         self._permissions.pop(key, None)
         self._cancel_permission_timer(pending)
-        await self._reply_permission(pending.request_id, pending.options, allow=False)
+        if not await self._reply_permission(
+            pending.request_id, pending.options, allow=False
+        ):
+            return False
+        self._settle_shared_approval(pending)
+        return True
 
     async def _reject_permissions(self, session_key: str) -> None:
         for key, pending in [
@@ -994,6 +1015,7 @@ class AntigravityACPClient:
             )
             failed = True
             cancelled = False
+            settled = False
             try:
                 await self._submit_prompt(turn, user_text)
                 while True:
@@ -1011,14 +1033,31 @@ class AntigravityACPClient:
                 )
                 # 取消语义：已生成但尚未出站的余量按 interrupted 丢弃，不等终态补发。
                 failed = cancelled
+                settled = not cancelled
             finally:
+                if not settled:
+                    # 超时/取消/异常收尾：原权限 RPC 必须先用既有安全 reject 结清，
+                    # 再清内存与 timer。只撤 timer 等于把请求丢给无人应答的 agent
+                    # （prompt 超时与权限到期默认同秒时，prompt 先到就会走到这里）。
+                    try:
+                        await self._reject_permissions(session_key)
+                    except Exception:  # noqa: BLE001 - 收尾不能掩盖原始异常
+                        logger.warning(
+                            "[HERMES antigravity] 收尾拒绝挂起权限失败", exc_info=True
+                        )
                 self._finishing.discard(session_key)
                 text = self._finalize_turns(session_key, emit=not failed)
             error = self._text_errors.pop(session_key, "")
+            if cancelled:
+                # 取消结果优先：正文错误已经记过日志，不能覆盖 interrupted 语义
+                # （否则被停 turn 会落到 transport-fallback，并把队列余量继续发出）。
+                if error:
+                    logger.error(
+                        f"[HERMES antigravity] 取消收尾时忽略正文单位错误 reason={error}"
+                    )
+                raise ACPCancelledError("ACP turn 已被 /run-stop 取消")
             if error:
                 raise ACPError(f"正文单位不合法: {error}")
-            if cancelled:
-                raise ACPCancelledError("ACP turn 已被 /run-stop 取消")
             return text
 
     async def steer(self, *, session_key: str, text: str) -> bool:

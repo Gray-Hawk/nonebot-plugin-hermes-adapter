@@ -538,6 +538,105 @@ class ACPApprovalHandlerTests(ACPHandlerHarness):
 
 
 
+# --- 返修：取消/超时结清后的共享审批 FIFO -----------------------------------
+
+
+class ACPApprovalSettleRegressionTests(ACPHandlerHarness):
+    """R1：已确认安全结清的 ACP 权限不得继续占共享审批 FIFO 队首。"""
+
+    async def test_cancelled_permission_settles_entry_so_next_scope_can_answer(self) -> None:
+        self._client(
+            chunks=["§\nA1\n§\n"],
+            flags=("--permission", "--permission-id=old-req"),
+            delay=0.01,
+        )
+        first = asyncio.create_task(self._turn())
+        await _wait_until(lambda: self.approvals.pending_count() == 1, what="私聊权限登记")
+        old = self.approvals.peek_oldest()
+        self.assertEqual(old.request_id, "old-req")
+
+        await self._run_stop()
+        self.assertTrue((await asyncio.wait_for(first, 10)).is_interrupted)
+        self.assertEqual(
+            len(_permission_frames(self.wire(), "old-req")), 1, "取消必须已按原 id 安全拒绝"
+        )
+        self.assertEqual(
+            self.approvals.pending_count(), 0, "已结清的旧单不得继续占 FIFO 队首"
+        )
+
+        # 另一个 scope 的新权限：第二台夹具进程用不同权限 id，便于分辨应答落在谁身上。
+        self._client(
+            chunks=["§\nG1\n§\n"],
+            flags=("--permission", "--permission-id=group-req"),
+            delay=0.01,
+        )
+        second = asyncio.create_task(self._turn(private=False))
+        await _wait_until(lambda: self.approvals.pending_count() == 1, what="群权限登记")
+        new = self.approvals.peek_oldest()
+        self.assertNotEqual(new.approval_id, old.approval_id, "队首必须是新单")
+        self.assertEqual(new.request_id, "group-req")
+
+        await self._approve("once")
+        result = await asyncio.wait_for(second, 10)
+        self.assertFalse(result.is_transport_error)
+        self.assertEqual(self.approvals.pending_count(), 0)
+        self.assertTrue(
+            any(f"审批 #{new.approval_id} 已应答" in text for text in self.platform),
+            f"/approve 必须答到新单而不是已结清旧单: {self.platform}",
+        )
+        frames = _permission_frames(self.wire(), "group-req")
+        self.assertEqual(len(frames), 1, frames)
+        self.assertEqual(
+            frames[0]["result"]["outcome"],
+            {"outcome": "selected", "optionId": "allow-once"},
+        )
+
+    async def test_settle_keeps_entry_when_reject_write_fails(self) -> None:
+        """真正写帧失败不能当已结清：条目留单可重试，Runs 条目一律不动。"""
+        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+
+        # 进程未启动：_send 直接失败 → 这是「真正发送失败」，不是「已结清」。
+        client = self._client(reply="§\nOK\n§")
+        options = [
+            {"optionId": "allow-once", "kind": "allow_once"},
+            {"optionId": "reject-once", "kind": "reject_once"},
+        ]
+        pending = ag.ACPPendingPermission(
+            session_key="k1",
+            session_id="sess-1",
+            request_id="fail-req",
+            options=options,
+            expires_at=time.monotonic() + 60,
+        )
+        key = client._permission_key("k1", "fail-req")
+        client._permissions[key] = pending
+        acp_entry = self.approvals.add_pending(
+            run_id="", adapter="onebotv11", scope_desc="私聊 123", command="pwd",
+            choices=["once", "deny"], is_private=True, request_id="fail-req",
+            backend="antigravity", session_key="k1",
+        )
+
+        self.assertFalse(await client._settle_permission(key, pending))
+        self.assertEqual(self.approvals.pending_count(), 1, "写帧失败必须留单")
+        self.assertIs(self.approvals.peek_oldest(), acp_entry)
+
+        # 同 request_id 的 Runs 条目不受 ACP 结清影响。
+        runs_entry = self.approvals.add_pending(
+            run_id="run-1", adapter="onebotv11", scope_desc="私聊 123", command="ls",
+            choices=["once"], is_private=True, request_id="fail-req", session_key="k1",
+        )
+        self.assertEqual(
+            self.approvals.settle_permission(session_key="k1", request_id="fail-req"), 1
+        )
+        self.assertEqual(self.approvals.pending_count(), 1)
+        self.assertIs(self.approvals.peek_oldest(), runs_entry)
+        # 缺键时不删任何条目（Runs 老存档 request_id 为空）。
+        self.assertEqual(
+            self.approvals.settle_permission(session_key="k1", request_id=""), 0
+        )
+        self.assertEqual(self.approvals.pending_count(), 1)
+
+
 # --- Runs 侧回归（审批／停止行为不变） -------------------------------------
 
 
