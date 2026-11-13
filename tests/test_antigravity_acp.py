@@ -80,6 +80,88 @@ class ACPSessionMappingTests(unittest.TestCase):
         self.assertIsNone(store.load_acp_session("nope"))
 
 
+class ACPAgentArgvTests(unittest.TestCase):
+    """`--agent` 只走独立 argv 项；缺省空串必须保持官方默认命令不变。"""
+
+    def test_default_args_have_no_agent_flag(self) -> None:
+        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+            DEFAULT_ACP_ARGS,
+            build_acp_args,
+        )
+
+        self.assertEqual(
+            build_acp_args(DEFAULT_ACP_ARGS, ""), ("acp", "--process-per-session")
+        )
+
+    def test_configured_agent_is_appended_as_a_separate_argv_pair(self) -> None:
+        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+            DEFAULT_ACP_ARGS,
+            build_acp_args,
+        )
+
+        self.assertEqual(
+            build_acp_args(DEFAULT_ACP_ARGS, "nano"),
+            ("acp", "--process-per-session", "--agent", "nano"),
+        )
+
+    def test_agent_with_spaces_and_specials_stays_a_single_argv_item(self) -> None:
+        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+            DEFAULT_ACP_ARGS,
+            build_acp_args,
+        )
+
+        # 不拼 shell 字符串：空格、分号、$(...) 都必须原样留在同一个 argv 项里。
+        agent = "my agent;$(id) `whoami`"
+        args = build_acp_args(DEFAULT_ACP_ARGS, agent)
+        self.assertEqual(len(args), 4)
+        self.assertEqual(args[-2:], ("--agent", agent))
+
+    def test_blank_agent_config_keeps_official_default(self) -> None:
+        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+            DEFAULT_ACP_ARGS,
+            build_acp_args,
+        )
+
+        # 只写空白（YAML/env 常见手误）等同未配置，不能变成 `--agent "   "`。
+        self.assertEqual(
+            build_acp_args(DEFAULT_ACP_ARGS, "   "), ("acp", "--process-per-session")
+        )
+
+
+class AntigravityAgentConfigTests(unittest.TestCase):
+    """配置面：AGENT_ANTIGRAVITY_AGENT 缺省空串，并接到 ACP 客户端。"""
+
+    def test_config_exposes_agent_with_empty_default(self) -> None:
+        from nonebot_plugin_hermes_adapter.config import Config
+
+        defaults = Config()
+        self.assertEqual(defaults.hermes_antigravity_agent, "")
+        field = Config.model_fields["hermes_antigravity_agent"]
+        self.assertEqual(field.alias, "agent_antigravity_agent")
+        validated = Config.model_validate({"agent_antigravity_agent": "nano"})
+        self.assertEqual(validated.hermes_antigravity_agent, "nano")
+
+    def test_get_client_passes_configured_agent_to_the_acp_client(self) -> None:
+        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+        from nonebot_plugin_hermes_adapter.config import plugin_config
+
+        previous = plugin_config.hermes_antigravity_agent
+        object.__setattr__(plugin_config, "hermes_antigravity_agent", "nano")
+        self.addCleanup(
+            object.__setattr__, plugin_config, "hermes_antigravity_agent", previous
+        )
+        previous_client = ag._client
+        ag._client = None
+        self.addCleanup(setattr, ag, "_client", previous_client)
+
+        client = ag.get_client()
+        # 命令行由 build_acp_args(cli_args, client._agent) 生成；这里只验证配置接线。
+        self.assertEqual(
+            ag.build_acp_args(ag.DEFAULT_ACP_ARGS, client._agent),
+            ("acp", "--process-per-session", "--agent", "nano"),
+        )
+
+
 class FakeACPBase(unittest.IsolatedAsyncioTestCase):
     reply = "§\n你好\n§"
     flags: tuple[str, ...] = ()
@@ -103,23 +185,34 @@ class FakeACPBase(unittest.IsolatedAsyncioTestCase):
             AntigravityACPClient,
         )
 
-        args = (
-            str(FIXTURE),
-            str(self.log_path),
-            json.dumps(self.reply, ensure_ascii=False),
-            *self.flags,
-        )
+        args = self.fixture_args()
         client = AntigravityACPClient(
             cli_path=sys.executable,
             cli_args=args,
             workspace=kwargs.pop("workspace", self.tmp),
             model=kwargs.pop("model", self.model),
+            agent=kwargs.pop("agent", ""),
             prompt_timeout=kwargs.pop("prompt_timeout", 5.0),
             rpc_timeout=kwargs.pop("rpc_timeout", 5.0),
             **kwargs,
         )
         self._clients.append(client)
         return client
+
+    def fixture_args(self) -> tuple[str, ...]:
+        return (
+            str(FIXTURE),
+            str(self.log_path),
+            json.dumps(self.reply, ensure_ascii=False),
+            *self.flags,
+        )
+
+    def spawn_argv(self) -> list[str]:
+        """假服务端启动时记下的真实命令行（含 argv[0] 解释器）。"""
+        path = Path(str(self.log_path) + ".argv")
+        if not path.exists():
+            return []
+        return json.loads(path.read_text(encoding="utf-8"))
 
     def log(self) -> list[dict]:
         if not self.log_path.exists():
@@ -132,6 +225,42 @@ class FakeACPBase(unittest.IsolatedAsyncioTestCase):
 
     def entries(self, method: str) -> list[dict]:
         return [item for item in self.log() if item.get("method") == method]
+
+
+class ACPAgentSpawnTests(FakeACPBase):
+    """真实子进程命令行：`--agent` 必须落到 argv，且缺省不改动命令行。"""
+
+    async def test_default_command_line_is_unchanged(self) -> None:
+        client = self.make_client()
+        await client.prompt(
+            session_key="k1", system_prompt="SYS", user_text="hi", store=self.store
+        )
+
+        argv = self.spawn_argv()
+        self.assertEqual(argv, list(self.fixture_args()))
+        self.assertNotIn("--agent", argv)
+
+    async def test_configured_agent_is_passed_to_the_real_command_line(self) -> None:
+        client = self.make_client(agent="nano")
+        await client.prompt(
+            session_key="k1", system_prompt="SYS", user_text="hi", store=self.store
+        )
+
+        argv = self.spawn_argv()
+        self.assertEqual(argv[-2:], ["--agent", "nano"])
+        self.assertEqual(argv[:-2], list(self.fixture_args()))
+
+    async def test_special_agent_stays_one_argv_item_on_the_real_command_line(self) -> None:
+        agent = "my agent;$(id) `whoami`"
+        client = self.make_client(agent=agent)
+        await client.prompt(
+            session_key="k1", system_prompt="SYS", user_text="hi", store=self.store
+        )
+
+        argv = self.spawn_argv()
+        self.assertEqual(argv[-2], "--agent")
+        self.assertEqual(argv[-1], agent)
+        self.assertEqual(len(argv), len(self.fixture_args()) + 2)
 
 
 class ACPHandshakeTests(FakeACPBase):

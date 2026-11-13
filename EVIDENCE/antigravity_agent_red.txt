@@ -1,0 +1,138 @@
+11-13 17:33:54 [SUCCESS] nonebot | NoneBot is initializing...
+11-13 17:33:54 [INFO] nonebot | Current Env: prod
+test_agent_with_spaces_and_specials_stays_a_single_argv_item (tests.test_antigravity_acp.ACPAgentArgvTests.test_agent_with_spaces_and_specials_stays_a_single_argv_item) ... ERROR
+test_blank_agent_config_keeps_official_default (tests.test_antigravity_acp.ACPAgentArgvTests.test_blank_agent_config_keeps_official_default) ... ERROR
+test_configured_agent_is_appended_as_a_separate_argv_pair (tests.test_antigravity_acp.ACPAgentArgvTests.test_configured_agent_is_appended_as_a_separate_argv_pair) ... ERROR
+test_default_args_have_no_agent_flag (tests.test_antigravity_acp.ACPAgentArgvTests.test_default_args_have_no_agent_flag) ... ERROR
+test_configured_agent_is_passed_to_the_real_command_line (tests.test_antigravity_acp.ACPAgentSpawnTests.test_configured_agent_is_passed_to_the_real_command_line) ... ERROR
+test_default_command_line_is_unchanged (tests.test_antigravity_acp.ACPAgentSpawnTests.test_default_command_line_is_unchanged) ... ERROR
+test_special_agent_stays_one_argv_item_on_the_real_command_line (tests.test_antigravity_acp.ACPAgentSpawnTests.test_special_agent_stays_one_argv_item_on_the_real_command_line) ... ERROR
+test_config_exposes_agent_with_empty_default (tests.test_antigravity_acp.AntigravityAgentConfigTests.test_config_exposes_agent_with_empty_default) ... ERROR
+test_get_client_passes_configured_agent_to_the_acp_client (tests.test_antigravity_acp.AntigravityAgentConfigTests.test_get_client_passes_configured_agent_to_the_acp_client) ... ERROR
+
+======================================================================
+ERROR: test_agent_with_spaces_and_specials_stays_a_single_argv_item (tests.test_antigravity_acp.ACPAgentArgvTests.test_agent_with_spaces_and_specials_stays_a_single_argv_item)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/tests/test_antigravity_acp.py", line 108, in test_agent_with_spaces_and_specials_stays_a_single_argv_item
+    from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+    ...<2 lines>...
+    )
+ImportError: cannot import name 'build_acp_args' from 'nonebot_plugin_hermes_adapter.backends.antigravity.client' (/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/backends/antigravity/client.py)
+
+======================================================================
+ERROR: test_blank_agent_config_keeps_official_default (tests.test_antigravity_acp.ACPAgentArgvTests.test_blank_agent_config_keeps_official_default)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/tests/test_antigravity_acp.py", line 120, in test_blank_agent_config_keeps_official_default
+    from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+    ...<2 lines>...
+    )
+ImportError: cannot import name 'build_acp_args' from 'nonebot_plugin_hermes_adapter.backends.antigravity.client' (/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/backends/antigravity/client.py)
+
+======================================================================
+ERROR: test_configured_agent_is_appended_as_a_separate_argv_pair (tests.test_antigravity_acp.ACPAgentArgvTests.test_configured_agent_is_appended_as_a_separate_argv_pair)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/tests/test_antigravity_acp.py", line 97, in test_configured_agent_is_appended_as_a_separate_argv_pair
+    from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+    ...<2 lines>...
+    )
+ImportError: cannot import name 'build_acp_args' from 'nonebot_plugin_hermes_adapter.backends.antigravity.client' (/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/backends/antigravity/client.py)
+
+======================================================================
+ERROR: test_default_args_have_no_agent_flag (tests.test_antigravity_acp.ACPAgentArgvTests.test_default_args_have_no_agent_flag)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/tests/test_antigravity_acp.py", line 87, in test_default_args_have_no_agent_flag
+    from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+    ...<2 lines>...
+    )
+ImportError: cannot import name 'build_acp_args' from 'nonebot_plugin_hermes_adapter.backends.antigravity.client' (/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/backends/antigravity/client.py)
+
+======================================================================
+ERROR: test_configured_agent_is_passed_to_the_real_command_line (tests.test_antigravity_acp.ACPAgentSpawnTests.test_configured_agent_is_passed_to_the_real_command_line)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/tests/test_antigravity_acp.py", line 244, in test_configured_agent_is_passed_to_the_real_command_line
+    client = self.make_client(agent="nano")
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/tests/test_antigravity_acp.py", line 189, in make_client
+    client = AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<6 lines>...
+        **kwargs,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'agent'
+
+======================================================================
+ERROR: test_default_command_line_is_unchanged (tests.test_antigravity_acp.ACPAgentSpawnTests.test_default_command_line_is_unchanged)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/tests/test_antigravity_acp.py", line 234, in test_default_command_line_is_unchanged
+    client = self.make_client()
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/tests/test_antigravity_acp.py", line 189, in make_client
+    client = AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<6 lines>...
+        **kwargs,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'agent'
+
+======================================================================
+ERROR: test_special_agent_stays_one_argv_item_on_the_real_command_line (tests.test_antigravity_acp.ACPAgentSpawnTests.test_special_agent_stays_one_argv_item_on_the_real_command_line)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/tests/test_antigravity_acp.py", line 255, in test_special_agent_stays_one_argv_item_on_the_real_command_line
+    client = self.make_client(agent=agent)
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/tests/test_antigravity_acp.py", line 189, in make_client
+    client = AntigravityACPClient(
+        cli_path=sys.executable,
+    ...<6 lines>...
+        **kwargs,
+    )
+TypeError: AntigravityACPClient.__init__() got an unexpected keyword argument 'agent'
+
+======================================================================
+ERROR: test_config_exposes_agent_with_empty_default (tests.test_antigravity_acp.AntigravityAgentConfigTests.test_config_exposes_agent_with_empty_default)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/tests/test_antigravity_acp.py", line 138, in test_config_exposes_agent_with_empty_default
+    self.assertEqual(defaults.hermes_antigravity_agent, "")
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/pydantic/main.py", line 1042, in __getattr__
+    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+AttributeError: 'Config' object has no attribute 'hermes_antigravity_agent'. Did you mean: 'hermes_antigravity_cli'?
+
+======================================================================
+ERROR: test_get_client_passes_configured_agent_to_the_acp_client (tests.test_antigravity_acp.AntigravityAgentConfigTests.test_get_client_passes_configured_agent_to_the_acp_client)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/red-4890893c-E2tY8s/tests/test_antigravity_acp.py", line 148, in test_get_client_passes_configured_agent_to_the_acp_client
+    previous = plugin_config.hermes_antigravity_agent
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/pydantic/main.py", line 1042, in __getattr__
+    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')
+AttributeError: 'Config' object has no attribute 'hermes_antigravity_agent'. Did you mean: 'hermes_antigravity_cli'?
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.014s
+
+FAILED (errors=9)

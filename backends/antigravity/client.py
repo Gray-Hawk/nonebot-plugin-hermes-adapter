@@ -23,6 +23,20 @@ DEFAULT_ACP_ARGS: tuple[str, ...] = ("acp", "--process-per-session")
 _CLIENT_INFO = {"name": "nonebot-plugin-hermes-adapter", "version": "0.1.0"}
 
 
+def build_acp_args(cli_args: Sequence[str], agent: str) -> tuple[str, ...]:
+    """命令行尾部的 `--agent <name>`：空串保持官方默认 agent。
+
+    只拼 argv 列表、不拼 shell 字符串；agent 名原样作为单独一项传递，
+    空格与特殊字符不会被 shell 或进程层拆开。
+    """
+
+    args = tuple(cli_args)
+    name = (agent or "").strip()
+    if not name:
+        return args
+    return (*args, "--agent", name)
+
+
 class ACPError(Exception):
     """ACP 调用失败（协议错误、进程退出、超时等）的统一异常基类。"""
 
@@ -57,6 +71,7 @@ class AntigravityACPClient:
         cli_path: str = "agy",
         cli_args: Sequence[str] | None = None,
         model: str = "",
+        agent: str = "",
         workspace: Path,
         prompt_timeout: float = 300.0,
         rpc_timeout: float = 60.0,
@@ -64,6 +79,9 @@ class AntigravityACPClient:
         self._cli_path = cli_path or "agy"
         self._cli_args = tuple(DEFAULT_ACP_ARGS if cli_args is None else cli_args)
         self._model = (model or "").strip()
+        # 交互 /agents 的选择不跨进程生效，官方 settings 也没有默认 agent 键；
+        # 只能用官方命令行参数显式指定，空串保持官方默认 agent。
+        self._agent = (agent or "").strip()
         self._workspace = Path(workspace)
         self._prompt_timeout = float(prompt_timeout)
         self._rpc_timeout = float(rpc_timeout)
@@ -89,7 +107,7 @@ class AntigravityACPClient:
             if self._proc is not None and self._proc.returncode is None:
                 return
             self._workspace.mkdir(parents=True, exist_ok=True)
-            argv = [self._cli_path, *self._cli_args]
+            argv = [self._cli_path, *build_acp_args(self._cli_args, self._agent)]
             try:
                 self._proc = await asyncio.create_subprocess_exec(
                     *argv,
@@ -534,6 +552,7 @@ def get_client() -> AntigravityACPClient:
         _client = AntigravityACPClient(
             cli_path=plugin_config.hermes_antigravity_cli,
             model=plugin_config.hermes_antigravity_model,
+            agent=plugin_config.hermes_antigravity_agent,
             workspace=_acp_workspace(),
             prompt_timeout=float(plugin_config.hermes_api_timeout),
         )

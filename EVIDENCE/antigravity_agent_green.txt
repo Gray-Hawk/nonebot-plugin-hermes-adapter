@@ -1,0 +1,33 @@
+### 1) focused: 新增 agent 用例（GREEN）
+test_agent_with_spaces_and_specials_stays_a_single_argv_item (tests.test_antigravity_acp.ACPAgentArgvTests.test_agent_with_spaces_and_specials_stays_a_single_argv_item) ... ok
+test_blank_agent_config_keeps_official_default (tests.test_antigravity_acp.ACPAgentArgvTests.test_blank_agent_config_keeps_official_default) ... ok
+test_configured_agent_is_appended_as_a_separate_argv_pair (tests.test_antigravity_acp.ACPAgentArgvTests.test_configured_agent_is_appended_as_a_separate_argv_pair) ... ok
+test_default_args_have_no_agent_flag (tests.test_antigravity_acp.ACPAgentArgvTests.test_default_args_have_no_agent_flag) ... ok
+ok
+ok
+ok
+test_config_exposes_agent_with_empty_default (tests.test_antigravity_acp.AntigravityAgentConfigTests.test_config_exposes_agent_with_empty_default) ... ok
+ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 0.056s
+
+OK
+
+### 2) 相关后端整文件（含既有 30 项 + clear 栅栏）
+----------------------------------------------------------------------
+Ran 39 tests in 0.842s
+
+OK
+
+### 3) 全量 tests/ 回归
+----------------------------------------------------------------------
+Ran 754 tests in 33.863s
+
+OK (skipped=1)
+
+### 4) turn_tests 回归
+----------------------------------------------------------------------
+Ran 6 tests in 0.053s
+
+OK

@@ -50,6 +50,13 @@ def log(payload: dict) -> None:
         handle.flush()
 
 
+def log_argv() -> None:
+    """记下真实启动命令行，供测试断言 `--agent` 等 argv 项的落点。"""
+    with open(LOG_PATH + ".argv", "w", encoding="utf-8") as handle:
+        json.dump(sys.argv, handle, ensure_ascii=False)
+        handle.flush()
+
+
 def update(session_id: str, kind: str, text: str) -> None:
     send(
         {
@@ -241,6 +248,7 @@ def handle_request(message: dict) -> None:
 
 
 def main() -> None:
+    log_argv()
     for line in sys.stdin:
         line = line.strip()
         if not line:
