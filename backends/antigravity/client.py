@@ -2,7 +2,7 @@
 
 只经官方 `agy acp`：一个插件实例一个懒启动进程（`--process-per-session`），
 stdin/stdout 走 NDJSON JSON-RPC。本模块集中放进程、会话生命周期与事件归一化，
-不引入后端抽象体系；HermesClient 只调用 `prompt()` 拿最终正文。
+不引入后端抽象体系；上层客户端只调用 `prompt()` 拿最终正文。
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from ...core.routing import CallerScope, resolve_caller_scope
 from ...core.storage.session_key_store import SessionKeyStore
 
 DEFAULT_ACP_ARGS: tuple[str, ...] = ("acp", "--process-per-session")
-_CLIENT_INFO = {"name": "nonebot-plugin-hermes-adapter", "version": "0.1.0"}
+_CLIENT_INFO = {"name": "nonebot-acp-client", "version": "0.1.0"}
 
 # 阶段2C1 起：ACP 反向 MCP 只暴露只读工具（同一个 HTTP 服务；其它后端仍全量）。
 # 阶段2C3：第三个只读工具 `get_message_files` —— 模型拿 refs 换 FileCache 的 local_path，
@@ -118,7 +118,7 @@ class ACPTimeoutError(ACPError):
 class ACPCancelledError(ACPError):
     """本轮被 `/run-stop` 取消：原 prompt 以 `stopReason=cancelled` 收尾。
 
-    单独一类异常让 HermesClient 能映射 `ChatResult.is_interrupted=True`（被停 turn 走
+    单独一类异常让上层客户端能映射 `ChatResult.is_interrupted=True`（被停 turn 走
     既有硬静默），不落成“调用失败”错误面。进程本身仍可继续复用。
     """
 

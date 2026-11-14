@@ -2,7 +2,7 @@
 
 与 get_message_images 同族的反向通道工具,但取回的是**文件**(群文件/私聊文件)
 而非图片字节:工具按需把附件下载进 FileCache,返回 file_name / local_path /
-sha256 / actual_size 元数据,让 Hermes 端拿本地路径做后续处理。
+sha256 / actual_size 元数据,让调用方拿本地路径做后续处理。
 
 安全边界:
 - 范围校验按行做:message_id 是自增小整数、可枚举,归属只能从 DB 反查

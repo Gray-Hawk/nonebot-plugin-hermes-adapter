@@ -190,8 +190,8 @@ def build_ping_message(ok: bool) -> str:
     不附带内部接入点标签或路由信息。
     """
     if ok:
-        return "🏓 pong! Hermes Agent 连接正常。"
-    return "⚠️ 无法连接到 Hermes Agent，请检查 Gateway 是否正在运行。"
+        return "🏓 pong! AI 助手连接正常。"
+    return "⚠️ 无法连接到 AI 助手，请检查 Gateway 是否正在运行。"
 
 
 async def probe_current_endpoint(adapter_name: str, is_private: bool, group_id: str | None) -> bool:
@@ -297,9 +297,9 @@ def build_help_text(
         text = header.strip("\n") + "\n\n命令：\n" + "\n".join(lines)
     else:
         if is_private:
-            intro = "🤖 Hermes Agent 帮助\n\n直接发送消息即可与 AI 对话。\n\n命令：\n"
+            intro = "🤖 AI 助手帮助\n\n直接发送消息即可与 AI 对话。\n\n命令：\n"
         else:
-            intro = "🤖 Hermes Agent 帮助\n\n@我 发送消息即可与 AI 对话。\n\n命令：\n"
+            intro = "🤖 AI 助手帮助\n\n@我 发送消息即可与 AI 对话。\n\n命令：\n"
         text = intro + "\n".join(lines)
     if footer is not None:
         text += "\n\n" + footer.strip("\n")

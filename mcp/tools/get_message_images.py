@@ -1,7 +1,7 @@
 """get_message_images: 按消息 id 列表精确取回图字节。
 
 返回 MCP `content[]` 数组,混合 TextContent (元信息 JSON + 每图前的 marker)
-与 ImageContent (实际 base64 图字节)。Hermes Agent 端 `tools/mcp_tool.py:2231`
+与 ImageContent (实际 base64 图字节)。调用方 `tools/mcp_tool.py:2231`
 会把 ImageContent 块缓存为 MEDIA:<path> 并注入下一轮 LLM 调用。
 
 返回结构示例:

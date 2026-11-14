@@ -154,6 +154,15 @@ class AntigravityToolWhitelistTests(unittest.TestCase):
         for name in EXPECTED_AG_TOOL_NAMES:
             self.assertIn(name, full)
 
+    def test_registered_tool_descriptions_do_not_name_the_upstream_backend(self) -> None:
+        """工具说明会被外部 Agent 原样读进上下文：只允许中性措辞。"""
+        tools = registered_tools(tool_names=product_tool_names())
+        self.assertEqual(tuple(tools), EXPECTED_AG_TOOL_NAMES)
+        for name, tool in tools.items():
+            description = tool.description or ""
+            self.assertTrue(description.strip(), f"{name} 的 description 为空")
+            self.assertNotIn("hermes", description.lower(), f"{name}: {description}")
+
     def test_third_tool_definition_is_identical_in_filtered_and_default_tables(self) -> None:
         """过滤只改注册集合，不改写第三个工具的描述与 schema。"""
         full = registered_tools()

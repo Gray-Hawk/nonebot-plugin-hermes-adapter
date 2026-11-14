@@ -6,8 +6,8 @@
     `group_id IS NULL` 的私聊行(MessageStore.get_recent 已有该 where 与索引),
     只读目标 owner 的会话,不跨私聊串号。闸只有一条:调用方必须可识别。
 
-返回每条消息的 `id` (DB 主键),供 Hermes 端后续调 `get_message_images`
-按 id 取图字节。原 `image_urls: list[str]` 字段去掉 —— 让 Hermes 不要直接
+返回每条消息的 `id` (DB 主键),供调用方后续调 `get_message_images`
+按 id 取图字节。原 `image_urls: list[str]` 字段去掉 —— 让调用方不要直接
 读到 CDN 链接,统一走 MCP 工具拿字节(URL 可能短效,且能避免 prompt token 浪费)。
 """
 

@@ -295,6 +295,21 @@ class ACPHandshakeTests(FakeACPBase):
         self.assertEqual(prompt["params"]["sessionId"], acp_session_id)
         self.assertEqual(prompt["params"]["prompt"], [{"type": "text", "text": "你好呀"}])
 
+    async def test_initialize_client_info_is_neutral_and_keeps_the_version(self) -> None:
+        """initialize.clientInfo 是插件写给外部 Agent 的可见身份，不得带后端名。"""
+        client = self.make_client()
+        await client.prompt(
+            session_key="k1", system_prompt="SYS", user_text="hi", store=self.store
+        )
+
+        initialize = self.entries("initialize")[0]
+        info = initialize["params"]["clientInfo"]
+        self.assertEqual(initialize["params"]["protocolVersion"], 1)
+        self.assertEqual(info["version"], "0.1.0", "协议版本字段不动")
+        self.assertTrue(info["name"], "客户端名不得为空")
+        self.assertNotIn("hermes", info["name"].lower(), info["name"])
+        self.assertTrue(info["name"].startswith("nonebot"), info["name"])
+
     async def test_thought_and_plan_updates_never_reach_body(self) -> None:
         client = self.make_client()
         text = await client.prompt(
