@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -263,6 +264,36 @@ class ACPAgentSpawnTests(FakeACPBase):
         self.assertEqual(len(argv), len(self.fixture_args()) + 2)
 
 
+class ACPWorkspacePathTests(unittest.TestCase):
+    """ACP cwd 会随 session/new 与 resume 发给外部后端：目录名不得带插件/后端身份。"""
+
+    def test_workspace_is_a_neutral_sibling_of_the_plugin_data_dir(self) -> None:
+        from nonebot_plugin_hermes_adapter import config
+        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+
+        base = Path("/srv/nb-data/nonebot_plugin_hermes_adapter")
+        with patch.object(config, "resolve_custom_dir", lambda: base):
+            workspace = ag._acp_workspace()
+            again = ag._acp_workspace()
+
+        self.assertEqual(workspace, base.parent / "acp-workspace")
+        self.assertEqual(again, workspace, "同一数据目录必须给出同一 cwd（跨重启稳定）")
+        self.assertFalse(workspace.is_relative_to(base), "cwd 不得落在插件数据目录里")
+        self.assertNotIn("hermes", str(workspace).lower())
+
+    def test_workspace_falls_back_to_a_neutral_temp_dir(self) -> None:
+        from nonebot_plugin_hermes_adapter import config
+        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+
+        with patch.object(config, "resolve_custom_dir", lambda: None):
+            workspace = ag._acp_workspace()
+
+        self.assertEqual(workspace.name, "acp-workspace")
+        # 只有插件/后端身份成分要断言：本机 TMPDIR 在 `~/.hermes/…` 下，
+        # 对整串做 blanket "hermes" 断言会把家目录误判成泄漏。
+        self.assertNotIn("nonebot_plugin_hermes_adapter", str(workspace).lower())
+
+
 class ACPHandshakeTests(FakeACPBase):
     async def test_lazy_process_then_initialize_new_session_and_prompt(self) -> None:
         client = self.make_client()
@@ -309,6 +340,34 @@ class ACPHandshakeTests(FakeACPBase):
         self.assertTrue(info["name"], "客户端名不得为空")
         self.assertNotIn("hermes", info["name"].lower(), info["name"])
         self.assertTrue(info["name"].startswith("nonebot"), info["name"])
+
+    async def test_new_and_resume_send_the_neutral_workspace_as_cwd(self) -> None:
+        """真 wire：new/resume 的 cwd 都是中性目录，且 ACP 子进程确实在该目录启动。"""
+        from nonebot_plugin_hermes_adapter import config
+        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+
+        base = self.tmp / "data" / "nonebot_plugin_hermes_adapter"
+        base.mkdir(parents=True)
+        with patch.object(config, "resolve_custom_dir", lambda: base):
+            workspace = ag._acp_workspace()
+        client = self.make_client(workspace=workspace)
+
+        await client.prompt(
+            session_key="k1", system_prompt="SYS", user_text="one", store=self.store
+        )
+        await client.prompt(
+            session_key="k1", system_prompt="SYS", user_text="two", store=self.store
+        )
+
+        expected = str(base.parent / "acp-workspace")
+        new_cwd = self.entries("session/new")[0]["params"]["cwd"]
+        resume_cwd = self.entries("session/resume")[0]["params"]["cwd"]
+        self.assertEqual(new_cwd, expected)
+        self.assertEqual(resume_cwd, expected)
+        self.assertEqual(Path(new_cwd).parent, base.parent, "cwd 必须是数据目录的同级")
+        self.assertEqual(Path(new_cwd).name, "acp-workspace")
+        self.assertNotIn("nonebot_plugin_hermes_adapter", new_cwd.lower())
+        self.assertTrue(Path(new_cwd).is_dir(), "ACP 子进程的工作目录必须已创建")
 
     async def test_thought_and_plan_updates_never_reach_body(self) -> None:
         client = self.make_client()
@@ -370,6 +429,38 @@ class ACPResumeTests(FakeACPBase):
         record = self.store.load_acp_session("k1")
         self.assertNotEqual(record[0], "gone-session")
         self.assertEqual(self.entries("session/prompt")[0]["params"]["sessionId"], record[0])
+
+
+class ACPWorkspaceMigrationTests(FakeACPBase):
+    """升级换 cwd：旧会话（旧 `antigravity-workspace`）在新 cwd 下仍走 resume。"""
+
+    flags = ("--persist-sessions",)
+
+    async def test_session_created_under_the_old_cwd_resumes_under_the_new_one(self) -> None:
+        old = self.tmp / "data" / "nonebot_plugin_hermes_adapter" / "antigravity-workspace"
+        new = self.tmp / "data" / "acp-workspace"
+
+        first = self.make_client(workspace=old)
+        await first.prompt(
+            session_key="k1", system_prompt="SYS", user_text="one", store=self.store
+        )
+        session_id = self.store.load_acp_session("k1")[0]
+        await first.close()
+
+        # 升级后：新进程 + 新 cwd，acp_sessions 行仍是同一个 session
+        second = self.make_client(workspace=new)
+        await second.prompt(
+            session_key="k1", system_prompt="SYS", user_text="two", store=self.store
+        )
+
+        self.assertEqual(len(self.entries("session/new")), 1, "旧会话不因 cwd 变化被重建")
+        resume = self.entries("session/resume")[0]["params"]
+        self.assertEqual(resume["sessionId"], session_id)
+        self.assertEqual(resume["cwd"], str(new))
+        self.assertEqual(Path(resume["cwd"]).name, "acp-workspace")
+        self.assertNotIn("nonebot_plugin_hermes_adapter", resume["cwd"].lower())
+        self.assertNotIn("antigravity-workspace", resume["cwd"])
+        self.assertEqual(self.store.load_acp_session("k1")[0], session_id)
 
 
 class ACPModelTests(FakeACPBase):

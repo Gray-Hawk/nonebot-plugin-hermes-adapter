@@ -1269,12 +1269,22 @@ _client: AntigravityACPClient | None = None
 
 
 def _acp_workspace() -> Path:
+    """ACP 进程 cwd 与 `session/new`／`session/resume` 的 cwd：插件数据目录的中性同级目录。
+
+    cwd 会原样进外部后端的会话参数（也是 ACP 子进程的工作目录），所以**不能**用
+    插件数据目录里的 `antigravity-workspace/`——那等于把插件目录名（本部署带着后端
+    身份）写进对方上下文，后端会据此反推出本侧后端名。取数据目录的同级
+    `acp-workspace/`：路径中性、由数据目录位置唯一确定，跨重启稳定；插件数据目录
+    本身不动。
+    """
     from ...config import resolve_custom_dir
 
     base = resolve_custom_dir()
     if base is None:
-        base = Path(tempfile.gettempdir()) / "nonebot_plugin_hermes_adapter"
-    return Path(base) / "antigravity-workspace"
+        # 拿不到数据目录时退到临时目录；仍走中性子目录，避免 /tmp/acp-workspace
+        # 这类公共路径被别的用户预先占位。
+        return Path(tempfile.gettempdir()) / "nonebot_acp" / "acp-workspace"
+    return Path(base).parent / "acp-workspace"
 
 
 def get_client() -> AntigravityACPClient:
