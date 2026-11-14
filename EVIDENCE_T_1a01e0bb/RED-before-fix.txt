@@ -1,0 +1,164 @@
+11-14 13:31:25 [SUCCESS] nonebot | NoneBot is initializing...
+11-14 13:31:25 [INFO] nonebot | Current Env: prod
+test_default_table_is_unfiltered_and_still_has_the_third_tool (tests.test_antigravity_mcp_files.AntigravityToolWhitelistTests.test_default_table_is_unfiltered_and_still_has_the_third_tool) ... /usr/lib/python3.13/unittest/case.py:606: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  if method() is not None:
+11-14 13:31:25 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-14 13:31:25 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+ok
+test_product_whitelist_is_exactly_the_three_read_only_tools_in_order (tests.test_antigravity_mcp_files.AntigravityToolWhitelistTests.test_product_whitelist_is_exactly_the_three_read_only_tools_in_order) ... FAIL
+test_registration_with_the_product_whitelist_exposes_exactly_three (tests.test_antigravity_mcp_files.AntigravityToolWhitelistTests.test_registration_with_the_product_whitelist_exposes_exactly_three) ... FAIL
+test_third_tool_definition_is_identical_in_filtered_and_default_tables (tests.test_antigravity_mcp_files.AntigravityToolWhitelistTests.test_third_tool_definition_is_identical_in_filtered_and_default_tables)
+过滤只改注册集合，不改写第三个工具的描述与 schema。 ... ERROR
+test_get_message_files_permission_is_auto_allowed_once_without_pending (tests.test_antigravity_mcp_files.GetMessageFilesPermissionTests.test_get_message_files_permission_is_auto_allowed_once_without_pending) ... /home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/typing.py:103: DeprecationWarning: Failing to pass a value to the 'type_params' parameter of 'typing.ForwardRef._evaluate' is deprecated, as it leads to incorrect behaviour when calling typing.ForwardRef._evaluate on a stringified annotation that references a PEP 695 type parameter. It will be disallowed in Python 3.15.
+  return ref._evaluate(globalns, localns, recursive_guard=frozenset())
+11-14 13:31:26 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] AGENT_PLUGIN_CUSTOM_DIR 指向的目录不可用: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-2d0xrx07/config;定制功能(规则/群档案/媒体配置等)将回退内置默认
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3552965 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-2d0xrx07
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images server=nonebot-bridge url=http://127.0.0.1:18878/mcp bearer=yes
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP 工具自动放行 tool=mcp_nonebot-bridge_get_message_files
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+ok
+test_read_file_deny_answers_the_original_request (tests.test_antigravity_mcp_files.GetMessageFilesPermissionTests.test_read_file_deny_answers_the_original_request) ... 11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3552969 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-yqmi3ncu
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images server=nonebot-bridge url=http://127.0.0.1:18878/mcp bearer=yes
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #1 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+ok
+test_read_file_permission_still_waits_for_the_admin (tests.test_antigravity_mcp_files.GetMessageFilesPermissionTests.test_read_file_permission_still_waits_for_the_admin) ... 11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3552971 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-yjoqp86e
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images server=nonebot-bridge url=http://127.0.0.1:18878/mcp bearer=yes
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #2 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+ok
+test_run_command_keeps_its_manual_approval (tests.test_antigravity_mcp_files.GetMessageFilesPermissionTests.test_run_command_keeps_its_manual_approval)
+与第三个 MCP 工具同一轮对照：终端命令绝不进自动放行分支。 ... 11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3552973 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-hrtptpnw
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images server=nonebot-bridge url=http://127.0.0.1:18878/mcp bearer=yes
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #3 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-14 13:31:26 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+ok
+test_cached_file_returns_the_local_path_for_the_model (tests.test_antigravity_mcp_files.GetMessageFilesScopeTests.test_cached_file_returns_the_local_path_for_the_model) ... ok
+test_group_and_private_refs_of_an_allowed_caller_reach_the_download_step (tests.test_antigravity_mcp_files.GetMessageFilesScopeTests.test_group_and_private_refs_of_an_allowed_caller_reach_the_download_step) ... ok
+test_input_model_caps_refs_at_four (tests.test_antigravity_mcp_files.GetMessageFilesScopeTests.test_input_model_caps_refs_at_four) ... ok
+test_unknown_message_id_is_indistinguishable_from_missing (tests.test_antigravity_mcp_files.GetMessageFilesScopeTests.test_unknown_message_id_is_indistinguishable_from_missing) ... ok
+test_unresolved_caller_gets_not_found_and_downloads_nothing (tests.test_antigravity_mcp_files.GetMessageFilesScopeTests.test_unresolved_caller_gets_not_found_and_downloads_nothing) ... 11-14 13:31:26 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] get_message_files 越权 message_id 已按 not_found 处理: 1 (caller: unresolved)
+11-14 13:31:26 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] get_message_files 越权 message_id 已按 not_found 处理: 2 (caller: unresolved)
+ok
+test_description_tells_the_model_it_returns_local_paths (tests.test_antigravity_mcp_files.GetMessageFilesWireTests.test_description_tells_the_model_it_returns_local_paths) ... ERROR
+test_recent_messages_output_schema_points_at_the_file_tool (tests.test_antigravity_mcp_files.GetMessageFilesWireTests.test_recent_messages_output_schema_points_at_the_file_tool)
+模型能从消息元数据发现第三个工具（file_count 说明带工具名）。 ... ok
+test_schema_requires_refs_of_message_id_and_idx (tests.test_antigravity_mcp_files.GetMessageFilesWireTests.test_schema_requires_refs_of_message_id_and_idx) ... ERROR
+test_wire_serves_the_third_tool_and_rejects_five_refs (tests.test_antigravity_mcp_files.GetMessageFilesWireTests.test_wire_serves_the_third_tool_and_rejects_five_refs)
+真 FastMCP 客户端（线上 wire）：工具可列、可调，参数越界在服务端拒绝。 ... ERROR
+
+======================================================================
+ERROR: test_third_tool_definition_is_identical_in_filtered_and_default_tables (tests.test_antigravity_mcp_files.AntigravityToolWhitelistTests.test_third_tool_definition_is_identical_in_filtered_and_default_tables)
+过滤只改注册集合，不改写第三个工具的描述与 schema。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c3-20261114/tests/test_antigravity_mcp_files.py", line 164, in test_third_tool_definition_is_identical_in_filtered_and_default_tables
+    filtered["get_message_files"].description, full["get_message_files"].description
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+KeyError: 'get_message_files'
+
+======================================================================
+ERROR: test_description_tells_the_model_it_returns_local_paths (tests.test_antigravity_mcp_files.GetMessageFilesWireTests.test_description_tells_the_model_it_returns_local_paths)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c3-20261114/tests/test_antigravity_mcp_files.py", line 195, in test_description_tells_the_model_it_returns_local_paths
+    description = registered_tools(tool_names=product_tool_names())[
+                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        "get_message_files"
+        ^^^^^^^^^^^^^^^^^^^
+    ].description or ""
+    ^
+KeyError: 'get_message_files'
+
+======================================================================
+ERROR: test_schema_requires_refs_of_message_id_and_idx (tests.test_antigravity_mcp_files.GetMessageFilesWireTests.test_schema_requires_refs_of_message_id_and_idx)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c3-20261114/tests/test_antigravity_mcp_files.py", line 181, in test_schema_requires_refs_of_message_id_and_idx
+    schema = tools["get_message_files"].parameters
+             ~~~~~^^^^^^^^^^^^^^^^^^^^^
+KeyError: 'get_message_files'
+
+======================================================================
+ERROR: test_wire_serves_the_third_tool_and_rejects_five_refs (tests.test_antigravity_mcp_files.GetMessageFilesWireTests.test_wire_serves_the_third_tool_and_rejects_five_refs)
+真 FastMCP 客户端（线上 wire）：工具可列、可调，参数越界在服务端拒绝。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c3-20261114/tests/test_antigravity_mcp_files.py", line 230, in test_wire_serves_the_third_tool_and_rejects_five_refs
+    names, result = asyncio.run(read({"refs": [{"message_id": 1, "idx": 0}]}))
+                    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c3-20261114/tests/test_antigravity_mcp_files.py", line 228, in read
+    return names, await client.call_tool("get_message_files", args)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/fastmcp/client/mixins/tools.py", line 336, in call_tool
+    return await self._parse_call_tool_result(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        name, result, raise_on_error=raise_on_error
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/fastmcp/client/mixins/tools.py", line 272, in _parse_call_tool_result
+    return await _parse_call_tool_result(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/fastmcp/client/mixins/tools.py", line 373, in _parse_call_tool_result
+    raise ToolError(msg)
+fastmcp.exceptions.ToolError: Unknown tool: 'get_message_files'
+
+======================================================================
+FAIL: test_product_whitelist_is_exactly_the_three_read_only_tools_in_order (tests.test_antigravity_mcp_files.AntigravityToolWhitelistTests.test_product_whitelist_is_exactly_the_three_read_only_tools_in_order)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c3-20261114/tests/test_antigravity_mcp_files.py", line 144, in test_product_whitelist_is_exactly_the_three_read_only_tools_in_order
+    self.assertEqual(product_tool_names(), EXPECTED_AG_TOOL_NAMES)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: ('get_recent_messages', 'get_message_images') != ('get_recent_messages', 'get_message_images', 'get_message_files')
+
+Second tuple contains 1 additional elements.
+First extra element 2:
+'get_message_files'
+
+- ('get_recent_messages', 'get_message_images')
++ ('get_recent_messages', 'get_message_images', 'get_message_files')
+?                                             +++++++++++++++++++++
+
+
+======================================================================
+FAIL: test_registration_with_the_product_whitelist_exposes_exactly_three (tests.test_antigravity_mcp_files.AntigravityToolWhitelistTests.test_registration_with_the_product_whitelist_exposes_exactly_three)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c3-20261114/tests/test_antigravity_mcp_files.py", line 148, in test_registration_with_the_product_whitelist_exposes_exactly_three
+    self.assertEqual(tuple(tools), EXPECTED_AG_TOOL_NAMES, "注册顺序必须保留原两个在前")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Tuples differ: ('get_recent_messages', 'get_message_images') != ('get_recent_messages', 'get_message_images', 'get_message_files')
+
+Second tuple contains 1 additional elements.
+First extra element 2:
+'get_message_files'
+
+- ('get_recent_messages', 'get_message_images')
++ ('get_recent_messages', 'get_message_images', 'get_message_files')
+?                                             +++++++++++++++++++++
+ : 注册顺序必须保留原两个在前
+
+----------------------------------------------------------------------
+Ran 17 tests in 0.619s
+
+FAILED (failures=2, errors=4)
