@@ -1,0 +1,324 @@
+11-14 08:39:59 [SUCCESS] nonebot | NoneBot is initializing...
+11-14 08:39:59 [INFO] nonebot | Current Env: prod
+test_auto_reply_write_failure_opens_no_manual_ticket (tests.test_antigravity_mcp_tools.McpAutoApprovalClientTests.test_auto_reply_write_failure_opens_no_manual_ticket) ... 11-14 08:39:59 [WARNING] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限应答写入失败（请求保持挂起）
+ok
+test_mcp_permission_is_auto_allowed_once_without_notification (tests.test_antigravity_mcp_tools.McpAutoApprovalClientTests.test_mcp_permission_is_auto_allowed_once_without_notification) ... 11-14 08:39:59 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508003 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-perm-l6jfaplt
+11-14 08:39:59 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+FAIL
+test_mcp_permission_without_allow_once_is_safely_refused (tests.test_antigravity_mcp_tools.McpAutoApprovalClientTests.test_mcp_permission_without_allow_once_is_safely_refused) ... 11-14 08:40:04 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508017 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-perm-4fhek06q
+FAIL
+test_non_mcp_permission_still_waits_for_the_admin (tests.test_antigravity_mcp_tools.McpAutoApprovalClientTests.test_non_mcp_permission_still_waits_for_the_admin) ... 11-14 08:40:09 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508023 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-perm-nzlf678l
+11-14 08:40:09 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+ok
+test_group_turn_mounts_scoped_mcp_and_auto_allows (tests.test_antigravity_mcp_tools.McpAutoApprovalHandlerTests.test_group_turn_mounts_scoped_mcp_and_auto_allows) ... 11-14 08:40:09 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] AGENT_PLUGIN_CUSTOM_DIR 指向的目录不可用: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-tkw9kzxx/config;定制功能(规则/群档案/媒体配置等)将回退内置默认
+/usr/lib/python3.13/unittest/async_case.py:135: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  return super().run(result)
+11-14 08:40:09 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-14 08:40:09 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/typing.py:103: DeprecationWarning: Failing to pass a value to the 'type_params' parameter of 'typing.ForwardRef._evaluate' is deprecated, as it leads to incorrect behaviour when calling typing.ForwardRef._evaluate on a stringified annotation that references a PEP 695 type parameter. It will be disallowed in Python 3.15.
+  return ref._evaluate(globalns, localns, recursive_guard=frozenset())
+ERROR
+test_mcp_tool_is_auto_allowed_without_pending_or_notice (tests.test_antigravity_mcp_tools.McpAutoApprovalHandlerTests.test_mcp_tool_is_auto_allowed_without_pending_or_notice) ... 11-14 08:40:09 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508025 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-amwf7lsg
+11-14 08:40:09 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #1 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-14 08:40:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-14 08:40:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+FAIL
+test_run_command_still_goes_through_admin_approval (tests.test_antigravity_mcp_tools.McpAutoApprovalHandlerTests.test_run_command_still_goes_through_admin_approval) ... 11-14 08:40:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508031 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-ey33p3e2
+11-14 08:40:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #2 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-14 08:40:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-14 08:40:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-14 08:40:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+ok
+test_dev_mode_has_no_authorization_header_and_still_identifies_caller (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_dev_mode_has_no_authorization_header_and_still_identifies_caller) ... ERROR
+test_disabled_mcp_attaches_nothing (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_disabled_mcp_attaches_nothing) ... ERROR
+test_foreign_bearer_is_refused (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_foreign_bearer_is_refused)
+跨 scope：不是本实例凭据的 Bearer 既认不出，也不能通过群/私范围判定。 ... 11-14 08:40:14 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] 拒绝越权操作 (onebotv11, 100) —— caller: unresolved caller
+11-14 08:40:14 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] 拒绝未识别调用方读取私聊 (onebotv11, 123) —— caller: unresolved
+ok
+test_group_turn_gets_scoped_bearer_definition (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_group_turn_gets_scoped_bearer_definition) ... ERROR
+test_http_layer_rejects_a_foreign_bearer (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_http_layer_rejects_a_foreign_bearer) ... ERROR
+test_missing_group_or_private_target_attaches_nothing (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_missing_group_or_private_target_attaches_nothing) ... ERROR
+test_private_turn_gets_the_same_scoped_bearer_definition (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_private_turn_gets_the_same_scoped_bearer_definition) ... ERROR
+test_unresolved_scope_does_not_attach_mcp (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_unresolved_scope_does_not_attach_mcp) ... ERROR
+test_disabled_mcp_keeps_the_2b_empty_list (tests.test_antigravity_mcp_tools.McpSessionDefinitionTests.test_disabled_mcp_keeps_the_2b_empty_list) ... 11-14 08:40:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508033 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-session-85aa990d
+ok
+test_new_and_resume_carry_the_same_http_definition (tests.test_antigravity_mcp_tools.McpSessionDefinitionTests.test_new_and_resume_carry_the_same_http_definition) ... 11-14 08:40:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508035 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-session-gx6j7dj8
+FAIL
+test_private_turn_gets_the_private_scope_definition (tests.test_antigravity_mcp_tools.McpSessionDefinitionTests.test_private_turn_gets_the_private_scope_definition) ... 11-14 08:40:14 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508038 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-session-uokebam3
+FAIL
+test_token_never_reaches_client_logs (tests.test_antigravity_mcp_tools.McpSessionDefinitionTests.test_token_never_reaches_client_logs) ... FAIL
+test_antigravity_table_is_exactly_the_two_read_only_tools (tests.test_antigravity_mcp_tools.McpToolTableTests.test_antigravity_table_is_exactly_the_two_read_only_tools) ... ERROR
+test_default_table_keeps_every_previous_tool (tests.test_antigravity_mcp_tools.McpToolTableTests.test_default_table_keeps_every_previous_tool) ... ok
+test_filter_keeps_the_same_tool_definitions (tests.test_antigravity_mcp_tools.McpToolTableTests.test_filter_keeps_the_same_tool_definitions)
+过滤只改注册集合，不改写这两个工具的描述与 schema。 ... ERROR
+
+======================================================================
+ERROR: test_group_turn_mounts_scoped_mcp_and_auto_allows (tests.test_antigravity_mcp_tools.McpAutoApprovalHandlerTests.test_group_turn_mounts_scoped_mcp_and_auto_allows)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 656, in test_group_turn_mounts_scoped_mcp_and_auto_allows
+    result = await asyncio.wait_for(self._reactive_turn(), 10)
+                                    ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'McpAutoApprovalHandlerTests' object has no attribute '_reactive_turn'
+
+======================================================================
+ERROR: test_dev_mode_has_no_authorization_header_and_still_identifies_caller (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_dev_mode_has_no_authorization_header_and_still_identifies_caller)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 205, in test_dev_mode_has_no_authorization_header_and_still_identifies_caller
+    servers = self._servers(self._turn_meta(private=True))
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 166, in _servers
+    return ag.mcp_servers_for_turn(meta)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'nonebot_plugin_hermes_adapter.backends.antigravity.client' has no attribute 'mcp_servers_for_turn'
+
+======================================================================
+ERROR: test_disabled_mcp_attaches_nothing (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_disabled_mcp_attaches_nothing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 231, in test_disabled_mcp_attaches_nothing
+    self.assertEqual(self._servers(self._turn_meta(private=False)), [])
+                     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 166, in _servers
+    return ag.mcp_servers_for_turn(meta)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'nonebot_plugin_hermes_adapter.backends.antigravity.client' has no attribute 'mcp_servers_for_turn'
+
+======================================================================
+ERROR: test_group_turn_gets_scoped_bearer_definition (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_group_turn_gets_scoped_bearer_definition)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 183, in test_group_turn_gets_scoped_bearer_definition
+    servers = self._servers(self._turn_meta(private=False))
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 166, in _servers
+    return ag.mcp_servers_for_turn(meta)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'nonebot_plugin_hermes_adapter.backends.antigravity.client' has no attribute 'mcp_servers_for_turn'
+
+======================================================================
+ERROR: test_http_layer_rejects_a_foreign_bearer (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_http_layer_rejects_a_foreign_bearer)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 253, in test_http_layer_rejects_a_foreign_bearer
+    app = server.build_mcp_app(
+        message_buffer=None,
+    ...<5 lines>...
+        tool_names=READ_ONLY_TOOLS,
+    )
+TypeError: build_mcp_app() got an unexpected keyword argument 'tool_names'
+
+======================================================================
+ERROR: test_missing_group_or_private_target_attaches_nothing (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_missing_group_or_private_target_attaches_nothing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 235, in test_missing_group_or_private_target_attaches_nothing
+    self.assertEqual(self._servers(self._turn_meta(private=False, group_id=None)), [])
+                     ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 166, in _servers
+    return ag.mcp_servers_for_turn(meta)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'nonebot_plugin_hermes_adapter.backends.antigravity.client' has no attribute 'mcp_servers_for_turn'
+
+======================================================================
+ERROR: test_private_turn_gets_the_same_scoped_bearer_definition (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_private_turn_gets_the_same_scoped_bearer_definition)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 196, in test_private_turn_gets_the_same_scoped_bearer_definition
+    servers = self._servers(self._turn_meta(private=True))
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 166, in _servers
+    return ag.mcp_servers_for_turn(meta)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'nonebot_plugin_hermes_adapter.backends.antigravity.client' has no attribute 'mcp_servers_for_turn'
+
+======================================================================
+ERROR: test_unresolved_scope_does_not_attach_mcp (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_unresolved_scope_does_not_attach_mcp)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 226, in test_unresolved_scope_does_not_attach_mcp
+    with patch.object(ag, "resolve_caller_scope", return_value=None):
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.backends.antigravity.client' from '/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/backends/antigravity/client.py'> does not have the attribute 'resolve_caller_scope'
+
+======================================================================
+ERROR: test_antigravity_table_is_exactly_the_two_read_only_tools (tests.test_antigravity_mcp_tools.McpToolTableTests.test_antigravity_table_is_exactly_the_two_read_only_tools)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 134, in test_antigravity_table_is_exactly_the_two_read_only_tools
+    tools = self._tools(tool_names=READ_ONLY_TOOLS)
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 122, in _tools
+    server.build_mcp_app(
+    ~~~~~~~~~~~~~~~~~~~~^
+        message_buffer=None,
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+        **kwargs,
+        ^^^^^^^^^
+    )
+    ^
+TypeError: build_mcp_app() got an unexpected keyword argument 'tool_names'
+
+======================================================================
+ERROR: test_filter_keeps_the_same_tool_definitions (tests.test_antigravity_mcp_tools.McpToolTableTests.test_filter_keeps_the_same_tool_definitions)
+过滤只改注册集合，不改写这两个工具的描述与 schema。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 148, in test_filter_keeps_the_same_tool_definitions
+    filtered = self._tools(tool_names=READ_ONLY_TOOLS)
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 122, in _tools
+    server.build_mcp_app(
+    ~~~~~~~~~~~~~~~~~~~~^
+        message_buffer=None,
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+        **kwargs,
+        ^^^^^^^^^
+    )
+    ^
+TypeError: build_mcp_app() got an unexpected keyword argument 'tool_names'
+
+======================================================================
+FAIL: test_mcp_permission_is_auto_allowed_once_without_notification (tests.test_antigravity_mcp_tools.McpAutoApprovalClientTests.test_mcp_permission_is_auto_allowed_once_without_notification)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 526, in test_mcp_permission_is_auto_allowed_once_without_notification
+    self.assertEqual(self.payloads, [], "MCP 自动放行不得发人工通知")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [{'backend': 'antigravity', 'run_id': '', [273 chars]'}]}] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+{'backend': 'antigravity', 'run_id': '', 'session_key': 'k1', 'session_id': 'sess-1', 'request_id': 'mcp-1', 'title': 'write_file', 'raw_input': {'CommandLine': 'pwd'}, 'options': [{'optionId': 'allow-once', 'kind': 'allow_once', 'name': 'Allow'}, {'optionId': 'reject-once', 'kind': 'reject_once', 'name': 'Reject'}]}
+
++ []
+- [{'backend': 'antigravity',
+-   'options': [{'kind': 'allow_once', 'name': 'Allow', 'optionId': 'allow-once'},
+-               {'kind': 'reject_once',
+-                'name': 'Reject',
+-                'optionId': 'reject-once'}],
+-   'raw_input': {'CommandLine': 'pwd'},
+-   'request_id': 'mcp-1',
+-   'run_id': '',
+-   'session_id': 'sess-1',
+-   'session_key': 'k1',
+-   'title': 'write_file'}] : MCP 自动放行不得发人工通知
+
+======================================================================
+FAIL: test_mcp_permission_without_allow_once_is_safely_refused (tests.test_antigravity_mcp_tools.McpAutoApprovalClientTests.test_mcp_permission_without_allow_once_is_safely_refused)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 558, in test_mcp_permission_without_allow_once_is_safely_refused
+    self.assertEqual(len(frames), 1, frames)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : []
+
+======================================================================
+FAIL: test_mcp_tool_is_auto_allowed_without_pending_or_notice (tests.test_antigravity_mcp_tools.McpAutoApprovalHandlerTests.test_mcp_tool_is_auto_allowed_without_pending_or_notice)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 637, in test_mcp_tool_is_auto_allowed_without_pending_or_notice
+    self.assertEqual(self.approvals.pending_count(), 0, "MCP 不得登记人工审批")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 1 != 0 : MCP 不得登记人工审批
+
+======================================================================
+FAIL: test_new_and_resume_carry_the_same_http_definition (tests.test_antigravity_mcp_tools.McpSessionDefinitionTests.test_new_and_resume_carry_the_same_http_definition)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 361, in test_new_and_resume_carry_the_same_http_definition
+    self.assertEqual(new[0]["params"]["mcpServers"], expected_mcp_servers())
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != [{'type': 'http', 'name': 'nonebot-bridge'[135 chars]'}]}]
+
+Second list contains 1 additional elements.
+First extra element 0:
+{'type': 'http', 'name': 'nonebot-bridge', 'url': 'http://127.0.0.1:18877/mcp', 'headers': [{'name': 'Authorization', 'value': 'Bearer [REDACTED]'}]}
+
+- []
++ [{'headers': [{'name': 'Authorization',
++                'value': 'Bearer [REDACTED]'}],
++   'name': 'nonebot-bridge',
++   'type': 'http',
++   'url': 'http://127.0.0.1:18877/mcp'}]
+
+======================================================================
+FAIL: test_private_turn_gets_the_private_scope_definition (tests.test_antigravity_mcp_tools.McpSessionDefinitionTests.test_private_turn_gets_the_private_scope_definition)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 386, in test_private_turn_gets_the_private_scope_definition
+    self.assertEqual(new[0]["params"]["mcpServers"], expected_mcp_servers())
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != [{'type': 'http', 'name': 'nonebot-bridge'[135 chars]'}]}]
+
+Second list contains 1 additional elements.
+First extra element 0:
+{'type': 'http', 'name': 'nonebot-bridge', 'url': 'http://127.0.0.1:18877/mcp', 'headers': [{'name': 'Authorization', 'value': 'Bearer [REDACTED]'}]}
+
+- []
++ [{'headers': [{'name': 'Authorization',
++                'value': 'Bearer [REDACTED]'}],
++   'name': 'nonebot-bridge',
++   'type': 'http',
++   'url': 'http://127.0.0.1:18877/mcp'}]
+
+======================================================================
+FAIL: test_token_never_reaches_client_logs (tests.test_antigravity_mcp_tools.McpSessionDefinitionTests.test_token_never_reaches_client_logs)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp2c-20261114/tests/test_antigravity_mcp_tools.py", line 430, in test_token_never_reaches_client_logs
+    self.assertTrue(any("MCP" in line for line in records), records)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : ['[HERMES antigravity] ACP 进程已启动 pid=3508040 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-session-uaa0i1qq']
+
+----------------------------------------------------------------------
+Ran 22 tests in 15.574s
+
+FAILED (failures=6, errors=10)

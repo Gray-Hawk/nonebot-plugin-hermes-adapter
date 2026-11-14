@@ -1,0 +1,74 @@
+11-14 08:40:57 [SUCCESS] nonebot | NoneBot is initializing...
+11-14 08:40:57 [INFO] nonebot | Current Env: prod
+test_auto_reply_write_failure_opens_no_manual_ticket (tests.test_antigravity_mcp_tools.McpAutoApprovalClientTests.test_auto_reply_write_failure_opens_no_manual_ticket) ... 11-14 08:40:57 [WARNING] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限应答写入失败（请求保持挂起）
+11-14 08:40:57 [WARNING] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP 工具权限自动应答写帧失败 tool=mcp_nonebot-bridge_get_recent_messages（不登记人工审批）
+ok
+test_mcp_permission_is_auto_allowed_once_without_notification (tests.test_antigravity_mcp_tools.McpAutoApprovalClientTests.test_mcp_permission_is_auto_allowed_once_without_notification) ... 11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508249 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-perm-t9ab5vp6
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP 工具自动放行 tool=mcp_nonebot-bridge_get_recent_messages
+ok
+test_mcp_permission_without_allow_once_is_safely_refused (tests.test_antigravity_mcp_tools.McpAutoApprovalClientTests.test_mcp_permission_without_allow_once_is_safely_refused) ... 11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508251 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-perm-3c5lsfz8
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP 工具自动放行 tool=mcp_nonebot-bridge_get_message_images
+ok
+test_non_mcp_permission_still_waits_for_the_admin (tests.test_antigravity_mcp_tools.McpAutoApprovalClientTests.test_non_mcp_permission_still_waits_for_the_admin) ... 11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508253 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-perm-b6c0tmhj
+11-14 08:40:57 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+ok
+test_group_turn_mounts_scoped_mcp_and_auto_allows (tests.test_antigravity_mcp_tools.McpAutoApprovalHandlerTests.test_group_turn_mounts_scoped_mcp_and_auto_allows) ... 11-14 08:40:57 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] AGENT_PLUGIN_CUSTOM_DIR 指向的目录不可用: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-drrdz9ps/config;定制功能(规则/群档案/媒体配置等)将回退内置默认
+/usr/lib/python3.13/unittest/async_case.py:135: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  return super().run(result)
+11-14 08:40:57 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-14 08:40:57 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/typing.py:103: DeprecationWarning: Failing to pass a value to the 'type_params' parameter of 'typing.ForwardRef._evaluate' is deprecated, as it leads to incorrect behaviour when calling typing.ForwardRef._evaluate on a stringified annotation that references a PEP 695 type parameter. It will be disallowed in Python 3.15.
+  return ref._evaluate(globalns, localns, recursive_guard=frozenset())
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-drrdz9ps/config/memory/onebotv11/groups/100.md
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508257 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-drrdz9ps
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP 工具自动放行 tool=mcp_nonebot-bridge_get_recent_messages
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=3 wrote_history=True
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+ok
+test_mcp_tool_is_auto_allowed_without_pending_or_notice (tests.test_antigravity_mcp_tools.McpAutoApprovalHandlerTests.test_mcp_tool_is_auto_allowed_without_pending_or_notice) ... 11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508259 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-bsyh6e00
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP 工具自动放行 tool=mcp_nonebot-bridge_get_recent_messages
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+ok
+test_run_command_still_goes_through_admin_approval (tests.test_antigravity_mcp_tools.McpAutoApprovalHandlerTests.test_run_command_still_goes_through_admin_approval) ... 11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508261 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-sjbqrbxy
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES approval] 审批挂起 #1 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+ok
+test_dev_mode_has_no_authorization_header_and_still_identifies_caller (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_dev_mode_has_no_authorization_header_and_still_identifies_caller) ... ok
+test_disabled_mcp_attaches_nothing (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_disabled_mcp_attaches_nothing) ... ok
+test_foreign_bearer_is_refused (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_foreign_bearer_is_refused)
+跨 scope：不是本实例凭据的 Bearer 既认不出，也不能通过群/私范围判定。 ... 11-14 08:40:57 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] 拒绝越权操作 (onebotv11, 100) —— caller: unresolved caller
+11-14 08:40:57 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] 拒绝未识别调用方读取私聊 (onebotv11, 123) —— caller: unresolved
+ok
+test_group_turn_gets_scoped_bearer_definition (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_group_turn_gets_scoped_bearer_definition) ... ok
+test_http_layer_rejects_a_foreign_bearer (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_http_layer_rejects_a_foreign_bearer) ... ok
+test_missing_group_or_private_target_attaches_nothing (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_missing_group_or_private_target_attaches_nothing) ... ok
+test_private_turn_gets_the_same_scoped_bearer_definition (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_private_turn_gets_the_same_scoped_bearer_definition) ... ok
+test_unresolved_scope_does_not_attach_mcp (tests.test_antigravity_mcp_tools.McpServerDefinitionTests.test_unresolved_scope_does_not_attach_mcp) ... ok
+test_disabled_mcp_keeps_the_2b_empty_list (tests.test_antigravity_mcp_tools.McpSessionDefinitionTests.test_disabled_mcp_keeps_the_2b_empty_list) ... 11-14 08:40:57 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508263 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-session-gpu_rpg6
+ok
+test_new_and_resume_carry_the_same_http_definition (tests.test_antigravity_mcp_tools.McpSessionDefinitionTests.test_new_and_resume_carry_the_same_http_definition) ... 11-14 08:40:58 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508265 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-session-gp2uwk76
+11-14 08:40:58 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 08:40:58 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+ok
+test_private_turn_gets_the_private_scope_definition (tests.test_antigravity_mcp_tools.McpSessionDefinitionTests.test_private_turn_gets_the_private_scope_definition) ... 11-14 08:40:58 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3508268 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-session-3fotut2a
+11-14 08:40:58 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+ok
+test_token_never_reaches_client_logs (tests.test_antigravity_mcp_tools.McpSessionDefinitionTests.test_token_never_reaches_client_logs) ... ok
+test_antigravity_table_is_exactly_the_two_read_only_tools (tests.test_antigravity_mcp_tools.McpToolTableTests.test_antigravity_table_is_exactly_the_two_read_only_tools) ... ok
+test_default_table_keeps_every_previous_tool (tests.test_antigravity_mcp_tools.McpToolTableTests.test_default_table_keeps_every_previous_tool) ... ok
+test_filter_keeps_the_same_tool_definitions (tests.test_antigravity_mcp_tools.McpToolTableTests.test_filter_keeps_the_same_tool_definitions)
+过滤只改注册集合，不改写这两个工具的描述与 schema。 ... ok
+
+----------------------------------------------------------------------
+Ran 22 tests in 0.600s
+
+OK
