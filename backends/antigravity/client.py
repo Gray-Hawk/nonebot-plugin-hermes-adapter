@@ -18,10 +18,68 @@ from typing import Any, Callable, Sequence
 
 from nonebot import logger
 
+from ...config import plugin_config
+from ...core.routing import CallerScope, resolve_caller_scope
 from ...core.storage.session_key_store import SessionKeyStore
 
 DEFAULT_ACP_ARGS: tuple[str, ...] = ("acp", "--process-per-session")
 _CLIENT_INFO = {"name": "nonebot-plugin-hermes-adapter", "version": "0.1.0"}
+
+# 阶段2C1：ACP 反向 MCP 只暴露两个只读工具（同一个 HTTP 服务；其它后端仍全量）。
+ANTIGRAVITY_MCP_TOOL_NAMES: tuple[str, ...] = (
+    "get_recent_messages",
+    "get_message_images",
+)
+MCP_SERVER_NAME = "nonebot-bridge"
+_MCP_TOOL_PREFIX = "mcp_"
+
+
+def caller_scope_for_mcp() -> CallerScope | None:
+    """本进程反向 MCP 调用方的范围——与 `mcp/auth` 同一个判定函数。
+
+    配置了 AGENT_API_KEY 就用这把凭据走真实 `resolve_caller_scope`（uniform）；
+    未配置就是既有 dev 语义。认不出（None）时调用方不得挂 MCP。
+
+    单上游部署里 `CallerScope` 只有 dev/uniform 两态（没有 per-group token），
+    所以范围由凭据决定；本轮消息上下文再用它的 `allows()` 与私聊可识别闸校验目标，
+    不为 ACP 另造第二套 token 表或权限模型。
+    """
+    key = str(getattr(plugin_config, "hermes_api_key", "") or "").strip()
+    if not key:
+        return CallerScope.dev()
+    return resolve_caller_scope(f"Bearer {key}")
+
+
+def mcp_servers_for_turn(turn_meta: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """按当前消息上下文构造 ACP 的 HTTP mcpServers（new/resume 共用这一份）。
+
+    - 只在 AGENT_MCP_ENABLED 时挂载；URL 复用既有 host/port，不新增端口或服务。
+    - Bearer 取现有 AGENT_API_KEY，只放进本次 ACP 配置，不写日志/异常/错误文案。
+    - 群/私都要求 scope 可识别且允许本轮目标；不成立就返回 []（安全拒绝）。
+    """
+    if not plugin_config.hermes_mcp_enabled:
+        return []
+    scope = caller_scope_for_mcp()
+    if scope is None:
+        return []
+    meta = turn_meta or {}
+    adapter = str(meta.get("adapter") or "")
+    if bool(meta.get("is_private")):
+        if not str(meta.get("user_id") or ""):
+            return []
+    else:
+        group_id = str(meta.get("group_id") or "")
+        if not group_id or not scope.allows(adapter, group_id):
+            return []
+    server: dict[str, Any] = {
+        "type": "http",
+        "name": MCP_SERVER_NAME,
+        "url": f"http://{plugin_config.hermes_mcp_host}:{plugin_config.hermes_mcp_port}/mcp",
+    }
+    key = str(getattr(plugin_config, "hermes_api_key", "") or "").strip()
+    if key:
+        server["headers"] = [{"name": "Authorization", "value": f"Bearer {key}"}]
+    return [server]
 
 
 def build_acp_args(cli_args: Sequence[str], agent: str) -> tuple[str, ...]:
@@ -304,6 +362,12 @@ class AntigravityACPClient:
             options = [
                 item for item in (params.get("options") or []) if isinstance(item, dict)
             ]
+            tool_call = params.get("toolCall")
+            tool_name = str(tool_call.get("name") or "") if isinstance(tool_call, dict) else ""
+            if tool_name.startswith(_MCP_TOOL_PREFIX):
+                # 阶段2C1：MCP 工具一律自动 allow_once——不进人工审批 FIFO、不发通知。
+                await self._auto_allow_mcp_permission(request_id, tool_name, options)
+                return
             if not self._register_permission(message, options):
                 # 无 callback／未知会话：安全自动拒绝（不做永久授权），绝不挂起 reader。
                 await self._reply_permission(request_id, options, allow=False)
@@ -363,6 +427,22 @@ class AntigravityACPClient:
             logger.warning("[HERMES antigravity] 权限应答写入失败（请求保持挂起）")
             return False
         return True
+
+    async def _auto_allow_mcp_permission(
+        self, request_id: Any, tool_name: str, options: list[dict]
+    ) -> None:
+        """MCP 工具权限自动 allow_once（不登记挂起、不发人工通知）。
+
+        没有 allow_once 时 `_reply_permission(allow=True)` 会退到 `cancelled`，仍是
+        安全拒绝而不是放行。写帧失败只留日志：自动应答不得转成人工审批单。
+        """
+        if await self._reply_permission(request_id, options, allow=True):
+            logger.info(f"[HERMES antigravity] MCP 工具自动放行 tool={tool_name}")
+        else:
+            logger.warning(
+                f"[HERMES antigravity] MCP 工具权限自动应答写帧失败 tool={tool_name}"
+                "（不登记人工审批）"
+            )
 
     def _register_permission(self, message: dict, options: list[dict]) -> bool:
         """登记 pending 并把规范化后的请求交给本轮 approval_callback。
@@ -900,12 +980,13 @@ class AntigravityACPClient:
         system_hash: str,
         model: str,
         reason: str = "",
+        mcp_servers: Sequence[dict[str, Any]] | None = None,
     ) -> str:
         result = await self._rpc(
             "session/new",
             {
                 "cwd": str(self._workspace),
-                "mcpServers": [],
+                "mcpServers": list(mcp_servers or []),
                 "_meta": {
                     "antigravity": {"systemPrompt": {"append": system_prompt}}
                 },
@@ -948,6 +1029,15 @@ class AntigravityACPClient:
             await self._ensure_started()
             record = self._load_session(store, session_key)
             system_hash = system_prompt_hash(system_prompt)
+            # 阶段2C1：本轮消息上下文对应的 MCP 定义；new/resume 传同一份。
+            mcp_servers = mcp_servers_for_turn(turn_meta)
+            if mcp_servers:
+                server = mcp_servers[0]
+                logger.info(
+                    f"[HERMES antigravity] MCP tools={','.join(ANTIGRAVITY_MCP_TOOL_NAMES)}"
+                    f" server={server.get('name')} url={server.get('url')}"
+                    f" bearer={'yes' if server.get('headers') else 'no'}"
+                )
             if record is None:
                 session_id = await self._create_session(
                     store=store,
@@ -955,13 +1045,14 @@ class AntigravityACPClient:
                     system_prompt=system_prompt,
                     system_hash=system_hash,
                     model=self._model,
+                    mcp_servers=mcp_servers,
                 )
             else:
                 session_id, stored_hash, stored_model = record
                 params: dict[str, Any] = {
                     "sessionId": session_id,
                     "cwd": str(self._workspace),
-                    "mcpServers": [],
+                    "mcpServers": mcp_servers,
                 }
                 changed = stored_hash != system_hash
                 if changed:
@@ -986,6 +1077,7 @@ class AntigravityACPClient:
                         system_prompt=system_prompt,
                         system_hash=system_hash,
                         model=self._model,
+                        mcp_servers=mcp_servers,
                     )
                 else:
                     effective_model = stored_model

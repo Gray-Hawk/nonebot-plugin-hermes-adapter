@@ -9,6 +9,7 @@ get_background_tasks,以及 Runs 控制工具 submit_control)装配进一个 Fas
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import Any
 
 import mcp.types as mcp_types
@@ -236,14 +237,26 @@ def build_mcp_app(
     image_cache: ImageCache,
     background_outbox: Any = None,
     running_sources: Any = None,
+    tool_names: Sequence[str] | None = None,
 ) -> Any:
     """构造 FastMCP 实例并返回 http_app(),由调用者交给 uvicorn。
 
     fastmcp 3.x: `http_app()` 替代旧版 `streamable_http_app()`。
     返回 Starlette ASGI app,我们在外面再包一层 Bearer 鉴权中间件。
+
+    tool_names: 可选工具名白名单。None=注册全表(默认,既有后端行为不变);
+    给了名单就只注册名单里的工具 —— 只为按能力裁剪工具表,不是配置系统。
     """
 
     mcp = FastMCP("nonebot-bridge")
+    allowed_tools = None if tool_names is None else frozenset(str(name) for name in tool_names)
+
+    def _tool(func):
+        """注册一个工具；白名单外一律不注册（未注册的名字模型看不到）。"""
+        if allowed_tools is None or func.__name__ in allowed_tools:
+            mcp.tool()(func)
+        return func
+
     file_config = load_file_config()
     file_cache = FileCache(
         cache_dir=default_file_cache_dir(), quota_bytes=file_config.cache_quota_bytes
@@ -266,7 +279,7 @@ def build_mcp_app(
     # 是 {adapter, group_id, ...},LLM 自然写法和 curl 默认形态都对得上。
     # Input 模型保留:它是 impl 层契约 + 单元测试入口。
 
-    @mcp.tool()
+    @_tool
     async def push_message(
         adapter: str,
         text: str,
@@ -313,7 +326,7 @@ def build_mcp_app(
         )
         return result
 
-    @mcp.tool()
+    @_tool
     async def recall_message(
         adapter: str,
         message_id: str,
@@ -353,7 +366,7 @@ def build_mcp_app(
         )
         return result
 
-    @mcp.tool()
+    @_tool
     async def list_active_sessions(
         adapter: str | None = None,
     ) -> ListActiveSessionsResult:
@@ -365,7 +378,7 @@ def build_mcp_app(
         _log_tool_call("list_active_sessions", f"adapter={adapter}", f"sessions={len(result.sessions)}")
         return result
 
-    @mcp.tool()
+    @_tool
     async def get_recent_messages(
         adapter: str,
         group_id: str | None = None,
@@ -394,7 +407,7 @@ def build_mcp_app(
         )
         return result
 
-    @mcp.tool()
+    @_tool
     async def get_message_images(
         message_ids: list[int],
         adapter: str,
@@ -476,10 +489,10 @@ def build_mcp_app(
         return blocks
 
     if sticker_feature_enabled():
-        mcp.tool()(search_sticker_library)
-        mcp.tool()(preview_sticker)
+        _tool(search_sticker_library)
+        _tool(preview_sticker)
 
-    @mcp.tool()
+    @_tool
     async def get_message_files(refs: list[FileRef]) -> GetMessageFilesResult:
         """Download selected files from QQ messages on demand (max 4 refs).
 
@@ -507,7 +520,7 @@ def build_mcp_app(
         )
         return result
 
-    @mcp.tool()
+    @_tool
     async def browse_group_files(
         adapter: str,
         group_id: str,
@@ -548,7 +561,7 @@ def build_mcp_app(
         )
         return result
 
-    @mcp.tool()
+    @_tool
     async def download_group_file(
         adapter: str,
         group_id: str,
@@ -591,7 +604,7 @@ def build_mcp_app(
         )
         return result
 
-    @mcp.tool()
+    @_tool
     async def wake_turn(
         adapter: str,
         text: str,
@@ -628,7 +641,7 @@ def build_mcp_app(
         )
         return result
 
-    @mcp.tool()
+    @_tool
     async def submit_control(
         adapter: str,
         reply_to: str | None = None,
@@ -687,7 +700,7 @@ def build_mcp_app(
         )
         return result
 
-    @mcp.tool()
+    @_tool
     async def request_continuation(
         adapter: str,
         group_id: str | None = None,
@@ -717,7 +730,7 @@ def build_mcp_app(
         )
         return result
 
-    @mcp.tool()
+    @_tool
     async def get_background_tasks(
         adapter: str,
         group_id: str | None = None,

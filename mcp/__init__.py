@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 import uvicorn
@@ -305,7 +306,13 @@ def _on_server_task_done(task: asyncio.Task) -> None:
         logger.error(f"[HERMES MCP] server task died: {exc!r}")
 
 
-async def start_mcp_server() -> None:
+async def start_mcp_server(*, tool_names: Sequence[str] | None = None) -> None:
+    """启动反向 MCP server。
+
+    tool_names: 可选工具名白名单；None 注册全表（既有后端/原有 MCP 行为不变）。
+    Antigravity 后端传两个只读工具名，复用同一端口、服务与 Bearer，不另起进程。
+    """
+
     global _server_task, _uvicorn_server
 
     if not plugin_config.hermes_mcp_enabled:
@@ -332,7 +339,14 @@ async def start_mcp_server() -> None:
         image_cache=image_cache,
         background_outbox=background_report_outbox,
         running_sources=running_sources,
+        tool_names=tool_names,
     )
+    if tool_names is None:
+        logger.info("[HERMES MCP] 工具表: 全量")
+    else:
+        logger.info(
+            f"[HERMES MCP] 工具表: {len(tool_names)} 个 ({', '.join(str(n) for n in tool_names)})"
+        )
 
     config = uvicorn.Config(
         asgi_app,

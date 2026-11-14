@@ -84,11 +84,15 @@ async def _hermes_m1_startup():
 
     init_prompt_dump()
     if plugin_config.hermes_api_interface == "antigravity":
-        # 首片不开放 MCP/submit_control：antigravity 不连 Hermes 控制面，
-        # 反向 MCP server 也不起；ACP 进程随插件关闭清理。
-        from .backends.antigravity.client import close_client
+        # 阶段2C1：ACP 只挂两个只读工具，但复用同一个反向 MCP HTTP 服务、端口与
+        # Bearer（仍受 AGENT_MCP_ENABLED 控制）；ACP 进程随插件关闭清理。
+        from .backends.antigravity.client import (
+            ANTIGRAVITY_MCP_TOOL_NAMES,
+            close_client,
+        )
 
-        logger.info("[HERMES MCP] antigravity 首片不开放 MCP，跳过反向 MCP server")
+        await start_mcp_server(tool_names=ANTIGRAVITY_MCP_TOOL_NAMES)
+        _driver.on_shutdown(stop_mcp_server)
         _driver.on_shutdown(close_client)
     else:
         await start_mcp_server()

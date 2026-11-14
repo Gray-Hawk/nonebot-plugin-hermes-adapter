@@ -12,6 +12,7 @@ reply-json is a JSON string (e.g. '"§\\n你好\\n§"'); flags:
     --permission       send session/request_permission before the second chunk
     --permission-id=<v>        permission RPC id（可给字符串，验证原 id 类型保留）
     --permission-title=<t>     toolCall.title（缺省 write_file）
+    --permission-name=<n>      toolCall.name（阶段2C1 用 mcp_ 前缀区分 MCP 工具；缺省不发该字段）
     --permission-raw=<json>    toolCall.rawInput（缺省 {"CommandLine": "pwd"}）
     --permission-options=<json> 权限 options 数组（缺省 allow_once/reject_once）
     --exit-on-prompt   exit(7) as soon as session/prompt arrives
@@ -64,6 +65,14 @@ def _permission_id() -> object:
 
 def _permission_title() -> str:
     return _flag_value("--permission-title=") or "write_file"
+
+
+def _permission_name() -> str | None:
+    """toolCall.name；缺省不发该字段（2B 帧形态保持不变）。
+
+    阶段2C1 靠真实 `mcp_` 前缀识别 MCP 工具，所以夹具必须能如实带出这个名字。
+    """
+    return _flag_value("--permission-name=")
 
 
 def _permission_raw() -> dict:
@@ -221,6 +230,14 @@ def _ask_permission(session_id: str, permission_id: object | None = None) -> Non
     event = threading.Event()
     with _perm_lock:
         _permissions[permission_id] = {"event": event, "response": None}
+    tool_call: dict = {
+        "toolCallId": "tc-1",
+        "title": _permission_title(),
+        "rawInput": _permission_raw(),
+    }
+    tool_name = _permission_name()
+    if tool_name is not None:
+        tool_call["name"] = tool_name
     send(
         {
             "jsonrpc": "2.0",
@@ -228,11 +245,7 @@ def _ask_permission(session_id: str, permission_id: object | None = None) -> Non
             "method": "session/request_permission",
             "params": {
                 "sessionId": session_id,
-                "toolCall": {
-                    "toolCallId": "tc-1",
-                    "title": _permission_title(),
-                    "rawInput": _permission_raw(),
-                },
+                "toolCall": tool_call,
                 "options": _permission_options(),
             },
         }
