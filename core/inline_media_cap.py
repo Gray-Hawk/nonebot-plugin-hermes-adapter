@@ -32,7 +32,10 @@ def _inline_image_url(part: Any) -> str | None:
     """``data:image/...`` 内联图片 part 的 url；其它 part 返回 None。"""
     if not isinstance(part, dict) or part.get("type") != "image_url":
         return None
-    url = (part.get("image_url") or {}).get("url")
+    image_url = part.get("image_url")
+    if not isinstance(image_url, dict):
+        return None
+    url = image_url.get("url")
     if isinstance(url, str) and url.lower().startswith("data:image/"):
         return url
     return None

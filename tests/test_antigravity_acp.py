@@ -434,7 +434,7 @@ class HermesAntigravityChatTests(FakeACPBase):
         store_patch.start()
         self.addCleanup(store_patch.stop)
 
-    async def _chat(self, client, content="你好", **overrides):
+    async def _chat(self, client, content: object = "你好", **overrides):
         from types import SimpleNamespace
 
         from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
@@ -502,17 +502,29 @@ class HermesAntigravityChatTests(FakeACPBase):
         self.assertIn("Antigravity", result.raw_text)
         self.assertEqual(len(self.entries("session/prompt")), 1)
 
-    async def test_image_content_is_refused_before_any_acp_call(self) -> None:
+    async def test_non_image_media_is_refused_before_any_acp_call(self) -> None:
         client = self.make_client()
         content = [
-            {"type": "text", "text": "看这张图"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}},
+            {"type": "text", "text": "看这个"},
+            {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}},
         ]
         result = await self._chat(client, content=content)
 
         self.assertTrue(result.is_local_refusal)
-        self.assertIn("仅支持文本", result.raw_text)
+        self.assertIn("暂不支持", result.raw_text)
         self.assertEqual(self.log(), [], "媒体轮不应启动 ACP 进程或提交 prompt")
+
+    async def test_remote_image_url_is_refused_before_any_acp_call(self) -> None:
+        # 2C2 只放开既有内联链产出的 data URL；远程 URL 不另造下载。
+        client = self.make_client()
+        content = [
+            {"type": "text", "text": "看这张图"},
+            {"type": "image_url", "image_url": {"url": "https://example.invalid/a.png"}},
+        ]
+        result = await self._chat(client, content=content)
+
+        self.assertTrue(result.is_local_refusal)
+        self.assertEqual(self.log(), [], "远程图不得启动 ACP 进程或提交 prompt")
 
     async def test_timeout_is_normalized_without_replay(self) -> None:
         self.flags = ("--hang-prompt",)

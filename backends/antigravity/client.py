@@ -124,9 +124,19 @@ def system_prompt_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def prompt_blocks(user_text: str) -> list[dict[str, Any]]:
-    """首片只发纯文本内容块；图片/文件不进入 ACP。"""
-    return [{"type": "text", "text": user_text}]
+def prompt_blocks(
+    user_text: str | Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """本轮用户内容 → `session/prompt` 的 content blocks。
+
+    - `str` 仍是单个 text 块（纯文本轮的 wire 字节与 2B 首片一致）；
+    - 已转换好的块列表（`text` / `image`）按原顺序透传：2C2 的图片块形如
+      `{"type":"image","data":<base64>,"mimeType":"image/png"}`，来自既有内联媒体链，
+      本函数不再下载、压缩或重新寻址。
+    """
+    if isinstance(user_text, str):
+        return [{"type": "text", "text": user_text}]
+    return [dict(block) for block in user_text]
 
 
 @dataclass
@@ -841,7 +851,9 @@ class AntigravityACPClient:
             return None
         return self._latest_turn.get(session_key)
 
-    async def _submit_prompt(self, turn: ACPTurn, user_text: str) -> None:
+    async def _submit_prompt(
+        self, turn: ACPTurn, user_text: str | Sequence[dict[str, Any]]
+    ) -> None:
         self._next_id += 1
         request_id = self._next_id
         loop = asyncio.get_running_loop()
@@ -1010,13 +1022,15 @@ class AntigravityACPClient:
         *,
         session_key: str,
         system_prompt: str,
-        user_text: str,
+        user_text: str | Sequence[dict[str, Any]],
         store: SessionKeyStore | None = None,
         on_unit: Callable[[dict[str, Any]], None] | None = None,
         turn_meta: dict[str, Any] | None = None,
         approval_callback: Callable[[dict[str, Any]], Any] | None = None,
     ) -> str:
-        """跑一轮文本 prompt，返回最终 assistant 正文（含模型自己写的 §）。
+        """跑一轮 prompt，返回最终 assistant 正文（含模型自己写的 §）。
+
+        user_text：文本（str）或已转换好的 ACP 内容块（text／image，按原顺序发出）。
 
         on_unit：每形成一份完整闭合的 § 正文单位就同步回调一次（流式投递）。
         终态只补发这一轮尚未回调过的单位；steer 接管的后续 prompt 也共用同一回调。

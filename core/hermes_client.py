@@ -11,6 +11,8 @@ import json
 import re
 import uuid
 import asyncio
+import base64
+import binascii
 import time
 from collections import deque
 from contextlib import suppress
@@ -1112,21 +1114,77 @@ def classify_persistence_error(text: str) -> PersistenceCause:
     return "unknown"
 
 
-def _antigravity_text_content(content: Any) -> str | None:
-    """Antigravity 首片只接受纯文本：任一段非文本即返回 None，由调用方本地拒绝。"""
+# ACP image 内容块的唯一合法来源：既有内联媒体链产出的 data URL
+# （`core/image_inline.py` 的 base64 结果）。mimeType 必填、payload 必须是合法 base64。
+_ACP_IMAGE_DATA_URL_RE = re.compile(
+    r"^data:(image/[A-Za-z0-9.+-]+);base64,([A-Za-z0-9+/]+={0,2})$"
+)
+
+
+def _antigravity_image_block(part: Any) -> dict[str, Any] | None:
+    """`image_url` part → ACP `image` 块；非 data: URL 或坏数据返回 None（fail-closed）。"""
+    if not isinstance(part, dict) or part.get("type") != "image_url":
+        return None
+    image_url = part.get("image_url")
+    if not isinstance(image_url, dict):
+        return None
+    url = image_url.get("url")
+    if not isinstance(url, str):
+        return None
+    match = _ACP_IMAGE_DATA_URL_RE.match(url)
+    if match is None:
+        return None
+    mime_type, payload = match.group(1), match.group(2)
+    try:
+        base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return {"type": "image", "data": payload, "mimeType": mime_type}
+
+
+def _antigravity_content_blocks(content: Any) -> list[dict[str, Any]] | None:
+    """用户内容 → ACP 内容块（text／image，保持原顺序）。
+
+    - `str` 与「全文本 parts」仍是单个 text 块，字节与 2B 首片一致；
+    - `image_url` 只接受既有内联链的 `data:image/...;base64,...`，拆成
+      `{"type":"image","data":<base64>,"mimeType":"image/png"}`（2C2 唯一放开的媒体形态）；
+    - 其余类型（音频／视频／文件／远程 URL／坏数据）一律返回 None，由调用方本地拒绝。
+    """
     if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        pieces: list[str] = []
-        for part in content:
-            if not isinstance(part, dict) or part.get("type") != "text":
-                return None
+        return [{"type": "text", "text": content}]
+    if not isinstance(content, list):
+        return None
+    # 与 runs 出站同一个按次上限：单轮最多 10 张 data 图，保留最新。
+    content = cap_inline_image_parts(content)
+    blocks: list[dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            return None
+        kind = part.get("type")
+        if kind == "text":
             text = part.get("text")
             if not isinstance(text, str):
                 return None
-            pieces.append(text)
-        return "\n".join(piece for piece in pieces if piece)
-    return None
+            blocks.append({"type": "text", "text": text})
+            continue
+        if kind == "image_url":
+            block = _antigravity_image_block(part)
+            if block is None:
+                return None
+            blocks.append(block)
+            continue
+        return None
+    if not blocks:
+        return [{"type": "text", "text": ""}]
+    if all(block["type"] == "text" for block in blocks):
+        # 纯文本仍合成一个 text 块（与 2B 的 ACP prompt 逐字节一致）。
+        return [
+            {
+                "type": "text",
+                "text": "\n".join(block["text"] for block in blocks if block["text"]),
+            }
+        ]
+    return blocks
 
 
 @dataclass
@@ -1416,12 +1474,12 @@ class HermesClient:
             }
             _dump_note = "astrbot 后端:图片另经附件上传,本转储为本地侧请求视图"
         elif _dump_iface == "antigravity":
-            # ACP 只发纯文本 prompt；转储保留本地侧系统提示与用户内容视图。
+            # ACP 发文本与图片内容块；转储保留本地侧系统提示与用户内容视图。
             _dump_request = {
                 "system_prompt": system_prompt,
                 "user_content": content,
             }
-            _dump_note = "antigravity 后端:仅文本经 ACP 发送,本转储为本地侧请求视图"
+            _dump_note = "antigravity 后端:文本与图片经 ACP 发送,本转储为本地侧请求视图"
         else:
             _dump_request = payload
         maybe_dump_request(
@@ -1466,11 +1524,11 @@ class HermesClient:
             _transport_failure),让 429 自动重试只写一个点(阶段2d)。
             """
             if plugin_config.hermes_api_interface == "antigravity":
-                user_text = _antigravity_text_content(content)
-                if user_text is None:
+                user_blocks = _antigravity_content_blocks(content)
+                if user_blocks is None:
                     notice = (
-                        "⚠️ Antigravity 后端首片仅支持文本消息；"
-                        "图片或文件请改用其他后端"
+                        "⚠️ Antigravity 后端暂不支持该消息形态；"
+                        "音频、视频、文件或未内联的图片请改用其他后端"
                     )
                     return "", None, ChatResult(
                         raw_text=notice, is_local_refusal=True
@@ -1495,7 +1553,7 @@ class HermesClient:
                     text = await antigravity_client.get_client().prompt(
                         session_key=session_key,
                         system_prompt=system_prompt,
-                        user_text=user_text,
+                        user_text=user_blocks,
                         store=mcp_module.session_key_store,
                         on_unit=_on_unit if reply_queue is not None else None,
                         turn_meta={

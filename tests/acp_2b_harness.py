@@ -208,7 +208,7 @@ class ACPHandlerHarness(unittest.IsolatedAsyncioTestCase):
     def session_key(self) -> str:
         return self.manager.get_session_key("onebotv11", True, self.ADMIN, None)
 
-    def _row(self, *, private=True, content="hi", mid=1):
+    def _row(self, *, private=True, content="hi", mid=1, image_urls=None):
         from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage
         from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin
 
@@ -222,9 +222,10 @@ class ACPHandlerHarness(unittest.IsolatedAsyncioTestCase):
             origin=MessageOrigin.human(),
             id=mid,
             private_owner_id=self.ADMIN if private else None,
+            image_urls=list(image_urls or []),
         )
 
-    async def _turn(self, row=None, *, private=True):
+    async def _turn(self, row=None, *, private=True, image_urls=None):
         row = row or self._row(private=private)
         return await self.mt._run_passive_turn(
             bot=self.bot,
@@ -233,7 +234,7 @@ class ACPHandlerHarness(unittest.IsolatedAsyncioTestCase):
             user_id=self.ADMIN,
             group_id=None if private else "100",
             text=row.content,
-            image_urls=[],
+            image_urls=list(image_urls or []),
             now_ms=int(time.time() * 1000),
             current_buffered=row,
             is_private=private,
