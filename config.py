@@ -11,7 +11,7 @@ from nonebot import get_plugin_config
 from pydantic import BaseModel, ConfigDict, Field
 
 # 发布模块名：仅用于 localstore 调用栈缺失时的按名兜底；实际导入名由包目录决定。
-PLUGIN_MODULE_NAME = "nonebot_plugin_hermes_adapter"
+PLUGIN_MODULE_NAME = "nonebot_plugin_agent_adapter"
 
 
 class Config(BaseModel):

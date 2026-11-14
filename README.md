@@ -1,14 +1,15 @@
 <div align="center">
     <a href="https://v2.nonebot.dev/store">
+    <!-- TODO(D3)：远端仓库尚未改名（未批准），badge 仍指旧仓库路径；改名后随 Homepage 一起切新名 -->
     <img src="https://raw.githubusercontent.com/Gray-Hawk/nonebot-plugin-hermes-adapter/4d4fc0c5d7c840b4ff5f55caf498455729af26b5/NoneBotPlugin.svg" width="310" alt="logo"></a>
     </a>
-    <h2>nonebot-plugin-hermes-adapter</h2>
+    <h2>nonebot-plugin-agent-adapter</h2>
 </div>
 
 NoneBot 插件，将 NoneBot2 桥接到 Hermes Agent 的 API Server
 
-- 分发名：`nonebot-plugin-hermes-adapter`
-- 模块名：`nonebot_plugin_hermes_adapter`
+- 分发名：`nonebot-plugin-agent-adapter`
+- 模块名：`nonebot_plugin_agent_adapter`
 - 许可：MIT，见 [LICENSE](LICENSE)
 
 ## 安装

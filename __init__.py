@@ -1,7 +1,7 @@
 """
-NoneBot Plugin Hermes
+NoneBot Plugin Agent Adapter
 
-通过 Hermes Agent API Server 实现多平台 AI 聊天机器人。
+通过 Agent 后端 API 实现多平台 AI 聊天机器人。
 """
 
 from nonebot import get_bots, get_driver, logger, require
@@ -14,14 +14,15 @@ require("nonebot_plugin_localstore")
 
 from .config import Config, background_report_enabled, plugin_config
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __plugin_meta__ = PluginMetadata(
-    name="Hermes Agent",
-    description="通过 Hermes Agent API Server 实现多平台 AI 聊天机器人",
+    name="Agent Adapter",
+    description="通过 Agent 后端 API 实现多平台 AI 聊天机器人",
+    # TODO(D3)：远端仓库改名未批准，homepage 留在旧仓库 URL；改名后与 pyproject Homepage 一起切。
     homepage="https://github.com/Gray-Hawk/nonebot-plugin-hermes-adapter",
     usage=(
-        "在群聊中 @机器人 发送消息即可与 Hermes Agent 对话。\n"
+        "在群聊中 @机器人 发送消息即可与 AI 助手对话。\n"
         "私聊直接发送消息即可。\n\n"
         "M1: 群聊 @ 后 5 分钟内 bot 会监听话题相关消息并按需主动插话。\n\n"
         "命令:\n"
@@ -204,7 +205,7 @@ async def _hermes_m1_startup():
         logger.info("[HERMES] API 接口: runs")
 
     logger.info(
-        f"Hermes Plugin loaded — API: {plugin_config.hermes_api_url} | "
+        f"Agent Adapter loaded — API: {plugin_config.hermes_api_url} | "
         f"MCP: {'on ' + plugin_config.hermes_mcp_host + ':' + str(plugin_config.hermes_mcp_port) if plugin_config.hermes_mcp_enabled else 'off'} | "
         "active_session: on"
     )

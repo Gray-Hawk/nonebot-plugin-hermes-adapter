@@ -1,13 +1,13 @@
 # 发布暂存区布局：本文件与 README.md、LICENSE、*.example.yaml 位于暂存区根，
-# 其余源码统一收在 nonebot_plugin_hermes_adapter/ 包目录下。
+# 其余源码统一收在 nonebot_plugin_agent_adapter/ 包目录下。
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nonebot-plugin-hermes-adapter"
-version = "0.1.0"
-description = "NoneBot 插件：把聊天平台消息桥接到 Hermes Agent API Server（nonebot-plugin-hermes 的独立演进分支）"
+name = "nonebot-plugin-agent-adapter"
+version = "0.2.0"
+description = "NoneBot 插件：把聊天平台消息桥接到 Agent 后端 API（nonebot-plugin-hermes 的独立演进分支）"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -32,14 +32,15 @@ dependencies = [
 migrate = ["python-dotenv>=1.0"]
 
 [project.urls]
+# TODO(D3)：远端仓库改名未批准，Homepage 留在旧仓库 URL；改名后与 README badge 一起切新名。
 Homepage = "https://github.com/Gray-Hawk/nonebot-plugin-hermes-adapter"
 Upstream = "https://github.com/gsskk/nonebot-plugin-hermes"
 
 [tool.nonebot]
-plugins = ["nonebot_plugin_hermes_adapter"]
+plugins = ["nonebot_plugin_agent_adapter"]
 
 [tool.setuptools.packages.find]
-include = ["nonebot_plugin_hermes_adapter*"]
+include = ["nonebot_plugin_agent_adapter*"]
 
 [tool.setuptools.package-data]
-nonebot_plugin_hermes_adapter = ["skill/*.md"]
+nonebot_plugin_agent_adapter = ["skill/*.md"]
