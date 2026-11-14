@@ -106,7 +106,7 @@ tests.test_antigravity_acp    → FAIL
 | 相关批（上述 + control_regressions/steer_pre_debounce/control_mcp_registration/recent_messages_private/get_message_images_contract/inline_image_limit_runs/gif_preview_frames） | **186 OK** | `EVIDENCE_T_6382d66c/related.txt` |
 | `unittest discover -s tests -t .` 全量 | **863 OK（skip=1）** | `EVIDENCE_T_6382d66c/full.txt` |
 | `tests._bootstrap` + `turn_tests.test_envelope_entry` | **6 OK** | `EVIDENCE_T_6382d66c/turn.txt` |
-| `verify.py` | 见 `EVIDENCE_T_6382d66c/verify.txt` | `EVIDENCE_T_6382d66c/verify.txt` |
+| `verify.py`（产品代码与候选 `fe5f3bb` 相同；运行提交 `7a79aef`、工作树干净） | **22/22 ALL PASS** | `EVIDENCE_T_6382d66c/verify.txt`（内含 `HEAD=7a79aef`、全量 863 OK/skip 1） |
 
 全量从基线 845 → **863**（新增 17 + 原图片拒绝用例拆成 2 个），skip 仍是 1。
 2A（流式／steer 接管／clear 栅栏）、2B（once／deny／取消／双超时）、2C1（工具表、Bearer、
