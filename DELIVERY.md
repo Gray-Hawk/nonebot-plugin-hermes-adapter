@@ -110,7 +110,7 @@ RED 证据里的 Bearer 已替换为 `[REDACTED]`。
 | 相关批（上述 + control_regressions/steer_pre_debounce/control_mcp_registration/recent_messages_private/get_message_images_contract） | **159 OK** | `EVIDENCE_T_9a23b145/related.txt` |
 | `unittest discover -s tests` 全量 | **845 OK（skip=1）** | `EVIDENCE_T_9a23b145/full.txt` |
 | `tests._bootstrap` + `turn_tests.test_envelope_entry` | **6 OK** | `EVIDENCE_T_9a23b145/turn.txt` |
-| `verify.py`（候选提交、工作树干净时） | **22/22 ALL PASS** | `EVIDENCE_T_9a23b145/verify.txt` |
+| `verify.py`（产品代码与候选 `10da5cd` 相同；运行提交 `5e89f76`、工作树干净） | **22/22 ALL PASS** | `EVIDENCE_T_9a23b145/verify.txt`（内含 `HEAD=5e89f76`、全量 845 OK/skip 1） |
 
 2A/2B 回归由 focused/相关/全量批覆盖（流式、steer 接管、clear 栅栏、权限 once/deny、
 取消、FIFO 精确结单均未改动，测试全绿）。
