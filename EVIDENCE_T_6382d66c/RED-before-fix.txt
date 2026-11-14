@@ -1,0 +1,26 @@
+=== RED on baseline 73c9bfc (new tests only, product unchanged) ===
+--- 1) tests.test_antigravity_images ---
+======================================================================
+ERROR: test_antigravity_images (unittest.loader._FailedTest.test_antigravity_images)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_antigravity_images
+Traceback (most recent call last):
+ImportError: cannot import name '_antigravity_content_blocks' from 'nonebot_plugin_hermes_adapter.core.hermes_client' (/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c2-red/core/hermes_client.py)
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+FAILED (errors=1)
+--- 2) tests.test_antigravity_acp ---
+/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/typing.py:103: DeprecationWarning: Failing to pass a value to the 'type_params' parameter of 'typing.ForwardRef._evaluate' is deprecated, as it leads to incorrect behaviour when calling typing.ForwardRef._evaluate on a stringified annotation that references a PEP 695 type parameter. It will be disallowed in Python 3.15.
+======================================================================
+FAIL: test_non_image_media_is_refused_before_any_acp_call (tests.test_antigravity_acp.HermesAntigravityChatTests.test_non_image_media_is_refused_before_any_acp_call)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+AssertionError: '暂不支持' not found in '⚠️ Antigravity 后端首片仅支持文本消息；图片或文件请改用其他后端'
+
+----------------------------------------------------------------------
+Ran 36 tests in 1.024s
+
+FAILED (failures=1)
