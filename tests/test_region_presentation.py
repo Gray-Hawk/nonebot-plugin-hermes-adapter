@@ -21,9 +21,9 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_origin import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import prompt_builder as pb  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import (  # noqa: E402
     AuthorKind,
     MessageOrigin,
     MessageSource,

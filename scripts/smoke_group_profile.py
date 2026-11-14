@@ -19,10 +19,10 @@ import nonebot
 
 nonebot.init()
 
-from nonebot_plugin_hermes_adapter import config as cfg  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import group_profile as gp  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import misc_config  # noqa: E402
+from nonebot_plugin_agent_adapter import config as cfg  # noqa: E402
+from nonebot_plugin_agent_adapter.core import group_profile as gp  # noqa: E402
+from nonebot_plugin_agent_adapter.core import prompt_builder as pb  # noqa: E402
+from nonebot_plugin_agent_adapter.core import misc_config  # noqa: E402
 
 FAILS = []
 
@@ -53,7 +53,7 @@ misc_config._store.commit(misc_config.MiscConfig(group_profile_enabled=False))
 check("记忆开关关闭返回 None", gp.build_group_profile_block("onebotv11", "2000000001") is None)
 misc_config._store.commit(misc_config.MiscConfig(group_profile_enabled=True))
 p = cfg.resolve_custom_dir()
-check("空配置回落 localstore 数据目录", p is not None and "nonebot_plugin_hermes_adapter" in str(p), str(p))
+check("空配置回落 localstore 数据目录", p is not None and "nonebot_plugin_agent_adapter" in str(p), str(p))
 base_reactive = pb.build_reactive_system_prompt()
 check("reactive 无块时输出不变", pb.build_reactive_system_prompt(profile_block=None) == base_reactive)
 base_passive = pb.build_passive_system_prompt(adapter="onebotv11", is_private=False, user_id="1", group_id="2000000001")

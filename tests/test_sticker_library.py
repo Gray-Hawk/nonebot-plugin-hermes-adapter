@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from tests import _bootstrap  # noqa: F401
-from nonebot_plugin_hermes_adapter.core.sticker_library import StickerLibrary
+from nonebot_plugin_agent_adapter.core.sticker_library import StickerLibrary
 
 
 PNG = base64.b64decode(

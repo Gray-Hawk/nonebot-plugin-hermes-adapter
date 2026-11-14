@@ -26,13 +26,13 @@ import nonebot
 
 nonebot.init()
 
-from nonebot_plugin_hermes_adapter.core.message_buffer import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_buffer import (  # noqa: E402
     BufferedMessage,
     MessageBuffer,
 )
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin, MessageSource  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.storage.message_store import MessageStore  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import reply_resolution as reply_resolver  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin, MessageSource  # noqa: E402
+from nonebot_plugin_agent_adapter.core.storage.message_store import MessageStore  # noqa: E402
+from nonebot_plugin_agent_adapter.core import reply_resolution as reply_resolver  # noqa: E402
 
 FAILS: list[str] = []
 

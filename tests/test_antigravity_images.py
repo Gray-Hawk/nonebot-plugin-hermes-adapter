@@ -30,13 +30,13 @@ sys.path.insert(0, str(ROOT))
 from tests import _bootstrap  # noqa: E402,F401
 
 from tests.acp_2b_harness import ACPHandlerHarness  # noqa: E402
-from nonebot_plugin_hermes_adapter.backends.antigravity.client import (  # noqa: E402
+from nonebot_plugin_agent_adapter.backends.antigravity.client import (  # noqa: E402
     prompt_blocks,
 )
-from nonebot_plugin_hermes_adapter.core.hermes_client import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.hermes_client import (  # noqa: E402
     _antigravity_content_blocks,
 )
-from nonebot_plugin_hermes_adapter.core.prompt_builder import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.prompt_builder import (  # noqa: E402
     _assemble_media_parts,
 )
 

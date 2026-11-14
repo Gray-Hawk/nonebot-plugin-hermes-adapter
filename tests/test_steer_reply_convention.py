@@ -24,14 +24,14 @@ sys.path.insert(0, str(ROOT))
 from tests import _bootstrap  # noqa: E402,F401
 from tests._regions import wrap_region  # noqa: E402
 
-from nonebot_plugin_hermes_adapter import config as plugin_config_module  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import steer_reconcile  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.run_tracker import (  # noqa: E402
+from nonebot_plugin_agent_adapter import config as plugin_config_module  # noqa: E402
+from nonebot_plugin_agent_adapter.core import steer_reconcile  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin  # noqa: E402
+from nonebot_plugin_agent_adapter.core.run_tracker import (  # noqa: E402
     RunTracker,
     make_scope_key,
 )
-from nonebot_plugin_hermes_adapter.handlers import message_relay as relay  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_relay as relay  # noqa: E402
 
 RAWS = {
     # 群聊:身份栏 + speaker(与普通/历史行同一文法,无 m:id 行);整批外面是与
@@ -107,8 +107,8 @@ class SteerReplyConventionTests(unittest.TestCase):
         """真实 `_try_steer_followup` 入口（群聊跟帖路径），返回注入文本。"""
         import asyncio
 
-        from nonebot_plugin_hermes_adapter.core.inflight import make_inflight_key
-        from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage
+        from nonebot_plugin_agent_adapter.core.inflight import make_inflight_key
+        from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage
 
         captured: list[str] = []
 
@@ -193,7 +193,7 @@ class InterimEchoRetirementTests(unittest.TestCase):
     def test_misc_config_drops_switch(self) -> None:
         from dataclasses import fields
 
-        from nonebot_plugin_hermes_adapter.core.misc_config import MiscConfig
+        from nonebot_plugin_agent_adapter.core.misc_config import MiscConfig
 
         self.assertNotIn(
             "interim_echo_enabled", {field.name for field in fields(MiscConfig)}

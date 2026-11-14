@@ -134,8 +134,8 @@ def check_envelope_protocol() -> None:
     sys.path.insert(0, str(ROOT))
     from tests import _bootstrap  # noqa: F401
 
-    from nonebot_plugin_hermes_adapter.core import prompt_protocol as pp
-    from nonebot_plugin_hermes_adapter.core import runs_text
+    from nonebot_plugin_agent_adapter.core import prompt_protocol as pp
+    from nonebot_plugin_agent_adapter.core import runs_text
 
     sep = runs_text.SEPARATOR
 
@@ -188,8 +188,8 @@ def check_prompt_protocol() -> None:
     sys.path.insert(0, str(ROOT))
     from tests import _bootstrap  # noqa: F401
 
-    from nonebot_plugin_hermes_adapter.core import prompt_builder as pb
-    from nonebot_plugin_hermes_adapter.core import prompt_protocol as pp
+    from nonebot_plugin_agent_adapter.core import prompt_builder as pb
+    from nonebot_plugin_agent_adapter.core import prompt_protocol as pp
 
     for attr in ("_DECISION_PROTOCOL_BLOCK_COMPLETIONS", "_DECISION_PROTOCOL_BLOCK_RUNS"):
         block = getattr(pb, attr)
@@ -461,6 +461,108 @@ def check_acceptance_cases() -> None:
     check("关键验收用例齐全", not missing, f"缺={missing}")
 
 
+NEW_MODULE = "nonebot_plugin_agent_adapter"
+NEW_DIST = "nonebot-plugin-agent-adapter"
+OLD_MODULE = "nonebot_plugin_hermes_adapter"
+OLD_DIST = "nonebot-plugin-hermes-adapter"
+RELEASE_VERSION = "0.2.0"
+
+# 旧名在这些活文件里**必须**原样保留，每处都有明确理由；数量不符即视为漏改多了或漏保留。
+# 历史证据（EVIDENCE*/evidence_*/DELIVERY*/review_t_*/SAMPLES/）按纪律一字不改，不参与本闸。
+OLD_NAME_ALLOWLIST = {
+    "README.md": (0, 1, "D3：远端仓库未改名，badge 仍指旧仓库路径"),
+    "__init__.py": (0, 1, "D3：homepage 仍指旧仓库 URL"),
+    "pyproject.toml": (0, 1, "D3：Homepage 仍指旧仓库 URL"),
+    "tests/_bootstrap.py": (1, 0, "旧名 import 阻断器的唯一字面量真源"),
+    "tests/test_queued_lane_interim_client.py": (1, 0, "生产冷迁移未做，部署路径兜底"),
+    "tests/test_evidence_probe_readonly.py": (1, 0, "历史证据探针的加载时改名桥"),
+    "gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py": (1, 0, "生产冷迁移未做，部署路径兜底"),
+    "verify.py": (1, 1, "旧名闸的字面量真源（本文件的检查项本身）"),
+}
+HISTORY_PREFIXES = ("EVIDENCE", "evidence_", "DELIVERY", "review_t_", "SAMPLES/")
+
+
+def _live_tracked_files() -> list[str]:
+    files = git("ls-files").stdout.splitlines()
+    return [
+        path for path in files
+        if not path.startswith(HISTORY_PREFIXES) and not path.endswith(".log")
+    ]
+
+
+def check_name_consistency() -> None:
+    """新名七处一致：只改单边会产出空 wheel 或插件声明失效。"""
+    pyproject = read("pyproject.toml")
+    points = {
+        "pyproject.name": f'name = "{NEW_DIST}"' in pyproject,
+        "pyproject.version": f'version = "{RELEASE_VERSION}"' in pyproject,
+        "[tool.nonebot].plugins": f'plugins = ["{NEW_MODULE}"]' in pyproject,
+        "packages.find.include": f'include = ["{NEW_MODULE}*"]' in pyproject,
+        "package-data 键": f'\n{NEW_MODULE} = ["skill/*.md"]' in pyproject,
+        "setup.py 守卫": f'_PACKAGE = _ROOT / "{NEW_MODULE}"' in read("setup.py"),
+        "config.PLUGIN_MODULE_NAME": f'PLUGIN_MODULE_NAME = "{NEW_MODULE}"' in read("config.py"),
+        "tests/_bootstrap.py": f'package_name = "{NEW_MODULE}"' in read("tests/_bootstrap.py"),
+        "__init__.__version__": f'__version__ = "{RELEASE_VERSION}"' in read("__init__.py"),
+    }
+    failed = [name for name, ok in points.items() if not ok]
+    check("新名七处一致（含版本 0.2.0）", not failed, f"不一致={failed}")
+
+
+def check_old_name_residue() -> None:
+    """旧名只在白名单处保留：漏改的运行读点会立刻在这里露出来。"""
+    hits: dict[str, tuple[int, int]] = {}
+    for path in _live_tracked_files():
+        source = (ROOT / path)
+        if not source.is_file():
+            continue
+        try:
+            text = source.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        found = (text.count(OLD_MODULE), text.count(OLD_DIST))
+        if found != (0, 0):
+            hits[path] = found
+    unexpected = sorted(set(hits) - set(OLD_NAME_ALLOWLIST))
+    mismatched = [
+        path for path, found in hits.items()
+        if path in OLD_NAME_ALLOWLIST and found != OLD_NAME_ALLOWLIST[path][:2]
+    ]
+    missing = sorted(set(OLD_NAME_ALLOWLIST) - set(hits))
+    check(
+        "旧名仅在白名单处保留（活文件）",
+        not unexpected and not mismatched and not missing,
+        f"多出={unexpected} 数量不符={mismatched} 白名单未命中={missing}",
+    )
+
+
+def check_old_name_unimportable() -> None:
+    """旧名 import 必须失败，且新名必须解析到本工作树（不被 site-packages 抢走）。"""
+    sys.path.insert(0, str(ROOT))
+    from tests import _bootstrap  # noqa: F401
+
+    import importlib
+
+    olds = tuple(_bootstrap._OLD_PACKAGE_NAMES)
+    blocked: list[str] = []
+    imported: list[str] = []
+    for old in olds:
+        try:
+            importlib.import_module(old)
+        except ModuleNotFoundError:
+            blocked.append(old)
+        else:
+            imported.append(old)
+            sys.modules.pop(old, None)
+    package = importlib.import_module(NEW_MODULE)
+    roots = [str(Path(entry).resolve()) for entry in package.__path__]
+    worktree_ok = str(ROOT.resolve()) in roots
+    check(
+        "旧名 import 被阻断且新名解析到本工作树",
+        bool(olds) and not imported and worktree_ok,
+        f"旧名={list(olds)} 未被阻断={imported} 新名解析={roots[:2]}",
+    )
+
+
 def check_worktree() -> None:
     staged = git("diff", "--cached", "--name-only").stdout.strip()
     check("验收不依赖暂存区", not staged, f"staged={staged.split() if staged else []}")
@@ -485,6 +587,9 @@ def main() -> int:
     check_push_gate()
     check_plan_before_send()
     check_acceptance_cases()
+    check_name_consistency()
+    check_old_name_residue()
+    check_old_name_unimportable()
     check_worktree()
     check_cache()  # 复跑后仍无缓存
     failed = [name for name, ok, _ in RESULTS if not ok]

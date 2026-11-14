@@ -3,7 +3,7 @@
 在源码根目录使用（覆盖已装版本要带 --force，否则报 target exists 并退出）：
     python scripts/install_skill.py --force
 
-不要用 `python -m nonebot_plugin_hermes_adapter.scripts.install_skill`：
+不要用 `python -m nonebot_plugin_agent_adapter.scripts.install_skill`：
 `-m` 会连带导入父包 __init__.py，在没有 NoneBot 进程的场景下 require() 会直接抛错。
 """
 

@@ -26,18 +26,18 @@ from tests import _bootstrap  # noqa: F401
 from nonebot.matcher import Matcher
 from nonebot_plugin_alconna import UniMessage
 
-from nonebot_plugin_hermes_adapter import mcp as mcp_mod
-from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
-from nonebot_plugin_hermes_adapter.config import plugin_config
-from nonebot_plugin_hermes_adapter.core import chat_config as chat_config_mod
-from nonebot_plugin_hermes_adapter.core import steer_seen
-from nonebot_plugin_hermes_adapter.core.active_session import ActiveSessionManager
-from nonebot_plugin_hermes_adapter.core.chat_config import parse_chat_config
-from nonebot_plugin_hermes_adapter.core.inflight import InflightRegistry
-from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker, make_scope_key
-from nonebot_plugin_hermes_adapter.handlers import message
-from nonebot_plugin_hermes_adapter.handlers import message_relay as relay
-from nonebot_plugin_hermes_adapter.handlers import message_turns as turns
+from nonebot_plugin_agent_adapter import mcp as mcp_mod
+from nonebot_plugin_agent_adapter.backends.antigravity import client as ag
+from nonebot_plugin_agent_adapter.config import plugin_config
+from nonebot_plugin_agent_adapter.core import chat_config as chat_config_mod
+from nonebot_plugin_agent_adapter.core import steer_seen
+from nonebot_plugin_agent_adapter.core.active_session import ActiveSessionManager
+from nonebot_plugin_agent_adapter.core.chat_config import parse_chat_config
+from nonebot_plugin_agent_adapter.core.inflight import InflightRegistry
+from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker, make_scope_key
+from nonebot_plugin_agent_adapter.handlers import message
+from nonebot_plugin_agent_adapter.handlers import message_relay as relay
+from nonebot_plugin_agent_adapter.handlers import message_turns as turns
 
 ADAPTER = "onebotv11"
 RUN_ID = "run-1"

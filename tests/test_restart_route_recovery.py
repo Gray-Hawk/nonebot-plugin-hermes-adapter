@@ -35,14 +35,14 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.core import outbound as ob  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import run_delivery_monitor as monitor  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.bot_registry import BotRegistry  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.runs_delivery_config import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import outbound as ob  # noqa: E402
+from nonebot_plugin_agent_adapter.core import run_delivery_monitor as monitor  # noqa: E402
+from nonebot_plugin_agent_adapter.core.bot_registry import BotRegistry  # noqa: E402
+from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker  # noqa: E402
+from nonebot_plugin_agent_adapter.core.runs_delivery_config import (  # noqa: E402
     RunsDeliveryConfig,
 )
-from nonebot_plugin_hermes_adapter.core.runs_terminal import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.runs_terminal import (  # noqa: E402
     prepare_terminal_batch,
 )
 
@@ -51,7 +51,7 @@ BOT_ID = "999"
 
 def _load_run_resume():
     """按真实包路径加载 tasks.run_resume，绕开 tasks/__init__ 的 apscheduler 依赖。"""
-    pkg_name = "nonebot_plugin_hermes_adapter.tasks"
+    pkg_name = "nonebot_plugin_agent_adapter.tasks"
     if pkg_name not in sys.modules:
         package = types.ModuleType(pkg_name)
         package.__path__ = [str(ROOT / "tasks")]

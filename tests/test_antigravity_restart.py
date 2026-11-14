@@ -34,10 +34,10 @@ from tests.test_antigravity_mcp_tools import (  # noqa: E402
     mcp_config,
 )
 
-from nonebot_plugin_hermes_adapter.backends.antigravity.client import (  # noqa: E402
+from nonebot_plugin_agent_adapter.backends.antigravity.client import (  # noqa: E402
     ACPProcessError,
 )
-from nonebot_plugin_hermes_adapter.core.storage.session_key_store import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.storage.session_key_store import (  # noqa: E402
     SessionKeyStore,
 )
 
@@ -181,9 +181,9 @@ class DeathChatResultTests(RestartFixture):
     """客户端之上：半截正文 + 进程死亡必须落成传输失败，不装成功。"""
 
     async def test_partial_body_then_death_is_a_transport_error(self) -> None:
-        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
-        from nonebot_plugin_hermes_adapter.config import plugin_config
-        from nonebot_plugin_hermes_adapter.core import hermes_client as hc
+        from nonebot_plugin_agent_adapter.backends.antigravity import client as ag
+        from nonebot_plugin_agent_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.core import hermes_client as hc
 
         previous = plugin_config.hermes_api_interface
         object.__setattr__(plugin_config, "hermes_api_interface", "antigravity")

@@ -9,10 +9,10 @@ import unittest
 from unittest.mock import patch
 
 from tests import _bootstrap  # noqa: F401
-from nonebot_plugin_hermes_adapter.config import plugin_config
-from nonebot_plugin_hermes_adapter.core import prompt_builder as pb
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin
+from nonebot_plugin_agent_adapter.config import plugin_config
+from nonebot_plugin_agent_adapter.core import prompt_builder as pb
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin
 
 
 class PlainTextPromptTests(unittest.TestCase):
@@ -109,7 +109,7 @@ class PlainTextPromptTests(unittest.TestCase):
             self.assertNotIn('not_final', example)
 
     def test_no_envelope_self_heal_left(self):
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
 
         for name in ('_missing_envelope_note', '_handle_envelope_rejection',
                      '_push_self_heal_note', '_should_hard_silence_envelope'):

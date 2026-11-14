@@ -185,7 +185,7 @@ HERMES_HOME="$HOME_DIR" hermes plugins list --json | grep -A3 queued-lane-interi
 # 3) NB 侧同版（R1 的解析器修正随插件包发布：site-packages 里的 core/hermes_client.py
 #    必须是本候选版本），装完后 `hermes` 与 nonebot 都要重启
 grep -c "pending, self._seg_text = self._seg_text" \
-  /home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot_plugin_hermes_adapter/core/hermes_client.py
+  /home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot_plugin_agent_adapter/core/hermes_client.py
 #    期望 ≥1；输出 0 说明 NB 侧还是旧包 → R1 未生效
 
 # 4) 重启该实例网关 + nonebot（由有权限的一方执行）。启动日志应出现：

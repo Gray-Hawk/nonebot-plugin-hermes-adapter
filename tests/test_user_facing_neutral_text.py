@@ -28,8 +28,8 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.core.chat_config import ChatConfig  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers import commands  # noqa: E402
+from nonebot_plugin_agent_adapter.core.chat_config import ChatConfig  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import commands  # noqa: E402
 
 
 class PingTextTests(unittest.TestCase):

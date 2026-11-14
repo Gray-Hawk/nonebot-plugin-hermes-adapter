@@ -15,8 +15,8 @@ os.environ["AGENT_PLUGIN_CUSTOM_DIR"] = str(_ROOT / "cfg")
 (_ROOT / "cfg").mkdir()
 
 from tests import _bootstrap  # noqa: F401,E402
-from nonebot_plugin_hermes_adapter.core.sticker_library import StickerLibrary  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers import commands  # noqa: E402
+from nonebot_plugin_agent_adapter.core.sticker_library import StickerLibrary  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import commands  # noqa: E402
 
 
 _PNG = bytes.fromhex(

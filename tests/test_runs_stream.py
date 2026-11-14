@@ -28,20 +28,20 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.config import plugin_config  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.hermes_client import (  # noqa: E402
+from nonebot_plugin_agent_adapter.config import plugin_config  # noqa: E402
+from nonebot_plugin_agent_adapter.core.hermes_client import (  # noqa: E402
     ChatResult,
     RunsEventParser,
 )
-from nonebot_plugin_hermes_adapter.core import runs_text  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.runs_terminal import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import runs_text  # noqa: E402
+from nonebot_plugin_agent_adapter.core.runs_terminal import (  # noqa: E402
     append_stream_unit,
     build_batch_plan,
     delivery_plan_units,
     prepare_terminal_batch,
     units_from_decisions,
 )
-from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker  # noqa: E402
+from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker  # noqa: E402
 from tests import test_runs_terminal as _e2  # noqa: E402
 
 SEP = runs_text.SEPARATOR
@@ -671,8 +671,8 @@ class _ClientChain:
 
 def real_chat(tracker, events: list[dict], run_id: str = "run-e2-h"):
     """真实 HermesClient.chat + 真实 SSE 行（只换 HTTP 客户端与台账单例）。"""
-    from nonebot_plugin_hermes_adapter.core import hermes_client as hc
-    from nonebot_plugin_hermes_adapter import mcp as mcp_module
+    from nonebot_plugin_agent_adapter.core import hermes_client as hc
+    from nonebot_plugin_agent_adapter import mcp as mcp_module
 
     fake = _ClientChain(run_id, sse_lines(events))
     public_args = inspect.signature(hc.hermes_client.chat).parameters
@@ -823,8 +823,8 @@ class ClientChainTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stream_break_sends_no_half_content(self) -> None:
         """断流：未闭合的 delta 尾部不发送，run 留给恢复链，不补猜内容。"""
-        from nonebot_plugin_hermes_adapter.core import hermes_client as hc
-        from nonebot_plugin_hermes_adapter import mcp as mcp_module
+        from nonebot_plugin_agent_adapter.core import hermes_client as hc
+        from nonebot_plugin_agent_adapter import mcp as mcp_module
 
         class _Resp(_ClientChain._Resp):
             async def aiter_lines(self):
@@ -932,7 +932,7 @@ class ReactiveLiveChainTests(_e2._ReactiveHarness):
         return tracker, chat, calls
 
     def _register(self, control: dict, key=("onebotv11", "group:g1")) -> None:
-        from nonebot_plugin_hermes_adapter.core import control_intent
+        from nonebot_plugin_agent_adapter.core import control_intent
 
         self.addCleanup(control_intent.CONTROL_QUEUE.discard, key)
         control_intent.CONTROL_QUEUE.register(key, control)
@@ -975,7 +975,7 @@ class ReactiveLiveChainTests(_e2._ReactiveHarness):
         self.assertEqual(chat.sent_at, [])
 
     async def test_reply_to_control_bound_to_first_unit(self) -> None:
-        from nonebot_plugin_hermes_adapter.core import control_intent
+        from nonebot_plugin_agent_adapter.core import control_intent
 
         self._register({"reply_to": "m:9"})
         events = [

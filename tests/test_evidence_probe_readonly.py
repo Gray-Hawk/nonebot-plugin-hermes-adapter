@@ -25,6 +25,7 @@ import sqlite3
 import sys
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 
@@ -33,7 +34,7 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker  # noqa: E402
+from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker  # noqa: E402
 
 PROBE = ROOT / "EVIDENCE" / "notifications" / "probes" / "compare_ack_predicate.py"
 SCOPE = "onebotv11:private:1581124503"
@@ -43,10 +44,18 @@ EVENT = "deleg_probe_ro"
 
 
 def _load_probe():
-    spec = importlib.util.spec_from_file_location("compare_ack_predicate_probe", PROBE)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
+    """加载历史证据探针。
+
+    探针是历史证据，源码里写的是改名前的模块名（文件一字不改）。这里只在**加载时**
+    把源码里的旧模块名重写成当前包名，避免为了跑历史探针而留下双导入兼容层。
+    历史探针的判定与只读语义不受影响：本用例比的是 ``ReadOnlyLedger`` 与真实消费器。
+    """
+    source = PROBE.read_text(encoding="utf-8").replace(
+        "nonebot_plugin_hermes_adapter", "nonebot_plugin_agent_adapter"
+    )
+    module = types.ModuleType("compare_ack_predicate_probe")
+    module.__file__ = str(PROBE)
+    exec(compile(source, str(PROBE), "exec"), module.__dict__)
     return module
 
 
@@ -138,7 +147,7 @@ class ReadOnlyEvidenceProbeTests(unittest.TestCase):
                 [("reply:1:history", "sent"), ("reply:1:primary", "sent")],
             )
             self.assertTrue(module.legacy_is_sent(ledger, RUN) is False)  # 旧判定不认多份命名
-            from nonebot_plugin_hermes_adapter.core.background_report_consumer import (
+            from nonebot_plugin_agent_adapter.core.background_report_consumer import (
                 BackgroundReportConsumer,
             )
 

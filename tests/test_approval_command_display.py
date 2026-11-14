@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.core import approvals  # noqa: E402
+from nonebot_plugin_agent_adapter.core import approvals  # noqa: E402
 
 
 class ApprovalCommandDisplayTests(unittest.TestCase):

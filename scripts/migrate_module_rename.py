@@ -5,11 +5,11 @@
 
     python scripts/migrate_module_rename.py \\
         --old-package <site-packages>/nonebot_plugin_hermes \\
-        --new-package <site-packages>/nonebot_plugin_hermes_adapter \\
+        --new-package <site-packages>/nonebot_plugin_agent_adapter \\
         --old-data ~/.local/share/nonebot2/nonebot_plugin_hermes \\
-        --new-data ~/.local/share/nonebot2/nonebot_plugin_hermes_adapter \\
+        --new-data ~/.local/share/nonebot2/nonebot_plugin_agent_adapter \\
         --old-cache ~/.cache/nonebot2/nonebot_plugin_hermes \\
-        --new-cache ~/.cache/nonebot2/nonebot_plugin_hermes_adapter
+        --new-cache ~/.cache/nonebot2/nonebot_plugin_agent_adapter
     # 加 --apply 才真正改名
 
 纪律：
@@ -329,14 +329,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.apply:
         print("DRY-RUN: no changes made")
-        print('NEXT: NoneBot 插件注册改为 nonebot-plugin-hermes-adapter = ["nonebot_plugin_hermes_adapter"]')
+        print('NEXT: NoneBot 插件注册改为 nonebot-plugin-agent-adapter = ["nonebot_plugin_agent_adapter"]')
         return EXIT_OK
 
     code, lines = apply_plan(items)
     for line in lines:
         print(line)
     if code == EXIT_OK:
-        print('NEXT: NoneBot 插件注册改为 nonebot-plugin-hermes-adapter = ["nonebot_plugin_hermes_adapter"]')
+        print('NEXT: NoneBot 插件注册改为 nonebot-plugin-agent-adapter = ["nonebot_plugin_agent_adapter"]')
     return code
 
 

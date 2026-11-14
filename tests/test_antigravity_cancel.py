@@ -31,7 +31,7 @@ from tests.acp_2b_harness import (  # noqa: E402
     wait_until as _wait_until,
 )
 
-from nonebot_plugin_hermes_adapter.core.storage.session_key_store import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.storage.session_key_store import (  # noqa: E402
     SessionKeyStore,
 )
 
@@ -55,7 +55,7 @@ class ACPCancelClientTests(unittest.IsolatedAsyncioTestCase):
             await client.close()
 
     def make_client(self, *, chunks, steer_chunks=None, delay=0.2, flags=(), prompt_timeout=10.0, permission_timeout=None):
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             AntigravityACPClient,
         )
 
@@ -96,7 +96,7 @@ class ACPCancelClientTests(unittest.IsolatedAsyncioTestCase):
         self.payloads.append(payload)
 
     async def test_cancel_running_turn_sends_id_less_notice_and_reports_cancelled(self) -> None:
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             ACPCancelledError,
         )
 
@@ -136,7 +136,7 @@ class ACPCancelClientTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_cancel_while_waiting_for_permission_rejects_and_ends_the_turn(self) -> None:
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             ACPCancelledError,
         )
 
@@ -171,7 +171,7 @@ class ACPCancelClientTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_steer_b_and_c_in_flight_cancel_ends_the_whole_wait_chain(self) -> None:
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             ACPCancelledError,
         )
 
@@ -195,7 +195,7 @@ class ACPCancelClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.units, ["A1"], "B/C 未开始的正文不得在取消后补发")
 
     async def test_prompt_after_cancel_reuses_the_same_process_and_session(self) -> None:
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             ACPCancelledError,
         )
 
@@ -235,7 +235,7 @@ class ACPCancelClientTests(unittest.IsolatedAsyncioTestCase):
         根因：prompt 超时与权限到期默认同为 300s，权限 timer 启动更晚；prompt 超时
         只发 cancel，随后 finalize 撤销 timer 并丢权限 → 原权限 RPC 永远没人应答。
         """
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             ACPTimeoutError,
         )
 

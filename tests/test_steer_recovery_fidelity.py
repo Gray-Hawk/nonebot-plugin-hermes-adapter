@@ -37,8 +37,8 @@ RENDERED = "[有人@我] [m:1] [普通用户] [id=10001 user=临时昵称]:\n看
 
 def _human(*, mid=None, content="看这里", group=GROUP, user=UID, nickname="临时昵称",
            at=()):
-    from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage
-    from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin
+    from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage
+    from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin
 
     return BufferedMessage(
         ts=1, adapter=ADAPTER, group_id=group, user_id=user, nickname=nickname,
@@ -47,7 +47,7 @@ def _human(*, mid=None, content="看这里", group=GROUP, user=UID, nickname="�
 
 
 def _scope_key() -> str:
-    from nonebot_plugin_hermes_adapter.core.run_tracker import make_scope_key
+    from nonebot_plugin_agent_adapter.core.run_tracker import make_scope_key
 
     return make_scope_key(ADAPTER, False, UID, GROUP)
 
@@ -56,7 +56,7 @@ class MatcherRowBoundaryTests(unittest.TestCase):
     """N1:原文里每条账项的边界与条数只认 pending 文本,先精确匹配再跳分隔符。"""
 
     def setUp(self) -> None:
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
 
         self.mt = mt
 
@@ -116,9 +116,9 @@ class RecoveryFactsTests(unittest.TestCase):
         self.custom = Path(self._tmp.name)
 
     def _rig(self):
-        from nonebot_plugin_hermes_adapter.core.message_buffer import MessageBuffer
-        from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker
-        from nonebot_plugin_hermes_adapter.core.storage.message_store import MessageStore
+        from nonebot_plugin_agent_adapter.core.message_buffer import MessageBuffer
+        from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker
+        from nonebot_plugin_agent_adapter.core.storage.message_store import MessageStore
 
         store = MessageStore(self.custom / "facts.db")
         self.addCleanup(store.close)
@@ -134,7 +134,7 @@ class RecoveryFactsTests(unittest.TestCase):
         return store, buffer, tracker
 
     def test_numbered_recovery_restores_nickname_and_at(self) -> None:
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
 
         store, buffer, tracker = self._rig()
         row = _human(content="看这里", at=(SELF,))
@@ -169,7 +169,7 @@ class RecoveryFactsTests(unittest.TestCase):
 
 
 def make_scope_key_safe(is_private: bool, user_id: str, group_id: str | None) -> str:
-    from nonebot_plugin_hermes_adapter.core.run_tracker import make_scope_key
+    from nonebot_plugin_agent_adapter.core.run_tracker import make_scope_key
 
     return make_scope_key(ADAPTER, is_private, user_id, group_id)
 
@@ -181,7 +181,7 @@ class NoIdLedgerLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.custom = Path(self._tmp.name)
-        from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker
+        from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker
 
         self.tracker = RunTracker(self.custom / "tracker.db")
         self.addCleanup(self.tracker.close)
@@ -195,7 +195,7 @@ class NoIdLedgerLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_virtual_anchor_settles_when_run_finishes(self) -> None:
-        from nonebot_plugin_hermes_adapter.core import steer_reconcile as sc
+        from nonebot_plugin_agent_adapter.core import steer_reconcile as sc
 
         self._register("run-old")
         self.tracker.record_steer(
@@ -218,7 +218,7 @@ class NoIdLedgerLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, "reconciled")
 
     async def test_text_recovery_is_scoped(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.run_tracker import make_scope_key
+        from nonebot_plugin_agent_adapter.core.run_tracker import make_scope_key
 
         self._register("run-old")
         self.tracker.record_steer(
@@ -246,7 +246,7 @@ class NoIdLedgerLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(statuses["run-other"], "pending")
 
     async def test_virtual_anchor_recovered_by_text_is_not_replayed(self) -> None:
-        from nonebot_plugin_hermes_adapter.core import steer_reconcile as sc
+        from nonebot_plugin_agent_adapter.core import steer_reconcile as sc
 
         self._register("run-old")
         self.tracker.record_steer(
@@ -273,7 +273,7 @@ class IdentityTableBoundaryTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.custom = Path(self._tmp.name)
-        from nonebot_plugin_hermes_adapter.core import identity
+        from nonebot_plugin_agent_adapter.core import identity
 
         self.identity = identity
         identity.clear_cache()
@@ -286,7 +286,7 @@ class IdentityTableBoundaryTests(unittest.TestCase):
         return root
 
     def test_missing_user_in_existing_table_does_not_borrow_other_dir(self) -> None:
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
 
         previous = self._write(self.custom / "previous", "10001,旧目录名字,,,\n")
         configured = self._write(self.custom / "configured", "20002,当前目录别的用户,,,\n")
@@ -299,7 +299,7 @@ class IdentityTableBoundaryTests(unittest.TestCase):
             )
 
     def test_current_table_wins_when_it_has_the_user(self) -> None:
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
 
         previous = self._write(self.custom / "previous", "10001,旧目录名字,,,\n")
         configured = self._write(self.custom / "configured", "10001,当前正主名,,,\n")
@@ -308,7 +308,7 @@ class IdentityTableBoundaryTests(unittest.TestCase):
             self.assertEqual(mt._speaker_name_resolver(ADAPTER)(UID), "当前正主名")
 
     def test_absent_table_still_uses_loaded_same_table(self) -> None:
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
 
         previous = self._write(self.custom / "previous", "10001,旧目录名字,,,\n")
         empty_configured = self.custom / "configured"

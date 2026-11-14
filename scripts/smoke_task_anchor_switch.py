@@ -35,29 +35,29 @@ finally:
 import nonebot  # noqa: E402
 
 nonebot.init()
-package = types.ModuleType("nonebot_plugin_hermes_adapter")
+package = types.ModuleType("nonebot_plugin_agent_adapter")
 package.__path__ = [str(ROOT)]
-package.__package__ = "nonebot_plugin_hermes_adapter"
-sys.modules.setdefault("nonebot_plugin_hermes_adapter", package)
+package.__package__ = "nonebot_plugin_agent_adapter"
+sys.modules.setdefault("nonebot_plugin_agent_adapter", package)
 
-from nonebot_plugin_hermes_adapter.config import plugin_config  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import chat_config as cc  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import control_intent  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.active_session import (  # noqa: E402
+from nonebot_plugin_agent_adapter.config import plugin_config  # noqa: E402
+from nonebot_plugin_agent_adapter.core import chat_config as cc  # noqa: E402
+from nonebot_plugin_agent_adapter.core import control_intent  # noqa: E402
+from nonebot_plugin_agent_adapter.core import prompt_builder as pb  # noqa: E402
+from nonebot_plugin_agent_adapter.core.active_session import (  # noqa: E402
     ActiveSessionManager,
     AnchorRecord,
     Participant,
 )
-from nonebot_plugin_hermes_adapter.core.hermes_client import _decision_hint  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.prompt_protocol import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.hermes_client import _decision_hint  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin  # noqa: E402
+from nonebot_plugin_agent_adapter.core.prompt_protocol import (  # noqa: E402
     anchor_prompt_residue,
 )
-from nonebot_plugin_hermes_adapter.core.inflight import make_inflight_key  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.routing import CallerScope  # noqa: E402
-from nonebot_plugin_hermes_adapter.mcp.tools.control import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.inflight import make_inflight_key  # noqa: E402
+from nonebot_plugin_agent_adapter.core.routing import CallerScope  # noqa: E402
+from nonebot_plugin_agent_adapter.mcp.tools.control import (  # noqa: E402
     SubmitControlInput,
     submit_control_impl,
 )

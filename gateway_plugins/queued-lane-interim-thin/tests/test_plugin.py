@@ -68,13 +68,20 @@ from hermes_state_runtime import (  # noqa: E402
 
 # Real parsers, importable outside NoneBot through shims that touch none of the code under test.
 # Two copies on purpose:
-#   * ``nonebot_plugin_hermes_adapter``  → this repository (the **candidate** code being delivered);
+#   * ``nonebot_plugin_agent_adapter``  → this repository (the **candidate** code being delivered);
 #   * ``qlt_stock_nonebot_adapter``      → the deployed site-packages copy (**stock as installed**),
 #     so a test can replay what the instance runs today against the candidate's frames.
-_NB_PKG = "nonebot_plugin_hermes_adapter"
+_NB_PKG = "nonebot_plugin_agent_adapter"
 _NB_STOCK_PKG = "qlt_stock_nonebot_adapter"
 _NB_ROOT = str(Path(__file__).resolve().parents[3])
-_NB_STOCK_ROOT = os.path.join(NB_SITE, _NB_PKG)
+# 部署副本目录：生产冷迁移未做，site-packages 里仍是旧名。新目录优先、旧名兜底；
+# 生产迁移完成后删掉旧条目即可（候选包名本身只认新名，不走这条兜底）。
+_NB_DEPLOYED_DIRS = ("nonebot_plugin_agent_adapter", "nonebot_plugin_hermes_adapter")
+_NB_STOCK_ROOT = next(
+    (os.path.join(NB_SITE, name) for name in _NB_DEPLOYED_DIRS
+     if os.path.isdir(os.path.join(NB_SITE, name))),
+    os.path.join(NB_SITE, _NB_DEPLOYED_DIRS[0]),
+)
 
 
 def _install_nb_package(name: str, root: str) -> None:
@@ -102,8 +109,8 @@ if "nonebot" not in sys.modules:
 _install_nb_package(_NB_PKG, _NB_ROOT)
 _install_nb_package(_NB_STOCK_PKG, _NB_STOCK_ROOT)
 
-from nonebot_plugin_hermes_adapter.core.hermes_client import RunsEventParser  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text  # noqa: E402
+from nonebot_plugin_agent_adapter.core.hermes_client import RunsEventParser  # noqa: E402
+from nonebot_plugin_agent_adapter.core.runs_text import decisions_from_text  # noqa: E402
 from qlt_stock_nonebot_adapter.core.hermes_client import (  # noqa: E402
     RunsEventParser as StockRunsEventParser,
 )
@@ -132,7 +139,7 @@ def _deployed_parser_is_envelope() -> bool:
     stock 对照只在「部署副本与候选同代」时才有意义：2026-11-11 部署副本已切到信封
     解析器（t_0ecd8f77 候选部署），旧用例『stock = 裸正文、不结段』的前提不再成立。
     """
-    source = Path(NB_SITE) / _NB_PKG / "core" / "runs_text.py"
+    source = Path(_NB_STOCK_ROOT) / "core" / "runs_text.py"
     try:
         return "分节符正文信封" in source.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -942,7 +949,7 @@ class KanbanNotifyGuardTest(unittest.TestCase):
                          [("api_server", "hermes-onebotv11+private+10086-gabcd")])
 
     def test_nb_report_source_still_routes_from_task_session_id(self):
-        from nonebot_plugin_hermes_adapter.core import kanban_report_source as krs
+        from nonebot_plugin_agent_adapter.core import kanban_report_source as krs
 
         session_id = "hermes-onebotv11+private+158****4503-g404"
         tid = self._create("nb-card", session_id=session_id)

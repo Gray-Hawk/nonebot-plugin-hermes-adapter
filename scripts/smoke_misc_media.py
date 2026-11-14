@@ -1,7 +1,7 @@
 """misc 15 键 + media 7 键消费端迁移 smoke 测试。
 
 跑法（shim 挂 work 副本，中立目录执行，显式临时 AGENT_PLUGIN_CUSTOM_DIR）：
-    ln -s <work 副本路径> <shim>/nonebot_plugin_hermes_adapter
+    ln -s <work 副本路径> <shim>/nonebot_plugin_agent_adapter
     cd <中立目录> && PYTHONPATH=<shim> python <work>/scripts/smoke_misc_media.py
 
 覆盖（misc/media 消费端的离线验收）：
@@ -36,18 +36,18 @@ os.environ["AGENT_PLUGIN_CUSTOM_DIR"] = str(_SCRATCH / "cfg")
 
 nonebot.init()
 
-import nonebot_plugin_hermes_adapter  # noqa: E402  (shim 提供的包名)
-from nonebot_plugin_hermes_adapter.core import media_whitelist as mw  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import image_inline as ii  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import misc_config as misc  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import media_config as media  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.media_config import (  # noqa: E402
+import nonebot_plugin_agent_adapter  # noqa: E402  (shim 提供的包名)
+from nonebot_plugin_agent_adapter.core import media_whitelist as mw  # noqa: E402
+from nonebot_plugin_agent_adapter.core import image_inline as ii  # noqa: E402
+from nonebot_plugin_agent_adapter.core import misc_config as misc  # noqa: E402
+from nonebot_plugin_agent_adapter.core import media_config as media  # noqa: E402
+from nonebot_plugin_agent_adapter.core import prompt_builder as pb  # noqa: E402
+from nonebot_plugin_agent_adapter.core.media_config import (  # noqa: E402
     MediaConfig,
     load_media_config,
     parse_media_config,
 )
-from nonebot_plugin_hermes_adapter.core.misc_config import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.misc_config import (  # noqa: E402
     MiscConfig,
     load_misc_config,
     parse_misc_config,
@@ -68,7 +68,7 @@ def skip(name: str, detail: str = "") -> None:
     SKIPS.append(name)
 
 
-SRC = Path(nonebot_plugin_hermes_adapter.__file__).parent
+SRC = Path(nonebot_plugin_agent_adapter.__file__).parent
 
 
 def src_has_no(relpath: str, token: str) -> bool:

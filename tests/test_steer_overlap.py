@@ -32,29 +32,29 @@ from tests._regions import region_rows, wrap_region  # noqa: E402
 
 import httpx  # noqa: E402
 
-from nonebot_plugin_hermes_adapter.core import hermes_client as hc  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import run_tracker as rt  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import steer_reconcile as sc  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import steer_seen  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.hermes_client import RunsEventParser  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import inflight as inflight_mod  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.inflight import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import hermes_client as hc  # noqa: E402
+from nonebot_plugin_agent_adapter.core import run_tracker as rt  # noqa: E402
+from nonebot_plugin_agent_adapter.core import steer_reconcile as sc  # noqa: E402
+from nonebot_plugin_agent_adapter.core import steer_seen  # noqa: E402
+from nonebot_plugin_agent_adapter.core.hermes_client import RunsEventParser  # noqa: E402
+from nonebot_plugin_agent_adapter.core import inflight as inflight_mod  # noqa: E402
+from nonebot_plugin_agent_adapter.core.inflight import (  # noqa: E402
     InflightRegistry,
     PendingEntry,
     make_inflight_key,
 )
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.prompt_builder import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin  # noqa: E402
+from nonebot_plugin_agent_adapter.core.prompt_builder import (  # noqa: E402
     render_current_rows,
     steer_region_decorations,
 )
-from nonebot_plugin_hermes_adapter.core.run_tracker import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.run_tracker import (  # noqa: E402
     RunTracker,
     make_scope_key,
 )
-from nonebot_plugin_hermes_adapter.handlers import message_relay as relay  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers import message_turns as turns  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_relay as relay  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_turns as turns  # noqa: E402
 
 ADAPTER = "onebotv11"
 GROUP_ID = "g1"

@@ -14,9 +14,9 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.core import prompt_protocol as pp  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import runs_text  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.hermes_client import RunsEventParser  # noqa: E402
+from nonebot_plugin_agent_adapter.core import prompt_protocol as pp  # noqa: E402
+from nonebot_plugin_agent_adapter.core import runs_text  # noqa: E402
+from nonebot_plugin_agent_adapter.core.hermes_client import RunsEventParser  # noqa: E402
 
 SEP = runs_text.SEPARATOR
 

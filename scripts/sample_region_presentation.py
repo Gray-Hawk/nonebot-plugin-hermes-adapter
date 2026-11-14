@@ -14,10 +14,10 @@ sys.dont_write_bytecode = True
 
 from tests import _bootstrap  # noqa: F401,E402
 
-from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import user_lists  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin, MessageSource  # noqa: E402
+from nonebot_plugin_agent_adapter.core import prompt_builder as pb  # noqa: E402
+from nonebot_plugin_agent_adapter.core import user_lists  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin, MessageSource  # noqa: E402
 
 ADAPTER = "onebotv11"
 SELF = "2968545011"
@@ -121,7 +121,7 @@ print("样例 6｜steer 呈递:与普通消息同一个聊天区区域块（dire
 print("=" * 70)
 from unittest.mock import patch  # noqa: E402
 
-from nonebot_plugin_hermes_adapter.handlers import message_relay as relay  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_relay as relay  # noqa: E402
 
 steer_rows = [
     human("10001", "主人", mid=8001, text="插一句"),

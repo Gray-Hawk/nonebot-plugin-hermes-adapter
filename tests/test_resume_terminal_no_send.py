@@ -27,7 +27,7 @@ from tests.test_restart_route_recovery import (
     _GatewayHandler,
     run_resume,
 )
-from nonebot_plugin_hermes_adapter.core.runs_terminal import prepare_terminal_batch
+from nonebot_plugin_agent_adapter.core.runs_terminal import prepare_terminal_batch
 
 
 class ResumeBusinessTerminalTests(RestartRouteHarness):

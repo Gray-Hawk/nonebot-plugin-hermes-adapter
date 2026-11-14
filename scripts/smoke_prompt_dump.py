@@ -1,7 +1,7 @@
 """提示词请求留痕 smoke 测试。
 
 跑法（shim 挂 work 副本，中立目录执行）：
-    ln -s <work 副本路径> <shim>/nonebot_plugin_hermes_adapter
+    ln -s <work 副本路径> <shim>/nonebot_plugin_agent_adapter
     cd <中立目录> && PYTHONPATH=<shim> python <work>/scripts/smoke_prompt_dump.py
 
 覆盖：开关关零 IO / init 回读开启 / 首开写文件 / 完整请求结构落盘（system 字段
@@ -21,9 +21,9 @@ import nonebot
 
 nonebot.init()
 
-from nonebot_plugin_hermes_adapter import config as cfg  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import prompt_dump as pd  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import misc_config  # noqa: E402
+from nonebot_plugin_agent_adapter import config as cfg  # noqa: E402
+from nonebot_plugin_agent_adapter.core import prompt_dump as pd  # noqa: E402
+from nonebot_plugin_agent_adapter.core import misc_config  # noqa: E402
 
 FAILS = []
 

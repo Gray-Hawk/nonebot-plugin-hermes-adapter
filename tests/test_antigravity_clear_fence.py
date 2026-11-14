@@ -30,32 +30,32 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.config import plugin_config  # noqa: E402
+from nonebot_plugin_agent_adapter.config import plugin_config  # noqa: E402
 
 # 配置根在导入插件模块前就隔离，避免读到本机真实配置。
 _CONFIG_TMP = tempfile.TemporaryDirectory(prefix="acp-clear-fence-config-")
 object.__setattr__(plugin_config, "hermes_custom_dir", _CONFIG_TMP.name)
 object.__setattr__(plugin_config, "hermes_api_interface", "antigravity")
 
-from nonebot_plugin_hermes_adapter import mcp  # noqa: E402
-from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import hermes_client as hc  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import outbound  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.active_session import (  # noqa: E402
+from nonebot_plugin_agent_adapter import mcp  # noqa: E402
+from nonebot_plugin_agent_adapter.backends.antigravity import client as ag  # noqa: E402
+from nonebot_plugin_agent_adapter.core import hermes_client as hc  # noqa: E402
+from nonebot_plugin_agent_adapter.core import outbound  # noqa: E402
+from nonebot_plugin_agent_adapter.core.active_session import (  # noqa: E402
     ActiveSessionManager,
 )
-from nonebot_plugin_hermes_adapter.core.chat_config import ChatConfig  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.media_config import MediaConfig  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.misc_config import MiscConfig  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.session import SessionManager  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.storage.session_key_store import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.chat_config import ChatConfig  # noqa: E402
+from nonebot_plugin_agent_adapter.core.media_config import MediaConfig  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin  # noqa: E402
+from nonebot_plugin_agent_adapter.core.misc_config import MiscConfig  # noqa: E402
+from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker  # noqa: E402
+from nonebot_plugin_agent_adapter.core.session import SessionManager  # noqa: E402
+from nonebot_plugin_agent_adapter.core.storage.session_key_store import (  # noqa: E402
     SessionKeyStore,
 )
-from nonebot_plugin_hermes_adapter.handlers import commands  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers import message_turns as mt  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import commands  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_turns as mt  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "fake_agy_acp.py"
 OLD_BODY = "OLD"

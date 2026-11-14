@@ -32,20 +32,20 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.core.background_report_consumer import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.background_report_consumer import (  # noqa: E402
     BackgroundReportConsumer,
 )
-from nonebot_plugin_hermes_adapter.core.background_report_outbox import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.background_report_outbox import (  # noqa: E402
     SOURCE_KANBAN,
     SOURCE_SUBAGENT,
     BackgroundReportOutbox,
 )
-from nonebot_plugin_hermes_adapter.core.kanban_report_source import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.kanban_report_source import (  # noqa: E402
     KanbanReportSource,
     WAKE_KINDS,
     ingest_into,
 )
-from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker  # noqa: E402
+from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker  # noqa: E402
 
 SESSION = "hermes-onebotv11+private+158****4503-g404"
 SCOPE = "onebotv11:private:1581124503"
@@ -557,7 +557,7 @@ class KanbanChainTests(unittest.TestCase):
     def test_wake_runtime_labels_source_as_internal_identity(self) -> None:
         import asyncio
 
-        from nonebot_plugin_hermes_adapter.core import background_report_runtime as rt
+        from nonebot_plugin_agent_adapter.core import background_report_runtime as rt
 
         calls: dict = {}
 
@@ -565,7 +565,7 @@ class KanbanChainTests(unittest.TestCase):
             calls.update(kwargs)
             return None
 
-        import nonebot_plugin_hermes_adapter.handlers.message_relay as relay
+        import nonebot_plugin_agent_adapter.handlers.message_relay as relay
 
         relay_original = relay.wake_private_turn
         relay.wake_private_turn = fake_private
@@ -588,7 +588,7 @@ class KanbanChainTests(unittest.TestCase):
             self.assertNotIn(noisy, WAKE_KINDS)
 
     def test_handover_selects_only_stateless_nb_destinations(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.kanban_report_source import select_handover_subs
+        from nonebot_plugin_agent_adapter.core.kanban_report_source import select_handover_subs
 
         subs = [
             {"task_id": "t1", "platform": "api_server", "chat_id": SESSION},
@@ -609,11 +609,11 @@ class KanbanChainTests(unittest.TestCase):
         con.commit()
         con.close()
 
-        import nonebot_plugin_hermes_adapter.core.kanban_report_source as mod
+        import nonebot_plugin_agent_adapter.core.kanban_report_source as mod
 
         mod._DUPLICATE_WARNED.clear()
         source = KanbanReportSource(self.board)
-        with self.assertLogs("nonebot_plugin_hermes_adapter.core.kanban_report_source", "WARNING") as logs:
+        with self.assertLogs("nonebot_plugin_agent_adapter.core.kanban_report_source", "WARNING") as logs:
             source.collect("0")
             source.collect("0")
         self.assertEqual(len(logs.output), 1)  # 每卡只提示一次

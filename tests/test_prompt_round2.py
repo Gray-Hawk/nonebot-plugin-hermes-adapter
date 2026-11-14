@@ -23,8 +23,8 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.config import plugin_config  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import prompt_builder  # noqa: E402
+from nonebot_plugin_agent_adapter.config import plugin_config  # noqa: E402
+from nonebot_plugin_agent_adapter.core import prompt_builder  # noqa: E402
 
 RETIRED = ("topic_hint", "should_reply", "reply_text", "not_final")
 # `background_task` 只认退役字段本身（后面不能跟 s），工具名 get_background_tasks 不算。

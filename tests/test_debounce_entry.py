@@ -11,10 +11,10 @@ from nonebot.exception import SkippedException
 from nonebot.matcher import Matcher
 from nonebot_plugin_alconna import Image, UniMessage
 
-from nonebot_plugin_hermes_adapter.core import chat_config
-from nonebot_plugin_hermes_adapter.core.active_session import ActiveSessionManager
-from nonebot_plugin_hermes_adapter.core.chat_config import parse_chat_config
-from nonebot_plugin_hermes_adapter.handlers import message
+from nonebot_plugin_agent_adapter.core import chat_config
+from nonebot_plugin_agent_adapter.core.active_session import ActiveSessionManager
+from nonebot_plugin_agent_adapter.core.chat_config import parse_chat_config
+from nonebot_plugin_agent_adapter.handlers import message
 
 
 class DebounceEntryTests(unittest.IsolatedAsyncioTestCase):

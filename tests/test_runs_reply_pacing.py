@@ -9,21 +9,21 @@ from tests import _bootstrap  # noqa: F401
 from tests.test_runs_stream import _ClientChain, sse_lines, unit, batch
 from tests.test_runs_stream import real_chat
 from tests import test_runs_terminal as e2
-from nonebot_plugin_hermes_adapter.config import plugin_config
-from nonebot_plugin_hermes_adapter.core import hermes_client as hc
-from nonebot_plugin_hermes_adapter import mcp
+from nonebot_plugin_agent_adapter.config import plugin_config
+from nonebot_plugin_agent_adapter.core import hermes_client as hc
+from nonebot_plugin_agent_adapter import mcp
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from pathlib import Path
 import tempfile
 import time
 from dataclasses import replace
-from nonebot_plugin_hermes_adapter.core.inflight import InflightRegistry, make_inflight_key
-from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage, MessageBuffer
-from nonebot_plugin_hermes_adapter.core.storage.message_store import MessageStore
-from nonebot_plugin_hermes_adapter.handlers import message_turns as mt, message_relay as relay
+from nonebot_plugin_agent_adapter.core.inflight import InflightRegistry, make_inflight_key
+from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage, MessageBuffer
+from nonebot_plugin_agent_adapter.core.storage.message_store import MessageStore
+from nonebot_plugin_agent_adapter.handlers import message_turns as mt, message_relay as relay
 
 
 def frame(body: str) -> str:

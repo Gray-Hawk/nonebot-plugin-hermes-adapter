@@ -26,13 +26,13 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.core import run_delivery_monitor as monitor  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.bot_registry import BotRegistry  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.runs_delivery_config import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import run_delivery_monitor as monitor  # noqa: E402
+from nonebot_plugin_agent_adapter.core.bot_registry import BotRegistry  # noqa: E402
+from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker  # noqa: E402
+from nonebot_plugin_agent_adapter.core.runs_delivery_config import (  # noqa: E402
     RunsDeliveryConfig,
 )
-from nonebot_plugin_hermes_adapter.core.runs_terminal import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.runs_terminal import (  # noqa: E402
     TerminalPlanError,
     prepare_terminal_batch,
 )

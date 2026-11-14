@@ -31,12 +31,12 @@ from tests import _bootstrap  # noqa: E402,F401
 
 from tests.test_runs_stream import _ClientChain, sse_lines  # noqa: E402
 
-from nonebot_plugin_hermes_adapter.config import plugin_config  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import hermes_client as hc  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker  # noqa: E402
+from nonebot_plugin_agent_adapter.config import plugin_config  # noqa: E402
+from nonebot_plugin_agent_adapter.core import hermes_client as hc  # noqa: E402
+from nonebot_plugin_agent_adapter.core import prompt_builder as pb  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin  # noqa: E402
+from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker  # noqa: E402
 
 ADAPTER = "onebotv11"
 SELF = "2968545011"
@@ -100,7 +100,7 @@ class _RunsSubmit:
         self.add_cleanup()
 
     async def submit(self, content):
-        from nonebot_plugin_hermes_adapter import mcp as mcp_module
+        from nonebot_plugin_agent_adapter import mcp as mcp_module
 
         with patch.object(hc, "_get_http_client", return_value=self.fake), \
                 patch.object(mcp_module, "run_tracker", self.tracker):

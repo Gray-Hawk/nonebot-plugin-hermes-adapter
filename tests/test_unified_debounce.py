@@ -7,9 +7,9 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from tests import _bootstrap  # noqa: F401
-from nonebot_plugin_hermes_adapter.core.chat_config import ChatConfig, parse_chat_config
-from nonebot_plugin_hermes_adapter.core.config_store import ConfigSnapshotStore
-from nonebot_plugin_hermes_adapter.core.config_templates import CHAT_CONFIG_TEMPLATE, load_yaml
+from nonebot_plugin_agent_adapter.core.chat_config import ChatConfig, parse_chat_config
+from nonebot_plugin_agent_adapter.core.config_store import ConfigSnapshotStore
+from nonebot_plugin_agent_adapter.core.config_templates import CHAT_CONFIG_TEMPLATE, load_yaml
 from scripts.migrate_config_v6 import build_migration, render_outputs
 
 OLD_DEBOUNCE_KEYS = (

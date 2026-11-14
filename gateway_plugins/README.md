@@ -1,7 +1,7 @@
 # gateway_plugins — Hermes 网关侧用户插件
 
 本目录存放**跑在 Hermes gateway 进程里**的用户插件（Hermes `$HERMES_HOME/plugins/<name>/`
-布局）。它们与 nonebot 适配器包（本仓库根目录的 `nonebot_plugin_hermes_adapter` 源码）分开
+布局）。它们与 nonebot 适配器包（本仓库根目录的 `nonebot_plugin_agent_adapter` 源码）分开
 发布：适配器是聊天桥，这些插件补的是网关自身缺的控制面。**不改 Hermes 上游核心文件。**
 
 安装用仓库脚本，从本目录取源（不要从 `.acceptance/` 手抄）：

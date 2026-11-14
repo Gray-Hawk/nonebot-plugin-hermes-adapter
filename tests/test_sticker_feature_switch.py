@@ -7,8 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests import _bootstrap  # noqa: F401
-from nonebot_plugin_hermes_adapter.core import misc_config, prompt_builder, sticker_library
-from nonebot_plugin_hermes_adapter.core.config_templates import MISC_CONFIG_TEMPLATE, load_yaml
+from nonebot_plugin_agent_adapter.core import misc_config, prompt_builder, sticker_library
+from nonebot_plugin_agent_adapter.core.config_templates import MISC_CONFIG_TEMPLATE, load_yaml
 
 
 PNG = base64.b64decode(
@@ -46,7 +46,7 @@ class StickerFeatureSwitchTests(unittest.TestCase):
     def test_prompt_guidance_follows_switch_and_allows_sticker_only_reply(self) -> None:
         # 本用例锁 E2 runs 终态口径文案(body 字段);completions 的 body 文案在
         # tests/test_completions_regression.py 里单独断言。
-        from nonebot_plugin_hermes_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.config import plugin_config
 
         old_iface = plugin_config.hermes_api_interface
         object.__setattr__(plugin_config, "hermes_api_interface", "runs")
@@ -79,7 +79,7 @@ class StickerFeatureSwitchTests(unittest.TestCase):
                     self.assertNotIn("表情=ID", prompt)
 
     def test_prompt_appends_only_dynamic_kind_line(self) -> None:
-        from nonebot_plugin_hermes_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.config import plugin_config
 
         old_iface = plugin_config.hermes_api_interface
         object.__setattr__(plugin_config, "hermes_api_interface", "runs")

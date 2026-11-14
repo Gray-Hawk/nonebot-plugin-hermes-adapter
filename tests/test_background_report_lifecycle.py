@@ -37,23 +37,23 @@ from tests.test_background_report_chain import (  # noqa: E402
     Harness,
 )
 
-from nonebot_plugin_hermes_adapter import mcp  # noqa: E402
-from nonebot_plugin_hermes_adapter.config import plugin_config  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import hermes_client as hc  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import outbound as ob  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.background_report_outbox import (  # noqa: E402
+from nonebot_plugin_agent_adapter import mcp  # noqa: E402
+from nonebot_plugin_agent_adapter.config import plugin_config  # noqa: E402
+from nonebot_plugin_agent_adapter.core import hermes_client as hc  # noqa: E402
+from nonebot_plugin_agent_adapter.core import outbound as ob  # noqa: E402
+from nonebot_plugin_agent_adapter.core.background_report_outbox import (  # noqa: E402
     SOURCE_KANBAN,
     SOURCE_SUBAGENT,
 )
-from nonebot_plugin_hermes_adapter.core import background_report_runtime as rt  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.inflight import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import background_report_runtime as rt  # noqa: E402
+from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult  # noqa: E402
+from nonebot_plugin_agent_adapter.core.inflight import (  # noqa: E402
     InflightRegistry,
     make_inflight_key,
 )
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers import message_relay as relay  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers import message_turns as mt  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_relay as relay  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_turns as mt  # noqa: E402
 
 SAMPLE = ROOT / "SAMPLES" / "runs_terminal_single_b4.json"
 

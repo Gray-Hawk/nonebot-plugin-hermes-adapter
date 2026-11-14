@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 PATCH_ID = "steer-presentation-thin/1"
 _MARK = "__steer_presentation_thin__"
 
-# 与 NB 侧 `nonebot_plugin_hermes_adapter/core/steer_presentation.py` 同一组字面量
+# 与 NB 侧 `nonebot_plugin_agent_adapter/core/steer_presentation.py` 同一组字面量
 # （两侧各有一份拷贝 + 一条测试逐字比对；改这里必须同批改那边）。
 PRESENTATION_FIELD = "presentation"
 PRESENTATION_SCHEMA = "hermes.steer.presentation/1"

@@ -30,28 +30,28 @@ sys.path.insert(0, str(ROOT))
 from tests import _bootstrap  # noqa: E402,F401
 from tests._regions import region_rows, wrap_region  # noqa: E402
 
-from nonebot_plugin_hermes_adapter.core import hermes_client as hc  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import steer_presentation  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import steer_seen  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.inflight import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import hermes_client as hc  # noqa: E402
+from nonebot_plugin_agent_adapter.core import steer_presentation  # noqa: E402
+from nonebot_plugin_agent_adapter.core import steer_seen  # noqa: E402
+from nonebot_plugin_agent_adapter.core.inflight import (  # noqa: E402
     InflightRegistry,
     PendingEntry,
     make_inflight_key,
 )
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.prompt_builder import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin  # noqa: E402
+from nonebot_plugin_agent_adapter.core.prompt_builder import (  # noqa: E402
     render_chat_region,
     render_steer_batch,
     render_steer_rows,
     steer_region_decorations,
 )
-from nonebot_plugin_hermes_adapter.core.run_tracker import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.run_tracker import (  # noqa: E402
     RunTracker,
     make_scope_key,
 )
-from nonebot_plugin_hermes_adapter.handlers import message_relay as relay  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers import message_turns as turns  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_relay as relay  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_turns as turns  # noqa: E402
 
 ADAPTER = "onebotv11"
 GROUP_ID = "g1"

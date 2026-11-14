@@ -16,11 +16,11 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 from tests import test_runs_terminal as e2  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import continuation  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.inflight import make_inflight_key  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.routing import CallerScope  # noqa: E402
-from nonebot_plugin_hermes_adapter.mcp.tools.continuation import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import continuation  # noqa: E402
+from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult  # noqa: E402
+from nonebot_plugin_agent_adapter.core.inflight import make_inflight_key  # noqa: E402
+from nonebot_plugin_agent_adapter.core.routing import CallerScope  # noqa: E402
+from nonebot_plugin_agent_adapter.mcp.tools.continuation import (  # noqa: E402
     RequestContinuationInput,
     request_continuation_impl,
 )
@@ -151,7 +151,7 @@ class PassiveContinuationConsumptionTests(e2._PassiveHarness):
         self.addCleanup(continuation.CONTINUATION_QUEUE.discard, PRIVATE_KEY)
 
     async def _run_with_continuation(self, result, *, tracker):
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
 
         async def chat(*args, **kwargs):
             continuation.request_continuation(PRIVATE_KEY)

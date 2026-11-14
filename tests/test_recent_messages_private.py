@@ -46,8 +46,8 @@ def _msg(
     stickers: tuple[str, ...] = (),
     files: tuple[dict, ...] = (),
 ):
-    from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage
-    from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin
+    from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage
+    from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin
 
     return BufferedMessage(
         ts=ts,
@@ -67,8 +67,8 @@ def _msg(
 
 class RecentMessagesHarness(unittest.TestCase):
     def setUp(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.message_buffer import MessageBuffer
-        from nonebot_plugin_hermes_adapter.core.storage.message_store import MessageStore
+        from nonebot_plugin_agent_adapter.core.message_buffer import MessageBuffer
+        from nonebot_plugin_agent_adapter.core.storage.message_store import MessageStore
 
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -78,7 +78,7 @@ class RecentMessagesHarness(unittest.TestCase):
         self.cfg = SimpleNamespace(mcp_recent_limit_max=50)
 
     def _input(self, **kwargs):
-        from nonebot_plugin_hermes_adapter.mcp.tools.get_recent_messages import (
+        from nonebot_plugin_agent_adapter.mcp.tools.get_recent_messages import (
             GetRecentMessagesInput,
         )
 
@@ -86,15 +86,15 @@ class RecentMessagesHarness(unittest.TestCase):
         return GetRecentMessagesInput(**kwargs)
 
     def _run(self, **kwargs):
-        from nonebot_plugin_hermes_adapter.core.routing import CallerScope
-        from nonebot_plugin_hermes_adapter.mcp.tools.get_recent_messages import (
+        from nonebot_plugin_agent_adapter.core.routing import CallerScope
+        from nonebot_plugin_agent_adapter.mcp.tools.get_recent_messages import (
             get_recent_messages_impl,
         )
 
         scope = kwargs.pop("scope", CallerScope.dev())
         inp = self._input(**kwargs)
         with patch(
-            "nonebot_plugin_hermes_adapter.mcp.tools.get_recent_messages.load_chat_config",
+            "nonebot_plugin_agent_adapter.mcp.tools.get_recent_messages.load_chat_config",
             lambda: self.cfg,
         ):
             return asyncio.run(
@@ -222,7 +222,7 @@ class InputContractTests(RecentMessagesHarness):
         self.assertEqual(self._input(group_id=GROUP, limit=100).limit, 100)
 
     def test_mcp_tool_schema_exposes_both_targets(self) -> None:
-        from nonebot_plugin_hermes_adapter.mcp import server
+        from nonebot_plugin_agent_adapter.mcp import server
 
         real_factory = server.FastMCP
         holder: dict = {}

@@ -15,8 +15,8 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.core import runs_text  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.runs_text import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import runs_text  # noqa: E402
+from nonebot_plugin_agent_adapter.core.runs_text import (  # noqa: E402
     MAX_BODY_CHARS,
     SEPARATOR,
     TextUnitsError,
@@ -24,13 +24,13 @@ from nonebot_plugin_hermes_adapter.core.runs_text import (  # noqa: E402
     split_text_units,
     units_from_text,
 )
-from nonebot_plugin_hermes_adapter.core.runs_terminal import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.runs_terminal import (  # noqa: E402
     TerminalPlanError,
     build_batch_plan,
     prepare_terminal_batch,
     units_from_output,
 )
-from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker  # noqa: E402
+from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker  # noqa: E402
 
 
 def unit(control: dict | None = None, body: str = "正文") -> str:
@@ -295,9 +295,9 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
                    sessions=None, current_buffered=None,
                    replied_msg_id=None, now_ms: int = 1, resolve_reply=None,
                    trigger_msg_id=None, task_anchor_enabled: bool = True):
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
-        from nonebot_plugin_hermes_adapter.handlers import message_feedback as fb
-        from nonebot_plugin_hermes_adapter.core import prompt_builder
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.handlers import message_feedback as fb
+        from nonebot_plugin_agent_adapter.core import prompt_builder
 
         calls = {"send": [], "settle": [], "history": [], "files": [], "control": {}}
         cfg = MagicMock()
@@ -419,7 +419,7 @@ class _ReactiveHarness(unittest.IsolatedAsyncioTestCase):
 
 class ReactiveBatchDeliveryTests(_ReactiveHarness):
     async def test_multi_decisions_send_in_order(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         decisions = decisions_from_text(batch(({}, "第一条"), ({}, "第二条")))
         result = ChatResult(raw_text="x", structured=decisions[0])
@@ -435,7 +435,7 @@ class ReactiveBatchDeliveryTests(_ReactiveHarness):
         self.assertEqual(calls["settle"], [])
 
     async def test_empty_body_unit_not_sent(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         # 尾部空的 § 单元不产生消息，也不占发送序。
         decisions = decisions_from_text(batch(({}, "只有这条"), ({}, "")))
@@ -446,7 +446,7 @@ class ReactiveBatchDeliveryTests(_ReactiveHarness):
         self.assertEqual([c["text"] for c in calls["send"]], ["只有这条"])
 
     async def test_all_silent_settles_without_send(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         result = ChatResult(raw_text="", structured={"should_reply": False})
         result.terminal_decisions = []
@@ -456,7 +456,7 @@ class ReactiveBatchDeliveryTests(_ReactiveHarness):
         self.assertEqual(calls["settle"], [("silent", "empty_output")])
 
     async def test_plan_failure_means_zero_sends(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         # tracker 里没有该 run 的 delivery 行 → 真实 upsert 失败 → 必须零发送
         decisions = decisions_from_text(batch(({}, "第一条"), ({}, "第二条")))
@@ -470,7 +470,7 @@ class ReactiveBatchDeliveryTests(_ReactiveHarness):
 
 class BatchRepairTests(unittest.IsolatedAsyncioTestCase):
     async def test_already_sent_component_not_resent(self) -> None:
-        from nonebot_plugin_hermes_adapter.core import run_delivery_monitor as monitor
+        from nonebot_plugin_agent_adapter.core import run_delivery_monitor as monitor
 
         with tempfile.TemporaryDirectory() as tmp:
             tracker = RunTracker(Path(tmp) / "t.db")
@@ -540,7 +540,7 @@ class _PassiveHarness(unittest.IsolatedAsyncioTestCase):
 
     async def _run(self, result, *, tracker, is_private: bool = True, group_id: str | None = None,
                    real_files: bool = False, bounce=None, chat=None, resolve_reply=None):
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
 
         calls = {"send": [], "settle": [], "history": [], "files": [], "heal": []}
         cfg = MagicMock()
@@ -570,7 +570,7 @@ class _PassiveHarness(unittest.IsolatedAsyncioTestCase):
             return 0
 
         if real_files:
-            from nonebot_plugin_hermes_adapter.core import outbound as ob
+            from nonebot_plugin_agent_adapter.core import outbound as ob
 
             files_mock = ob.send_local_files
         else:
@@ -626,7 +626,7 @@ class _PassiveHarness(unittest.IsolatedAsyncioTestCase):
             ),
         }
         with patch.multiple(mt, **patches):
-            from nonebot_plugin_hermes_adapter.core import prompt_builder
+            from nonebot_plugin_agent_adapter.core import prompt_builder
 
             rows_patch = patch.object(
                 prompt_builder, "render_current_rows", MagicMock(return_value="hi")
@@ -644,7 +644,7 @@ class PassiveBatchDeliveryTests(_PassiveHarness):
     """私聊 passive 路径同样按份发送（runs 终态）。"""
 
     async def test_passive_multi_decisions_send_in_order(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         decisions = decisions_from_text(batch(({}, "私聊一"), ({}, "私聊二")))
         result = ChatResult(raw_text="x", structured=decisions[0])
@@ -659,7 +659,7 @@ class PassiveMultiControlTests(_PassiveHarness):
     """R5：私聊 passive 连续多份终态必须按份顺序消费仍存在的控制（submit_control FIFO）。"""
 
     def _register(self, *controls) -> None:
-        from nonebot_plugin_hermes_adapter.core import control_intent
+        from nonebot_plugin_agent_adapter.core import control_intent
 
         key = ("onebotv11", "private:u1")
         self.addCleanup(control_intent.CONTROL_QUEUE.discard, key)
@@ -667,8 +667,8 @@ class PassiveMultiControlTests(_PassiveHarness):
             control_intent.CONTROL_QUEUE.register(key, control)
 
     async def test_second_unit_control_kept(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
-        from nonebot_plugin_hermes_adapter.core import control_intent
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core import control_intent
 
         self._register({"reply_to": "m:1"}, {"answer_anchor": "all"})
         output = batch(({}, "先回应"), ({}, "任务已登记"))
@@ -684,8 +684,8 @@ class PassiveMultiControlTests(_PassiveHarness):
         self.assertEqual([c["text"] for c in calls["send"]], ["先回应", "任务已登记"])
 
     async def test_unpaired_control_dropped_at_turn_end(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
-        from nonebot_plugin_hermes_adapter.core import control_intent
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core import control_intent
 
         # 静默轮不消费控制：登记了 but 没有正文 → 轮末丢弃，也不发空消息。
         self._register({"answer_anchor": "all"})
@@ -698,8 +698,8 @@ class PassiveMultiControlTests(_PassiveHarness):
         self.assertEqual(control_intent.CONTROL_QUEUE.pending(("onebotv11", "private:u1")), 1)
 
     async def test_single_completions_text_unit_gets_control(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
-        from nonebot_plugin_hermes_adapter.core import control_intent
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core import control_intent
 
         self._register({"reply_to": "m:3"})
         output = unit({}, "单份正文")
@@ -718,9 +718,9 @@ class NakedMediaRunsTests(_ReactiveHarness):
     async def test_runs_naked_image_survives_chat_and_handler(self) -> None:
         from PIL import Image
 
-        from nonebot_plugin_hermes_adapter.config import plugin_config
-        from nonebot_plugin_hermes_adapter.core import hermes_client as hc
-        from nonebot_plugin_hermes_adapter.core import media_whitelist as mw
+        from nonebot_plugin_agent_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.core import hermes_client as hc
+        from nonebot_plugin_agent_adapter.core import media_whitelist as mw
 
         with tempfile.TemporaryDirectory() as tmp:
             path = (Path(tmp) / "noise.png").resolve()
@@ -779,7 +779,7 @@ class NakedMediaRunsTests(_ReactiveHarness):
 class CompletionsSinglePathRegressionTests(_ReactiveHarness):
     async def test_single_completions_decision_unchanged(self) -> None:
         """completions（无 terminal_decisions）仍走旧单份计划与 single send。"""
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         result = ChatResult(
             raw_text="{}\n{\"body\":\"正文\"}",
@@ -800,7 +800,7 @@ def _resume_build_units():
         n for n in ast.parse(source).body
         if isinstance(n, ast.FunctionDef) and n.name == "_build_units"
     )
-    ns = {"__package__": "nonebot_plugin_hermes_adapter.tasks"}
+    ns = {"__package__": "nonebot_plugin_agent_adapter.tasks"}
     exec(compile(ast.Module(body=[node], type_ignores=[]), "<run_resume._build_units>", "exec"), ns)
     return ns["_build_units"]
 
@@ -809,7 +809,7 @@ class SilentControlSideEffectTests(_ReactiveHarness):
     """纯文本协议：没有正文就是静默——不合成空决策、不消费控制、不收窗。"""
 
     async def test_completions_silent_leaves_controls_alone(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         result = ChatResult(raw_text="", structured={"should_reply": False})
         result.run_id = "run-e2-h"
@@ -819,7 +819,7 @@ class SilentControlSideEffectTests(_ReactiveHarness):
         self.assertEqual(calls["settle"], [("silent", "empty_output")])
 
     async def test_runs_silent_unit_leaves_controls_alone(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         result = ChatResult(raw_text="", structured={"should_reply": False})
         result.terminal_decisions = []
@@ -830,8 +830,8 @@ class SilentControlSideEffectTests(_ReactiveHarness):
         self.assertEqual(calls["settle"], [("silent", "empty_output")])
 
     async def test_batch_exit_control_closes_window_after_group(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
-        from nonebot_plugin_hermes_adapter.core import control_intent
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core import control_intent
 
         key = ("onebotv11", "group:g1")
         self.addCleanup(control_intent.CONTROL_QUEUE.discard, key)
@@ -856,7 +856,7 @@ class ResumePlanConsistencyTests(_ReactiveHarness):
     """R2：正常入口产物 + 真实恢复适配器必须得到同一计划，已 sent 不重置。"""
 
     async def test_normal_plan_matches_resume_adapter(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         output = batch(({}, "第一份"), ({"reply_to": "m:7"}, "第二份"))
         decisions = decisions_from_text(output)
@@ -896,7 +896,7 @@ class BatchBounceAccountingTests(_ReactiveHarness):
     async def _repair_sends(self, tracker, run_id: str) -> list[str]:
         from types import SimpleNamespace as NS
 
-        from nonebot_plugin_hermes_adapter.core import run_delivery_monitor as monitor
+        from nonebot_plugin_agent_adapter.core import run_delivery_monitor as monitor
 
         delivery = tracker.get_delivery(run_id)
         plan = json.loads(delivery["plan_json"])
@@ -915,7 +915,7 @@ class BatchBounceAccountingTests(_ReactiveHarness):
         return sent
 
     async def test_reactive_bounced_unit_not_repaired(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         output = batch(({}, "被拦截的正文"), ({}, "正常正文"))
         decisions = decisions_from_text(output)
@@ -935,7 +935,7 @@ class BatchBounceAccountingTests(_ReactiveHarness):
         self.assertNotIn("被拦截的正文", repaired)
 
     async def test_reactive_all_bounced_settles_suppressed(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         output = unit({}, "唯一一份")
         decisions = decisions_from_text(output)
@@ -950,9 +950,9 @@ class BatchBounceAccountingTests(_ReactiveHarness):
 
 
     async def test_real_bounce_rule_marks_unit_not_required(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.feedback_rules import FeedbackRule
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
-        from nonebot_plugin_hermes_adapter.handlers import message_feedback as fb
+        from nonebot_plugin_agent_adapter.core.feedback_rules import FeedbackRule
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.handlers import message_feedback as fb
 
         rule = FeedbackRule(
             name="review-bounce", regex=None, where="reply", action="bounce",
@@ -980,7 +980,7 @@ class BatchBounceAccountingTests(_ReactiveHarness):
 
 class PassiveBounceAccountingTests(_PassiveHarness):
     async def test_passive_bounced_unit_not_repaired(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         output = unit({}, "私聊被拦截")
         decisions = decisions_from_text(output)
@@ -1001,7 +1001,7 @@ class LegacyComponentNamingTests(_ReactiveHarness):
     """R4：带索引的组件名只给 E2 批量份；非批量保持 legacy 名。"""
 
     async def test_completions_file_and_history_use_legacy_names(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "a.txt"
@@ -1024,8 +1024,8 @@ class LegacyComponentNamingTests(_ReactiveHarness):
 
 class GroupPassiveLegacyFileTests(_PassiveHarness):
     async def test_group_passive_file_claim_uses_legacy_component(self) -> None:
-        from nonebot_plugin_hermes_adapter.core import media_whitelist, outbound as ob
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core import media_whitelist, outbound as ob
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "a.txt"

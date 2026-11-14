@@ -9,7 +9,7 @@ from __future__ import annotations
 
 
 def _pb():
-    from nonebot_plugin_hermes_adapter.core import prompt_builder
+    from nonebot_plugin_agent_adapter.core import prompt_builder
 
     return prompt_builder
 

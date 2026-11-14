@@ -18,25 +18,25 @@ from tests import _bootstrap  # noqa: F401
 
 from tests import test_runs_terminal as e2
 from tests.test_control_regressions import KEY, _result, _row
-from nonebot_plugin_hermes_adapter.config import plugin_config
-from nonebot_plugin_hermes_adapter.core import chat_config as cc
-from nonebot_plugin_hermes_adapter.core import config_templates as ct
-from nonebot_plugin_hermes_adapter.core import control_intent
-from nonebot_plugin_hermes_adapter.core import prompt_builder as pb
-from nonebot_plugin_hermes_adapter.core import task_notes
-from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
-from nonebot_plugin_hermes_adapter.core.active_session import (
+from nonebot_plugin_agent_adapter.config import plugin_config
+from nonebot_plugin_agent_adapter.core import chat_config as cc
+from nonebot_plugin_agent_adapter.core import config_templates as ct
+from nonebot_plugin_agent_adapter.core import control_intent
+from nonebot_plugin_agent_adapter.core import prompt_builder as pb
+from nonebot_plugin_agent_adapter.core import task_notes
+from nonebot_plugin_agent_adapter.handlers import message_turns as mt
+from nonebot_plugin_agent_adapter.core.active_session import (
     ActiveSessionManager,
     AnchorRecord,
     Participant,
 )
-from nonebot_plugin_hermes_adapter.core.decision_contract import ANCHOR_FIELD_NAMES
-from nonebot_plugin_hermes_adapter.core.hermes_client import _decision_hint
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin
-from nonebot_plugin_hermes_adapter.core.prompt_protocol import anchor_prompt_residue
-from nonebot_plugin_hermes_adapter.core.routing import CallerScope
-from nonebot_plugin_hermes_adapter.mcp.tools.control import (
+from nonebot_plugin_agent_adapter.core.decision_contract import ANCHOR_FIELD_NAMES
+from nonebot_plugin_agent_adapter.core.hermes_client import _decision_hint
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin
+from nonebot_plugin_agent_adapter.core.prompt_protocol import anchor_prompt_residue
+from nonebot_plugin_agent_adapter.core.routing import CallerScope
+from nonebot_plugin_agent_adapter.mcp.tools.control import (
     SubmitControlInput,
     submit_control_impl,
 )

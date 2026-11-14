@@ -8,9 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
-from nonebot_plugin_hermes_adapter.core import prompt_builder  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers import message_turns as mt  # noqa: E402
+from nonebot_plugin_agent_adapter.core import prompt_builder  # noqa: E402
+from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_turns as mt  # noqa: E402
 
 
 def _stub_everything(calls, result):
@@ -107,8 +107,8 @@ class PassiveTurnTextProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls["note"], [])
 
     async def test_request_continuation_is_consumed_once_after_send(self):
-        from nonebot_plugin_hermes_adapter.core import continuation
-        from nonebot_plugin_hermes_adapter.core.inflight import make_inflight_key
+        from nonebot_plugin_agent_adapter.core import continuation
+        from nonebot_plugin_agent_adapter.core.inflight import make_inflight_key
 
         key = make_inflight_key("onebotv11", True, "u1", None)
         self.addCleanup(continuation.discard_continuation, key)
@@ -122,8 +122,8 @@ class PassiveTurnTextProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(continuation.pending_continuation(key))
 
     async def test_stale_continuation_from_previous_turn_is_dropped(self):
-        from nonebot_plugin_hermes_adapter.core import continuation
-        from nonebot_plugin_hermes_adapter.core.inflight import make_inflight_key
+        from nonebot_plugin_agent_adapter.core import continuation
+        from nonebot_plugin_agent_adapter.core.inflight import make_inflight_key
 
         key = make_inflight_key("onebotv11", True, "u1", None)
         self.addCleanup(continuation.discard_continuation, key)

@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, patch
 
 from tests import _bootstrap  # noqa: F401
 
-from nonebot_plugin_hermes_adapter.core.storage.session_key_store import SessionKeyStore
+from nonebot_plugin_agent_adapter.core.storage.session_key_store import SessionKeyStore
 
 FIXTURE = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "fake_agy_acp.py"
 
@@ -44,7 +44,7 @@ class ACPHandlerHarness(unittest.IsolatedAsyncioTestCase):
     ADMIN = "123"
 
     def setUp(self) -> None:
-        from nonebot_plugin_hermes_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.config import plugin_config
 
         self._prev_interface = plugin_config.hermes_api_interface
         object.__setattr__(plugin_config, "hermes_api_interface", "antigravity")
@@ -61,20 +61,20 @@ class ACPHandlerHarness(unittest.IsolatedAsyncioTestCase):
             object.__setattr__, plugin_config, "hermes_custom_dir", self._prev_custom_dir
         )
 
-        from nonebot_plugin_hermes_adapter import mcp
-        from nonebot_plugin_hermes_adapter.core import approvals
-        from nonebot_plugin_hermes_adapter.core import hermes_client as hc
-        from nonebot_plugin_hermes_adapter.core import outbound
-        from nonebot_plugin_hermes_adapter.core.active_session import ActiveSessionManager
-        from nonebot_plugin_hermes_adapter.core.chat_config import ChatConfig
-        from nonebot_plugin_hermes_adapter.core.inflight import InflightRegistry
-        from nonebot_plugin_hermes_adapter.core.media_config import MediaConfig
-        from nonebot_plugin_hermes_adapter.core.misc_config import MiscConfig
-        from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker
-        from nonebot_plugin_hermes_adapter.core.session import SessionManager
-        from nonebot_plugin_hermes_adapter.handlers import commands
-        from nonebot_plugin_hermes_adapter.handlers import message_feedback as feedback
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter import mcp
+        from nonebot_plugin_agent_adapter.core import approvals
+        from nonebot_plugin_agent_adapter.core import hermes_client as hc
+        from nonebot_plugin_agent_adapter.core import outbound
+        from nonebot_plugin_agent_adapter.core.active_session import ActiveSessionManager
+        from nonebot_plugin_agent_adapter.core.chat_config import ChatConfig
+        from nonebot_plugin_agent_adapter.core.inflight import InflightRegistry
+        from nonebot_plugin_agent_adapter.core.media_config import MediaConfig
+        from nonebot_plugin_agent_adapter.core.misc_config import MiscConfig
+        from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker
+        from nonebot_plugin_agent_adapter.core.session import SessionManager
+        from nonebot_plugin_agent_adapter.handlers import commands
+        from nonebot_plugin_agent_adapter.handlers import message_feedback as feedback
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
 
         self.mcp = mcp
         self.hc = hc
@@ -175,7 +175,7 @@ class ACPHandlerHarness(unittest.IsolatedAsyncioTestCase):
 
     # ---------------------------------------------------------------- helpers
     def _client(self, *, reply=None, flags=(), chunks=None, delay=0.05, permission_timeout=None):
-        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+        from nonebot_plugin_agent_adapter.backends.antigravity import client as ag
 
         args = [str(FIXTURE), str(self.base / "wire.jsonl"), json.dumps(reply or "", ensure_ascii=False)]
         if chunks is not None:
@@ -209,8 +209,8 @@ class ACPHandlerHarness(unittest.IsolatedAsyncioTestCase):
         return self.manager.get_session_key("onebotv11", True, self.ADMIN, None)
 
     def _row(self, *, private=True, content="hi", mid=1, image_urls=None):
-        from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage
-        from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin
+        from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage
+        from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin
 
         return BufferedMessage(
             ts=int(time.time() * 1000),

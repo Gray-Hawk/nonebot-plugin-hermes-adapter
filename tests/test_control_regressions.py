@@ -23,19 +23,19 @@ from tests import _bootstrap  # noqa: F401
 from tests import test_runs_terminal as e2
 from tests.test_runs_stream import _ClientChain, real_chat
 
-from nonebot_plugin_hermes_adapter.config import plugin_config
-from nonebot_plugin_hermes_adapter.core import control_intent
-from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text
-from nonebot_plugin_hermes_adapter.core import hermes_client as hc
-from nonebot_plugin_hermes_adapter.core.active_session import ActiveSessionManager
-from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
-from nonebot_plugin_hermes_adapter.core.inflight import InflightRegistry, make_inflight_key
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin
-from nonebot_plugin_hermes_adapter.core.routing import CallerScope
-from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker
-from nonebot_plugin_hermes_adapter.handlers import message_relay as relay
-from nonebot_plugin_hermes_adapter.mcp.tools.control import SubmitControlInput, submit_control_impl
+from nonebot_plugin_agent_adapter.config import plugin_config
+from nonebot_plugin_agent_adapter.core import control_intent
+from nonebot_plugin_agent_adapter.core.runs_text import decisions_from_text
+from nonebot_plugin_agent_adapter.core import hermes_client as hc
+from nonebot_plugin_agent_adapter.core.active_session import ActiveSessionManager
+from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
+from nonebot_plugin_agent_adapter.core.inflight import InflightRegistry, make_inflight_key
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin
+from nonebot_plugin_agent_adapter.core.routing import CallerScope
+from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker
+from nonebot_plugin_agent_adapter.handlers import message_relay as relay
+from nonebot_plugin_agent_adapter.mcp.tools.control import SubmitControlInput, submit_control_impl
 
 KEY = make_inflight_key("onebotv11", False, "u1", "g1")
 

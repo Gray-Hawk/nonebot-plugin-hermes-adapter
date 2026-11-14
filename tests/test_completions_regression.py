@@ -21,7 +21,7 @@ class CompletionsTextSeamTests(unittest.TestCase):
         return f"§\n{body}\n§"
 
     def test_single_sentence_is_one_unit(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text
+        from nonebot_plugin_agent_adapter.core.runs_text import decisions_from_text
 
         decisions = decisions_from_text(self._unit("正文"))
         self.assertEqual(len(decisions), 1)
@@ -31,26 +31,26 @@ class CompletionsTextSeamTests(unittest.TestCase):
         self.assertTrue(decisions[0]["should_reply"])
 
     def test_empty_text_maps_to_silent(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text
+        from nonebot_plugin_agent_adapter.core.runs_text import decisions_from_text
 
         for text in ("", "   ", "\n\n", "§\n§"):
             self.assertEqual(decisions_from_text(text), [])
 
     def test_separator_makes_multiple_units(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text
+        from nonebot_plugin_agent_adapter.core.runs_text import decisions_from_text
 
         decisions = decisions_from_text("§\n甲\n§\n乙\n§\n丙\n§")
         self.assertEqual([d["body"] for d in decisions], ["甲", "乙", "丙"])
 
     def test_bare_text_is_not_a_body(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text
+        from nonebot_plugin_agent_adapter.core.runs_text import decisions_from_text
 
         # 旧裸正文不保留兼容层：没有分节符就没有正文。
         self.assertEqual(decisions_from_text("甲\n§\n乙"), [])
         self.assertEqual(decisions_from_text("直接一句话"), [])
 
     def test_over_limit_fails_closed(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.runs_text import (
+        from nonebot_plugin_agent_adapter.core.runs_text import (
             MAX_BODY_CHARS,
             TextUnitsError,
             decisions_from_text,
@@ -60,7 +60,7 @@ class CompletionsTextSeamTests(unittest.TestCase):
             decisions_from_text(self._unit("长" * (MAX_BODY_CHARS + 1)))
 
     def test_media_extraction_unchanged(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import extract_response_media
+        from nonebot_plugin_agent_adapter.core.hermes_client import extract_response_media
 
         cleaned, media, files = extract_response_media("图来了 MEDIA:/tmp/x.png")
         self.assertIn("图来了", cleaned)
@@ -78,7 +78,7 @@ class MidTurnEntryTests(unittest.IsolatedAsyncioTestCase):
             nonebot.init()
         except Exception:
             pass
-        from nonebot_plugin_hermes_adapter.handlers import message_turns
+        from nonebot_plugin_agent_adapter.handlers import message_turns
 
         cls.mt = message_turns
 
@@ -144,8 +144,8 @@ class ChatTextUnitTests(unittest.IsolatedAsyncioTestCase):
             nonebot.init()
         except Exception:
             pass
-        from nonebot_plugin_hermes_adapter.config import plugin_config
-        from nonebot_plugin_hermes_adapter.core import hermes_client as hc
+        from nonebot_plugin_agent_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.core import hermes_client as hc
 
         class _Resp:
             status_code = 200
@@ -217,9 +217,9 @@ class CompletionsPromptTests(unittest.TestCase):
             nonebot.init()
         except Exception:
             pass
-        from nonebot_plugin_hermes_adapter.handlers import message_turns
-        from nonebot_plugin_hermes_adapter.core import prompt_builder
-        from nonebot_plugin_hermes_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.handlers import message_turns
+        from nonebot_plugin_agent_adapter.core import prompt_builder
+        from nonebot_plugin_agent_adapter.config import plugin_config
 
         cls.mt = message_turns
         cls.pb = prompt_builder
@@ -269,7 +269,7 @@ class CompletionsPromptTests(unittest.TestCase):
         self.assertIn("submit_control", block)
 
     def test_sticker_guidance_follows_interface(self) -> None:
-        from nonebot_plugin_hermes_adapter.core import sticker_library
+        from nonebot_plugin_agent_adapter.core import sticker_library
 
         old = sticker_library._STICKER_FEATURE_ENABLED
         sticker_library._STICKER_FEATURE_ENABLED = True
@@ -291,7 +291,7 @@ class MidTurnAndMediaTests(unittest.TestCase):
             nonebot.init()
         except Exception:
             pass
-        from nonebot_plugin_hermes_adapter.handlers import message_turns
+        from nonebot_plugin_agent_adapter.handlers import message_turns
 
         cls.mt = message_turns
 

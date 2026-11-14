@@ -50,7 +50,7 @@ class _Cache:
 
 class GetMessageImagesContractTests(unittest.TestCase):
     def _impl(self, owners, *, scope, adapter, group_id=None):
-        from nonebot_plugin_hermes_adapter.mcp.tools.get_message_images import (
+        from nonebot_plugin_agent_adapter.mcp.tools.get_message_images import (
             GetMessageImagesInput,
             get_message_images_impl,
         )
@@ -59,7 +59,7 @@ class GetMessageImagesContractTests(unittest.TestCase):
             message_ids=list(owners), adapter=adapter, group_id=group_id
         )
         with patch(
-            "nonebot_plugin_hermes_adapter.mcp.tools.get_message_images.load_media_config",
+            "nonebot_plugin_agent_adapter.mcp.tools.get_message_images.load_media_config",
             lambda: SimpleNamespace(),
         ):
             return asyncio.run(
@@ -75,7 +75,7 @@ class GetMessageImagesContractTests(unittest.TestCase):
         return [r["reason"] for r in json.loads(header)["results"]]
 
     def test_schema_requires_message_ids_and_adapter(self) -> None:
-        from nonebot_plugin_hermes_adapter.mcp import server
+        from nonebot_plugin_agent_adapter.mcp import server
 
         real_factory = server.FastMCP
         holder: dict = {}
@@ -107,7 +107,7 @@ class GetMessageImagesContractTests(unittest.TestCase):
     def test_input_rejects_adapter_omitted_or_null(self) -> None:
         from pydantic import ValidationError
 
-        from nonebot_plugin_hermes_adapter.mcp.tools.get_message_images import (
+        from nonebot_plugin_agent_adapter.mcp.tools.get_message_images import (
             GetMessageImagesInput,
         )
 
@@ -126,7 +126,7 @@ class GetMessageImagesContractTests(unittest.TestCase):
         """真实注册入口(FastMCP 工具)在参数校验阶段就拒,不进 impl。"""
         from fastmcp import Client
 
-        from nonebot_plugin_hermes_adapter.mcp import server
+        from nonebot_plugin_agent_adapter.mcp import server
 
         real_factory = server.FastMCP
         holder: dict = {}
@@ -163,7 +163,7 @@ class GetMessageImagesContractTests(unittest.TestCase):
         self.assertTrue(blocks)
 
     def test_group_and_private_fetch_pass_consistency_check(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.routing import CallerScope
+        from nonebot_plugin_agent_adapter.core.routing import CallerScope
 
         owners = {1: ("ob11", "g-1"), 2: ("ob11", None)}
 
@@ -183,7 +183,7 @@ class GetMessageImagesContractTests(unittest.TestCase):
         self.assertEqual(self._reasons(private_blocks), ["cache_miss"])
 
     def test_adapter_or_group_mismatch_is_not_found(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.routing import CallerScope
+        from nonebot_plugin_agent_adapter.core.routing import CallerScope
 
         owners = {1: ("ob11", "g-1"), 2: ("ob11", None)}
 

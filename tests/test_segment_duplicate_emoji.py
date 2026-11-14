@@ -30,11 +30,11 @@ sys.path.insert(0, str(ROOT))
 from tests import _bootstrap  # noqa: E402,F401
 from tests import test_runs_terminal as _e2  # noqa: E402
 
-from nonebot_plugin_hermes_adapter.config import plugin_config  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers import message_turns as mt  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers import message_feedback as mf  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers.message_feedback import (  # noqa: E402
+from nonebot_plugin_agent_adapter.config import plugin_config  # noqa: E402
+from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_turns as mt  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_feedback as mf  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers.message_feedback import (  # noqa: E402
     _emoji_like_quiet,
 )
 
@@ -178,7 +178,7 @@ class RunsClientToHookTests(unittest.IsolatedAsyncioTestCase):
         try:
             async with real_client(transport=transport) as client:
                 with patch(
-                    "nonebot_plugin_hermes_adapter.core.hermes_client._get_http_client",
+                    "nonebot_plugin_agent_adapter.core.hermes_client._get_http_client",
                     lambda: client,
                 ):
                     result = await mt.hermes_client.chat(

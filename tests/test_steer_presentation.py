@@ -28,27 +28,27 @@ sys.path.insert(0, str(ROOT))
 from tests import _bootstrap  # noqa: E402,F401
 from tests._regions import is_region, region_rows, wrap_region  # noqa: E402
 
-from nonebot_plugin_hermes_adapter.core import steer_seen  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.inflight import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import steer_seen  # noqa: E402
+from nonebot_plugin_agent_adapter.core.inflight import (  # noqa: E402
     InflightRegistry,
     PendingEntry,
     make_inflight_key,
 )
-from nonebot_plugin_hermes_adapter.core.message_buffer import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_buffer import (  # noqa: E402
     BufferedMessage,
     iter_message_media,
     media_label,
 )
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.prompt_builder import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin  # noqa: E402
+from nonebot_plugin_agent_adapter.core.prompt_builder import (  # noqa: E402
     _format_speaker_tag,
     render_steer_rows,
 )
-from nonebot_plugin_hermes_adapter.core.run_tracker import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.run_tracker import (  # noqa: E402
     RunTracker,
     make_scope_key,
 )
-from nonebot_plugin_hermes_adapter.handlers import message_relay as relay  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_relay as relay  # noqa: E402
 
 ADAPTER = "onebotv11"
 GROUP_ID = "g1"
@@ -224,7 +224,7 @@ class MediaTypingTests(unittest.TestCase):
     """P-08:触发 fragment 的 own／quote／forward 分型与感知入库同序同 idx。"""
 
     def _fragment(self):
-        from nonebot_plugin_hermes_adapter.handlers import message as message_mod
+        from nonebot_plugin_agent_adapter.handlers import message as message_mod
 
         with patch.object(message_mod, "_peek_event_db_id", lambda *a, **k: 501):
             return message_mod._build_current_fragment(
@@ -454,7 +454,7 @@ class FollowupSteerGateTests(_TrackerCase):
 
     def test_cross_source_merge_during_await_keeps_slot(self) -> None:
         """跨源合并(真人行 + 系统事件行)同样不得摘槽:正文不变,身份已变。"""
-        from nonebot_plugin_hermes_adapter.core.message_origin import MessageSource
+        from nonebot_plugin_agent_adapter.core.message_origin import MessageSource
 
         entry = self._followup(msg(user="u3", nickname="小周", content="我再补一句", m_id=114))
         content_before = entry.msg.content
@@ -517,8 +517,8 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
 
     async def _run_reactive_turn(self, result, *, tracker) -> InflightRegistry:
         """真实 `_run_reactive_turn`,只替换外部 I/O(与既有 harness 同形)。"""
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
-        from nonebot_plugin_hermes_adapter.core import prompt_builder
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.core import prompt_builder
 
         registry = InflightRegistry()
         cfg = MagicMock()
@@ -593,7 +593,7 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
         return registry
 
     async def test_native_recovery_restores_authors_in_order(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         pending_text = await self._record_multi_author_steer()
         result = ChatResult(raw_text="", pending_steer=pending_text)
@@ -613,7 +613,7 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
 
     async def test_negative_control_without_ledger_attributes_everything_to_trigger(self) -> None:
         """负对照:无可靠台账时只能整段 fallback —— 多作者被归给 run 发起者。"""
-        from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
+        from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
 
         pending_text = await self._record_multi_author_steer()
         empty_tracker = RunTracker(Path(tempfile.mkdtemp()) / "empty.db")
@@ -640,7 +640,7 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
             captured.append(text)
             return True
 
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
 
         for user, nickname, content, m_id in (
             ("u2", "小李", "先别开枪", 301),
@@ -673,7 +673,7 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
 
     async def test_partial_ledger_match_falls_back_whole_segment(self) -> None:
         """部分命中不做半还原:宁可作者回退,也不让未命中正文从呈递中消失。"""
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
 
         pending_text = await self._record_multi_author_steer()
         with patch.object(mt, "_mcp", _runtime(self.tracker)):
@@ -708,14 +708,14 @@ class RecoveryTextSourceTests(unittest.TestCase):
 
     @staticmethod
     def _conv() -> str:
-        from nonebot_plugin_hermes_adapter.handlers.message_relay import (
+        from nonebot_plugin_agent_adapter.handlers.message_relay import (
             _STEER_REPLY_CONVENTION_LINE,
         )
 
         return _STEER_REPLY_CONVENTION_LINE
 
     def test_body_quoting_convention_line_is_not_stripped(self) -> None:
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
 
         conv = self._conv()
         body = "用户正在引用：\n" + conv + "\n请解释这行，不要删除。"
@@ -727,7 +727,7 @@ class RecoveryTextSourceTests(unittest.TestCase):
         self.assertEqual([m["m_id"] for m in matched], ["1"])
 
     def test_matcher_skips_convention_line_only_between_batches(self) -> None:
-        from nonebot_plugin_hermes_adapter.handlers import message_turns as mt
+        from nonebot_plugin_agent_adapter.handlers import message_turns as mt
 
         conv = self._conv()
         first = "[m:1] [普通用户] [id=u1 user=甲]:\n甲"
@@ -741,7 +741,7 @@ class RecoveryTextSourceTests(unittest.TestCase):
         self.assertEqual([m["m_id"] for m in matched], ["1", "2"])
 
     def test_strip_convention_keeps_body_trailing_newlines(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.steer_reconcile import _strip_convention
+        from nonebot_plugin_agent_adapter.core.steer_reconcile import _strip_convention
 
         conv = self._conv()
         body = "原文尾部有两个换行\n\n"
@@ -749,7 +749,7 @@ class RecoveryTextSourceTests(unittest.TestCase):
         self.assertEqual(_strip_convention(body), body, "没有约定行时原样返回")
 
     def test_empty_raw_text_is_original_not_missing(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.steer_reconcile import original_text_of
+        from nonebot_plugin_agent_adapter.core.steer_reconcile import original_text_of
 
         self.assertEqual(
             original_text_of({"m_id": "9", "raw_text": "", "steer_text": "[m:9]:\n"}),

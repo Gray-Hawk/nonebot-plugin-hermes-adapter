@@ -15,7 +15,7 @@ os.environ["AGENT_PLUGIN_CUSTOM_DIR"] = str(_ROOT / "cfg")
 (_ROOT / "cfg").mkdir()
 
 from tests import _bootstrap  # noqa: F401,E402
-from nonebot_plugin_hermes_adapter.mcp import server  # noqa: E402
+from nonebot_plugin_agent_adapter.mcp import server  # noqa: E402
 
 
 class ControlMcpRegistrationTests(unittest.TestCase):

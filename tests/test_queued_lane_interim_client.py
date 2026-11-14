@@ -34,8 +34,14 @@ from tests.test_runs_stream import real_chat  # noqa: E402
 from tests.test_runs_terminal import _ReactiveHarness  # noqa: E402
 
 # 线上装的那一份(本项目主实例 NeonBot 的 venv)。对照用例比的是它，不是本工作树。
-_DEPLOYED_SITE = (
-    "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot_plugin_hermes_adapter"
+# 生产冷迁移未做，部署目录仍是旧名：新目录优先、旧名兜底；迁移完成后删掉旧条目。
+_DEPLOYED_SITE_CANDIDATES = (
+    "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot_plugin_agent_adapter",
+    "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot_plugin_hermes_adapter",
+)
+_DEPLOYED_SITE = next(
+    (path for path in _DEPLOYED_SITE_CANDIDATES if Path(path).is_dir()),
+    _DEPLOYED_SITE_CANDIDATES[0],
 )
 
 
@@ -108,8 +114,8 @@ class QueuedLaneInterimClientTest(_ReactiveHarness):
     """真客户端 + 真 processor + 真发送计划，只替平台出口。"""
 
     def setUp(self) -> None:
-        from nonebot_plugin_hermes_adapter.config import plugin_config
-        from nonebot_plugin_hermes_adapter.core import hermes_client as hc
+        from nonebot_plugin_agent_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.core import hermes_client as hc
 
         previous = plugin_config.hermes_api_interface
         object.__setattr__(plugin_config, "hermes_api_interface", "runs")
@@ -126,8 +132,8 @@ class QueuedLaneInterimClientTest(_ReactiveHarness):
         """One real reactive turn; ``chat`` is the real client with only HTTP replaced."""
         import tempfile
 
-        from nonebot_plugin_hermes_adapter.core import hermes_client as hc
-        from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker
+        from nonebot_plugin_agent_adapter.core import hermes_client as hc
+        from nonebot_plugin_agent_adapter.core.run_tracker import RunTracker
 
         # A bare ledger: the run row is created by the real client's own submit/register
         # (pre-registering the same run id would collide on run_submissions.run_id, which is

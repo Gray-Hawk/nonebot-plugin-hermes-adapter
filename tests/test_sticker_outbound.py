@@ -10,8 +10,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from tests import _bootstrap  # noqa: F401
-from nonebot_plugin_hermes_adapter.core.sticker_library import StickerLibrary
-from nonebot_plugin_hermes_adapter.core import outbound, sticker_library
+from nonebot_plugin_agent_adapter.core.sticker_library import StickerLibrary
+from nonebot_plugin_agent_adapter.core import outbound, sticker_library
 
 
 PNG = base64.b64decode(

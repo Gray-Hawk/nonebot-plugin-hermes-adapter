@@ -21,13 +21,13 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.core import decision_contract, prompt_builder  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import task_notes  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.storage.window_store import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import decision_contract, prompt_builder  # noqa: E402
+from nonebot_plugin_agent_adapter.core import task_notes  # noqa: E402
+from nonebot_plugin_agent_adapter.core.storage.window_store import (  # noqa: E402
     session_from_payload,
     session_to_payload,
 )
-from nonebot_plugin_hermes_adapter.handlers import message_feedback  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_feedback  # noqa: E402
 
 
 class RemovedFieldHygieneTests(unittest.TestCase):
@@ -42,7 +42,7 @@ class RemovedFieldHygieneTests(unittest.TestCase):
             self.assertNotIn("background_task", rendered)
 
     def test_prompts_do_not_offer_background_task(self) -> None:
-        from nonebot_plugin_hermes_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.config import plugin_config
 
         previous = plugin_config.hermes_api_interface
         try:
@@ -70,7 +70,7 @@ class RemovedFieldHygieneTests(unittest.TestCase):
 
     def test_legacy_control_line_is_not_a_body(self) -> None:
         # 旧信封控制行不再有语义，也不再算正文：没有分节符就一条都不发。
-        from nonebot_plugin_hermes_adapter.core.runs_text import units_from_text
+        from nonebot_plugin_agent_adapter.core.runs_text import units_from_text
 
         legacy = '{"legacy_unknown":"收尾"}\n{"body":"正文"}'
         self.assertEqual(units_from_text(legacy), [])
@@ -78,7 +78,7 @@ class RemovedFieldHygieneTests(unittest.TestCase):
         self.assertEqual([u["body"] for u in units_from_text(f"§\n{legacy}\n§")], [legacy])
 
     def test_retired_background_task_field_is_gone_from_control(self) -> None:
-        from nonebot_plugin_hermes_adapter.core import control_intent
+        from nonebot_plugin_agent_adapter.core import control_intent
 
         decision = {"background_task": "旧便签", "_control": {"reply_to": "m:1"}}
         effective = control_intent.resolve_control(decision)

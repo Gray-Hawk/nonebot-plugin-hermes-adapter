@@ -29,22 +29,22 @@ sys.path.insert(0, str(ROOT))
 from tests import _bootstrap  # noqa: E402,F401
 from tests._regions import region_rows, wrap_region  # noqa: E402
 
-from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import steer_reconcile  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import user_lists  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.inflight import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import prompt_builder as pb  # noqa: E402
+from nonebot_plugin_agent_adapter.core import steer_reconcile  # noqa: E402
+from nonebot_plugin_agent_adapter.core import user_lists  # noqa: E402
+from nonebot_plugin_agent_adapter.core.inflight import (  # noqa: E402
     InflightRegistry,
     PendingEntry,
     make_inflight_key,
 )
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.run_tracker import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin  # noqa: E402
+from nonebot_plugin_agent_adapter.core.run_tracker import (  # noqa: E402
     RunTracker,
     make_scope_key,
 )
-from nonebot_plugin_hermes_adapter.handlers import message_relay as relay  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers import message_turns as turns  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_relay as relay  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import message_turns as turns  # noqa: E402
 
 ADAPTER = "onebotv11"
 SELF_ID = "999"

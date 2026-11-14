@@ -73,7 +73,7 @@ PRIVATE_USER = "123"
 
 
 def _plugin_config_override(testcase: unittest.TestCase, **overrides) -> None:
-    from nonebot_plugin_hermes_adapter.config import plugin_config
+    from nonebot_plugin_agent_adapter.config import plugin_config
 
     saved = {name: getattr(plugin_config, name) for name in overrides}
     for name, value in overrides.items():
@@ -98,7 +98,7 @@ def mcp_config(testcase: unittest.TestCase, *, enabled: bool = True) -> None:
 
 def build_app(**kwargs):
     """真 `build_mcp_app`，只截获 FastMCP 实例以便读注册表／当 in-process server 用。"""
-    from nonebot_plugin_hermes_adapter.mcp import server
+    from nonebot_plugin_agent_adapter.mcp import server
 
     real_factory = server.FastMCP
     holder: dict = {}
@@ -127,7 +127,7 @@ def registered_tools(**kwargs) -> dict:
 
 
 def product_tool_names() -> tuple[str, ...]:
-    from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+    from nonebot_plugin_agent_adapter.backends.antigravity.client import (
         ANTIGRAVITY_MCP_TOOL_NAMES,
     )
 
@@ -433,7 +433,7 @@ class GetMessageFilesScopeTests(unittest.TestCase):
         self.base = Path(self.tmp.name)
 
     def _impl(self, refs, *, store, cache=None, downloader=None, scope, resolver=None):
-        from nonebot_plugin_hermes_adapter.mcp.tools.get_message_files import (
+        from nonebot_plugin_agent_adapter.mcp.tools.get_message_files import (
             GetMessageFilesInput,
             get_message_files_impl,
         )
@@ -473,7 +473,7 @@ class GetMessageFilesScopeTests(unittest.TestCase):
         self.assertEqual(store.updates, [])
 
     def test_group_and_private_refs_of_an_allowed_caller_reach_the_download_step(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.routing import CallerScope
+        from nonebot_plugin_agent_adapter.core.routing import CallerScope
 
         targets = {1: ("onebotv11", GROUP, PRIVATE_USER), 2: ("onebotv11", None, PRIVATE_USER)}
         files = {
@@ -495,14 +495,14 @@ class GetMessageFilesScopeTests(unittest.TestCase):
             self.assertIsNone(item.local_path, "下载失败不得返回半截路径")
 
     def test_unknown_message_id_is_indistinguishable_from_missing(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.routing import CallerScope
+        from nonebot_plugin_agent_adapter.core.routing import CallerScope
 
         store = _Store({1: ("onebotv11", GROUP, PRIVATE_USER)}, {1: []})
         result = self._impl([(1, 0), (99, 0)], store=store, scope=CallerScope.uniform())
         self.assertEqual([item.reason for item in result.results], ["not_found", "not_found"])
 
     def test_cached_file_returns_the_local_path_for_the_model(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.routing import CallerScope
+        from nonebot_plugin_agent_adapter.core.routing import CallerScope
 
         cached = self.base / "cache-canary.txt"
         cached.write_text("ACP2C3-FILE-CANARY", encoding="utf-8")
@@ -526,7 +526,7 @@ class GetMessageFilesScopeTests(unittest.TestCase):
     def test_input_model_caps_refs_at_four(self) -> None:
         from pydantic import ValidationError
 
-        from nonebot_plugin_hermes_adapter.mcp.tools.get_message_files import (
+        from nonebot_plugin_agent_adapter.mcp.tools.get_message_files import (
             GetMessageFilesInput,
         )
 

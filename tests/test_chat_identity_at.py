@@ -27,14 +27,14 @@ from tests import _bootstrap  # noqa: E402,F401
 
 import nonebot_plugin_alconna as alconna  # noqa: E402
 
-from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import user_lists  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers.message_media import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import prompt_builder as pb  # noqa: E402
+from nonebot_plugin_agent_adapter.core import user_lists  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers.message_media import (  # noqa: E402
     _collect_at_targets,
 )
-from nonebot_plugin_hermes_adapter.core.storage.message_store import MessageStore  # noqa: E402
+from nonebot_plugin_agent_adapter.core.storage.message_store import MessageStore  # noqa: E402
 
 SELF_ID = "999"
 ADAPTER = "onebotv11"
@@ -64,7 +64,7 @@ def bot_row(
 
 def system_row(label: str = "戳一戳") -> BufferedMessage:
     """合成系统行（无人类身份、无 m:id）。"""
-    from nonebot_plugin_hermes_adapter.core.message_origin import MessageSource
+    from nonebot_plugin_agent_adapter.core.message_origin import MessageSource
 
     return BufferedMessage(
         ts=1, adapter=ADAPTER, group_id=GROUP, user_id="0", nickname="",

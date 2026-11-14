@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.core.storage.session_key_store import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.storage.session_key_store import (  # noqa: E402
     SessionKeyStore,
 )
 
@@ -85,7 +85,7 @@ class ACPAgentArgvTests(unittest.TestCase):
     """`--agent` 只走独立 argv 项；缺省空串必须保持官方默认命令不变。"""
 
     def test_default_args_have_no_agent_flag(self) -> None:
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             DEFAULT_ACP_ARGS,
             build_acp_args,
         )
@@ -95,7 +95,7 @@ class ACPAgentArgvTests(unittest.TestCase):
         )
 
     def test_configured_agent_is_appended_as_a_separate_argv_pair(self) -> None:
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             DEFAULT_ACP_ARGS,
             build_acp_args,
         )
@@ -106,7 +106,7 @@ class ACPAgentArgvTests(unittest.TestCase):
         )
 
     def test_agent_with_spaces_and_specials_stays_a_single_argv_item(self) -> None:
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             DEFAULT_ACP_ARGS,
             build_acp_args,
         )
@@ -118,7 +118,7 @@ class ACPAgentArgvTests(unittest.TestCase):
         self.assertEqual(args[-2:], ("--agent", agent))
 
     def test_blank_agent_config_keeps_official_default(self) -> None:
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             DEFAULT_ACP_ARGS,
             build_acp_args,
         )
@@ -133,7 +133,7 @@ class AntigravityAgentConfigTests(unittest.TestCase):
     """配置面：AGENT_ANTIGRAVITY_PERSONA 缺省空串，并接到 ACP 客户端。"""
 
     def test_config_exposes_agent_with_empty_default(self) -> None:
-        from nonebot_plugin_hermes_adapter.config import Config
+        from nonebot_plugin_agent_adapter.config import Config
 
         defaults = Config()
         self.assertEqual(defaults.hermes_antigravity_persona, "")
@@ -143,8 +143,8 @@ class AntigravityAgentConfigTests(unittest.TestCase):
         self.assertEqual(validated.hermes_antigravity_persona, "nano")
 
     def test_get_client_passes_configured_agent_to_the_acp_client(self) -> None:
-        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
-        from nonebot_plugin_hermes_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.backends.antigravity import client as ag
+        from nonebot_plugin_agent_adapter.config import plugin_config
 
         previous = plugin_config.hermes_antigravity_persona
         object.__setattr__(plugin_config, "hermes_antigravity_persona", "nano")
@@ -182,7 +182,7 @@ class FakeACPBase(unittest.IsolatedAsyncioTestCase):
             await client.close()
 
     def make_client(self, **kwargs):
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             AntigravityACPClient,
         )
 
@@ -268,10 +268,10 @@ class ACPWorkspacePathTests(unittest.TestCase):
     """ACP cwd 会随 session/new 与 resume 发给外部后端：目录名不得带插件/后端身份。"""
 
     def test_workspace_is_a_neutral_sibling_of_the_plugin_data_dir(self) -> None:
-        from nonebot_plugin_hermes_adapter import config
-        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+        from nonebot_plugin_agent_adapter import config
+        from nonebot_plugin_agent_adapter.backends.antigravity import client as ag
 
-        base = Path("/srv/nb-data/nonebot_plugin_hermes_adapter")
+        base = Path("/srv/nb-data/nonebot_plugin_agent_adapter")
         with patch.object(config, "resolve_custom_dir", lambda: base):
             workspace = ag._acp_workspace()
             again = ag._acp_workspace()
@@ -282,8 +282,8 @@ class ACPWorkspacePathTests(unittest.TestCase):
         self.assertNotIn("hermes", str(workspace).lower())
 
     def test_workspace_falls_back_to_a_neutral_temp_dir(self) -> None:
-        from nonebot_plugin_hermes_adapter import config
-        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+        from nonebot_plugin_agent_adapter import config
+        from nonebot_plugin_agent_adapter.backends.antigravity import client as ag
 
         with patch.object(config, "resolve_custom_dir", lambda: None):
             workspace = ag._acp_workspace()
@@ -291,7 +291,7 @@ class ACPWorkspacePathTests(unittest.TestCase):
         self.assertEqual(workspace.name, "acp-workspace")
         # 只有插件/后端身份成分要断言：本机 TMPDIR 在 `~/.hermes/…` 下，
         # 对整串做 blanket "hermes" 断言会把家目录误判成泄漏。
-        self.assertNotIn("nonebot_plugin_hermes_adapter", str(workspace).lower())
+        self.assertNotIn("nonebot_plugin_agent_adapter", str(workspace).lower())
 
 
 class ACPHandshakeTests(FakeACPBase):
@@ -343,10 +343,10 @@ class ACPHandshakeTests(FakeACPBase):
 
     async def test_new_and_resume_send_the_neutral_workspace_as_cwd(self) -> None:
         """真 wire：new/resume 的 cwd 都是中性目录，且 ACP 子进程确实在该目录启动。"""
-        from nonebot_plugin_hermes_adapter import config
-        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+        from nonebot_plugin_agent_adapter import config
+        from nonebot_plugin_agent_adapter.backends.antigravity import client as ag
 
-        base = self.tmp / "data" / "nonebot_plugin_hermes_adapter"
+        base = self.tmp / "data" / "nonebot_plugin_agent_adapter"
         base.mkdir(parents=True)
         with patch.object(config, "resolve_custom_dir", lambda: base):
             workspace = ag._acp_workspace()
@@ -366,7 +366,7 @@ class ACPHandshakeTests(FakeACPBase):
         self.assertEqual(resume_cwd, expected)
         self.assertEqual(Path(new_cwd).parent, base.parent, "cwd 必须是数据目录的同级")
         self.assertEqual(Path(new_cwd).name, "acp-workspace")
-        self.assertNotIn("nonebot_plugin_hermes_adapter", new_cwd.lower())
+        self.assertNotIn("nonebot_plugin_agent_adapter", new_cwd.lower())
         self.assertTrue(Path(new_cwd).is_dir(), "ACP 子进程的工作目录必须已创建")
 
     async def test_thought_and_plan_updates_never_reach_body(self) -> None:
@@ -437,7 +437,7 @@ class ACPWorkspaceMigrationTests(FakeACPBase):
     flags = ("--persist-sessions",)
 
     async def test_session_created_under_the_old_cwd_resumes_under_the_new_one(self) -> None:
-        old = self.tmp / "data" / "nonebot_plugin_hermes_adapter" / "antigravity-workspace"
+        old = self.tmp / "data" / "nonebot_plugin_agent_adapter" / "antigravity-workspace"
         new = self.tmp / "data" / "acp-workspace"
 
         first = self.make_client(workspace=old)
@@ -458,7 +458,7 @@ class ACPWorkspaceMigrationTests(FakeACPBase):
         self.assertEqual(resume["sessionId"], session_id)
         self.assertEqual(resume["cwd"], str(new))
         self.assertEqual(Path(resume["cwd"]).name, "acp-workspace")
-        self.assertNotIn("nonebot_plugin_hermes_adapter", resume["cwd"].lower())
+        self.assertNotIn("nonebot_plugin_agent_adapter", resume["cwd"].lower())
         self.assertNotIn("antigravity-workspace", resume["cwd"])
         self.assertEqual(self.store.load_acp_session("k1")[0], session_id)
 
@@ -525,9 +525,9 @@ class HermesAntigravityChatTests(FakeACPBase):
         super().setUp()
         from unittest.mock import patch
 
-        from nonebot_plugin_hermes_adapter import mcp as mcp_module
-        from nonebot_plugin_hermes_adapter.config import plugin_config
-        from nonebot_plugin_hermes_adapter.core import hermes_client as hc
+        from nonebot_plugin_agent_adapter import mcp as mcp_module
+        from nonebot_plugin_agent_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.core import hermes_client as hc
 
         self.patch = patch
         self.hc = hc
@@ -543,7 +543,7 @@ class HermesAntigravityChatTests(FakeACPBase):
     async def _chat(self, client, content: object = "你好", **overrides):
         from types import SimpleNamespace
 
-        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+        from nonebot_plugin_agent_adapter.backends.antigravity import client as ag
 
         kwargs = dict(
             text="",
@@ -644,7 +644,7 @@ class HermesAntigravityChatTests(FakeACPBase):
 
 class AntigravityPromptTests(unittest.TestCase):
     def setUp(self) -> None:
-        from nonebot_plugin_hermes_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.config import plugin_config
 
         self._previous = plugin_config.hermes_api_interface
         object.__setattr__(plugin_config, "hermes_api_interface", "antigravity")
@@ -677,7 +677,7 @@ class AntigravityPromptTests(unittest.TestCase):
             self.assertNotIn(token, prompt, f"{token} 不应出现在 antigravity 系统提示里")
 
     def test_reactive_prompt_keeps_group_rules_without_tools(self) -> None:
-        from nonebot_plugin_hermes_adapter.core import prompt_builder as pb
+        from nonebot_plugin_agent_adapter.core import prompt_builder as pb
 
         prompt = pb.build_reactive_system_prompt(
             adapter="onebotv11", group_id="462540549", self_id="2968545011",
@@ -688,7 +688,7 @@ class AntigravityPromptTests(unittest.TestCase):
         self.assertIn("<session_context>", prompt)
 
     def test_passive_prompt_keeps_private_rules_without_tools(self) -> None:
-        from nonebot_plugin_hermes_adapter.core import prompt_builder as pb
+        from nonebot_plugin_agent_adapter.core import prompt_builder as pb
 
         prompt = pb.build_passive_system_prompt(
             adapter="onebotv11", is_private=True, user_id="10001", group_id=None,
@@ -701,7 +701,7 @@ class AntigravityPromptTests(unittest.TestCase):
 
 class AntigravityConfigGateTests(unittest.TestCase):
     def setUp(self) -> None:
-        from nonebot_plugin_hermes_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.config import plugin_config
 
         self._previous = plugin_config.hermes_api_interface
         object.__setattr__(plugin_config, "hermes_api_interface", "antigravity")
@@ -712,7 +712,7 @@ class AntigravityConfigGateTests(unittest.TestCase):
     def test_config_accepts_antigravity_with_minimal_new_fields(self) -> None:
         from typing import get_args
 
-        from nonebot_plugin_hermes_adapter.config import Config
+        from nonebot_plugin_agent_adapter.config import Config
 
         annotation = Config.model_fields["hermes_api_interface"].annotation
         self.assertIn("antigravity", get_args(annotation))
@@ -721,7 +721,7 @@ class AntigravityConfigGateTests(unittest.TestCase):
         self.assertEqual(defaults.hermes_antigravity_model, "")
 
     def test_control_plane_is_closed_for_antigravity(self) -> None:
-        from nonebot_plugin_hermes_adapter.config import (
+        from nonebot_plugin_agent_adapter.config import (
             hermes_control_plane_enabled,
             steer_reply_push_active,
         )
@@ -730,14 +730,14 @@ class AntigravityConfigGateTests(unittest.TestCase):
         self.assertFalse(steer_reply_push_active())
 
     def test_background_reporting_is_closed_for_antigravity(self) -> None:
-        from nonebot_plugin_hermes_adapter.config import (
+        from nonebot_plugin_agent_adapter.config import (
             background_report_enabled,
         )
 
         self.assertFalse(background_report_enabled())
 
     def test_antigravity_passive_uses_decision_channel(self) -> None:
-        from nonebot_plugin_hermes_adapter.handlers.message_turns import (
+        from nonebot_plugin_agent_adapter.handlers.message_turns import (
             _passive_decision_enabled,
         )
 
@@ -747,7 +747,7 @@ class AntigravityConfigGateTests(unittest.TestCase):
 
 class AntigravityMediaGateTests(unittest.TestCase):
     def setUp(self) -> None:
-        from nonebot_plugin_hermes_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.config import plugin_config
 
         self._previous = plugin_config.hermes_api_interface
         object.__setattr__(plugin_config, "hermes_api_interface", "antigravity")
@@ -756,9 +756,9 @@ class AntigravityMediaGateTests(unittest.TestCase):
         )
 
     def test_history_media_is_not_inlined_for_text_only_backend(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage
-        from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin
-        from nonebot_plugin_hermes_adapter.handlers.message_turns import (
+        from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage
+        from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin
+        from nonebot_plugin_agent_adapter.handlers.message_turns import (
             _inline_media_window,
         )
 
@@ -777,9 +777,9 @@ class HermesAntigravityHealthTests(FakeACPBase):
         from types import SimpleNamespace
         from unittest.mock import patch
 
-        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
-        from nonebot_plugin_hermes_adapter.config import plugin_config
-        from nonebot_plugin_hermes_adapter.core import hermes_client as hc
+        from nonebot_plugin_agent_adapter.backends.antigravity import client as ag
+        from nonebot_plugin_agent_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.core import hermes_client as hc
 
         previous = plugin_config.hermes_api_interface
         object.__setattr__(plugin_config, "hermes_api_interface", "antigravity")
@@ -801,7 +801,7 @@ class HermesAntigravityHealthTests(FakeACPBase):
 
 class ACPClearSessionTests(FakeACPBase):
     async def test_clear_generation_opens_a_new_acp_session(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.session import SessionManager
+        from nonebot_plugin_agent_adapter.core.session import SessionManager
 
         manager = SessionManager()
         manager.bind_store(self.store)
@@ -840,7 +840,7 @@ class ACPTimeoutTests(FakeACPBase):
     flags = ("--hang-prompt",)
 
     async def test_timeout_cancels_the_prompt_and_raises_timeout(self) -> None:
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             ACPTimeoutError,
         )
 

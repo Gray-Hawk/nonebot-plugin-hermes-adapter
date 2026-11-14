@@ -26,29 +26,29 @@ from tests import test_runs_terminal as e2
 from tests.test_background_report_chain import build_board
 from tests.test_runs_stream import RunsEventParser, sse_lines
 
-from nonebot_plugin_hermes_adapter.config import plugin_config
-from nonebot_plugin_hermes_adapter.core import control_intent
-from nonebot_plugin_hermes_adapter.core.active_session import (
+from nonebot_plugin_agent_adapter.config import plugin_config
+from nonebot_plugin_agent_adapter.core import control_intent
+from nonebot_plugin_agent_adapter.core.active_session import (
     ActiveSessionManager,
     AnchorRecord,
     Participant,
 )
-from nonebot_plugin_hermes_adapter.core.hermes_client import ChatResult
-from nonebot_plugin_hermes_adapter.core.inflight import make_inflight_key
-from nonebot_plugin_hermes_adapter.core.kanban_report_source import KanbanReportSource, ingest_into
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin
-from nonebot_plugin_hermes_adapter.core.routing import CallerScope
-from nonebot_plugin_hermes_adapter.core.running_tasks import (
+from nonebot_plugin_agent_adapter.core.hermes_client import ChatResult
+from nonebot_plugin_agent_adapter.core.inflight import make_inflight_key
+from nonebot_plugin_agent_adapter.core.kanban_report_source import KanbanReportSource, ingest_into
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin
+from nonebot_plugin_agent_adapter.core.routing import CallerScope
+from nonebot_plugin_agent_adapter.core.running_tasks import (
     DelegationRunningSource,
     KanbanRunningSource,
 )
-from nonebot_plugin_hermes_adapter.core.background_report_outbox import BackgroundReportOutbox
-from nonebot_plugin_hermes_adapter.mcp.tools.background_status import (
+from nonebot_plugin_agent_adapter.core.background_report_outbox import BackgroundReportOutbox
+from nonebot_plugin_agent_adapter.mcp.tools.background_status import (
     GetBackgroundTasksInput,
     get_background_tasks_impl,
 )
-from nonebot_plugin_hermes_adapter.mcp.tools.control import (
+from nonebot_plugin_agent_adapter.mcp.tools.control import (
     SubmitControlInput,
     submit_control_impl,
 )
@@ -544,7 +544,7 @@ class _ControlTurnHarness(e2._ReactiveHarness):
         control_intent.CONTROL_QUEUE.register(GROUP_KEY, control)
 
     def _result(self, output: str):
-        from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text
+        from nonebot_plugin_agent_adapter.core.runs_text import decisions_from_text
 
         decisions = decisions_from_text(_body_of(output))
         result = ChatResult(

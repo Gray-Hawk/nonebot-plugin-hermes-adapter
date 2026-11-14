@@ -20,13 +20,13 @@ sys.path.insert(0, str(ROOT))
 from tests import _bootstrap  # noqa: E402,F401
 from tests import test_runs_terminal as e2  # noqa: E402
 
-from nonebot_plugin_hermes_adapter.config import plugin_config  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import control_intent  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.hermes_client import (  # noqa: E402
+from nonebot_plugin_agent_adapter.config import plugin_config  # noqa: E402
+from nonebot_plugin_agent_adapter.core import control_intent  # noqa: E402
+from nonebot_plugin_agent_adapter.core.hermes_client import (  # noqa: E402
     ChatResult,
     _normalize_astrbot_decision,
 )
-from nonebot_plugin_hermes_adapter.core.inflight import make_inflight_key  # noqa: E402
+from nonebot_plugin_agent_adapter.core.inflight import make_inflight_key  # noqa: E402
 
 
 def _astrbot_decision(**fields) -> dict:
@@ -82,7 +82,7 @@ class AstrbotClientPathBTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(object.__setattr__, plugin_config, "hermes_api_interface", previous)
 
     async def _chat(self, text: str) -> ChatResult:
-        from nonebot_plugin_hermes_adapter.core import hermes_client as hc
+        from nonebot_plugin_agent_adapter.core import hermes_client as hc
 
         completion = SimpleNamespace(text=text, attachments=[])
         with patch.object(

@@ -19,10 +19,10 @@ sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
 
-from nonebot_plugin_hermes_adapter.core import hermes_client as hc  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.session import SessionManager  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers import commands  # noqa: E402
-from nonebot_plugin_hermes_adapter.handlers.commands import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core import hermes_client as hc  # noqa: E402
+from nonebot_plugin_agent_adapter.core.session import SessionManager  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers import commands  # noqa: E402
+from nonebot_plugin_agent_adapter.handlers.commands import (  # noqa: E402
     compress_receipt_lines,
     handle_compress,
 )

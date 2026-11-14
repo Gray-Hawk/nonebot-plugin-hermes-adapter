@@ -33,7 +33,7 @@ from tests.acp_2b_harness import (  # noqa: E402
     wait_until as _wait_until,
 )
 
-from nonebot_plugin_hermes_adapter.core.storage.session_key_store import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.storage.session_key_store import (  # noqa: E402
     SessionKeyStore,
 )
 
@@ -59,7 +59,7 @@ class ACPPermissionClientTests(unittest.IsolatedAsyncioTestCase):
             await client.close()
 
     def make_client(self, *, flags=(), permission_timeout=None):
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             AntigravityACPClient,
         )
 
@@ -264,7 +264,7 @@ class ACPPermissionClientTests(unittest.IsolatedAsyncioTestCase):
 
 class ApprovalQueueBackendTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        from nonebot_plugin_hermes_adapter.core import approvals
+        from nonebot_plugin_agent_adapter.core import approvals
 
         self.approvals = approvals
         self._tmp = tempfile.TemporaryDirectory(prefix="acp-approvals-")
@@ -593,7 +593,7 @@ class ACPApprovalSettleRegressionTests(ACPHandlerHarness):
 
     async def test_settle_keeps_entry_when_reject_write_fails(self) -> None:
         """真正写帧失败不能当已结清：条目留单可重试，Runs 条目一律不动。"""
-        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+        from nonebot_plugin_agent_adapter.backends.antigravity import client as ag
 
         # 进程未启动：_send 直接失败 → 这是「真正发送失败」，不是「已结清」。
         client = self._client(reply="§\nOK\n§")
@@ -642,9 +642,9 @@ class ACPApprovalSettleRegressionTests(ACPHandlerHarness):
 
 class RunsApprovalRegressionTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        from nonebot_plugin_hermes_adapter.config import plugin_config
-        from nonebot_plugin_hermes_adapter.core import approvals
-        from nonebot_plugin_hermes_adapter.handlers import commands
+        from nonebot_plugin_agent_adapter.config import plugin_config
+        from nonebot_plugin_agent_adapter.core import approvals
+        from nonebot_plugin_agent_adapter.handlers import commands
 
         self.commands = commands
         self.approvals = approvals

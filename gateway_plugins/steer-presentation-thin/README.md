@@ -51,7 +51,7 @@ POST /v1/runs/{run_id}/steer
  "presentation": {"schema": "hermes.steer.presentation/1", "format": "chat_region"}}
 ```
 
-* NB 侧字面量在 `nonebot_plugin_hermes_adapter/core/steer_presentation.py`，两侧靠
+* NB 侧字面量在 `nonebot_plugin_agent_adapter/core/steer_presentation.py`，两侧靠
   `gateway_plugins/steer-presentation-thin/tests/test_plugin.py::SchemaParityTests` 与
   `tests/test_steer_region_presentation.py::ContractTests` 双向逐字比对。
 * 插件未装 / 版本不认识 → 上游丢弃多余字段，文本照旧被外壳包住：**回退安全，不丢内容**

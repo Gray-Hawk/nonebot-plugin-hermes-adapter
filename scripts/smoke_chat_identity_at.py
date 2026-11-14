@@ -36,15 +36,15 @@ finally:
 import nonebot  # noqa: E402
 
 nonebot.init()
-package = types.ModuleType("nonebot_plugin_hermes_adapter")
+package = types.ModuleType("nonebot_plugin_agent_adapter")
 package.__path__ = [str(ROOT)]
-package.__package__ = "nonebot_plugin_hermes_adapter"
-sys.modules.setdefault("nonebot_plugin_hermes_adapter", package)
+package.__package__ = "nonebot_plugin_agent_adapter"
+sys.modules.setdefault("nonebot_plugin_agent_adapter", package)
 
-from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
-from nonebot_plugin_hermes_adapter.core import user_lists  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin, MessageSource  # noqa: E402
+from nonebot_plugin_agent_adapter.core import prompt_builder as pb  # noqa: E402
+from nonebot_plugin_agent_adapter.core import user_lists  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_buffer import BufferedMessage  # noqa: E402
+from nonebot_plugin_agent_adapter.core.message_origin import MessageOrigin, MessageSource  # noqa: E402
 
 SELF = "2968545011"
 ADAPTER = "onebotv11"
@@ -189,7 +189,7 @@ print("私 current:", cur_priv)
 print("私 steer  :", st_priv)
 check("私聊:current 与 steer 逐字节一致", cur_priv == region_rows(st_priv))
 check("私聊单人行省略 speaker", cur_priv == "[m:602]:\n在吗")
-from nonebot_plugin_hermes_adapter.core import steer_reconcile  # noqa: E402
+from nonebot_plugin_agent_adapter.core import steer_reconcile  # noqa: E402
 stripped = steer_reconcile.original_text_of({"m_id": "401", "raw_text": "插一句\n(引用 主人(10001): 提及2968545011) [CQ:at,qq=2968545011] 我也说"})
 print("回收剥壳 →", repr(stripped))
 check("恢复改投逐字节读原文(零剥壳)",

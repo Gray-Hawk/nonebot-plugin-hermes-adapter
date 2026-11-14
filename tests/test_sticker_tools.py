@@ -14,9 +14,9 @@ from PIL import Image
 from tests import _bootstrap  # noqa: F401
 from mcp.types import ImageContent
 
-from nonebot_plugin_hermes_adapter.core.media_config import MediaConfig
-from nonebot_plugin_hermes_adapter.core.sticker_library import StickerLibrary
-from nonebot_plugin_hermes_adapter.mcp.tools.sticker_library import (
+from nonebot_plugin_agent_adapter.core.media_config import MediaConfig
+from nonebot_plugin_agent_adapter.core.sticker_library import StickerLibrary
+from nonebot_plugin_agent_adapter.mcp.tools.sticker_library import (
     preview_sticker_impl,
     search_sticker_library_impl,
 )

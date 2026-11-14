@@ -6,7 +6,7 @@ import unittest
 from PIL import Image
 
 from tests import _bootstrap  # noqa: F401
-from nonebot_plugin_hermes_adapter.core.image_inline import encode_image_frames_bytes
+from nonebot_plugin_agent_adapter.core.image_inline import encode_image_frames_bytes
 
 
 def make_gif(colors: list[tuple[int, int, int]]) -> bytes:

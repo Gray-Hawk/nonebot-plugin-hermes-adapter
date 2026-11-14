@@ -4,8 +4,8 @@ import inspect
 import unittest
 
 from tests import _bootstrap  # noqa: F401
-from nonebot_plugin_hermes_adapter.core.config_templates import CHAT_CONFIG_TEMPLATE, OLD_KEYS, load_yaml
-from nonebot_plugin_hermes_adapter.handlers.message import _debounce_arrive, _debounce_states
+from nonebot_plugin_agent_adapter.core.config_templates import CHAT_CONFIG_TEMPLATE, OLD_KEYS, load_yaml
+from nonebot_plugin_agent_adapter.handlers.message import _debounce_arrive, _debounce_states
 
 
 class GroupDebounceTests(unittest.TestCase):

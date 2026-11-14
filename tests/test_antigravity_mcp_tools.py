@@ -39,7 +39,7 @@ from tests.acp_2b_harness import (  # noqa: E402
     permission_frames as _permission_frames,
     wait_until as _wait_until,
 )
-from nonebot_plugin_hermes_adapter.core.storage.session_key_store import (  # noqa: E402
+from nonebot_plugin_agent_adapter.core.storage.session_key_store import (  # noqa: E402
     SessionKeyStore,
 )
 
@@ -81,7 +81,7 @@ def expected_mcp_servers(*, with_bearer: bool = True) -> list[dict]:
 
 def _plugin_config_override(testcase: unittest.TestCase, **overrides) -> None:
     """按用例覆盖 plugin_config 字段，并在结束后逐项还原。"""
-    from nonebot_plugin_hermes_adapter.config import plugin_config
+    from nonebot_plugin_agent_adapter.config import plugin_config
 
     saved = {name: getattr(plugin_config, name) for name in overrides}
     for name, value in overrides.items():
@@ -109,7 +109,7 @@ def mcp_config(testcase: unittest.TestCase, *, enabled: bool = True, key: str = 
 
 class McpToolTableTests(unittest.TestCase):
     def _tools(self, **kwargs) -> dict:
-        from nonebot_plugin_hermes_adapter.mcp import server
+        from nonebot_plugin_agent_adapter.mcp import server
 
         real_factory = server.FastMCP
         holder: dict = {}
@@ -162,7 +162,7 @@ class McpServerDefinitionTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
     def _servers(self, meta: dict) -> list[dict]:
-        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+        from nonebot_plugin_agent_adapter.backends.antigravity import client as ag
 
         return ag.mcp_servers_for_turn(meta)
 
@@ -175,7 +175,7 @@ class McpServerDefinitionTests(unittest.TestCase):
         }
 
     def test_group_turn_gets_scoped_bearer_definition(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.routing import (
+        from nonebot_plugin_agent_adapter.core.routing import (
             CallerScope,
             resolve_caller_scope,
         )
@@ -190,8 +190,8 @@ class McpServerDefinitionTests(unittest.TestCase):
         self.assertTrue(scope.allows("onebotv11", GROUP))
 
     def test_private_turn_gets_the_same_scoped_bearer_definition(self) -> None:
-        from nonebot_plugin_hermes_adapter.mcp.auth import private_scope_refusal
-        from nonebot_plugin_hermes_adapter.core.routing import resolve_caller_scope
+        from nonebot_plugin_agent_adapter.mcp.auth import private_scope_refusal
+        from nonebot_plugin_agent_adapter.core.routing import resolve_caller_scope
 
         mcp_config(self)
         servers = self._servers(self._turn_meta(private=True))
@@ -200,7 +200,7 @@ class McpServerDefinitionTests(unittest.TestCase):
         self.assertIsNone(private_scope_refusal("onebotv11", "123", scope))
 
     def test_dev_mode_has_no_authorization_header_and_still_identifies_caller(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.routing import CallerScope, resolve_caller_scope
+        from nonebot_plugin_agent_adapter.core.routing import CallerScope, resolve_caller_scope
 
         mcp_config(self, key="")
         servers = self._servers(self._turn_meta(private=True))
@@ -210,8 +210,8 @@ class McpServerDefinitionTests(unittest.TestCase):
 
     def test_foreign_bearer_is_refused(self) -> None:
         """跨 scope：不是本实例凭据的 Bearer 既认不出，也不能通过群/私范围判定。"""
-        from nonebot_plugin_hermes_adapter.core.routing import resolve_caller_scope
-        from nonebot_plugin_hermes_adapter.mcp.auth import private_scope_refusal, scope_refusal
+        from nonebot_plugin_agent_adapter.core.routing import resolve_caller_scope
+        from nonebot_plugin_agent_adapter.mcp.auth import private_scope_refusal, scope_refusal
 
         mcp_config(self)
         self.assertIsNone(resolve_caller_scope(f"Bearer {DUMMY_TOKEN}-other"))
@@ -221,7 +221,7 @@ class McpServerDefinitionTests(unittest.TestCase):
         self.assertIn("private chat", private_scope_refusal("onebotv11", "123", None) or "")
 
     def test_unresolved_scope_does_not_attach_mcp(self) -> None:
-        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+        from nonebot_plugin_agent_adapter.backends.antigravity import client as ag
 
         mcp_config(self)
         with patch.object(ag, "resolve_caller_scope", return_value=None):
@@ -239,7 +239,7 @@ class McpServerDefinitionTests(unittest.TestCase):
         self.assertEqual(self._servers(meta), [])
 
     def test_http_layer_rejects_a_foreign_bearer(self) -> None:
-        from nonebot_plugin_hermes_adapter.mcp import server
+        from nonebot_plugin_agent_adapter.mcp import server
 
         mcp_config(self)
         real_factory = server.FastMCP
@@ -299,7 +299,7 @@ class McpSessionDefinitionTests(unittest.IsolatedAsyncioTestCase):
             await client.close()
 
     def make_client(self) -> "object":
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             AntigravityACPClient,
         )
 
@@ -400,7 +400,7 @@ class McpSessionDefinitionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_token_never_reaches_client_logs(self) -> None:
         mcp_config(self)
-        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
+        from nonebot_plugin_agent_adapter.backends.antigravity import client as ag
 
         records: list[str] = []
 
@@ -436,7 +436,7 @@ class McpSessionDefinitionTests(unittest.IsolatedAsyncioTestCase):
 
 class McpAutoApprovalClientTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        from nonebot_plugin_hermes_adapter.core import approvals
+        from nonebot_plugin_agent_adapter.core import approvals
 
         self.approvals = approvals
         self._tmp = tempfile.TemporaryDirectory(prefix="acp2c1-perm-")
@@ -464,7 +464,7 @@ class McpAutoApprovalClientTests(unittest.IsolatedAsyncioTestCase):
             await client.close()
 
     def make_client(self, *, flags=(), start: bool = True):
-        from nonebot_plugin_hermes_adapter.backends.antigravity.client import (
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
             AntigravityACPClient,
         )
 
