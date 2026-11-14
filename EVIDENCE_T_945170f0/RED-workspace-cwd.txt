@@ -1,0 +1,52 @@
+11-14 18:20:23 [SUCCESS] nonebot | NoneBot is initializing...
+11-14 18:20:23 [INFO] nonebot | Current Env: prod
+FF11-14 18:20:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3628141 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpiet6h24g/data/nonebot_plugin_hermes_adapter/antigravity-workspace
+11-14 18:20:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3628143 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpiet6h24g/data/acp-workspace
+.11-14 18:20:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3628145 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp2itmp4kv/data/nonebot_plugin_hermes_adapter/antigravity-workspace
+F
+======================================================================
+FAIL: test_workspace_falls_back_to_a_neutral_temp_dir (tests.test_antigravity_acp.ACPWorkspacePathTests.test_workspace_falls_back_to_a_neutral_temp_dir)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/external-backend-sanitize-20261114/tests/test_antigravity_acp.py", line 291, in test_workspace_falls_back_to_a_neutral_temp_dir
+    self.assertEqual(workspace.name, "acp-workspace")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'antigravity-workspace' != 'acp-workspace'
+- antigravity-workspace
++ acp-workspace
+
+
+======================================================================
+FAIL: test_workspace_is_a_neutral_sibling_of_the_plugin_data_dir (tests.test_antigravity_acp.ACPWorkspacePathTests.test_workspace_is_a_neutral_sibling_of_the_plugin_data_dir)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/external-backend-sanitize-20261114/tests/test_antigravity_acp.py", line 279, in test_workspace_is_a_neutral_sibling_of_the_plugin_data_dir
+    self.assertEqual(workspace, base.parent / "acp-workspace")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: PosixPath('/srv/nb-data/nonebot_plugin_hermes_adapter/antigravity-workspace') != PosixPath('/srv/nb-data/acp-workspace')
+
+======================================================================
+FAIL: test_new_and_resume_send_the_neutral_workspace_as_cwd (tests.test_antigravity_acp.ACPHandshakeTests.test_new_and_resume_send_the_neutral_workspace_as_cwd)
+真 wire：new/resume 的 cwd 都是中性目录，且 ACP 子进程确实在该目录启动。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/external-backend-sanitize-20261114/tests/test_antigravity_acp.py", line 365, in test_new_and_resume_send_the_neutral_workspace_as_cwd
+    self.assertEqual(new_cwd, expected)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+AssertionError: '/hom[62 chars]mp4kv/data/nonebot_plugin_hermes_adapter/antigravity-workspace' != '/hom[62 chars]mp4kv/data/acp-workspace'
+- /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp2itmp4kv/data/nonebot_plugin_hermes_adapter/antigravity-workspace
+?                                                                              ^^^^^^^^ --------------------------------
++ /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp2itmp4kv/data/acp-workspace
+?                                                                              ^^
+
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.057s
+
+FAILED (failures=3)

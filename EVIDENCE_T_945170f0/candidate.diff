@@ -1,0 +1,367 @@
+diff --git a/backends/antigravity/client.py b/backends/antigravity/client.py
+index c0f4437..244c628 100644
+--- a/backends/antigravity/client.py
++++ b/backends/antigravity/client.py
+@@ -2,7 +2,7 @@
+ 
+ 只经官方 `agy acp`：一个插件实例一个懒启动进程（`--process-per-session`），
+ stdin/stdout 走 NDJSON JSON-RPC。本模块集中放进程、会话生命周期与事件归一化，
+-不引入后端抽象体系；HermesClient 只调用 `prompt()` 拿最终正文。
++不引入后端抽象体系；上层客户端只调用 `prompt()` 拿最终正文。
+ """
+ 
+ from __future__ import annotations
+@@ -23,7 +23,7 @@ from ...core.routing import CallerScope, resolve_caller_scope
+ from ...core.storage.session_key_store import SessionKeyStore
+ 
+ DEFAULT_ACP_ARGS: tuple[str, ...] = ("acp", "--process-per-session")
+-_CLIENT_INFO = {"name": "nonebot-plugin-hermes-adapter", "version": "0.1.0"}
++_CLIENT_INFO = {"name": "nonebot-acp-client", "version": "0.1.0"}
+ 
+ # 阶段2C1 起：ACP 反向 MCP 只暴露只读工具（同一个 HTTP 服务；其它后端仍全量）。
+ # 阶段2C3：第三个只读工具 `get_message_files` —— 模型拿 refs 换 FileCache 的 local_path，
+@@ -118,7 +118,7 @@ class ACPTimeoutError(ACPError):
+ class ACPCancelledError(ACPError):
+     """本轮被 `/run-stop` 取消：原 prompt 以 `stopReason=cancelled` 收尾。
+ 
+-    单独一类异常让 HermesClient 能映射 `ChatResult.is_interrupted=True`（被停 turn 走
++    单独一类异常让上层客户端能映射 `ChatResult.is_interrupted=True`（被停 turn 走
+     既有硬静默），不落成“调用失败”错误面。进程本身仍可继续复用。
+     """
+ 
+@@ -1269,12 +1269,22 @@ _client: AntigravityACPClient | None = None
+ 
+ 
+ def _acp_workspace() -> Path:
++    """ACP 进程 cwd 与 `session/new`／`session/resume` 的 cwd：插件数据目录的中性同级目录。
++
++    cwd 会原样进外部后端的会话参数（也是 ACP 子进程的工作目录），所以**不能**用
++    插件数据目录里的 `antigravity-workspace/`——那等于把插件目录名（本部署带着后端
++    身份）写进对方上下文，后端会据此反推出本侧后端名。取数据目录的同级
++    `acp-workspace/`：路径中性、由数据目录位置唯一确定，跨重启稳定；插件数据目录
++    本身不动。
++    """
+     from ...config import resolve_custom_dir
+ 
+     base = resolve_custom_dir()
+     if base is None:
+-        base = Path(tempfile.gettempdir()) / "nonebot_plugin_hermes_adapter"
+-    return Path(base) / "antigravity-workspace"
++        # 拿不到数据目录时退到临时目录；仍走中性子目录，避免 /tmp/acp-workspace
++        # 这类公共路径被别的用户预先占位。
++        return Path(tempfile.gettempdir()) / "nonebot_acp" / "acp-workspace"
++    return Path(base).parent / "acp-workspace"
+ 
+ 
+ def get_client() -> AntigravityACPClient:
+diff --git a/handlers/commands.py b/handlers/commands.py
+index cff4b0e..11e9558 100644
+--- a/handlers/commands.py
++++ b/handlers/commands.py
+@@ -190,8 +190,8 @@ def build_ping_message(ok: bool) -> str:
+     不附带内部接入点标签或路由信息。
+     """
+     if ok:
+-        return "🏓 pong! Hermes Agent 连接正常。"
+-    return "⚠️ 无法连接到 Hermes Agent，请检查 Gateway 是否正在运行。"
++        return "🏓 pong! AI 助手连接正常。"
++    return "⚠️ 无法连接到 AI 助手，请检查 Gateway 是否正在运行。"
+ 
+ 
+ async def probe_current_endpoint(adapter_name: str, is_private: bool, group_id: str | None) -> bool:
+@@ -297,9 +297,9 @@ def build_help_text(
+         text = header.strip("\n") + "\n\n命令：\n" + "\n".join(lines)
+     else:
+         if is_private:
+-            intro = "🤖 Hermes Agent 帮助\n\n直接发送消息即可与 AI 对话。\n\n命令：\n"
++            intro = "🤖 AI 助手帮助\n\n直接发送消息即可与 AI 对话。\n\n命令：\n"
+         else:
+-            intro = "🤖 Hermes Agent 帮助\n\n@我 发送消息即可与 AI 对话。\n\n命令：\n"
++            intro = "🤖 AI 助手帮助\n\n@我 发送消息即可与 AI 对话。\n\n命令：\n"
+         text = intro + "\n".join(lines)
+     if footer is not None:
+         text += "\n\n" + footer.strip("\n")
+diff --git a/mcp/tools/get_message_files.py b/mcp/tools/get_message_files.py
+index e698a49..89cb1ca 100644
+--- a/mcp/tools/get_message_files.py
++++ b/mcp/tools/get_message_files.py
+@@ -2,7 +2,7 @@
+ 
+ 与 get_message_images 同族的反向通道工具,但取回的是**文件**(群文件/私聊文件)
+ 而非图片字节:工具按需把附件下载进 FileCache,返回 file_name / local_path /
+-sha256 / actual_size 元数据,让 Hermes 端拿本地路径做后续处理。
++sha256 / actual_size 元数据,让调用方拿本地路径做后续处理。
+ 
+ 安全边界:
+ - 范围校验按行做:message_id 是自增小整数、可枚举,归属只能从 DB 反查
+diff --git a/mcp/tools/get_message_images.py b/mcp/tools/get_message_images.py
+index f25b480..294fce7 100644
+--- a/mcp/tools/get_message_images.py
++++ b/mcp/tools/get_message_images.py
+@@ -1,7 +1,7 @@
+ """get_message_images: 按消息 id 列表精确取回图字节。
+ 
+ 返回 MCP `content[]` 数组,混合 TextContent (元信息 JSON + 每图前的 marker)
+-与 ImageContent (实际 base64 图字节)。Hermes Agent 端 `tools/mcp_tool.py:2231`
++与 ImageContent (实际 base64 图字节)。调用方 `tools/mcp_tool.py:2231`
+ 会把 ImageContent 块缓存为 MEDIA:<path> 并注入下一轮 LLM 调用。
+ 
+ 返回结构示例:
+diff --git a/mcp/tools/get_recent_messages.py b/mcp/tools/get_recent_messages.py
+index 188f858..852f957 100644
+--- a/mcp/tools/get_recent_messages.py
++++ b/mcp/tools/get_recent_messages.py
+@@ -6,8 +6,8 @@
+     `group_id IS NULL` 的私聊行(MessageStore.get_recent 已有该 where 与索引),
+     只读目标 owner 的会话,不跨私聊串号。闸只有一条:调用方必须可识别。
+ 
+-返回每条消息的 `id` (DB 主键),供 Hermes 端后续调 `get_message_images`
+-按 id 取图字节。原 `image_urls: list[str]` 字段去掉 —— 让 Hermes 不要直接
++返回每条消息的 `id` (DB 主键),供调用方后续调 `get_message_images`
++按 id 取图字节。原 `image_urls: list[str]` 字段去掉 —— 让调用方不要直接
+ 读到 CDN 链接,统一走 MCP 工具拿字节(URL 可能短效,且能避免 prompt token 浪费)。
+ """
+ 
+diff --git a/tests/test_antigravity_acp.py b/tests/test_antigravity_acp.py
+index 65906d6..62c245a 100644
+--- a/tests/test_antigravity_acp.py
++++ b/tests/test_antigravity_acp.py
+@@ -14,6 +14,7 @@ import sys
+ import tempfile
+ import unittest
+ from pathlib import Path
++from unittest.mock import patch
+ 
+ ROOT = Path(__file__).resolve().parents[1]
+ sys.path.insert(0, str(ROOT))
+@@ -263,6 +264,36 @@ class ACPAgentSpawnTests(FakeACPBase):
+         self.assertEqual(len(argv), len(self.fixture_args()) + 2)
+ 
+ 
++class ACPWorkspacePathTests(unittest.TestCase):
++    """ACP cwd 会随 session/new 与 resume 发给外部后端：目录名不得带插件/后端身份。"""
++
++    def test_workspace_is_a_neutral_sibling_of_the_plugin_data_dir(self) -> None:
++        from nonebot_plugin_hermes_adapter import config
++        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
++
++        base = Path("/srv/nb-data/nonebot_plugin_hermes_adapter")
++        with patch.object(config, "resolve_custom_dir", lambda: base):
++            workspace = ag._acp_workspace()
++            again = ag._acp_workspace()
++
++        self.assertEqual(workspace, base.parent / "acp-workspace")
++        self.assertEqual(again, workspace, "同一数据目录必须给出同一 cwd（跨重启稳定）")
++        self.assertFalse(workspace.is_relative_to(base), "cwd 不得落在插件数据目录里")
++        self.assertNotIn("hermes", str(workspace).lower())
++
++    def test_workspace_falls_back_to_a_neutral_temp_dir(self) -> None:
++        from nonebot_plugin_hermes_adapter import config
++        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
++
++        with patch.object(config, "resolve_custom_dir", lambda: None):
++            workspace = ag._acp_workspace()
++
++        self.assertEqual(workspace.name, "acp-workspace")
++        # 只有插件/后端身份成分要断言：本机 TMPDIR 在 `~/.hermes/…` 下，
++        # 对整串做 blanket "hermes" 断言会把家目录误判成泄漏。
++        self.assertNotIn("nonebot_plugin_hermes_adapter", str(workspace).lower())
++
++
+ class ACPHandshakeTests(FakeACPBase):
+     async def test_lazy_process_then_initialize_new_session_and_prompt(self) -> None:
+         client = self.make_client()
+@@ -295,6 +326,49 @@ class ACPHandshakeTests(FakeACPBase):
+         self.assertEqual(prompt["params"]["sessionId"], acp_session_id)
+         self.assertEqual(prompt["params"]["prompt"], [{"type": "text", "text": "你好呀"}])
+ 
++    async def test_initialize_client_info_is_neutral_and_keeps_the_version(self) -> None:
++        """initialize.clientInfo 是插件写给外部 Agent 的可见身份，不得带后端名。"""
++        client = self.make_client()
++        await client.prompt(
++            session_key="k1", system_prompt="SYS", user_text="hi", store=self.store
++        )
++
++        initialize = self.entries("initialize")[0]
++        info = initialize["params"]["clientInfo"]
++        self.assertEqual(initialize["params"]["protocolVersion"], 1)
++        self.assertEqual(info["version"], "0.1.0", "协议版本字段不动")
++        self.assertTrue(info["name"], "客户端名不得为空")
++        self.assertNotIn("hermes", info["name"].lower(), info["name"])
++        self.assertTrue(info["name"].startswith("nonebot"), info["name"])
++
++    async def test_new_and_resume_send_the_neutral_workspace_as_cwd(self) -> None:
++        """真 wire：new/resume 的 cwd 都是中性目录，且 ACP 子进程确实在该目录启动。"""
++        from nonebot_plugin_hermes_adapter import config
++        from nonebot_plugin_hermes_adapter.backends.antigravity import client as ag
++
++        base = self.tmp / "data" / "nonebot_plugin_hermes_adapter"
++        base.mkdir(parents=True)
++        with patch.object(config, "resolve_custom_dir", lambda: base):
++            workspace = ag._acp_workspace()
++        client = self.make_client(workspace=workspace)
++
++        await client.prompt(
++            session_key="k1", system_prompt="SYS", user_text="one", store=self.store
++        )
++        await client.prompt(
++            session_key="k1", system_prompt="SYS", user_text="two", store=self.store
++        )
++
++        expected = str(base.parent / "acp-workspace")
++        new_cwd = self.entries("session/new")[0]["params"]["cwd"]
++        resume_cwd = self.entries("session/resume")[0]["params"]["cwd"]
++        self.assertEqual(new_cwd, expected)
++        self.assertEqual(resume_cwd, expected)
++        self.assertEqual(Path(new_cwd).parent, base.parent, "cwd 必须是数据目录的同级")
++        self.assertEqual(Path(new_cwd).name, "acp-workspace")
++        self.assertNotIn("nonebot_plugin_hermes_adapter", new_cwd.lower())
++        self.assertTrue(Path(new_cwd).is_dir(), "ACP 子进程的工作目录必须已创建")
++
+     async def test_thought_and_plan_updates_never_reach_body(self) -> None:
+         client = self.make_client()
+         text = await client.prompt(
+@@ -357,6 +431,38 @@ class ACPResumeTests(FakeACPBase):
+         self.assertEqual(self.entries("session/prompt")[0]["params"]["sessionId"], record[0])
+ 
+ 
++class ACPWorkspaceMigrationTests(FakeACPBase):
++    """升级换 cwd：旧会话（旧 `antigravity-workspace`）在新 cwd 下仍走 resume。"""
++
++    flags = ("--persist-sessions",)
++
++    async def test_session_created_under_the_old_cwd_resumes_under_the_new_one(self) -> None:
++        old = self.tmp / "data" / "nonebot_plugin_hermes_adapter" / "antigravity-workspace"
++        new = self.tmp / "data" / "acp-workspace"
++
++        first = self.make_client(workspace=old)
++        await first.prompt(
++            session_key="k1", system_prompt="SYS", user_text="one", store=self.store
++        )
++        session_id = self.store.load_acp_session("k1")[0]
++        await first.close()
++
++        # 升级后：新进程 + 新 cwd，acp_sessions 行仍是同一个 session
++        second = self.make_client(workspace=new)
++        await second.prompt(
++            session_key="k1", system_prompt="SYS", user_text="two", store=self.store
++        )
++
++        self.assertEqual(len(self.entries("session/new")), 1, "旧会话不因 cwd 变化被重建")
++        resume = self.entries("session/resume")[0]["params"]
++        self.assertEqual(resume["sessionId"], session_id)
++        self.assertEqual(resume["cwd"], str(new))
++        self.assertEqual(Path(resume["cwd"]).name, "acp-workspace")
++        self.assertNotIn("nonebot_plugin_hermes_adapter", resume["cwd"].lower())
++        self.assertNotIn("antigravity-workspace", resume["cwd"])
++        self.assertEqual(self.store.load_acp_session("k1")[0], session_id)
++
++
+ class ACPModelTests(FakeACPBase):
+     model = "gemini-3.8-flash-high"
+ 
+diff --git a/tests/test_antigravity_mcp_files.py b/tests/test_antigravity_mcp_files.py
+index 6a998d6..97b0323 100644
+--- a/tests/test_antigravity_mcp_files.py
++++ b/tests/test_antigravity_mcp_files.py
+@@ -154,6 +154,15 @@ class AntigravityToolWhitelistTests(unittest.TestCase):
+         for name in EXPECTED_AG_TOOL_NAMES:
+             self.assertIn(name, full)
+ 
++    def test_registered_tool_descriptions_do_not_name_the_upstream_backend(self) -> None:
++        """工具说明会被外部 Agent 原样读进上下文：只允许中性措辞。"""
++        tools = registered_tools(tool_names=product_tool_names())
++        self.assertEqual(tuple(tools), EXPECTED_AG_TOOL_NAMES)
++        for name, tool in tools.items():
++            description = tool.description or ""
++            self.assertTrue(description.strip(), f"{name} 的 description 为空")
++            self.assertNotIn("hermes", description.lower(), f"{name}: {description}")
++
+     def test_third_tool_definition_is_identical_in_filtered_and_default_tables(self) -> None:
+         """过滤只改注册集合，不改写第三个工具的描述与 schema。"""
+         full = registered_tools()
+diff --git a/tests/test_user_facing_neutral_text.py b/tests/test_user_facing_neutral_text.py
+new file mode 100644
+index 0000000..e2dff9c
+--- /dev/null
++++ b/tests/test_user_facing_neutral_text.py
+@@ -0,0 +1,79 @@
++"""用户可见文本的中性措辞回归：`/ping` 与内置 `/help`。
++
++产品口径：用户只看得到「AI 助手」，不写死某个后端名——换后端时 `/ping` 与
++`/help` 不能继续自称别的后端。包名、配置键、日志前缀与 Hermes 主后端是结构
++兼容面，**不在此断言范围**（也不得被本模块的措辞要求反向改掉）。
++
++只测两个纯拼装函数（`build_ping_message` / `build_help_text`），不启 bot、
++不发真实消息。
++"""
++
++from __future__ import annotations
++
++import os
++import sys
++import tempfile
++import unittest
++from pathlib import Path
++from unittest.mock import patch
++
++_SCRATCH = tempfile.TemporaryDirectory()
++_ROOT = Path(_SCRATCH.name)
++os.environ["LOCALSTORE_DATA_DIR"] = str(_ROOT / "data")
++os.environ["AGENT_PLUGIN_CUSTOM_DIR"] = str(_ROOT / "cfg")
++(_ROOT / "cfg").mkdir()
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT))
++
++from tests import _bootstrap  # noqa: E402,F401
++
++from nonebot_plugin_hermes_adapter.core.chat_config import ChatConfig  # noqa: E402
++from nonebot_plugin_hermes_adapter.handlers import commands  # noqa: E402
++
++
++class PingTextTests(unittest.TestCase):
++    def test_ping_texts_are_backend_neutral(self) -> None:
++        ok_text = commands.build_ping_message(True)
++        fail_text = commands.build_ping_message(False)
++
++        for text in (ok_text, fail_text):
++            self.assertNotIn("hermes", text.lower(), text)
++            self.assertIn("AI 助手", text)
++
++        # 既有可读形态与排障指向不变，只换称谓。
++        self.assertIn("pong", ok_text)
++        self.assertIn("Gateway", fail_text)
++
++
++class HelpTextTests(unittest.TestCase):
++    def setUp(self) -> None:
++        # 命令清单依赖 chat_config：钉住「空闲重置关闭」，命令表才确定。
++        patcher = patch.object(
++            commands, "load_chat_config", lambda: ChatConfig(session_idle_reset_sec=0)
++        )
++        patcher.start()
++        self.addCleanup(patcher.stop)
++
++    def test_help_texts_are_backend_neutral(self) -> None:
++        private = commands.build_help_text(True, False)
++        group = commands.build_help_text(False, False)
++
++        for text in (private, group):
++            self.assertNotIn("hermes", text.lower(), text)
++            self.assertIn("AI 助手帮助", text)
++            for name, title in (
++                ("clear", "重置对话"),
++                ("ping", "检查连接状态"),
++                ("help", "显示本帮助"),
++            ):
++                self.assertIn(f"{commands._display_cmd(name)} - {title}", text)
++            self.assertNotIn(commands._display_cmd("delay"), text)
++            self.assertNotIn("管理员", text)
++
++        self.assertIn("直接发送消息即可与 AI 对话", private)
++        self.assertIn("@我 发送消息即可与 AI 对话", group)
++
++
++if __name__ == "__main__":
++    unittest.main()

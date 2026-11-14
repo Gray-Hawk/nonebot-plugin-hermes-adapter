@@ -1,0 +1,46 @@
+=== backends/antigravity/client.py @ baseline 5989e14 ===
+5:不引入后端抽象体系；HermesClient 只调用 `prompt()` 拿最终正文。
+121:    单独一类异常让 HermesClient 能映射 `ChatResult.is_interrupted=True`（被停 turn 走
+=== backends/antigravity/client.py @ 候选 3f55b60 ===
+(none)
+
+=== handlers/commands.py @ baseline 5989e14 ===
+193:        return "🏓 pong! Hermes Agent 连接正常。"
+194:    return "⚠️ 无法连接到 Hermes Agent，请检查 Gateway 是否正在运行。"
+204:    """检查 Hermes 连接状态(当前会话自己的接入点)"""
+300:            intro = "🤖 Hermes Agent 帮助\n\n直接发送消息即可与 AI 对话。\n\n命令：\n"
+302:            intro = "🤖 Hermes Agent 帮助\n\n@我 发送消息即可与 AI 对话。\n\n命令：\n"
+399:        "🔍 Hermes Plugin M1-mem 状态",
+442:_HERMES_CONTROL_UNAVAILABLE = "当前 AstrBot 后端未提供此 Hermes 专用命令"
+669:    # 手动压缩针对"当前聊天所在会话";Runs 通道下这就是 X-Hermes-Session-Id 携带的值。
+=== handlers/commands.py @ 候选 3f55b60 ===
+204:    """检查 Hermes 连接状态(当前会话自己的接入点)"""
+399:        "🔍 Hermes Plugin M1-mem 状态",
+442:_HERMES_CONTROL_UNAVAILABLE = "当前 AstrBot 后端未提供此 Hermes 专用命令"
+669:    # 手动压缩针对"当前聊天所在会话";Runs 通道下这就是 X-Hermes-Session-Id 携带的值。
+
+=== mcp/tools/get_recent_messages.py @ baseline 5989e14 ===
+9:返回每条消息的 `id` (DB 主键),供 Hermes 端后续调 `get_message_images`
+10:按 id 取图字节。原 `image_urls: list[str]` 字段去掉 —— 让 Hermes 不要直接
+=== mcp/tools/get_recent_messages.py @ 候选 3f55b60 ===
+(none)
+
+=== mcp/tools/get_message_images.py @ baseline 5989e14 ===
+4:与 ImageContent (实际 base64 图字节)。Hermes Agent 端 `tools/mcp_tool.py:2231`
+=== mcp/tools/get_message_images.py @ 候选 3f55b60 ===
+(none)
+
+=== mcp/tools/get_message_files.py @ baseline 5989e14 ===
+5:sha256 / actual_size 元数据,让 Hermes 端拿本地路径做后续处理。
+=== mcp/tools/get_message_files.py @ 候选 3f55b60 ===
+(none)
+
+=== backends/antigravity/client.py 的 ACP cwd ===
+--- baseline 5989e14 ---
+1277:    return Path(base) / "antigravity-workspace"
+--- 候选 3f55b60 ---
+1275:    插件数据目录里的 `antigravity-workspace/`——那等于把插件目录名（本部署带着后端
+1277:    `acp-workspace/`：路径中性、由数据目录位置唯一确定，跨重启稳定；插件数据目录
+1284:        # 拿不到数据目录时退到临时目录；仍走中性子目录，避免 /tmp/acp-workspace
+1286:        return Path(tempfile.gettempdir()) / "nonebot_acp" / "acp-workspace"
+1287:    return Path(base).parent / "acp-workspace"
