@@ -22,6 +22,9 @@ reply-json is a JSON string (e.g. '"§\\n你好\\n§"'); flags:
     --error-model      answer session/set_model with JSON-RPC error -32602
     --gate-prompt=<p>  hold the prompt reply until file <p> exists (clear-fence
                        tests keep a normal prompt in flight while /clear runs)
+    --persist-sessions 把会话 ID 落到 `<log>.sessions`，模拟真实 agy 的跨进程会话库：
+                       front/worker 换进程后 `session/resume` 仍认得原 sessionId
+                       （阶段4重启回归用；缺省纯内存，既有用例语义不变）
 
 Streaming / steer scripts（阶段2A，离线夹具）:
     --chunks=<json>         首条 prompt 的 agent_message_chunk 序列
@@ -181,6 +184,44 @@ def _flag_value(prefix: str) -> str | None:
         if flag.startswith(prefix):
             return flag[len(prefix) :]
     return None
+
+
+def _persist_path() -> str:
+    """跨进程会话库落点；只有 `--persist-sessions` 才启用。
+
+    真实 `agy` 把会话落在 SQLite 里，front/worker 换进程后 `session/resume` 仍认得
+    同一 sessionId。夹具默认纯内存（既有用例语义不变），只有显式带上该 flag 时才把
+    `{sessionId: {...}}` 落到 `<log>.sessions`，让新进程如实复现「会话还在」。
+    """
+    return LOG_PATH + ".sessions" if "--persist-sessions" in FLAGS else ""
+
+
+def _load_persisted_sessions() -> None:
+    path = _persist_path()
+    if not path:
+        return
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    for session_id, info in data.items():
+        if isinstance(session_id, str):
+            _sessions[session_id] = info if isinstance(info, dict) else {}
+
+
+def _persist_sessions() -> None:
+    path = _persist_path()
+    if not path:
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(_sessions, handle, ensure_ascii=False)
+            handle.flush()
+    except OSError:
+        pass
 
 
 def _prompt_text(request: dict) -> str:
@@ -414,6 +455,7 @@ def handle_request(message: dict) -> None:
         with _count_lock:
             session_id = f"sess-{len(_sessions) + 1}"
             _sessions[session_id] = {"cwd": params.get("cwd"), "model": "default-model"}
+        _persist_sessions()
         send(
             {
                 "jsonrpc": "2.0",
@@ -486,6 +528,7 @@ def handle_request(message: dict) -> None:
 
 def main() -> None:
     log_argv()
+    _load_persisted_sessions()
     for line in sys.stdin:
         line = line.strip()
         if not line:
