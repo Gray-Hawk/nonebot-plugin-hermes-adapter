@@ -1,0 +1,102 @@
+11-14 14:39:02 [SUCCESS] nonebot | NoneBot is initializing...
+11-14 14:39:02 [INFO] nonebot | Current Env: prod
+== 基线（无变异）
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579096 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpv_5gsf2j
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579098 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpv_5gsf2j
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579100 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpdd7fl4p0
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579102 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpdd7fl4p0
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579105 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpeg0jwaj_
+11-14 14:39:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程结束 code=8
+----------------------------------------------------------------------
+Ran 3 tests in 0.076s
+
+OK
+[baseline] failures=0 errors=0
+== M1：_load_session 恒为 None（不读 acp_sessions，每次新建会话）
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579107 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpxyok2xr8
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579109 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpxyok2xr8
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579111 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp1n8v9ej4
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579113 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp1n8v9ej4
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579115 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpqoz1hkrt
+11-14 14:39:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程结束 code=8
+======================================================================
+FAIL: test_restart_resumes_the_same_session_and_repeats_mcp_servers (tests.test_antigravity_restart.RestartResumeContractTests.test_restart_resumes_the_same_session_and_repeats_mcp_servers)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp4-20261114/tests/test_antigravity_restart.py", line 254, in test_restart_resumes_the_same_session_and_repeats_mcp_servers
+    self.assertEqual(len(new), 1, "重启后必须 resume，不得新建会话")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 1 : 重启后必须 resume，不得新建会话
+
+======================================================================
+FAIL: test_restart_with_changed_system_prompt_appends_meta_only_that_turn (tests.test_antigravity_restart.RestartResumeContractTests.test_restart_with_changed_system_prompt_appends_meta_only_that_turn)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp4-20261114/tests/test_antigravity_restart.py", line 283, in test_restart_with_changed_system_prompt_appends_meta_only_that_turn
+    self.assertEqual(len(resume), 1)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.071s
+
+FAILED (failures=2)
+[M1] failures=2 errors=0
+== M2：进程死亡被当成功（吞掉 ACPProcessError，半截正文当终态）
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579117 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpcbez9z1a
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579119 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpcbez9z1a
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579121 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp4muvmwtt
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579123 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp4muvmwtt
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-14 14:39:02 [INFO] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程已启动 pid=3579126 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpxgx72q2d
+11-14 14:39:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES antigravity] ACP 进程结束 code=8
+11-14 14:39:02 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='第'
+======================================================================
+FAIL: test_dead_turn_emits_only_closed_units_and_keeps_the_session_row (tests.test_antigravity_restart.ProcessDeathMidTurnTests.test_dead_turn_emits_only_closed_units_and_keeps_the_session_row)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp4-20261114/tests/test_antigravity_restart.py", line 119, in test_dead_turn_emits_only_closed_units_and_keeps_the_session_row
+    units = await self._die_mid_turn()
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/acp4-20261114/tests/test_antigravity_restart.py", line 108, in _die_mid_turn
+    with self.assertRaises(ACPProcessError):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: ACPProcessError not raised
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.071s
+
+FAILED (failures=1)
+[M2] failures=1 errors=0
+== 结论 baseline=0 M1=2 M2=1 (baseline 必须为 0，M1/M2 必须 > 0)
