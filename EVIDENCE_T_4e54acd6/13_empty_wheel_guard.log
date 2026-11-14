@@ -1,0 +1,8 @@
+* Creating isolated environment: venv+pip...
+* Installing packages in isolated environment:
+  - setuptools>=61.0
+* Getting build dependencies for wheel...
+找不到标准包目录 nonebot_plugin_agent_adapter；请先用发布脚本生成暂存区，再在暂存区构建，避免产出空 wheel
+
+TIP pass --env-dir and --sdist-extract-dir to keep the build environment and sources, then see https://build.pypa.io/en/stable/how-to/troubleshooting.html#debug-a-failed-build for help debugging a failed build
+ERROR Backend subprocess exited when trying to invoke get_requires_for_build_wheel

@@ -1,0 +1,19 @@
+creating build/lib/nonebot_plugin_agent_adapter
+copying nonebot_plugin_agent_adapter/__init__.py -> build/lib/nonebot_plugin_agent_adapter
+creating build/lib/nonebot_plugin_agent_adapter/tasks
+creating build/lib/nonebot_plugin_agent_adapter/scripts
+creating build/lib/nonebot_plugin_agent_adapter/backends
+creating build/lib/nonebot_plugin_agent_adapter/mcp
+creating build/lib/nonebot_plugin_agent_adapter/skill
+creating build/lib/nonebot_plugin_agent_adapter/core
+creating build/lib/nonebot_plugin_agent_adapter/tests
+creating build/lib/nonebot_plugin_agent_adapter/turn_tests
+creating build/lib/nonebot_plugin_agent_adapter/handlers
+creating build/lib/nonebot_plugin_agent_adapter/backends/astrbot
+…
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+Successfully built nonebot_plugin_agent_adapter-0.2.0-py3-none-any.whl

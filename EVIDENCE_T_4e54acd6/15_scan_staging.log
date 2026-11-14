@@ -1,0 +1,70 @@
+HIT README.md:34: 主人 | 子集，用来把「主人」与「管理员」在聊天行身份栏里分开（缺键时整组管理员按主人呈现，
+HIT README.md:34: 主人 | 子集，用来把「主人」与「管理员」在聊天行身份栏里分开（缺键时整组管理员按主人呈现，
+HIT README.md:57: 主人 | [有人@我] [m:123] [主人] [id=10001 user=昵称]: 正文
+HIT README.md:63: 主人 | （`known_bots` 或非当前 bot 的 bot 行）＞ `主人` / `管理员`（`admin_users`，可选
+HIT user_lists.example.yaml:32: 主人 | # admin_users 中属于「主人」的子集（{adapter}:{user_id} 复合 id），可选。
+HIT user_lists.example.yaml:33: 主人 | # 缺键 = 沿用既有口径：整组 admin_users 即主人（active_session 的 master_ids 同源）。
+HIT user_lists.example.yaml:34: 主人 | # 显式配置（含空表 []）后，列出的账号呈现为主人，其余 admin_users 呈现为管理员。
+HIT nonebot_plugin_agent_adapter/core/control_intent.py:3: 主人 | 主人定案的超简单语义：控制只是插件功能，工具只登记、不直接发消息/退窗/钉锚；
+HIT nonebot_plugin_agent_adapter/core/inline_media_cap.py:10: 主人 | 约束（主人定案）：
+HIT nonebot_plugin_agent_adapter/core/message_origin.py:68: 主人 | # 信息(见 prompt_builder 的审计行),不得占据通知类型槽位冒充主人/寻址等
+EXEMPT nonebot_plugin_agent_adapter/core/prompt_builder.py:95: 主人 | 去匹配 SOUL.md / 系统设定里的稳定身份信息(主人、管理员、白名单等)。
+EXEMPT nonebot_plugin_agent_adapter/core/prompt_builder.py:121: 主人 | #   3. 主人      —— user_lists.authority_role()=="master"(admin_users 或其显式子集)。
+EXEMPT nonebot_plugin_agent_adapter/core/prompt_builder.py:789: 主人 | 「主人」「寻址」这种事实类型),也不是用户身份。类型串与审计串相同时省略,
+HIT nonebot_plugin_agent_adapter/core/runs_text.py:3: 主人 | 协议（主人 2026-11-11 定案）：
+HIT nonebot_plugin_agent_adapter/core/runs_text.py:28: 主人 | # 发送单元的轻量分类（主人 2026-11-11 定案）：当前只有正文；未来工具显示可以加
+HIT nonebot_plugin_agent_adapter/core/user_lists.py:13: 主人 | - master_users:       admin_users 中属于「主人」的子集({adapter}:{user_id} 复合 id),
+HIT nonebot_plugin_agent_adapter/core/user_lists.py:14: 主人 | 可选键。缺键 = 沿用既有架构口径(admin_users 即 master_ids,整组按主人呈现);
+HIT nonebot_plugin_agent_adapter/core/user_lists.py:15: 主人 | 显式配置(含空表)只把列出的账号当主人,其余 admin_users 呈现为管理员。
+HIT nonebot_plugin_agent_adapter/core/user_lists.py:186: 主人 | 不另建一套身份表。缺键时整组管理员按主人呈现——这不是新约定,
+HIT nonebot_plugin_agent_adapter/core/user_lists.py:188: 主人 | 显式配置后只有子集是主人,其余是管理员。非管理员一律 None(普通用户)。
+HIT nonebot_plugin_agent_adapter/gateway_plugins/queued-lane-interim-thin/README.md:145: /home/neonsky | cd /tmp && PYTHONPATH=/home/neonsky/.hermes/hermes-agent \
+HIT nonebot_plugin_agent_adapter/gateway_plugins/queued-lane-interim-thin/README.md:146: /home/neonsky | /home/neonsky/.hermes/hermes-agent/venv/bin/python -B -m unittest discover \
+HIT nonebot_plugin_agent_adapter/gateway_plugins/queued-lane-interim-thin/README.md:150: /home/neonsky | cd <repo> && PYTHONDONTWRITEBYTECODE=1 /home/neonsky/NeonBot/.venv/bin/python -B \
+HIT nonebot_plugin_agent_adapter/gateway_plugins/queued-lane-interim-thin/README.md:188: /home/neonsky | /home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot_plugin_agent_adapter/core/hermes_cl
+HIT nonebot_plugin_agent_adapter/gateway_plugins/queued-lane-interim-thin/README.md:150: NeonBot | cd <repo> && PYTHONDONTWRITEBYTECODE=1 /home/neonsky/NeonBot/.venv/bin/python -B \
+HIT nonebot_plugin_agent_adapter/gateway_plugins/queued-lane-interim-thin/README.md:150: .venv | cd <repo> && PYTHONDONTWRITEBYTECODE=1 /home/neonsky/NeonBot/.venv/bin/python -B \
+HIT nonebot_plugin_agent_adapter/gateway_plugins/queued-lane-interim-thin/README.md:188: NeonBot | /home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot_plugin_agent_adapter/core/hermes_cl
+HIT nonebot_plugin_agent_adapter/gateway_plugins/queued-lane-interim-thin/README.md:188: .venv | /home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot_plugin_agent_adapter/core/hermes_cl
+HIT nonebot_plugin_agent_adapter/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py:19: /home/neonsky | cd /tmp && PYTHONPATH=/home/neonsky/.hermes/hermes-agent \
+HIT nonebot_plugin_agent_adapter/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py:20: /home/neonsky | /home/neonsky/.hermes/hermes-agent/venv/bin/python -m unittest discover \
+HIT nonebot_plugin_agent_adapter/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py:21: /home/neonsky | -s /home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/queued-
+HIT nonebot_plugin_agent_adapter/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py:21: nph-20-work | -s /home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/queued-
+HIT nonebot_plugin_agent_adapter/gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py:137: NeonBot | """部署副本（NeonBot site-packages）是否已是分节符信封解析器。
+HIT nonebot_plugin_agent_adapter/gateway_plugins/steer-presentation-thin/README.md:87: /home/neonsky | cd /tmp && /home/neonsky/.hermes/hermes-agent/venv/bin/python -B -m unittest discover \
+HIT nonebot_plugin_agent_adapter/gateway_plugins/steer-presentation-thin/README.md:88: /home/neonsky | -s /home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/steer-p
+HIT nonebot_plugin_agent_adapter/gateway_plugins/steer-presentation-thin/README.md:88: nph-20-work | -s /home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/steer-p
+HIT nonebot_plugin_agent_adapter/gateway_plugins/steer-presentation-thin/README.md:91: /home/neonsky | /home/neonsky/NeonBot/.venv/bin/python -B -m unittest tests.test_steer_region_presentation
+HIT nonebot_plugin_agent_adapter/gateway_plugins/steer-presentation-thin/README.md:91: NeonBot | /home/neonsky/NeonBot/.venv/bin/python -B -m unittest tests.test_steer_region_presentation
+HIT nonebot_plugin_agent_adapter/gateway_plugins/steer-presentation-thin/README.md:91: .venv | /home/neonsky/NeonBot/.venv/bin/python -B -m unittest tests.test_steer_region_presentation
+HIT nonebot_plugin_agent_adapter/gateway_plugins/steer-presentation-thin/tests/test_plugin.py:15: /home/neonsky | cd /tmp && /home/neonsky/.hermes/hermes-agent/venv/bin/python -B -m unittest discover \
+HIT nonebot_plugin_agent_adapter/gateway_plugins/steer-presentation-thin/tests/test_plugin.py:16: /home/neonsky | -s /home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/steer-p
+HIT nonebot_plugin_agent_adapter/gateway_plugins/steer-presentation-thin/tests/test_plugin.py:16: nph-20-work | -s /home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/gateway_plugins/steer-p
+HIT nonebot_plugin_agent_adapter/handlers/message_turns.py:2089: 主人 | # 段内重复吞掉的可观察回执（主人 2026-11-09 批准）：Runs 同一 assistant 段的
+HIT nonebot_plugin_agent_adapter/scripts/smoke_chat_identity_at.py:6: /home/neonsky | /home/neonsky/NeonBot/.venv/bin/python -B \
+HIT nonebot_plugin_agent_adapter/scripts/smoke_chat_identity_at.py:7: /home/neonsky | /home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/scripts/smoke_chat_identit
+HIT nonebot_plugin_agent_adapter/scripts/smoke_chat_identity_at.py:7: nph-20-work | /home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/scripts/smoke_chat_identit
+HIT nonebot_plugin_agent_adapter/scripts/smoke_chat_identity_at.py:89: 主人 | # 权限事实：admin_users 两号；master_users 显式只认主人号；known_bots 一个别家 bot。
+HIT nonebot_plugin_agent_adapter/scripts/smoke_chat_identity_at.py:6: NeonBot | /home/neonsky/NeonBot/.venv/bin/python -B \
+HIT nonebot_plugin_agent_adapter/scripts/smoke_chat_identity_at.py:6: .venv | /home/neonsky/NeonBot/.venv/bin/python -B \
+HIT nonebot_plugin_agent_adapter/scripts/smoke_task_anchor_switch.py:6: /home/neonsky | /home/neonsky/NeonBot/.venv/bin/python -B \
+HIT nonebot_plugin_agent_adapter/scripts/smoke_task_anchor_switch.py:7: /home/neonsky | /home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/scripts/smoke_task_anchor_
+HIT nonebot_plugin_agent_adapter/scripts/smoke_task_anchor_switch.py:7: nph-20-work | /home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109/scripts/smoke_task_anchor_
+HIT nonebot_plugin_agent_adapter/scripts/smoke_task_anchor_switch.py:6: NeonBot | /home/neonsky/NeonBot/.venv/bin/python -B \
+HIT nonebot_plugin_agent_adapter/scripts/smoke_task_anchor_switch.py:6: .venv | /home/neonsky/NeonBot/.venv/bin/python -B \
+HIT nonebot_plugin_agent_adapter/tests/test_chat_identity_at.py:4: 主人 | - 五类身份：普通用户/管理员/主人/其他 BOT/我；
+HIT nonebot_plugin_agent_adapter/tests/test_chat_identity_at.py:5: 主人 | - 当前 bot 与已知 bot／主人+已知 bot 的优先级；
+HIT nonebot_plugin_agent_adapter/tests/test_chat_identity_at.py:6: 主人 | - 主人/管理员：master_users 缺键回落 admin_users（既有 master_ids 口径）与显式子集；
+HIT nonebot_plugin_agent_adapter/tests/test_chat_identity_at.py:173: 主人 | self.assertIsNone(absent.master_users)  # 缺键 = 沿用整组管理员为主人
+HIT nonebot_plugin_agent_adapter/tests/test_control_regressions.py:316: 主人 | 主人定案：reply_to 只挂首条；锚（pin/release/answer/merge）只在首条执行一次；
+HIT nonebot_plugin_agent_adapter/tests/test_get_message_images_contract.py:5: 主人 | 主人口径:adapter 在 get_recent_messages 与 get_message_images 均强制必填,不得靠省略跳过校验。
+HIT nonebot_plugin_agent_adapter/tests/test_get_message_images_contract.py:102: 主人 | # 主人口径:adapter 与 get_recent_messages 一样必填;group_id 仍可选。
+HIT nonebot_plugin_agent_adapter/tests/test_inline_image_limit_runs.py:3: 253384307 | 生产故障（2026-11-12 14:07 群 253384307 m:71446）：窗口里有 12 张普通图，上游
+HIT nonebot_plugin_agent_adapter/tests/test_inline_image_limit_runs.py:8: 主人 | 口径（主人定案）：不拆轮、不改上游。在被动/主动出站的 user_content 完成后、提交
+HIT nonebot_plugin_agent_adapter/tests/test_queued_lane_interim_client.py:36: NeonBot | # 线上装的那一份(本项目主实例 NeonBot 的 venv)。对照用例比的是它，不是本工作树。
+HIT nonebot_plugin_agent_adapter/tests/test_queued_lane_interim_client.py:68: NeonBot | 信封候选部署到 NeonBot 之后这条前提不再成立（部署副本只认完整闭合段），用例必须
+HIT nonebot_plugin_agent_adapter/tests/test_region_presentation.py:8: 主人 | - wake_turn 来源只从来源模型取,不伪装成用户昵称/主人发言;
+HIT nonebot_plugin_agent_adapter/tests/test_runs_envelope.py:162: 主人 | """delta 增量按闭合拆成正文单位（t_049df793 主人定案的结构化队列）。
+HIT nonebot_plugin_agent_adapter/tests/test_segment_duplicate_emoji.py:3: 主人 | 主人批准的最小增量：Runs 同一 assistant 段的 interim／delta 完整单元全文匹配
+HIT nonebot_plugin_agent_adapter/tests/fixtures/fake_agy_acp.py:38: 主人 | （主人实测语义；默认即此形态）
+总命中(豁免外): 66  豁免: 3  扫描文件: 234

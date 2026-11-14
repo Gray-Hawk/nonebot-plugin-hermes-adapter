@@ -1,0 +1,2 @@
+c00372237e234c8dc175c9ad234b7062cc47040c0f3c41cb3fea0f4156242f0f  /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/dist/nonebot_plugin_agent_adapter-0.2.0-py3-none-any.whl
+1019442 bytes

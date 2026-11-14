@@ -1,0 +1,13 @@
+repo=/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/agent-adapter-rename-20261114
+python=/home/neonsky/NeonBot/.venv/bin/python
+interpreter prefix=/home/neonsky/NeonBot/.venv
+
+[1] 未加载测试引导器（旧名能否被 site-packages 满足）
+    find_spec('nonebot_plugin_hermes_adapter') -> FOUND /home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot_plugin_hermes_adapter/__init__.py
+
+11-14 18:53:56 [SUCCESS] nonebot | NoneBot is initializing...
+11-14 18:53:56 [INFO] nonebot | Current Env: prod
+[2] 已加载 tests._bootstrap（旧名必须被阻断、新名必须指向本仓库）
+    blocklist=('nonebot_plugin_hermes_adapter',)
+    find_spec('nonebot_plugin_hermes_adapter') -> ModuleNotFoundError(nonebot_plugin_hermes_adapter: 插件已更名为 nonebot_plugin_agent_adapter，旧模块名不再可用)
+    import nonebot_plugin_agent_adapter -> __path__=['/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/agent-adapter-rename-20261114']

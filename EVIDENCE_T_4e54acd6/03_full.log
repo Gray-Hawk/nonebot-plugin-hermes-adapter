@@ -1,0 +1,56 @@
+11-14 18:52:00 [SUCCESS] nonebot | NoneBot is initializing...
+11-14 18:52:00 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/loader.py:366: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  tests, should_recurse = self._find_test_path(full_path, pattern)
+11-14 18:52:00 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-14 18:52:00 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650745 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpde2okl0y
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650747 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpw7jdgpp4
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650749 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpu_8asfae
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650751 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpwy9q2_o_
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [SESSION] 会话已重置: onebotv11+private+10001 (generation=1)
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650754 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpjq7qhuvl
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650756 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmplpviqyk0
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650758 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmp226wekbz/data/acp-workspace
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650761 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmp_dve_bvr
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650763 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpt4kbqyvn
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650765 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpq0o5ercp
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650767 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmplbft2h4a
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650769 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpfnenb86m
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650772 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpd7x9sw50
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650775 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmp6ngph8wm
+11-14 18:52:01 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] session/resume 失败 code=-32602，重建会话
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650777 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpwe_rt8xj
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650779 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpf50kyaj2/data/nonebot_plugin_agent_adapter/antigravity-workspace
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650781 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpf50kyaj2/data/acp-workspace
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650783 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpol98r0h7
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650785 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmppqmm3jqi
+11-14 18:52:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=3650787 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpwd9dlgmx
+11-14 18:52:01 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程结束 code=7
+11-14 18:52:01 [ERROR] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 调用失败 code=None: ACPProcessError
+…（INFO 行略，完整输出见 scratch 原始日志）…
+11-14 18:52:49 [WARNING] nonebot_plugin_agent_adapter | [OUTBOUND] 本地表情发送失败 id=missing: 未知表情 ID: missing
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES] /reload-config: onebotv11:admin 重载 ['media']，表情 7 条
+11-14 18:52:49 [WARNING] nonebot_plugin_agent_adapter | [HERMES] /reload-config 失败: 配置坏档
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] task anchors disabled: ignored ['pin_anchor', 'release_anchor', 'answer_anchor', 'anchor_merge'] (group=g1 user=u1)
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] anchor_merge invalid: 'nonexistent' (group=g1)
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] answer_anchor invalid: who='nonexistent' pinned=['u2'] (group=g1)
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] anchor_merge invalid: 'nonexistent' (group=g1)
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] answer_anchor invalid: who='nonexistent' pinned=['u2'] (group=g1)
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] task anchors disabled: ignored ['pin_anchor'] (group=g1 user=u1)
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [MCP submit_control] 任务锚开关关闭，丢弃锚字段 scope=group adapter=onebotv11 target=g1 ignored=['pin_anchor']
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['answer_anchor', 'pin_anchor'] pending=1
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [MCP submit_control] 任务锚开关关闭，丢弃锚字段 scope=group adapter=onebotv11 target=g1 ignored=['pin_anchor', 'release_anchor', 'answer_anchor', 'anchor_merge']
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to', 'should_exit_active'] pending=1 ignored=['pin_anchor', 'release_anchor', 'answer_anchor', 'anchor_merge']
+11-14 18:52:49 [INFO] nonebot_plugin_agent_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+----------------------------------------------------------------------
+Ran 901 tests in 48.070s
+
+OK (skipped=1)

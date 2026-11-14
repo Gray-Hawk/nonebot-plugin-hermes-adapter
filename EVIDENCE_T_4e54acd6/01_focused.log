@@ -1,0 +1,15 @@
+11-14 18:51:49 [SUCCESS] nonebot | NoneBot is initializing...
+11-14 18:51:49 [INFO] nonebot | Current Env: prod
+test_seven_name_points_agree (tests.test_module_rename.NameConsistencyTests.test_seven_name_points_agree) ... ok
+test_version_and_display_name_follow_the_release (tests.test_module_rename.NameConsistencyTests.test_version_and_display_name_follow_the_release) ... ok
+test_acp_client_info_carries_no_plugin_name (tests.test_module_rename.NeutralIdentityTests.test_acp_client_info_carries_no_plugin_name) ... ok
+test_log_prefix_stays_hermes_while_plugin_line_is_renamed (tests.test_module_rename.NeutralIdentityTests.test_log_prefix_stays_hermes_while_plugin_line_is_renamed) ... ok
+test_new_package_resolves_to_this_worktree (tests.test_module_rename.OldNameRetirementTests.test_new_package_resolves_to_this_worktree) ... ok
+test_old_module_names_are_not_importable (tests.test_module_rename.OldNameRetirementTests.test_old_module_names_are_not_importable) ... ok
+test_old_name_does_not_survive_as_a_runtime_fallback (tests.test_module_rename.OldNameRetirementTests.test_old_name_does_not_survive_as_a_runtime_fallback) ... 11-14 18:51:49 [WARNING] nonebot_plugin_agent_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/tmp/tmpweq8_t9a/data/nonebot_plugin_agent_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.019s
+
+OK

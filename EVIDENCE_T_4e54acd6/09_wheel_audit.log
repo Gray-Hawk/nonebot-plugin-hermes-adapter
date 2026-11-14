@@ -1,0 +1,16 @@
+wheel=nonebot_plugin_agent_adapter-0.2.0-py3-none-any.whl entries=218 bytes=1019442
+[PASS] 非空 wheel：包目录含 __init__.py
+[PASS] 非空 wheel：运行代码数量合理 — py=212 pkg_files=213
+[PASS] 包内无历史证据/缓存/数据库/日志 — 命中=[]
+[PASS] dist-info 目录名与新名/版本一致 — nonebot_plugin_agent_adapter-0.2.0.dist-info/METADATA
+[PASS] METADATA Name 为新发布名 — nonebot-plugin-agent-adapter
+[PASS] METADATA Version 为 0.2.0 — 0.2.0
+[PASS] METADATA 描述不再自称 Hermes Agent API Server — NoneBot 插件：把聊天平台消息桥接到 Agent 后端 API（nonebot-plugin-hermes 的独立演进分支）
+[PASS] top_level.txt 只有新模块名 — ['nonebot_plugin_agent_adapter']
+[PASS] 无 console script（不恢复上游脚本） — []
+[PASS] RECORD 覆盖全部文件 — 未登记=[]
+[PASS] RECORD 大小与 sha256 全部一致 — 大小/哈希不符=[] 缺文件=[]
+[PASS] package-data：包内 skill/*.md 已随包 — ['nonebot_plugin_agent_adapter/skill/SKILL.md']
+[PASS] wheel 载荷旧名仅在白名单处保留 — 多出=[] 数量不符={}
+
+ALL PASS

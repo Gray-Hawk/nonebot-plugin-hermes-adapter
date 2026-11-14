@@ -1,0 +1,25 @@
+总命中(豁免外): 4405  豁免: 3  扫描文件: 393
+--- 按文件命中数（仅活文件，历史目录除外）---
+      8 gateway_plugins/queued-lane-interim-thin/README.md
+      6 scripts/smoke_chat_identity_at.py
+      6 gateway_plugins/steer-presentation-thin/README.md
+      5 scripts/smoke_task_anchor_switch.py
+      5 gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py
+      5 core/user_lists.py
+      4 tests/test_chat_identity_at.py
+      4 README.md
+      3 user_lists.example.yaml
+      3 gateway_plugins/steer-presentation-thin/tests/test_plugin.py
+      2 tests/test_queued_lane_interim_client.py
+      2 tests/test_inline_image_limit_runs.py
+      2 tests/test_get_message_images_contract.py
+      2 core/runs_text.py
+      1 tests/test_segment_duplicate_emoji.py
+      1 tests/test_runs_envelope.py
+      1 tests/test_region_presentation.py
+      1 tests/test_control_regressions.py
+      1 tests/fixtures/fake_agy_acp.py
+      1 handlers/message_turns.py
+      1 core/message_origin.py
+      1 core/inline_media_cap.py
+      1 core/control_intent.py

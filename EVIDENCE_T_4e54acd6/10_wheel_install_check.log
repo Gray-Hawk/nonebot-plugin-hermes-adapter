@@ -1,0 +1,26 @@
+11-14 18:54:20 [SUCCESS] nonebot | NoneBot is initializing...
+11-14 18:54:20 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/importlib/__init__.py:88: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  return _bootstrap._gcd_import(name[level:], package, level)
+11-14 18:54:20 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_alconna:uniseg" from "nonebot_plugin_alconna.uniseg"
+11-14 18:54:20 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-14 18:54:20 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_alconna"
+11-14 18:54:20 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_apscheduler"
+11-14 18:54:20 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_localstore"
+11-14 18:54:20 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_agent_adapter"
+[PASS] nonebot.load_plugin 返回插件对象
+[PASS] 插件 id 为新模块名 — nonebot_plugin_agent_adapter
+[PASS] 插件显示名为 Agent Adapter — Agent Adapter
+[PASS] 插件版本为 0.2.0 — {'author': 'gsskk', 'version': '0.2.0'}
+[PASS] 插件包命中本 venv 的 site-packages — [PosixPath('/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/installvenv2/lib/python3.13/site-packages/nonebot_plugin_agent_adapter')]
+[PASS] 插件包不是仓库工作树 — [PosixPath('/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/installvenv2/lib/python3.13/site-packages/nonebot_plugin_agent_adapter')]
+[PASS] importlib.metadata 认到新分发名 — nonebot-plugin-agent-adapter
+[PASS] 分发版本为 0.2.0 — 0.2.0
+[PASS] 发行物落位在本 venv — /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/aa-rename/base/installvenv2/lib/python3.13/site-packages
+[PASS] PLUGIN_MODULE_NAME 为新名 — nonebot_plugin_agent_adapter
+[PASS] 子模块 core.hermes_client 可导入
+[PASS] 子模块 handlers.message_relay 可导入
+[PASS] 子模块 mcp.server 可导入
+[PASS] 子模块 backends.antigravity.client 可导入
+
+ALL PASS
