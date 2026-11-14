@@ -109,7 +109,7 @@ RED 里的 17 条包含当时还存在的 `run_command` 用例；GREEN 阶段判
 | 相关批（上述 + control_regressions/steer_pre_debounce/control_mcp_registration/recent_messages_private/get_message_images_contract/inline_image_limit_runs/gif_preview_frames） | **202 OK** | `EVIDENCE_T_1a01e0bb/related.txt` |
 | `unittest discover -s tests -t .` 全量 | **879 OK（skip=1）** | `EVIDENCE_T_1a01e0bb/full.txt` |
 | `tests._bootstrap` + `turn_tests.test_envelope_entry` | **6 OK** | `EVIDENCE_T_1a01e0bb/turn.txt` |
-| `verify.py`（产品与测试代码与候选 `8c33227` 相同；运行提交与工作树状态见首行） | **VERIFY_RESULT** | `EVIDENCE_T_1a01e0bb/verify.txt` |
+| `verify.py`（产品与测试代码与候选 `8c33227` 相同；运行提交 `978ab1f`、工作树干净） | **22/22 ALL PASS** | `EVIDENCE_T_1a01e0bb/verify.txt`（内含 `HEAD=978ab1f`、全量 879 OK/skip 1） |
 
 全量从基线 863 → **879**（只新增 16 个用例，既有用例无增删），skip 仍是 1。
 2A（流式／steer 接管／clear 栅栏）、2B（once／deny／取消／双超时）、2C1（工具表、Bearer、
