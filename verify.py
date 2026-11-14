@@ -476,6 +476,7 @@ OLD_NAME_ALLOWLIST = {
     "tests/_bootstrap.py": (1, 0, "旧名 import 阻断器的唯一字面量真源"),
     "tests/test_queued_lane_interim_client.py": (1, 0, "生产冷迁移未做，部署路径兜底"),
     "tests/test_evidence_probe_readonly.py": (1, 0, "历史证据探针的加载时改名桥"),
+    "scripts/migrate_module_rename.py": (3, 0, "迁移示例：本次实际来源是上一发布模块名"),
     "gateway_plugins/queued-lane-interim-thin/tests/test_plugin.py": (1, 0, "生产冷迁移未做，部署路径兜底"),
     "verify.py": (1, 1, "旧名闸的字面量真源（本文件的检查项本身）"),
 }

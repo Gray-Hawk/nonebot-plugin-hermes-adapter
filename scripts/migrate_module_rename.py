@@ -4,11 +4,11 @@
 把插件包目录、localstore 数据目录与缓存目录从旧模块名迁到新模块名：
 
     python scripts/migrate_module_rename.py \\
-        --old-package <site-packages>/nonebot_plugin_hermes \\
+        --old-package <site-packages>/nonebot_plugin_hermes_adapter \\
         --new-package <site-packages>/nonebot_plugin_agent_adapter \\
-        --old-data ~/.local/share/nonebot2/nonebot_plugin_hermes \\
+        --old-data ~/.local/share/nonebot2/nonebot_plugin_hermes_adapter \\
         --new-data ~/.local/share/nonebot2/nonebot_plugin_agent_adapter \\
-        --old-cache ~/.cache/nonebot2/nonebot_plugin_hermes \\
+        --old-cache ~/.cache/nonebot2/nonebot_plugin_hermes_adapter \\
         --new-cache ~/.cache/nonebot2/nonebot_plugin_agent_adapter
     # 加 --apply 才真正改名
 
