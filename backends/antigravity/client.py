@@ -25,10 +25,13 @@ from ...core.storage.session_key_store import SessionKeyStore
 DEFAULT_ACP_ARGS: tuple[str, ...] = ("acp", "--process-per-session")
 _CLIENT_INFO = {"name": "nonebot-plugin-hermes-adapter", "version": "0.1.0"}
 
-# 阶段2C1：ACP 反向 MCP 只暴露两个只读工具（同一个 HTTP 服务；其它后端仍全量）。
+# 阶段2C1 起：ACP 反向 MCP 只暴露只读工具（同一个 HTTP 服务；其它后端仍全量）。
+# 阶段2C3：第三个只读工具 `get_message_files` —— 模型拿 refs 换 FileCache 的 local_path，
+# 再用原生 read_file 读正文（read_file 仍走人工审批，不在自动放行范围内）。
 ANTIGRAVITY_MCP_TOOL_NAMES: tuple[str, ...] = (
     "get_recent_messages",
     "get_message_images",
+    "get_message_files",
 )
 MCP_SERVER_NAME = "nonebot-bridge"
 _MCP_TOOL_PREFIX = "mcp_"

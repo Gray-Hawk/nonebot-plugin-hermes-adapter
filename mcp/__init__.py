@@ -310,7 +310,7 @@ async def start_mcp_server(*, tool_names: Sequence[str] | None = None) -> None:
     """启动反向 MCP server。
 
     tool_names: 可选工具名白名单；None 注册全表（既有后端/原有 MCP 行为不变）。
-    Antigravity 后端传两个只读工具名，复用同一端口、服务与 Bearer，不另起进程。
+    Antigravity 后端传三个只读工具名，复用同一端口、服务与 Bearer，不另起进程。
     """
 
     global _server_task, _uvicorn_server

@@ -84,8 +84,9 @@ async def _hermes_m1_startup():
 
     init_prompt_dump()
     if plugin_config.hermes_api_interface == "antigravity":
-        # 阶段2C1：ACP 只挂两个只读工具，但复用同一个反向 MCP HTTP 服务、端口与
-        # Bearer（仍受 AGENT_MCP_ENABLED 控制）；ACP 进程随插件关闭清理。
+        # 阶段2C3：ACP 挂三个只读工具（get_recent_messages／get_message_images／
+        # get_message_files），复用同一个反向 MCP HTTP 服务、端口与 Bearer（仍受
+        # AGENT_MCP_ENABLED 控制）；ACP 进程随插件关闭清理。
         from .backends.antigravity.client import (
             ANTIGRAVITY_MCP_TOOL_NAMES,
             close_client,

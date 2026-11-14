@@ -1,11 +1,12 @@
-"""阶段2C1：两个只读 MCP 工具 + `mcp_` 自动审批（离线 TDD）。
+"""阶段2C1：只读 MCP 工具 + `mcp_` 自动审批（离线 TDD）。
 
 链路与 2B 同源：真 `build_mcp_app` / 真 `CallerScope` / 真 `resolve_caller_scope` /
 真 `AntigravityACPClient` / 真 `HermesClient.chat` / 真 handler / 真 `core.approvals`，
 只把官方 `agy acp` 换成 NDJSON 夹具子进程、平台发送换成进程内替身。
 
 覆盖：
-- Antigravity 工具表恰好两个只读工具；默认工具表不变、定义未被改写；
+- Antigravity 工具表恰好三个只读工具；默认工具表不变、定义未被改写；
+  （阶段2C3 起第三个是 get_message_files；恰三个的定案见 tests/test_antigravity_mcp_files.py）
 - session/new 与 session/resume 携带同一份 HTTP mcpServers（群/私 scope 一致）；
 - 无 key（dev）、无 scope、无目标时不挂 MCP；外部/错误 Bearer 被拒；
 - `mcp_` 权限请求自动 allow_once，不登记人工审批、不发通知；
@@ -44,7 +45,7 @@ from nonebot_plugin_hermes_adapter.core.storage.session_key_store import (  # no
 
 FIXTURE = ROOT / "tests" / "fixtures" / "fake_agy_acp.py"
 
-READ_ONLY_TOOLS = ("get_recent_messages", "get_message_images")
+READ_ONLY_TOOLS = ("get_recent_messages", "get_message_images", "get_message_files")
 ALL_TOOL_NAMES = {
     "push_message",
     "recall_message",
@@ -130,7 +131,7 @@ class McpToolTableTests(unittest.TestCase):
             )
         return {tool.name: tool for tool in asyncio.run(holder["mcp"].list_tools())}
 
-    def test_antigravity_table_is_exactly_the_two_read_only_tools(self) -> None:
+    def test_antigravity_table_is_exactly_the_three_read_only_tools(self) -> None:
         tools = self._tools(tool_names=READ_ONLY_TOOLS)
         self.assertEqual(set(tools), set(READ_ONLY_TOOLS))
 
@@ -138,12 +139,12 @@ class McpToolTableTests(unittest.TestCase):
         tools = self._tools()
         missing = ALL_TOOL_NAMES - set(tools)
         self.assertEqual(missing, set(), f"默认工具表少了 {missing}")
-        # 默认表是完整表，不是被过滤后的两工具表。
+        # 默认表是完整表，不是被过滤后的三工具表。
         self.assertGreater(len(tools), len(READ_ONLY_TOOLS))
         self.assertTrue(set(READ_ONLY_TOOLS).issubset(tools))
 
     def test_filter_keeps_the_same_tool_definitions(self) -> None:
-        """过滤只改注册集合，不改写这两个工具的描述与 schema。"""
+        """过滤只改注册集合，不改写这三个工具的描述与 schema。"""
         full = self._tools()
         filtered = self._tools(tool_names=READ_ONLY_TOOLS)
         for name in READ_ONLY_TOOLS:
