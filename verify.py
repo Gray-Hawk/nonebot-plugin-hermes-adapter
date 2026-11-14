@@ -492,8 +492,9 @@ def _live_tracked_files() -> list[str]:
 
 
 def check_name_consistency() -> None:
-    """新名七处一致：只改单边会产出空 wheel 或插件声明失效。"""
+    """新名一致：只改单边会产出空 wheel 或插件声明失效；README 的公开声明也要在闸内。"""
     pyproject = read("pyproject.toml")
+    readme = read("README.md")
     points = {
         "pyproject.name": f'name = "{NEW_DIST}"' in pyproject,
         "pyproject.version": f'version = "{RELEASE_VERSION}"' in pyproject,
@@ -504,9 +505,13 @@ def check_name_consistency() -> None:
         "config.PLUGIN_MODULE_NAME": f'PLUGIN_MODULE_NAME = "{NEW_MODULE}"' in read("config.py"),
         "tests/_bootstrap.py": f'package_name = "{NEW_MODULE}"' in read("tests/_bootstrap.py"),
         "__init__.__version__": f'__version__ = "{RELEASE_VERSION}"' in read("__init__.py"),
+        # README 的公开声明行：旧名计数闸只能发现残留，发现不了将来拼成第三个名字，
+        # 所以直接断言两条精确声明行。badge/Homepage 的旧远端 URL 仍走 D3 例外，不在此列。
+        "README 分发名精确行": f"- 分发名：`{NEW_DIST}`" in readme,
+        "README 模块名精确行": f"- 模块名：`{NEW_MODULE}`" in readme,
     }
     failed = [name for name, ok in points.items() if not ok]
-    check("新名七处一致（含版本 0.2.0）", not failed, f"不一致={failed}")
+    check("新名各处一致（含版本 0.2.0 与 README 精确声明）", not failed, f"不一致={failed}")
 
 
 def check_old_name_residue() -> None:
