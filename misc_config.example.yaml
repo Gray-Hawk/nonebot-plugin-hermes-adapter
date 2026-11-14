@@ -2,7 +2,7 @@
 # 落位：<AGENT_PLUGIN_CUSTOM_DIR>/misc_config.yaml（未配置该目录时用 localstore 插件数据目录）。
 # 加载：启动缓存 + 管理员手动重载；除逐键标注“重启生效”外不做文件监听。
 
-# ---- 历史、记忆与输出：10 键 ----
+# ---- 历史、记忆与输出：9 键 ----
 
 # 单条历史文本在入库和模型渲染时共用的字符上限；取消“入库 200、渲染 800”双层口径，
 # 不提供 0 = 无限制。由 perception_text_length 与旧硬编码 800 合并。
@@ -25,8 +25,7 @@ transport_error_fallback_text: ''
 # /help 菜单头尾自定义文件路径；中间命令清单仍由插件动态生成。空 = 使用内置动态菜单。
 help_menu_file: ''
 
-# 是否在本地保存每轮完整生产请求结构供排障（system 指令 + messages/input 里的
-# user content；含画像与主机路径，仅存本地，内联图片按长度占位）。
+# 是否在本地保存每轮完整生产请求结构供排障（system 指令 + messages/input 里的 user content；含画像与主机路径，仅存本地，内联图片按长度占位）。
 prompt_dump_enabled: false
 
 # /approve 挂起审批超时秒数，默认 300，与上游默认审批超时一致。
