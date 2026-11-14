@@ -1,0 +1,30 @@
+--- a/release_sync.py
++++ b/release_sync.py
+@@ -17,6 +17,9 @@
+     其余源码  = 暂存区根/nonebot_plugin_agent_adapter/ 下（保持原有相对结构）
+ 
+ 纪律：
++- 公共发行面（主人 2026-11-14 决定）：wheel 只含插件运行需要的安装文件。开发文件
++  （tests/、scripts/、gateway_plugins/、turn_tests/、verify.py）**不进暂存区**，继续留在
++  源码仓库；它们含个人主机路径与内部取证群号，进 wheel 就是发布门禁失败。
+ - 输出不得落在源树内，源树也不得落在输出内；目标已存在且非空一律拒绝，--force 只清项目名
+   精确匹配且标准包目录存在的旧暂存区，绝不覆盖任意既有目录。
+ - 真实 .env（放行 .env.example）、SQLite 库与 WAL/journal、日志、字节码、缓存、虚拟环境、构建产物、
+@@ -93,6 +96,8 @@
+     ".tmp",
+     ".bak",
+ )
++# 公共发行面排除的开发文件（相对路径首段匹配）：只有源码仓库需要，wheel 不需要。
++DEV_ONLY_PATHS = frozenset({"tests", "scripts", "gateway_plugins", "turn_tests", "verify.py"})
+ 
+ DEFAULT_SOURCE = Path(
+     os.environ.get("NPH_WORK") or "~/nph-20-work/devclone"
+@@ -116,6 +121,8 @@
+ 
+ def deny_reason(rel: PurePosixPath) -> str | None:
+     """该相对路径是否禁入暂存区；返回原因或 None。"""
++    if rel.parts[0] in DEV_ONLY_PATHS:
++        return "开发文件（留在源码仓库，不进公开 wheel）"
+     for part in rel.parts[:-1]:
+         if part in DENY_DIR_NAMES:
+             return f"目录 {part}"

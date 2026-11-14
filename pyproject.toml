@@ -28,7 +28,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# 离线配置迁移脚本（包内 scripts/migrate_config_v6.py）读旧 .env 时才需要。
+# 离线配置迁移脚本是开发文件（源码仓库 scripts/migrate_config_v6.py），不随公开 wheel
+# 发行；从源码树跑它时才需要 python-dotenv。
 migrate = ["python-dotenv>=1.0"]
 
 [project.urls]
@@ -41,6 +42,15 @@ plugins = ["nonebot_plugin_agent_adapter"]
 
 [tool.setuptools.packages.find]
 include = ["nonebot_plugin_agent_adapter*"]
+# 公共发行面（2026-11-14 定案）：wheel 只保留插件运行需要的安装文件。
+# tests/scripts/gateway_plugins/turn_tests/verify.py 是开发文件，留在源码仓库。
+# 第一道闸在发布暂存（release_sync 不复制它们），这里是第二道闸。
+exclude = [
+    "nonebot_plugin_agent_adapter.tests*",
+    "nonebot_plugin_agent_adapter.scripts*",
+    "nonebot_plugin_agent_adapter.gateway_plugins*",
+    "nonebot_plugin_agent_adapter.turn_tests*",
+]
 
 [tool.setuptools.package-data]
 nonebot_plugin_agent_adapter = ["skill/*.md"]
