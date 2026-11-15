@@ -349,6 +349,7 @@ class ACPCompressCommandTests(ACPHandlerHarness):
         receipt = "\n".join(self.platform)
         self.assertIn("压缩完成", receipt)
         self.assertIn("ACP session 不变", receipt)
+        self.assertEqual(self.last_receipt(), "🗜️ 会话压缩完成(ACP session 不变)")
         for leaked in (session_key, "antigravity-", "hermes-", "onebotv11+", self.ADMIN):
             self.assertNotIn(leaked, receipt, f"回执泄漏内部标识: {leaked}")
         self.assertIsNone(
