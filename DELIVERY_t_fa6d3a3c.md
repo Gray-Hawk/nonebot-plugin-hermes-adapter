@@ -9,15 +9,16 @@
 - 分支：`wt/t_fa6d3a3c`（看板分配的独立 worktree；卡里建议名 `feat/antigravity-acp-compact`
   未启用，避免与 dispatcher 的 worktree 分支名脱钩）
 - 功能提交：`56e64675055f056aa3d055f03653a88ce85ff445`
+- 复核返修：`3f1892f`（压缩控制轮 steer 隔离，见下）
 - 交付树 `verify.py`：`ALL PASS: 25/25`
 
 ## 改动文件
 
 | 文件 | 改动 |
 | --- | --- |
-| `backends/antigravity/client.py` | +75/−3：新增 `compact(...)->bool`、`COMPACT_COMMAND_TEXT`、`ACPTurn.collect_text`；`prompt()` 支持控制命令形态（`system_prompt=None` + `collect_text=False`） |
+| `backends/antigravity/client.py` | 新增 `compact(...)->bool`、`COMPACT_COMMAND_TEXT`、`ACPTurn.collect_text`/`control`；`prompt()` 支持控制命令形态（`system_prompt=None` + `collect_text=False`），`steer()` 拒绝控制轮 |
 | `handlers/commands.py` | +101/−5：`/compress` 后端分支 `_compress_acp`、ACP 回执与错误归类、`build_help_text(backend=…)`、`_help_backend()` |
-| `tests/test_antigravity_compact.py` | 新增 450 行 / 16 项：fake ACP wire 契约 + 命令面 + 帮助文案 |
+| `tests/test_antigravity_compact.py` | 新增 20 项：fake ACP wire 契约 + 命令面 + 帮助文案 + 压缩/steer 重叠回归 |
 | `tests/test_manual_compress_control.py` | +12：`HandlerTests.setUp` 钉住 `hermes_api_interface="runs"`（见下） |
 
 ### 为什么改那条既有测试
@@ -43,12 +44,35 @@
 - **`/help`**：反重力管理员只看到「手动压缩当前会话上下文」，不写 `--preview`；Hermes/completions/runs
   的 HTTP 压缩、preview、轮换采纳行为保持原样。
 
+## 复核返修：压缩控制轮不接受正常 steer（`3f1892f`）
+
+复核 P1：`compact()` 复用 `prompt()` 注册的控制轮虽然 `collect_text=False`，但仍被
+`active_turn()`/`steer()` 消费链当成可接管轮；压缩期间用户发正常私聊会被成功 steer 并跳过
+正常 dispatch，控制轮又没有正文出口，最终只回「压缩完成」、回复被静默吞掉。
+
+最小修复（不扩状态机、不动 preview/focus）：
+
+- `ACPTurn` 增加 `control` 标记，`prompt(system_prompt=None)` 的控制轮登记该标记；
+  `collect_text` 仍只管正文隔离。
+- `steer()` 遇到控制命令轮返回 `False`；消息入口按既有 False 回退走正常 dispatch，
+  同一把 `_session_lock` 把后续普通轮排在压缩之后，回复不丢、只处理一次。
+- `active_turn()` 仍暴露控制轮，保留 `/compress` 的忙碌预检与 409 回执语义。
+
+新增回归（`tests/test_antigravity_compact.py`，+4 项）：
+
+- 真 `/compress` + 真 `handle_message` + fake ACP 重叠：压缩期间消息不被 steer、零第三条
+  prompt；压缩收尾后正常 dispatch 恰好 1 次，`session/prompt` 第三条携带该消息，
+  平台收到真实回复；结束无残留 active turn。
+- 控制轮 `steer()` 返回 False 且不发 `session/prompt`、控制轮原样保留；
+- 普通在跑轮 steer 行为不变；
+- 压缩进行中再次 `/compress` 仍回「正忙」，不发第二条 `/compact`。
+
 ## 测试（真实命令与结果）
 
 ```
 # 解释器：/home/neonsky/NeonBot/.venv/bin/python（PYTHONDONTWRITEBYTECODE=1, -B）
-python -B -m unittest tests.test_antigravity_compact -v      → Ran 16 tests ... OK
-python -B -m unittest discover -s tests -t .                 → Ran 917 tests ... OK (skipped=1)
+python -B -m unittest tests.test_antigravity_compact -v      → Ran 20 tests ... OK
+python -B -m unittest discover -s tests -t .                 → Ran 921 tests ... OK (skipped=1)
 python -B -m unittest discover -s turn_tests -p 'test_*.py'  → Ran 6 tests ... OK
 python -B verify.py                                          → ALL PASS: 25/25（含网关插件独立测试 48/21 项）
 python -B -m py_compile backends/antigravity/client.py handlers/commands.py \
