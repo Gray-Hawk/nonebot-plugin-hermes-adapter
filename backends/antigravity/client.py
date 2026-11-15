@@ -171,6 +171,9 @@ class ACPTurn:
     cancelled: bool = False
     # 控制命令轮（`/compact`）不收集正文：agy 的回显/输出不属 QQ 正文流。
     collect_text: bool = True
+    # 控制命令轮没有正文交付出口：不接受后续用户 steer（由入口按 False 回退
+    # 走正常 dispatch，会话锁串行化），也不跟随普通轮的系统提示/模型同步。
+    control: bool = False
 
 
 @dataclass
@@ -808,6 +811,7 @@ class AntigravityACPClient:
         stream_here: bool,
         approval_callback: Callable[[dict[str, Any]], Any] | None = None,
         collect_text: bool = True,
+        control: bool = False,
     ) -> ACPTurn:
         self._turn_seq += 1
         turn = ACPTurn(
@@ -818,6 +822,7 @@ class AntigravityACPClient:
             meta=dict(meta or {}),
             approval_callback=approval_callback,
             collect_text=collect_text,
+            control=control,
         )
         self._turns.setdefault(session_key, []).append(turn)
         self._latest_turn[session_key] = turn
@@ -1144,6 +1149,7 @@ class AntigravityACPClient:
                 stream_here=collect_text,
                 approval_callback=approval_callback,
                 collect_text=collect_text,
+                control=control,
             )
             failed = True
             cancelled = False
@@ -1236,6 +1242,8 @@ class AntigravityACPClient:
         新轮只登记接管身份；正文归属在 `user_message_chunk` 边界后才切到新轮，
         旧轮已流出的正文继续按旧轮投递。没有在跑的轮、进程已退出或本 scope 正在
         收尾时返回 False，调用方按既有排队语义投递（零丢失，不另造状态机）。
+        控制命令轮（`/compact`）没有正文交付出口：同样返回 False，让入口回退到
+        正常 dispatch（同一把 `_session_lock` 串行化），绝不「已受理」后吞掉回复。
         """
         if not text or not text.strip():
             return False
@@ -1243,6 +1251,12 @@ class AntigravityACPClient:
             return False
         latest = self._latest_turn.get(session_key)
         if latest is None:
+            return False
+        if latest.control:
+            logger.info(
+                "[HERMES antigravity] steer 跳过控制命令轮，回落正常消息链 "
+                f"session={latest.session_id}"
+            )
             return False
         turn = self._new_turn(
             session_key=session_key,

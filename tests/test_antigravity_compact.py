@@ -116,6 +116,7 @@ class _ACPCompactBase(unittest.IsolatedAsyncioTestCase):
         )
 
         args = [str(FIXTURE), str(self.log_path), json.dumps(self.reply, ensure_ascii=False)]
+        args += list(kwargs.pop("flags", ()))
         client = AntigravityACPClient(
             cli_path=sys.executable,
             cli_args=args,
@@ -391,6 +392,201 @@ class ACPCompressCommandTests(ACPHandlerHarness):
                 self.assertNotIn("已压缩", receipt)
                 self.assertNotIn("tokens", receipt)
                 self.assertEqual(self.wire(), [], "附加参数不得发任何 RPC")
+
+
+class ACPCompactSteerIsolationTests(_ACPCompactBase):
+    """控制命令轮没有正文交付出口，普通用户 steer 必须回退，不得被静默吞掉。"""
+
+    async def _established(self):
+        client = self.make_client()
+        await client.prompt(
+            session_key="k1", system_prompt="SYS-A", user_text="hello", store=self.store
+        )
+        return client, self.store.load_acp_session("k1")[0]
+
+    async def test_control_turn_refuses_steer_without_sending_a_prompt(self) -> None:
+        client, session_id = await self._established()
+        control = client._new_turn(
+            session_key="k1",
+            session_id=session_id,
+            on_unit=None,
+            meta=self.group_meta(),
+            stream_here=False,
+            collect_text=False,
+            control=True,
+        )
+        self.assertIs(client.active_turn("k1"), control)
+
+        ok = await client.steer(session_key="k1", text="§\nLATE-USER\n§")
+
+        self.assertFalse(ok, "控制命令轮不得接管正常用户消息")
+        self.assertEqual(
+            [prompt_text(row) for row in self.rows("session/prompt")],
+            ["hello"],
+            "拒绝 steer 时不得发后续 session/prompt",
+        )
+        self.assertIs(client.active_turn("k1"), control, "控制轮原样保留，不登记接管轮")
+        self.assertFalse(control.superseded)
+
+    async def test_ordinary_turn_still_accepts_steer(self) -> None:
+        client, session_id = await self._established()
+        turn = client._new_turn(
+            session_key="k1",
+            session_id=session_id,
+            on_unit=None,
+            meta=self.group_meta(),
+            stream_here=True,
+        )
+        self.assertIs(client.active_turn("k1"), turn)
+
+        ok = await client.steer(session_key="k1", text="§\nSTEER-OK\n§")
+
+        self.assertTrue(ok, "普通在跑轮的 steer 行为不得回归")
+        prompts = self.rows("session/prompt")
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("STEER-OK", prompt_text(prompts[-1]))
+
+
+class ACPCompactConcurrencyTests(ACPHandlerHarness):
+    """压缩进行中到达的正常私聊：回退既有正常正文链，回复不丢、只处理一次。"""
+
+    def _compress(self):
+        target = SimpleNamespace(private=True, id=self.ADMIN)
+        return self._command(
+            self.commands.handle_compress,
+            target=target,
+            raw=f"/{self.commands._cmd('compress')}",
+        )
+
+    async def test_normal_message_during_compact_is_dispatched_once_and_answered(
+        self,
+    ) -> None:
+        from nonebot.matcher import Matcher
+        from nonebot_plugin_alconna import UniMessage
+        from nonebot_plugin_agent_adapter.core import steer_seen
+        from nonebot_plugin_agent_adapter.core.chat_config import ChatConfig
+        from nonebot_plugin_agent_adapter.handlers import message, message_relay as relay
+
+        gate = self.base / "release"
+        gate.write_text("go", encoding="utf-8")
+        client = self._client(
+            reply="§\nLATER-USER-ANSWER\n§", flags=(f"--gate-prompt={gate}",)
+        )
+        # 首个 prompt 直接放行；之后删除 gate，`/compact` 的 prompt 被夹具挂住。
+        await self._turn()
+        self.assertIn("LATER-USER-ANSWER", "\n".join(self.platform))
+        self.platform.clear()
+        gate.unlink()
+
+        compress_task = asyncio.create_task(self._compress())
+        await _wait_until(
+            lambda: any(
+                prompt_text(row) == "/compact" for row in self.rows("session/prompt")
+            ),
+            what="/compact prompt",
+        )
+        control = client.active_turn(self.session_key())
+        self.assertIsNotNone(control)
+        self.assertTrue(control.control)
+        self.assertFalse(control.collect_text)
+
+        cfg = ChatConfig(reply_debounce_sec=0)
+        dispatches: list[dict] = []
+        real_dispatch = message._dispatch_chat
+
+        async def counting_dispatch(**payload):
+            dispatches.append(payload)
+            await real_dispatch(**payload)
+
+        target = SimpleNamespace(private=True, id=self.ADMIN)
+        event = SimpleNamespace(
+            message=UniMessage("LATER-USER-QUESTION"),
+            get_user_id=lambda: self.ADMIN,
+            is_tome=lambda: False,
+            message_id=902,
+        )
+        steer_seen._steer_seen_reset_for_test()
+        message._debounce_states.clear()
+        self.addCleanup(steer_seen._steer_seen_reset_for_test)
+        self.addCleanup(message._debounce_states.clear)
+        with (
+            patch.object(message, "load_chat_config", lambda: cfg),
+            patch.object(relay, "load_chat_config", lambda: cfg),
+            patch.object(message.alconna, "get_target", lambda *_: target),
+            patch.object(
+                UniMessage, "generate_without_reply", lambda **kw: kw["event"].message
+            ),
+            patch.object(message, "get_adapter_name", lambda _: "onebotv11"),
+            patch.object(message, "check_isolation", lambda *_: True),
+            patch.object(message, "_dispatch_chat", counting_dispatch),
+            patch.object(message, "_peek_event_db_id", lambda *_: 902),
+            patch.object(message, "session_manager", self.manager),
+            patch.object(message.user_lists, "is_known_bot", lambda *_: False),
+            patch.object(message.user_lists, "is_blacklisted", lambda *_: False),
+            patch.object(relay, "_steer_name_resolver", lambda *_: None),
+            patch.object(relay, "steer_reply_push_active", lambda: False),
+            # 本离线 venv 未装 apscheduler，tasks 包导入会炸；这里的投递重试旁路与
+            # 本条消息的通路无关，只保留 slot 释放这一实际副作用。
+            patch.object(
+                relay,
+                "_release_slot_and_retry",
+                lambda key, *a, **k: relay._mcp.inflight.exit(key),
+            ),
+        ):
+            ingress = asyncio.create_task(
+                message.handle_message(self.bot, event, Matcher)
+            )
+            await _wait_until(
+                lambda: dispatches, what="压缩期间消息进入正常 dispatch"
+            )
+            # 压缩仍在进行：消息没有被控制轮 steer 接管，也没有提前发第三条 prompt。
+            texts = [prompt_text(row) for row in self.rows("session/prompt")]
+            self.assertEqual(texts[1], "/compact")
+            self.assertEqual(len(texts), 2)
+            self.assertFalse(any("LATER-USER-QUESTION" in text for text in texts))
+            gate.write_text("go", encoding="utf-8")
+            await ingress
+            await compress_task
+
+        texts = [prompt_text(row) for row in self.rows("session/prompt")]
+        self.assertEqual(len(texts), 3, texts)
+        self.assertEqual(texts[1], "/compact")
+        self.assertIn("LATER-USER-QUESTION", texts[2], "压缩收尾后才走正常正文链")
+        self.assertEqual(len(dispatches), 1, "后续消息必须且只能正常 dispatch 一次")
+        delivered = "\n".join(self.platform)
+        self.assertIn("压缩完成", delivered)
+        self.assertIn("LATER-USER-ANSWER", delivered, "压缩期间到达的消息回复不得丢失")
+        self.assertIsNone(client.active_turn(self.session_key()))
+
+    async def test_second_compress_during_compaction_still_reports_busy(self) -> None:
+        gate = self.base / "release"
+        gate.write_text("go", encoding="utf-8")
+        self._client(reply="§\nOK\n§", flags=(f"--gate-prompt={gate}",))
+        await self._turn()
+        gate.unlink()
+
+        first = asyncio.create_task(self._compress())
+        await _wait_until(
+            lambda: any(
+                prompt_text(row) == "/compact" for row in self.rows("session/prompt")
+            ),
+            what="/compact prompt",
+        )
+        self.platform.clear()
+
+        await self._compress()
+
+        self.assertIn("正忙", self.platform[-1])
+        self.assertEqual(
+            sum(
+                prompt_text(row) == "/compact"
+                for row in self.rows("session/prompt")
+            ),
+            1,
+            "压缩进行中不得再发第二条 /compact",
+        )
+        gate.write_text("go", encoding="utf-8")
+        await first
 
 
 class CompressHelpTextTests(unittest.TestCase):
