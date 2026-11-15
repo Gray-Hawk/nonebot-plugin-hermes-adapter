@@ -671,7 +671,8 @@ def compress_receipt_lines(
 # 实测 agy 1.5.9 只有命令文本可用:已有会话 `session/resume` 后由 `session/prompt`
 # 发 `/compact`;没有 `session/compact` RPC,也没有压缩进度事件可展示。
 _ACP_COMPRESS_NO_SESSION = "⚠️ 当前会话尚未建立(或已被清理),无需压缩"
-_ACP_COMPRESS_DONE = "🗜️ 会话压缩完成(ACP session 不变:{session_key})"
+# 成功回执固定文本:不携带内部 session key / ACP sessionId(用户可见面不暴露内部身份)。
+_ACP_COMPRESS_DONE = "🗜️ 会话压缩完成(ACP session 不变)"
 _ACP_COMPRESS_BOUNDARY = (
     "⚠️ 反重力后端只支持直接压缩:{cmd} 即可(不接受 --preview、聚焦主题或附加参数)"
 )
@@ -737,7 +738,7 @@ async def _compress_acp(*, bot: Bot, target, adapter_name: str, user_id: str, ev
         return
     if compacted:
         logger.info(f"[HERMES] /compress ACP 已压缩 session={session_key}")
-        text = _ACP_COMPRESS_DONE.format(session_key=session_key)
+        text = _ACP_COMPRESS_DONE
     else:
         text = _ACP_COMPRESS_NO_SESSION
     await alconna.UniMessage(text).send(target=target, bot=bot)

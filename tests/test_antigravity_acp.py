@@ -836,6 +836,69 @@ class ACPClearSessionTests(FakeACPBase):
         self.assertNotEqual(prompts[-1]["params"]["sessionId"], old_id)
 
 
+class ACPKeyRenameStartsFreshSessionTests(FakeACPBase):
+    """换到 antigravity-* key：干净新建 ACP 会话，不续用、不错读旧 hermes 映射。"""
+
+    # 假服务端跨进程记住已建会话，才能证明「没有 resume 旧会话」。
+    flags = ("--persist-sessions",)
+
+    def set_interface(self, value: str) -> None:
+        from nonebot_plugin_agent_adapter.config import plugin_config
+
+        previous = plugin_config.hermes_api_interface
+        object.__setattr__(plugin_config, "hermes_api_interface", value)
+        self.addCleanup(
+            object.__setattr__, plugin_config, "hermes_api_interface", previous
+        )
+
+    async def test_new_key_opens_a_fresh_acp_session(self) -> None:
+        from nonebot_plugin_agent_adapter.core.session import SessionManager
+
+        # 旧版本：Hermes 前缀的 key 已经建过 ACP 会话。
+        self.set_interface("completions")
+        manager = SessionManager()
+        manager.bind_store(self.store)
+        old_key = manager.get_session_key("onebotv11", True, "10001")
+        self.assertEqual(old_key, "hermes-onebotv11+private+10001")
+        first = self.make_client()
+        await first.prompt(
+            session_key=old_key, system_prompt="SYS", user_text="one", store=self.store
+        )
+        old_session_id = self.store.load_acp_session(old_key)[0]
+        await first.close()
+
+        # 升级：切 ACP 后端 + 重启。旧 ACP 会话不保留，key 直接换名。
+        self.set_interface("antigravity")
+        restarted = SessionManager()
+        restarted.bind_store(self.store)
+        new_key = restarted.get_session_key("onebotv11", True, "10001")
+        self.assertEqual(new_key, "antigravity-onebotv11+private+10001")
+        self.assertIsNone(
+            self.store.load_acp_session(new_key), "新 key 不得读到旧 hermes 映射"
+        )
+
+        second = self.make_client()
+        await second.prompt(
+            session_key=new_key, system_prompt="SYS", user_text="two", store=self.store
+        )
+
+        created = self.entries("session/new")
+        self.assertEqual(len(created), 2, "换名后应干净新建一个 ACP 会话")
+        new_session_id = self.store.load_acp_session(new_key)[0]
+        self.assertIsNotNone(new_session_id)
+        self.assertNotEqual(new_session_id, old_session_id)
+        self.assertEqual(
+            self.entries("session/prompt")[-1]["params"]["sessionId"], new_session_id
+        )
+        self.assertTrue(
+            all(
+                row["params"]["sessionId"] != old_session_id
+                for row in self.entries("session/resume")
+            ),
+            "不得 resume 旧 hermes 会话",
+        )
+
+
 class ACPTimeoutTests(FakeACPBase):
     flags = ("--hang-prompt",)
 

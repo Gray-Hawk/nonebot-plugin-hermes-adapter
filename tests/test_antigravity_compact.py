@@ -337,6 +337,25 @@ class ACPCompressCommandTests(ACPHandlerHarness):
         self.assertEqual(self.rows("session/resume")[-1]["params"]["sessionId"],
                          self.store.load_acp_session(self.session_key())[0])
 
+    async def test_success_receipt_carries_no_internal_session_key(self) -> None:
+        """成功回执只说明「压缩完成、ACP session 不变」，内部 key/UUID 一律不透出。"""
+        self._client(reply="§\n好的\n§")
+        await self._turn()
+        session_key = self.session_key()
+        self.assertTrue(session_key, "本用例需要真实内部 key 作为反例")
+
+        await self._compress()
+
+        receipt = "\n".join(self.platform)
+        self.assertIn("压缩完成", receipt)
+        self.assertIn("ACP session 不变", receipt)
+        for leaked in (session_key, "antigravity-", "hermes-", "onebotv11+", self.ADMIN):
+            self.assertNotIn(leaked, receipt, f"回执泄漏内部标识: {leaked}")
+        self.assertIsNone(
+            __import__("re").search(r"[0-9a-f]{8}-[0-9a-f]{4}-", receipt),
+            f"回执不得出现 ACP UUID: {receipt!r}",
+        )
+
     async def test_agy_output_never_reaches_the_qq_body(self) -> None:
         marker = "COMPACT-AGY-OUTPUT-MUST-NOT-SURFACE"
         self._client(chunks=[f"§\n{marker}\n§"])

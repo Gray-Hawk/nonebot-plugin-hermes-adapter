@@ -21,7 +21,11 @@ _DEFAULT_SOURCE_LABEL = "后台任务完成"
 def resolve_background_route(
     origin_session_id: str, known_sessions: Iterable[tuple]
 ) -> dict[str, Any] | None:
-    """现会话用登记路由；T1 后旧 session key 从稳定事件身份还原目标。"""
+    """现会话用登记路由；T1 后旧 session key 从稳定事件身份还原目标。
+
+    session key 按真实后端命名:ACP 新 key 是 ``antigravity-*``,Hermes 仍是
+    ``hermes-*``。升级前登记的事件仍带旧 ``hermes-*``(ACP 部署也认),两种都解。
+    """
     for row in known_sessions:
         if len(row) == 6 and row[5] == origin_session_id:
             _, adapter, is_private, user_id, group_id, _ = row
@@ -30,7 +34,7 @@ def resolve_background_route(
                 "user_id": user_id, "group_id": group_id,
             }
     match = re.fullmatch(
-        r"hermes-(?P<adapter>[^+]+)\+(?P<scope>private|group)\+"
+        r"(?:hermes|antigravity)-(?P<adapter>[^+]+)\+(?P<scope>private|group)\+"
         r"(?P<target>[^+]+?)(?:-g\d+)?",
         origin_session_id,
     )
