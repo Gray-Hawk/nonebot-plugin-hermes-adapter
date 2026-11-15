@@ -296,6 +296,18 @@ class _RecorderMessage:
 
 class HandlerTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        # 本文件测 Runs 的 HTTP 压缩面：钉住后端，避免同进程其他测试模块在导入期
+        # 把全局 interface 设成 antigravity 后误走 ACP 分支。
+        from nonebot_plugin_agent_adapter.config import plugin_config
+
+        self._prev_interface = plugin_config.hermes_api_interface
+        object.__setattr__(plugin_config, "hermes_api_interface", "runs")
+        self.addCleanup(
+            object.__setattr__,
+            plugin_config,
+            "hermes_api_interface",
+            self._prev_interface,
+        )
         _RecorderMessage.sent = []
         self.target = SimpleNamespace(private=False, id="462540549")
         self.session_manager = MagicMock()

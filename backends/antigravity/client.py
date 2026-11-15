@@ -36,6 +36,10 @@ ANTIGRAVITY_MCP_TOOL_NAMES: tuple[str, ...] = (
 MCP_SERVER_NAME = "nonebot-bridge"
 _MCP_TOOL_PREFIX = "mcp_"
 
+# 实测（agy 1.5.9）：`available_commands_update` 里有 `compact`，`session/prompt`
+# 发 `/compact` 可执行；直接 RPC `session/compact` 是 -32601。这里只发这条命令文本。
+COMPACT_COMMAND_TEXT = "/compact"
+
 
 def caller_scope_for_mcp() -> CallerScope | None:
     """本进程反向 MCP 调用方的范围——与 `mcp/auth` 同一个判定函数。
@@ -165,6 +169,8 @@ class ACPTurn:
     # 权限请求只认本轮的 approval_callback（steer 轮继承同轮回调）。
     approval_callback: Callable[[dict[str, Any]], Any] | None = None
     cancelled: bool = False
+    # 控制命令轮（`/compact`）不收集正文：agy 的回显/输出不属 QQ 正文流。
+    collect_text: bool = True
 
 
 @dataclass
@@ -696,6 +702,9 @@ class AntigravityACPClient:
             if key is not None and key in self._latest_turn:
                 current = self._streaming_turn.get(session_id)
                 target = self._boundary_turn(key, session_id)
+                if target is not None and not target.collect_text:
+                    # 控制命令轮（`/compact`）不接管正文流：回显与输出都不进 QQ。
+                    return
                 if target is not None and target is not current:
                     if current is not None:
                         self._seal_turn_remainder(current)
@@ -711,8 +720,8 @@ class AntigravityACPClient:
         if not isinstance(text, str):
             return
         turn = self._streaming_turn.get(session_id)
-        if turn is None or self._text_errors.get(turn.session_key):
-            # 轮次已收尾（或已 fail-closed）：游离 chunk 不进入任何一轮。
+        if turn is None or not turn.collect_text or self._text_errors.get(turn.session_key):
+            # 轮次已收尾、控制命令轮（不收集正文）或已 fail-closed：游离 chunk 不进入任何一轮。
             return
         turn.text.append(text)
         self._ingest_chunk(turn, text)
@@ -798,6 +807,7 @@ class AntigravityACPClient:
         meta: dict[str, Any] | None,
         stream_here: bool,
         approval_callback: Callable[[dict[str, Any]], Any] | None = None,
+        collect_text: bool = True,
     ) -> ACPTurn:
         self._turn_seq += 1
         turn = ACPTurn(
@@ -807,6 +817,7 @@ class AntigravityACPClient:
             on_unit=on_unit,
             meta=dict(meta or {}),
             approval_callback=approval_callback,
+            collect_text=collect_text,
         )
         self._turns.setdefault(session_key, []).append(turn)
         self._latest_turn[session_key] = turn
@@ -1024,12 +1035,13 @@ class AntigravityACPClient:
         self,
         *,
         session_key: str,
-        system_prompt: str,
+        system_prompt: str | None,
         user_text: str | Sequence[dict[str, Any]],
         store: SessionKeyStore | None = None,
         on_unit: Callable[[dict[str, Any]], None] | None = None,
         turn_meta: dict[str, Any] | None = None,
         approval_callback: Callable[[dict[str, Any]], Any] | None = None,
+        collect_text: bool = True,
     ) -> str:
         """跑一轮 prompt，返回最终 assistant 正文（含模型自己写的 §）。
 
@@ -1039,13 +1051,17 @@ class AntigravityACPClient:
         终态只补发这一轮尚未回调过的单位；steer 接管的后续 prompt 也共用同一回调。
         approval_callback：本轮 `session/request_permission` 的登记/通知通道；空则不登记、
         按 reject_once 安全拒绝（无管理员可答时不扩大授权）。
+        system_prompt=None 是控制命令（`/compact`）形态：已有会话 resume 时不追加系统提示
+        `_meta`、不改保存的 system hash、不同步模型，也绝不新建会话；`collect_text=False`
+        让这一轮的 agy 输出不进正文流。
         返回的正文是这一轮所有 prompt 段（含被 steer 接管的旧段）的完整拼接；
         被 `/run-stop` 取消时抛 `ACPCancelledError`，不返回半截正文。
         """
         async with self._session_lock(session_key):
             await self._ensure_started()
             record = self._load_session(store, session_key)
-            system_hash = system_prompt_hash(system_prompt)
+            control = system_prompt is None
+            system_hash = "" if control else system_prompt_hash(system_prompt)
             # 阶段2C1：本轮消息上下文对应的 MCP 定义；new/resume 传同一份。
             mcp_servers = mcp_servers_for_turn(turn_meta)
             if mcp_servers:
@@ -1056,6 +1072,9 @@ class AntigravityACPClient:
                     f" bearer={'yes' if server.get('headers') else 'no'}"
                 )
             if record is None:
+                if control:
+                    # 控制命令不新建空会话：缺会话由 `compact()` 上报 False。
+                    raise ACPError("控制命令没有可用的 ACP 会话")
                 session_id = await self._create_session(
                     store=store,
                     session_key=session_key,
@@ -1071,7 +1090,7 @@ class AntigravityACPClient:
                     "cwd": str(self._workspace),
                     "mcpServers": mcp_servers,
                 }
-                changed = stored_hash != system_hash
+                changed = not control and stored_hash != system_hash
                 if changed:
                     # 标准 ACP systemPrompt 字段不生效；扩展只在变化时追加，
                     # 避免同一段系统上下文在会话里叠加多份。
@@ -1081,6 +1100,9 @@ class AntigravityACPClient:
                 try:
                     await self._rpc("session/resume", params)
                 except ACPError as exc:
+                    if control:
+                        # 控制命令不重建会话：会话已失效时如实上抛，由调用方按缺会话处理。
+                        raise
                     # 只对「会话不存在」重建；其它错误如实上抛，不掩盖鉴权/超时等问题。
                     if exc.code != -32602:
                         raise
@@ -1098,7 +1120,7 @@ class AntigravityACPClient:
                     )
                 else:
                     effective_model = stored_model
-                    if self._model and self._model != stored_model:
+                    if not control and self._model and self._model != stored_model:
                         await self._rpc(
                             "session/set_model",
                             {"sessionId": session_id, "modelId": self._model},
@@ -1119,8 +1141,9 @@ class AntigravityACPClient:
                 session_id=session_id,
                 on_unit=on_unit,
                 meta=turn_meta,
-                stream_here=True,
+                stream_here=collect_text,
                 approval_callback=approval_callback,
+                collect_text=collect_text,
             )
             failed = True
             cancelled = False
@@ -1168,6 +1191,44 @@ class AntigravityACPClient:
             if error:
                 raise ACPError(f"正文单位不合法: {error}")
             return text
+
+    async def compact(
+        self,
+        *,
+        session_key: str,
+        store: SessionKeyStore | None = None,
+        turn_meta: dict[str, Any] | None = None,
+    ) -> bool:
+        """手动压缩已有 ACP 会话：`session/resume` + `session/prompt('/compact')`。
+
+        实测（agy 1.5.9）：`compact` 是可用命令，`session/prompt` 发 `/compact` 就能执行；
+        直接 RPC `session/compact` 是 -32601，所以这里只发命令文本，不加新 RPC。
+
+        - 与普通轮共用同一把 `_session_lock`、同一份 `mcp_servers_for_turn(turn_meta)`
+          与同一套 turn 收尾；resume 不带系统提示 `_meta`、不改保存的 system hash。
+        - 沿用同一 sessionId；缺会话返回 False 且不发任何 RPC，也不新建空会话。
+        - 成功返回 True；agy 的输出与回显都不进 QQ 正文（`collect_text=False`）。
+          真实错误按 `ACPError` 上抛，由调用方如实归类。
+        """
+        if self._load_session(store, session_key) is None:
+            return False
+        try:
+            await self.prompt(
+                session_key=session_key,
+                system_prompt=None,
+                user_text=COMPACT_COMMAND_TEXT,
+                store=store,
+                turn_meta=turn_meta,
+                collect_text=False,
+            )
+        except ACPError as exc:
+            if exc.code == -32602:
+                # agy 侧会话已不存在：与缺会话同口径，不重建空会话。
+                logger.warning("[HERMES antigravity] /compact 会话已失效，不重建")
+                return False
+            raise
+        logger.info(f"[HERMES antigravity] 已发送 /compact session={session_key}")
+        return True
 
     async def steer(self, *, session_key: str, text: str) -> bool:
         """在同 ACP session 上发后续 `session/prompt`（运行中 steer 接管）。

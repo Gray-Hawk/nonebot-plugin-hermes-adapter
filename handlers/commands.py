@@ -263,12 +263,14 @@ def build_help_text(
     header: str | None = None,
     footer: str | None = None,
     cmd_prefix: str = "",
+    backend: str = "hermes",
 ) -> str:
     """拼装 /help 正文。与 handler 分开以便离线冒烟。
 
     默认形态保持旧行为一字不差;自定义只换头尾,中间命令清单仍按功能开关
     动态生成(T1 才列 /delay /resume,管理员才列 /hermes-status)。
     cmd_prefix 非空时每条命令带寻址前缀(如 /normi clear)。
+    backend="antigravity" 时只列直接压缩(ACP 没有 preview/focus 面),不写 --preview。
     """
 
     def _cl(cmd: str) -> str:
@@ -286,7 +288,10 @@ def build_help_text(
     if is_admin:
         # 管理员才看见运行时状态命令,普通用户视角下此命令"不存在"
         lines.append(f"{_cl('hermes-status')} - 查看插件运行时状态(管理员)")
-        if hermes_control_plane_enabled():
+        if backend == "antigravity":
+            # ACP 手动压缩只发裸 /compress,没有 --preview(能力边界由命令回执说明)。
+            lines.append(f"{_cl('compress')} - 手动压缩当前会话上下文(管理员)")
+        elif hermes_control_plane_enabled():
             lines.append(f"{_cl('run-status')} - 查看当前会话在跑的 run(管理员)")
             lines.append(f"{_cl('run-stop')} - 终止当前会话在跑的 run(管理员)")
             lines.append(f"{_cl('compress')} - 手动压缩当前会话上下文;--preview 只看占用(管理员)")
@@ -306,6 +311,11 @@ def build_help_text(
     return text
 
 
+def _help_backend() -> str:
+    """/help 的后端分支:只有反重力需要不同的压缩命令文案。"""
+    return "antigravity" if plugin_config.hermes_api_interface == "antigravity" else "hermes"
+
+
 @help_command.handle()
 async def handle_help(bot: Bot, event: Event, matcher: Matcher):
     """显示帮助信息"""
@@ -320,7 +330,14 @@ async def handle_help(bot: Bot, event: Event, matcher: Matcher):
 
     # 菜单文件读取挪出事件循环(同步 IO 会堵住其他消息处理)
     header, footer = await asyncio.to_thread(load_help_menu_decor, load_misc_config().help_menu_file)
-    help_text = build_help_text(target.private, is_admin, header=header, footer=footer, cmd_prefix=CMD_PREFIX)
+    help_text = build_help_text(
+        target.private,
+        is_admin,
+        header=header,
+        footer=footer,
+        cmd_prefix=CMD_PREFIX,
+        backend=_help_backend(),
+    )
     await alconna.UniMessage(help_text).send(target=target, bot=bot)
 
 
@@ -650,6 +667,82 @@ def compress_receipt_lines(
     return [f"⚠️ 压缩失败(HTTP {code or '-'} {status or ''}):{detail}"]
 
 
+# --- ACP 侧 `/compress`(反重力;复用同一命令面与管理员检查) ---
+# 实测 agy 1.5.9 只有命令文本可用:已有会话 `session/resume` 后由 `session/prompt`
+# 发 `/compact`;没有 `session/compact` RPC,也没有压缩进度事件可展示。
+_ACP_COMPRESS_NO_SESSION = "⚠️ 当前会话尚未建立(或已被清理),无需压缩"
+_ACP_COMPRESS_DONE = "🗜️ 会话压缩完成(ACP session 不变:{session_key})"
+_ACP_COMPRESS_BOUNDARY = (
+    "⚠️ 反重力后端只支持直接压缩:{cmd} 即可(不接受 --preview、聚焦主题或附加参数)"
+)
+
+
+def acp_compress_error_lines(exc: BaseException, *, max_detail: int = 200) -> list[str]:
+    """ACP 压缩失败回执:只按真实异常类别归类,不补造消息数、摘要或进度。"""
+    if isinstance(exc, antigravity_client.ACPCancelledError):
+        return ["⚠️ 压缩已被取消(ACP 轮被会话取消),session 未变"]
+    if isinstance(exc, antigravity_client.ACPTimeoutError):
+        return ["⚠️ 压缩超时(ACP 未在时限内收尾),session 未变;稍后可再发一次"]
+    detail = str(exc)[:max_detail]
+    return [f"⚠️ 压缩失败(ACP 调用错误):{detail}"]
+
+
+async def _compress_acp(*, bot: Bot, target, adapter_name: str, user_id: str, event: Event) -> None:
+    """反重力后端的 `/compress`:裸命令才发 RPC;回执不伪造压缩结果。"""
+    is_private = target.private
+    group_id = None if is_private else target.id
+    session_key = session_manager.get_session_key(adapter_name, is_private, user_id, group_id)
+    raw = ""
+    try:
+        raw = event.get_plaintext().strip()
+    except Exception:
+        pass
+    preview, focus = split_compress_args(raw)
+    if preview or focus:
+        # 首版不接 preview/focus:零 RPC,只回能力边界。
+        await alconna.UniMessage(
+            _ACP_COMPRESS_BOUNDARY.format(cmd=_display_cmd("compress"))
+        ).send(target=target, bot=bot)
+        return
+    client = antigravity_client.get_client()
+    if client.active_turn(session_key) is not None:
+        # 预检只为即时反馈;预检后发生的竞争由 ACP 客户端同一把 _session_lock 串行化。
+        await alconna.UniMessage(
+            "\n".join(
+                compress_receipt_lines(
+                    {"ok": False, "code": 409, "status": "session_busy"},
+                    previous_key=session_key,
+                )
+            )
+        ).send(target=target, bot=bot)
+        return
+    turn_meta = {
+        "adapter": adapter_name,
+        "is_private": is_private,
+        "user_id": user_id,
+        "group_id": group_id,
+    }
+    try:
+        compacted = await client.compact(
+            session_key=session_key,
+            store=_mcp.session_key_store,
+            turn_meta=turn_meta,
+        )
+    except antigravity_client.ACPError as exc:
+        # 只记异常类别/码,不记会话正文。
+        logger.warning(f"[HERMES] /compress ACP 失败 {type(exc).__name__} code={exc.code}")
+        await alconna.UniMessage("\n".join(acp_compress_error_lines(exc))).send(
+            target=target, bot=bot
+        )
+        return
+    if compacted:
+        logger.info(f"[HERMES] /compress ACP 已压缩 session={session_key}")
+        text = _ACP_COMPRESS_DONE.format(session_key=session_key)
+    else:
+        text = _ACP_COMPRESS_NO_SESSION
+    await alconna.UniMessage(text).send(target=target, bot=bot)
+
+
 @compress_command.handle()
 async def handle_compress(bot: Bot, event: Event, matcher: Matcher):
     """手动压缩当前会话上下文(管理员;同会话忙碌时明确拒绝)"""
@@ -661,6 +754,10 @@ async def handle_compress(bot: Bot, event: Event, matcher: Matcher):
     if not _is_admin(adapter_name, user_id):
         logger.debug(f"[HERMES] /compress silent skip for {adapter_name}:{user_id}")
         return  # 隐身策略(同 /run-status):不暴露命令存在性
+    if plugin_config.hermes_api_interface == "antigravity":
+        # ACP 没有网关 HTTP 压缩面:只走「已有会话 resume + prompt('/compact')」。
+        await _compress_acp(bot=bot, target=target, adapter_name=adapter_name, user_id=user_id, event=event)
+        return
     if not hermes_control_plane_enabled():
         await alconna.UniMessage(_HERMES_CONTROL_UNAVAILABLE).send(target=target, bot=bot)
         return
