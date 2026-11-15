@@ -865,7 +865,11 @@ class AntigravityACPClient:
         return full
 
     def active_turn(self, session_key: str) -> ACPTurn | None:
-        """本 scope 正在跑的 ACP 轮（steer 分发用）；没有则 None。"""
+        """本 scope 正在跑的 ACP 轮；没有则 None。
+
+        控制命令轮（`/compact`）同样算「在跑」（`/compress` 忙碌预检依赖它），
+        但 `steer()` 会拒绝接管：正常消息由入口按 False 回退到正常 dispatch。
+        """
         if session_key in self._finishing or not self._reader_loop_started():
             return None
         return self._latest_turn.get(session_key)
