@@ -286,8 +286,8 @@ def env(body: str) -> str:
 
 
 def batch(*bodies: str) -> str:
-    """多份正文连发：相邻两份共享中间那个 §。"""
-    return SEP + "\n" + ("\n" + SEP + "\n").join(bodies) + "\n" + SEP
+    """多份正文各自独立闭合：每份自己写开头和结尾，相邻两份是两个 § 行。"""
+    return "\n".join(env(body) for body in bodies)
 
 
 def frame(run: Run, name: str, **fields) -> None:
@@ -614,8 +614,8 @@ class QueuedLaneInterimTest(unittest.TestCase):
 
         旧用例假定部署副本是「裸正文、不结段」的 stock（reviewer t_049df793 R2：该前提
         已经随着 2026-11-11 14:34 的信封部署失效）。当前事实：部署副本与候选同代，在
-        interim 处结清前一段 delta，普通 A/P/C 帧序得到 [A, P, C]。R1 的共享标记边界由
-        ``test_shared_marker_between_units_survives_queued_interim`` 在候选解析器上断言。
+        interim 处结清前一段 delta，普通 A/P/C 帧序得到 [A, P, C]。独立信封边界由
+        ``test_independent_envelope_between_units_survives_queued_interim`` 在候选解析器上断言。
         """
         if not _deployed_parser_is_envelope():
             self.skipTest("部署副本不是信封解析器：本对照『与候选项同代』的前提不成立")
@@ -646,12 +646,12 @@ class QueuedLaneInterimTest(unittest.TestCase):
         # The streamed prefix is covered by the interim: one message, no [答复, 答复A] pair.
         self.assertEqual(client.sent, ["答复A", "答复C"])
 
-    def test_shared_marker_between_units_survives_queued_interim(self):
-        """R1（t_049df793）：delta 已到 A、B 两份，queued interim 只是 A → B 仍发一次。
+    def test_independent_envelope_between_units_survives_queued_interim(self):
+        """delta 已到 A、B 两份（各自独立信封），queued interim 只是 A → B 仍发一次。
 
         反例：旧前缀裁剪把共享的 § 切掉，剩下的尾巴缺开头，完整的 B 被当 missing_open
-        丢掉。结构化队列下 A 在 delta 闭合时就已入队，interim 的 A 只是同一段文本的
-        另一种切帧（段内去重），共享标记不会产生 missing_open，B 照发一次。
+        丢掉。独立信封下 A 在 delta 闭合时就已入队，interim 的 A 只是同一段文本的
+        另一种切帧（段内去重），B 带自己的开头照发一次。
         """
         patches.install()
         run = Run()
@@ -665,7 +665,7 @@ class QueuedLaneInterimTest(unittest.TestCase):
         self.assertEqual(client.sent, ["答复A", "答复B", "答复C"])
         self.assertEqual(len(client.sent), 3)
         self.assertEqual(client.parser.interim_count, 1)
-        # 只有 interim 重复 A 的段内去重；共享标记不得被记成缺开头。
+        # 只有 interim 重复 A 的段内去重；独立信封不得被记成缺开头。
         self.assertEqual(client.suppressed, [("segment_duplicate", "答复A")])
         self.assertNotIn("missing_open", [reason for reason, _text in client.suppressed])
 

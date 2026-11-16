@@ -242,11 +242,11 @@ class TextProtocolParserTests(unittest.TestCase):
         ])
         self.assertEqual([d["body"] for d in drained], ["A", "B"])
 
-    def test_interim_prefix_keeps_the_shared_marker_of_the_tail(self) -> None:
-        """delta 已积到多份、interim 只是前面一份：两份正文共享的 § 不能被前缀裁掉。
+    def test_interim_prefix_keeps_both_units_after_interim(self) -> None:
+        """delta 已积到多份、interim 只是前面一份：后面的正文一份都不能丢。
 
-        反例（t_049df793 R1）：``pending[len(text):]`` 直接切片，剩下 ``\nB\n§`` 缺开头，
-        完整的 B 被误记 missing_open 丢掉。
+        反例（t_049df793 R1）：``pending[len(text):]`` 直接切片，剩下的尾巴缺开头，
+        完整的 B 被误记 missing_open 丢掉。独立信封下 B 带自己的开头，整段留在碎片里。
         """
         for interim in (unit({}, "A"), unit({}, "A") + "\n"):
             with self.subTest(interim=interim):
