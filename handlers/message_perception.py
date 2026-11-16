@@ -154,9 +154,14 @@ async def handle_perception(bot: Bot, event: Event):
     # 同一次 get_forward_msg 响应内兼收 image 段 URL(kind='forward_image',只注册发号、
     # 不内联);base = own + sticker + quote,号即该图在本条 message_images 的 idx。
     forward_base = len(image_urls) + len(sticker_urls) + len(quote_image_urls)
-    forward_full, forward_image_urls = await _extract_forward_full(
-        uni_msg, bot, adapter_name=adapter_name, number_base=forward_base
+    forward_full, forward_image_urls, forward_video_entries = await _extract_forward_full(
+        uni_msg, bot, adapter_name=adapter_name, number_base=forward_base,
+        file_idx_base=len(file_entries),
     )
+    # 合并转发里的视频与文件/普通视频共用 m:<mid>#f<idx> 编号：落库前先接在
+    # 本条消息已有引用行之后，落库后由 _collect_file_placeholders 统一补占位。
+    if forward_video_entries:
+        file_entries.extend(forward_video_entries)
     if forward_full is not None:
         summary = _summarize_forward(forward_full)
         msg_text = f"{msg_text}\n{summary}" if msg_text else summary

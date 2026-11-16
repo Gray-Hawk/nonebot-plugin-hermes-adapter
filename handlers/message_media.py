@@ -178,44 +178,106 @@ def _clean_file_name(name) -> str:
 
 
 def _extract_file_entries(uni_msg: alconna.UniMessage, *, cap: int | None = None) -> list[dict]:
-    """提取普通 File 段元数据；接收阶段只登记，不发起下载。"""
+    """提取普通 File 段元数据；接收阶段只登记，不发起下载。
+
+    视频段复用同一条文件引用通道：能拿到可下载 url 的 video 段也登记成一行
+    (kind="video")，编号与文件共用 `m:<mid>#f<idx>`；拿不到 url 的视频不登记，
+    占位退回普通 `[视频]`。不下载、不抽帧。
+    """
     entries: list[dict] = []
     effective_cap = cap
     if (effective_cap is not None and effective_cap <= 0) or not uni_msg.has(alconna.File):
-        return entries
-    for seg in uni_msg[alconna.File]:
-        if effective_cap is None:
-            effective_cap = load_file_config().max_files_per_message
-        if len(entries) >= effective_cap:
-            logger.warning(f"[file] 单消息文件数超过 {effective_cap}，其余仅保留消息到达事实")
-            break
-        size_raw = None
-        origin = getattr(seg, "origin", None)
-        origin_data = getattr(origin, "data", None)
-        if isinstance(origin_data, dict):
-            size_raw = origin_data.get("file_size")
-        if size_raw is None:
-            size_raw = getattr(seg, "size", None)
-        try:
-            size = max(0, int(size_raw or 0))
-        except (TypeError, ValueError):
-            size = 0
-        url = getattr(seg, "url", None)
-        if not isinstance(url, str) or not url.startswith(("http://", "https://")):
-            url = None
-        entries.append({
-            "file_id": str(getattr(seg, "id", "") or ""),
-            "name": _clean_file_name(getattr(seg, "name", None)),
-            "size": size,
-            "url": url,
-            "qq_message_id": None,
-        })
+        entries = []
+    else:
+        for seg in uni_msg[alconna.File]:
+            if effective_cap is None:
+                effective_cap = load_file_config().max_files_per_message
+            if len(entries) >= effective_cap:
+                logger.warning(f"[file] 单消息文件数超过 {effective_cap}，其余仅保留消息到达事实")
+                break
+            size_raw = None
+            origin = getattr(seg, "origin", None)
+            origin_data = getattr(origin, "data", None)
+            if isinstance(origin_data, dict):
+                size_raw = origin_data.get("file_size")
+            if size_raw is None:
+                size_raw = getattr(seg, "size", None)
+            try:
+                size = max(0, int(size_raw or 0))
+            except (TypeError, ValueError):
+                size = 0
+            url = getattr(seg, "url", None)
+            if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+                url = None
+            entries.append({
+                "kind": "file",
+                "file_id": str(getattr(seg, "id", "") or ""),
+                "name": _clean_file_name(getattr(seg, "name", None)),
+                "size": size,
+                "url": url,
+                "qq_message_id": None,
+            })
+    entries.extend(_extract_video_entries(uni_msg, cap=cap))
     return entries
 
 
-def _collect_file_placeholders(file_entries: list[dict], message_id: int | None = None) -> list[str]:
+_VIDEO_ENTRY_KIND = "video"
+
+
+def _video_file_entry(seg) -> dict | None:
+    """单个 video 段 → 文件引用行；拿不到可下载 url 时返回 None（退回 [视频]）。"""
+    url = getattr(seg, "url", None)
+    if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+        return None
+    size_raw = None
+    origin = getattr(seg, "origin", None)
+    origin_data = getattr(origin, "data", None)
+    if isinstance(origin_data, dict):
+        size_raw = origin_data.get("file_size")
+    if size_raw is None:
+        size_raw = getattr(seg, "size", None)
+    try:
+        size = max(0, int(size_raw or 0))
+    except (TypeError, ValueError):
+        size = 0
+    return {
+        "kind": _VIDEO_ENTRY_KIND,
+        "file_id": str(getattr(seg, "id", "") or ""),
+        "name": _clean_file_name(getattr(seg, "name", None) or "video.mp4"),
+        "size": size,
+        "url": url,
+        "qq_message_id": None,
+    }
+
+
+def _extract_video_entries(uni_msg: alconna.UniMessage, *, cap: int | None = None) -> list[dict]:
+    """普通消息里的 video 段 → 文件引用行（与文件同一上限，只登记元数据）。"""
+    if not uni_msg.has(alconna.Video):
+        return []
+    limit = cap if cap is not None else load_file_config().max_files_per_message
+    entries: list[dict] = []
+    for seg in uni_msg[alconna.Video]:
+        if limit is not None and limit <= 0:
+            break
+        if limit is not None and len(entries) >= limit:
+            logger.warning(f"[file] 单消息视频数超过 {limit}，其余仅保留消息到达事实")
+            break
+        entry = _video_file_entry(seg)
+        if entry is not None:
+            entries.append(entry)
+    return entries
+
+
+def _collect_file_placeholders(
+    file_entries: list[dict], message_id: int | None = None, *, idx_base: int = 0
+) -> list[str]:
+    """文件/视频引用行 → 可寻址占位；idx_base 供合并转发接排在本条消息之后。"""
     labels: list[str] = []
-    for idx, entry in enumerate(file_entries):
+    for offset, entry in enumerate(file_entries):
+        idx = idx_base + offset
+        if entry.get("kind") == _VIDEO_ENTRY_KIND:
+            labels.append(f"[视频 m:{message_id}#f{idx}]" if message_id is not None else "[视频]")
+            continue
         name = _clean_file_name(entry.get("name"))
         if message_id is None:
             labels.append(f"[文件:{name}]")
@@ -252,8 +314,11 @@ def _collect_nontext_placeholders(
         for _v in uni_msg[alconna.Voice]:
             placeholders.append("[语音]")
     if uni_msg.has(alconna.Video):
-        for _v in uni_msg[alconna.Video]:
-            placeholders.append("[视频]")
+        for video in uni_msg[alconna.Video]:
+            # 已登记成文件引用（有可下载 url）的视频由调用方按 m:<mid>#f<idx> 出占位；
+            # 拿不到引用的才退回普通 [视频]。
+            if _video_file_entry(video) is None:
+                placeholders.append("[视频]")
     if uni_msg.has(alconna.Emoji):
         for face in uni_msg[alconna.Emoji]:
             name = getattr(face, "name", None)
@@ -334,7 +399,9 @@ def _collect_at_targets(
 # --- Phase B-1: 合并转发消息提取 ---
 
 
-def _node_summary(node: dict, *, image_labels=None) -> str | None:
+def _node_summary(
+    node: dict, *, image_labels=None, video_labels=None
+) -> str | None:
     """将 OneBot get_forward_msg 返回的单条节点转成单行摘要。
 
     节点结构在不同 OneBot 实现端之间不完全统一,主要存在两种:
@@ -369,7 +436,10 @@ def _node_summary(node: dict, *, image_labels=None) -> str | None:
         elif seg_type == "record":
             parts.append("[语音]")
         elif seg_type == "video":
-            parts.append("[视频]")
+            if video_labels is not None:
+                parts.append(next(video_labels, "[视频]"))
+            else:
+                parts.append("[视频]")
         elif seg_type == "file":
             name = data.get("name") or data.get("file") or "未命名"
             parts.append(f"[文件:{name}]")
@@ -404,6 +474,31 @@ def _node_image_urls(node: dict) -> list[str | None]:
     return urls
 
 
+def _node_video_entries(node: dict) -> list[dict]:
+    """节点内 video 段 → 文件引用行(按段序;无可下载 url 的段跳过)。
+
+    与 _node_summary 的 video_labels 同一顺序遍历,保证块内标签与登记行一一对应。
+    """
+    entries: list[dict] = []
+    segs = node.get("content") or node.get("message") or []
+    for seg in segs:
+        if not isinstance(seg, dict) or seg.get("type") != "video":
+            continue
+        data = seg.get("data", {}) if isinstance(seg.get("data"), dict) else {}
+        url = data.get("url")
+        if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+            continue
+        entries.append({
+            "kind": _VIDEO_ENTRY_KIND,
+            "file_id": str(data.get("file_id") or data.get("file") or ""),
+            "name": _clean_file_name(data.get("name") or data.get("file") or "video.mp4"),
+            "size": 0,
+            "url": url,
+            "qq_message_id": None,
+        })
+    return entries
+
+
 # 折叠转发 get_forward_msg 的短 TTL 结果缓存:
 # 同一条消息的同一 ref 会被 perception(priority=1)与主 handler(priority=98)各调
 # 一次 _extract_forward_full;被引消息本身是折叠转发时那段还要再各调一次——同一
@@ -416,7 +511,8 @@ _FORWARD_FULL_TTL_S = 60.0
 # 锚在 dict 里不释放,重连换新实例后旧条目也永远 miss。无 self_id 的调用方
 # (离线冒烟的 FakeBot)退化 id(bot),实例天然隔离的语义不变。
 _forward_full_cache: dict[
-    tuple[str, str, int | None, int | None], tuple[str, tuple[str, ...], float]
+    tuple[str, str, int | None, int | None, int | None, int],
+    tuple[str, tuple[str, ...], tuple[dict, ...], float],
 ] = {}
 
 
@@ -427,11 +523,13 @@ async def _extract_forward_full(
     adapter_name: str,
     number_base: int | None = None,
     cap: int | None = None,
-) -> tuple[str | None, list[str]]:
-    """提取合并转发消息,返回 (块文本, 转发图 URL 列表)。
+    file_message_id: int | None = None,
+    file_idx_base: int = 0,
+) -> tuple[str | None, list[str], list[dict]]:
+    """提取合并转发消息,返回 (块文本, 转发图 URL 列表, 转发视频引用行)。
 
     块文本形如 <forwarded_messages count="N">...</forwarded_messages>;仅支持
-    onebotv11/onebotv12(其他适配器返回 (None, []));get_forward_msg 失败时返回
+    onebotv11/onebotv12(其他适配器返回 (None, [], []));get_forward_msg 失败时返回
     自闭合 fetch_failed 标签,不抛出。
 
     number_base: 给定时启用转发图发号——把每个节点内 image 段原位渲染成
@@ -442,6 +540,12 @@ async def _extract_forward_full(
     (用于被引消息里的折叠转发:那些图不属本条消息,不占本条消息的 idx)。
     cap: 本消息转发图注册上限;None 时现读 media_config.forward_image_cap。
     超出上限按内容(URL)去重截断 + WARN。
+
+    file_message_id / file_idx_base: 转发里的 video 段同样登记成文件引用行(与文件、
+    普通视频共用一个 m:<mid>#f<idx> 编号空间,编号从 file_idx_base 起排)。主路径知道
+    本条消息的真实 m:id 时块内直接渲染 `[视频 m:<mid>#f<idx>]`;perception 落库前
+    还不知道 m:id(file_message_id=None),块内保留普通 `[视频]`,引用行随消息落库后
+    由调用方补占位。拿不到 url 的视频段一律保留 `[视频]`。
     """
     # TODO(B-1.3): onebotv12 uses the same `get_forward_msg` API name based on OneBot
     # spec convergence, but this has not been verified against a live v12 deployment.
@@ -449,7 +553,7 @@ async def _extract_forward_full(
     # fetch_failed self-closing tag — degraded but non-crashing. Verify with a real
     # v12 adapter and either confirm or branch the call.
     if adapter_name not in {"onebotv11", "onebotv12"}:
-        return None, []
+        return None, [], []
 
     refs = uni_msg[alconna.Reference]
     ref_id: str | None = None
@@ -458,15 +562,19 @@ async def _extract_forward_full(
             ref_id = ref.id
             break
     if ref_id is None:
-        return None, []
+        return None, [], []
 
     # 短 TTL 缓存命中即返(见 _forward_full_cache 注释)。命中时返回新列表副本,
-    # 不与缓存共享可变对象。
-    cache_key = (str(getattr(bot, "self_id", "") or id(bot)), ref_id, number_base, cap)
+    # 不与缓存共享可变对象。渲染参数(m:id/编号起点)进键:主路径与 perception 的
+    # 同一 ref 渲染形态不同,不能互相命中。
+    cache_key = (
+        str(getattr(bot, "self_id", "") or id(bot)), ref_id, number_base, cap,
+        file_message_id, file_idx_base,
+    )
     now_mono = time.monotonic()
     cached = _forward_full_cache.get(cache_key)
-    if cached is not None and cached[2] > now_mono:
-        return cached[0], list(cached[1])
+    if cached is not None and cached[3] > now_mono:
+        return cached[0], list(cached[1]), [dict(e) for e in cached[2]]
 
     try:
         resp = await bot.call_api("get_forward_msg", id=ref_id)
@@ -475,7 +583,7 @@ async def _extract_forward_full(
             f"[HERMES forward] get_forward_msg failed adapter={adapter_name} "
             f"ref_id={ref_id}: {type(exc).__name__}: {exc}"
         )
-        return '<forwarded_messages count="?" status="fetch_failed"/>', []
+        return '<forwarded_messages count="?" status="fetch_failed"/>', [], []
 
     nodes: list = []
     if isinstance(resp, dict):
@@ -495,6 +603,7 @@ async def _extract_forward_full(
         effective_cap = cap if cap is not None else load_media_config().forward_image_cap
     seen_img_urls: set[str] = set()
     registered: list[str] = []
+    registered_videos: list[dict] = []
     img_truncated = False
 
     lines: list[str] = []
@@ -515,7 +624,16 @@ async def _extract_forward_full(
                     seen_img_urls.add(u)
                     registered.append(u)
                     image_labels.append(f"[转发图#{number_base + len(registered) - 1}]")
-            summary = _node_summary(node, image_labels=iter(image_labels))
+            video_labels: list[str] = []
+            for entry in _node_video_entries(node):
+                idx = file_idx_base + len(registered_videos)
+                registered_videos.append(entry)
+                video_labels.append(
+                    f"[视频 m:{file_message_id}#f{idx}]" if file_message_id is not None else "[视频]"
+                )
+            summary = _node_summary(
+                node, image_labels=iter(image_labels), video_labels=iter(video_labels)
+            )
         else:
             summary = _node_summary(node)
         if summary is None:
@@ -545,17 +663,20 @@ async def _extract_forward_full(
         )
 
     if not lines:
-        return '<forwarded_messages count="?" status="fetch_failed"/>', registered
+        return '<forwarded_messages count="?" status="fetch_failed"/>', registered, registered_videos
 
     content = "\n".join(lines)
     block = f'<forwarded_messages count="{total_nodes}">\n{content}\n</forwarded_messages>'
     # 成功结果入缓存(失败/空块路径不落缓存,下一层照常重试)。
-    _forward_full_cache[cache_key] = (block, tuple(registered), now_mono + _FORWARD_FULL_TTL_S)
+    _forward_full_cache[cache_key] = (
+        block, tuple(registered), tuple(dict(e) for e in registered_videos),
+        now_mono + _FORWARD_FULL_TTL_S,
+    )
     if len(_forward_full_cache) > 256:
-        expired = [k for k, (_b, _u, exp) in _forward_full_cache.items() if exp <= now_mono]
+        expired = [k for k, (_b, _u, _v, exp) in _forward_full_cache.items() if exp <= now_mono]
         for k in expired:
             _forward_full_cache.pop(k, None)
-    return block, registered
+    return block, registered, registered_videos
 
 
 # 自闭合 forwarded_messages 标签(fetch_failed / preview 两种变体共用此形态)。
@@ -650,7 +771,7 @@ async def _extract_replied_media(event: Event, bot: Bot, *, adapter_name: str) -
             # 引用内历史@改写成「提及」,见 _rewrite_quoted_ats docstring
             suffix = _rewrite_quoted_ats(replied_at)
             out.text = (out.text + " " + suffix).strip() if out.text else suffix
-        replied_forward, _replied_fwd_imgs = await _extract_forward_full(
+        replied_forward, _replied_fwd_imgs, _replied_fwd_videos = await _extract_forward_full(
             replied_message, bot, adapter_name=adapter_name
         )
         out.forward_full = replied_forward
