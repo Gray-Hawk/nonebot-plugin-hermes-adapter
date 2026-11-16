@@ -207,8 +207,9 @@ no `not_final` field) to request the next turn.
 
 Mentions live in the reply text: write `[CQ:at,qq=12345]` exactly where each strong
 notification belongs. Multiple people and arbitrary positions are supported; the plugin
-preserves segment order and does not prepend or infer mentions. Omit markers for ordinary
-replies, and do not use other CQ codes or `@all`.
+preserves segment order and does not prepend or infer mentions. A poke is
+`[CQ:poke,type=1,id=12345]` (type may be omitted, digits only, never yourself). Omit
+markers for ordinary replies, and do not use any other CQ codes or `@all`.
 
 `reply_to` independently quotes one specific message: register it with
 `submit_control(reply_to="m:123")`, using the plugin `m:id` already shown in history. Never
