@@ -244,11 +244,24 @@ class _InlinePoke:
     qq: str
 
 
-def _ob11_poke_segment(ptype: str, qq: str):
-    """OneBot v11 poke 消息段；adapter 不可用时返回 None（调用方保留原样文本）。"""
-    if _Ob11MessageSegment is None:
-        return None
-    return _Ob11MessageSegment("poke", {"type": ptype, "id": qq})
+def _poke_supported() -> bool:
+    """poke 是否可用：依赖 onebotv11 adapter 在场（与旧版同一探测口径）。
+
+    不在场时整条链路保持「poke 标记原样留文本」的旧行为。
+    """
+    return _Ob11MessageSegment is not None
+
+
+async def _send_poke(bot: Bot, target: alconna.Target, qq: str) -> None:
+    """按 OneBot v11 公开 API 戳一戳。
+
+    NapCat 群聊只接受 ``send_poke(group_id, user_id)``（原生 poke 消息段 retcode=1400），
+    私聊同一 API 只给 ``user_id``。类型字段 ``type`` 不在公开 API 面内，不发送。
+    """
+    if target.private:
+        await bot.call_api("send_poke", user_id=int(qq))
+    else:
+        await bot.call_api("send_poke", group_id=int(target.id), user_id=int(qq))
 
 
 def _is_self_poke_target(qq: str, self_id: str | None) -> bool:
@@ -291,8 +304,7 @@ def _parse_inline_markers(
         if int(qq) == 0 or _is_self_poke_target(qq, self_id):
             # 0/自己不是合法戳一戳目标：不切断文本，原样留下。
             continue
-        segment = _ob11_poke_segment(ptype, qq)
-        if segment is None:  # pragma: no cover - 依赖 onebotv11 adapter 是否安装
+        if not _poke_supported():  # pragma: no cover - 依赖 onebotv11 adapter 是否安装
             continue
         events.append((match.start(), match.end(), _InlinePoke(ptype, qq)))
     for start, end, token in sorted(events, key=lambda item: item[0]):
@@ -311,21 +323,44 @@ def _parse_inline_markers(
 
 
 def _tokens_to_segments(tokens: Sequence[str | _InlineAt | _InlinePoke]) -> list:
-    """片段 → alconna 段列表(文本用裸 str,由 UniMessage 构造期收成 Text)。"""
+    """片段 → alconna 段列表(文本用裸 str,由 UniMessage 构造期收成 Text)。
+
+    ``_InlinePoke`` 不出现在这里：poke 是**动作**不是段（NapCat 群聊拒绝原生 poke
+    消息段），由 :func:`_message_steps` 切成独立动作位。
+    """
 
     segments: list = []
     for tok in tokens:
         if isinstance(tok, _InlineAt):
             segments.append(alconna.At("user", tok.qq))
         elif isinstance(tok, _InlinePoke):
-            segment = _ob11_poke_segment(tok.type, tok.qq)
-            if segment is None:  # pragma: no cover - 解析期已挡
-                segments.append(f"[CQ:poke,type={tok.type},id={tok.qq}]")
-            else:
-                segments.append(alconna.Other(segment))
+            continue
         else:
             segments.append(tok)
     return segments
+
+
+def _message_steps(
+    tokens: Sequence[str | _InlineAt | _InlinePoke],
+) -> list[list[str | _InlineAt] | _InlinePoke]:
+    """片段序列 → 有序动作位：文本/@ 分批，poke 各占一步（保序）。
+
+    出站动作顺序 = 入参顺序：``文本1 [poke] 文本2`` 拆成三步（消息、戳、消息），
+    绝不把 poke 提前或延后。相邻的文本/@ 合成同一批，不额外多分一条消息。
+    """
+    steps: list[list[str | _InlineAt] | _InlinePoke] = []
+    current: list[str | _InlineAt] = []
+    for tok in tokens:
+        if isinstance(tok, _InlinePoke):
+            if current:
+                steps.append(current)
+                current = []
+            steps.append(tok)
+            continue
+        current.append(tok)
+    if current:
+        steps.append(current)
+    return steps
 
 
 def _truncate_tokens(
@@ -492,11 +527,15 @@ def _pack_forward_nodes(
     bot_nickname: str,
     max_chars_per_node: int = 3500,
 ) -> list[alconna.CustomNode]:
-    """把 文本/@/poke 片段装进合并转发的自定义节点。
+    """把 文本/@ 片段装进合并转发的自定义节点。
 
-    与纯文本分包的区别:**@ / poke 段是独立段,不参与字符预算、也不会被切断**——先按
+    与纯文本分包的区别:**@ 段是独立段,不参与字符预算、也不会被切断**——先按
     片段切分文本,再按预算开新节点,段落在它当时所在的节点里,跨节点时各节点自带自己的
     段,整包不丢人也不重排。返回至少一个节点(空文本返回一个空内容节点)。
+
+    ``_InlinePoke`` 不进节点:NapCat 群聊拒绝原生 poke 消息段(retcode=1400),poke 由
+    ``send_poke`` 公开 API 单独发;长文合并转发时它在整包之后按原序补发(见
+    ``send_text_with_media``),绝不退化成节点里的字面 CQ 文本。
     """
 
     contents: list[list] = [[]]
@@ -506,13 +545,6 @@ def _pack_forward_nodes(
             contents[-1].append(alconna.At("user", tok.qq))
             continue
         if isinstance(tok, _InlinePoke):
-            segment = _ob11_poke_segment(tok.type, tok.qq)
-            if segment is not None:
-                contents[-1].append(alconna.Other(segment))
-            else:  # pragma: no cover - 解析期已挡
-                contents[-1].append(
-                    alconna.Text(f"[CQ:poke,type={tok.type},id={tok.qq}]")
-                )
             continue
         for chunk in _split_text_chunks(tok, max_chars_per_node):
             if not chunk:
@@ -685,6 +717,179 @@ async def _send_unimsg(
     return msg_ids
 
 
+async def _send_msg(msg: alconna.UniMessage, *, bot: Bot, target: alconna.Target):
+    """单条消息出站（唯一 UniMessage.send 调用点，便于替身与计数）。"""
+    return await msg.send(target=target, bot=bot)
+
+
+async def _send_steps(
+    steps: Sequence["alconna.UniMessage | _InlinePoke"],
+    *,
+    bot: Bot,
+    target: alconna.Target,
+    delivery: DeliveryContext | None = None,
+) -> list[str]:
+    """按序发送「消息 + 戳一戳」动作位，整体只认领一次交付组件。
+
+    一次出站可能落成多条消息 + 多个 ``send_poke`` 调用：组件只认领一次，回执 id 全部
+    汇总到同一次 ``mark_component_sent``——已 sent 的组件绝不会重发（避免同一组件重复
+    发送），中途任何一步失败就整体记 unknown（部分失败不记成功，交给对账）。
+    """
+    outcome, existing, token = _delivery_begin(delivery)
+    if outcome == "sent":
+        return existing
+    if delivery is not None:
+        _delivery_raise_if_busy(outcome, delivery)
+    msg_ids: list[str] = []
+    try:
+        for step in steps:
+            if isinstance(step, _InlinePoke):
+                await _send_poke(bot, target, step.qq)
+                continue
+            receipt = await _send_msg(step, bot=bot, target=target)
+            msg_ids.extend(_receipt_msg_ids(receipt))
+    except Exception as exc:
+        _delivery_mark_unknown(delivery, exc, token)
+        raise
+    if delivery is not None:
+        delivery.tracker.mark_component_sent(
+            run_id=delivery.run_id, component_id=delivery.component_id, msg_ids=msg_ids,
+            token=token,
+        )
+    if not msg_ids:
+        logger.warning(f"[OUTBOUND] 发送成功但回执无 msg_ids(消息 id 无法留痕) target={target}")
+    return msg_ids
+
+
+async def _send_with_pokes(
+    *,
+    bot: Bot,
+    target: alconna.Target,
+    tokens: list[str | _InlineAt | _InlinePoke],
+    reply_id: str,
+    reply_at: str,
+    media_urls: Sequence[str],
+    adapter_name: str | None,
+    delivery: DeliveryContext | None,
+    original_len: int,
+    max_len: int,
+) -> SendResult:
+    """含 poke 的一次出站：文本/@ 与 poke 按原序落成有序动作位。
+
+    NapCat 群聊拒绝原生 poke 消息段（retcode=1400，仅允许私聊），所以 poke 一律走
+    ``send_poke`` 公开 API：``文本1 [poke] 文本2`` → 消息、戳、消息，顺序不变。
+    长文合并转发仍然优先（poke 不进节点，整包之后按原序补发）。整批只认领一次交付
+    组件，回执 id 汇总回写，一次失败即整体 unknown。
+    """
+    media_msg, media_count = (
+        _media_unimsg(media_urls) if media_urls else (None, 0)
+    )
+
+    def _first_message(content_tokens: Sequence[str | _InlineAt]) -> alconna.UniMessage:
+        msg = alconna.UniMessage()
+        if reply_id:
+            msg += alconna.UniMessage([alconna.Reply(reply_id)])
+            if reply_at:
+                msg += alconna.UniMessage([alconna.At("user", reply_at), alconna.Text(" ")])
+        if content_tokens:
+            msg += alconna.UniMessage(_tokens_to_segments(content_tokens))
+        return msg
+
+    long_forward = (
+        original_len > max_len
+        and not target.private
+        and adapter_name == "onebotv11"
+        and load_chat_config().long_reply_forward
+    )
+    steps: list = []
+    if long_forward:
+        try:
+            nickname = await get_bot_nickname(bot)
+            nodes = _pack_forward_nodes(
+                tokens, bot_self_id=bot.self_id, bot_nickname=nickname
+            )
+            if media_msg is not None:
+                nodes[-1].content.extend(media_msg)
+            if reply_id:
+                nodes[0].content.insert(0, alconna.Reply(reply_id))
+                if reply_at:
+                    nodes[0].content[1:1] = [alconna.At("user", reply_at), alconna.Text(" ")]
+                logger.warning(
+                    f"[OUTBOUND] 合并转发无外层引用槽位,Reply 已放入首节点首段;"
+                    f"客户端展示待实测 target={target} reply_id={reply_id}"
+                )
+            steps.append(alconna.UniMessage([alconna.Reference()(*nodes)]))
+        except Exception as exc:
+            logger.warning(f"[OUTBOUND] long-reply forward failed, falling back to truncation: {exc}")
+            steps = []
+    if not steps:
+        truncated = False
+        if original_len > max_len:
+            tokens, _ = _truncate_tokens(tokens, max_len)
+            tokens.append(_TRUNCATION_SUFFIX)
+            truncated = True
+        first = True
+        for step in _message_steps(tokens):
+            if isinstance(step, _InlinePoke):
+                steps.append(step)
+                continue
+            steps.append(_first_message(step) if first else alconna.UniMessage(
+                _tokens_to_segments(step)
+            ))
+            first = False
+        if media_msg is not None:
+            if steps and not isinstance(steps[-1], _InlinePoke):
+                steps[-1] += media_msg
+            else:
+                steps.append(media_msg)
+        logger.debug(
+            f"[OUTBOUND] stepped send target={target} text_len={original_len} "
+            f"truncated={truncated} steps={len(steps)} pokes="
+            f"{sum(1 for s in steps if isinstance(s, _InlinePoke))}"
+        )
+    if not steps:
+        return SendResult(ok=False, msg_ids=[])
+    try:
+        msg_ids = await _send_steps(steps, bot=bot, target=target, delivery=delivery)
+    except DeliveryClaimBusy as exc:
+        run_id = delivery.run_id if delivery is not None else "-"
+        component_id = delivery.component_id if delivery is not None else "-"
+        logger.info(
+            f"[OUTBOUND] 交付组件按台账取消出站 run={run_id} component={component_id}: {exc}"
+        )
+        return SendResult(ok=False, msg_ids=[])
+    except Exception as exc:
+        logger.error(
+            f"[OUTBOUND] 发送失败(含 poke) target_type={type(target).__name__}: {exc}",
+            exc_info=True,
+        )
+        return SendResult(ok=False, msg_ids=[])
+    return SendResult(ok=True, msg_ids=msg_ids)
+
+
+def _media_unimsg(media_urls: Sequence[str]) -> tuple[alconna.UniMessage, int]:
+    """媒体 URL → UniMessage 段（与主路径同一套 scheme 判定），返回 (msg, 有效数)。"""
+    msg = alconna.UniMessage()
+    sent = 0
+    for u in media_urls:
+        if u.startswith(("http://", "https://")):
+            msg += alconna.UniMessage(alconna.Image(url=u))
+            sent += 1
+        elif u.startswith("data:"):
+            parsed = _parse_image_data_url(u)
+            if parsed is None:
+                logger.warning(f"[OUTBOUND] unsupported data: URL skipped (len={len(u)})")
+                continue
+            raw, mimetype, _ = parsed
+            msg += alconna.UniMessage(alconna.Image(raw=raw, mimetype=mimetype))
+            sent += 1
+        else:
+            logger.warning(
+                f"[OUTBOUND] 无法投递的媒体引用,已跳过(需要 http(s) 或 data:): {u[:120]}"
+            )
+    return msg, sent
+
+
 async def send_text_with_media(
     *,
     bot: Bot,
@@ -787,6 +992,15 @@ async def send_text_with_media(
                 f"[OUTBOUND] 引用目标发送者 ID 非法，仅保留 Reply target={target} "
                 f"value={str(reply_at_user_id)[:80]!r}"
             )
+
+    # poke 是动作不是消息段（NapCat 群聊拒绝原生 poke 段）：含 poke 的正文按原序
+    # 拆成「消息 / 戳 / 消息」多个动作位，复用同一套统一出站与 delivery 认领。
+    if any(isinstance(tok, _InlinePoke) for tok in tokens):
+        return await _send_with_pokes(
+            bot=bot, target=target, tokens=tokens, reply_id=reply_id or "",
+            reply_at=reply_at, media_urls=media_urls, adapter_name=adapter_name,
+            delivery=delivery, original_len=original_len, max_len=max_len,
+        )
 
     # B-1.2: 群聊 + OneBot v11 + 超长 → 合并转发 (而非截断)
     # 私聊永远走截断 (send_private_forward_msg 实现端覆盖差);

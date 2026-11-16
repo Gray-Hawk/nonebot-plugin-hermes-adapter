@@ -1,0 +1,16 @@
+11-16 22:07:00 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 22:07:00 [INFO] nonebot | Current Env: prod
+<frozen runpy>:88: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+11-16 22:07:00 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 22:07:00 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 22:07:00 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+.11-16 22:07:00 [WARNING] nonebot_plugin_hermes_adapter | [OUTBOUND] 发送成功但回执无 msg_ids(消息 id 无法留痕) target=namespace(private=False, id='54321')
+....11-16 22:07:00 [ERROR] nonebot_plugin_hermes_adapter | [OUTBOUND] 发送失败(含 poke) target_type=SimpleNamespace: send_poke boom
+..11-16 22:07:00 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] reply_text 有 1 处 CQ 段形态未转换,按普通文本发送: ['[CQ:poke,']
+.11-16 22:07:00 [WARNING] nonebot_plugin_hermes_adapter | [OUTBOUND] 发送成功但回执无 msg_ids(消息 id 无法留痕) target=namespace(private=False, id='54321')
+....11-16 22:07:00 [WARNING] nonebot_plugin_hermes_adapter | [OUTBOUND] 发送成功但回执无 msg_ids(消息 id 无法留痕) target=namespace(private=True, id='12345')
+.
+----------------------------------------------------------------------
+Ran 13 tests in 0.016s
+
+OK

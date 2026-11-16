@@ -1,11 +1,13 @@
-"""出站戳一戳：正文内联 ``[CQ:poke,type=1,id=<QQ>]`` 转 OneBot poke 段。
+"""出站戳一戳：正文内联 ``[CQ:poke,type=1,id=<QQ>]`` 走 OneBot 公开 API。
 
-现有出站只认 ``[CQ:at,qq=<数字>]`` 一种内联 CQ。本文件锁定 poke 的最小扩展：
-- 只认 ``[CQ:poke,type=<数字>,id=<数字>]`` 与省略 type 的 ``[CQ:poke,id=<数字>]``；
-- 转成 OneBot poke 消息段走同一条出站，标记绝不留进正文文本；
-- 参数非法（非数字/顺序不符/缺 id）按现有 inline 解析失败语义留在正文里；
-- 自戳视为非法目标（不做真实自戳验收），保留原样文本；
-- @ 回归不变。
+NapCat 群聊实测拒绝原生 poke 消息段（retcode=1400，仅允许私聊），
+`send_poke(group_id, user_id)` 群聊 retcode=0。本文件锁定：
+
+- 群聊/私聊都走 ``send_poke`` 公开 API，绝不再拼原生 poke 消息段；
+- 混合文本、多个 poke、@ 与媒体保持动作顺序（消息 / 戳 / 消息……）；
+- 参数非法（非数字/顺序不符/缺 id）、0、数字身份自戳仍按文本处理，原样留下；
+- 整批只认领一次交付组件：回执汇总回写，中途失败整体记 unknown，不把部分失败
+  当成功、也不重复发送同一组件。
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from tests import _bootstrap  # noqa: F401
 
@@ -28,69 +30,143 @@ def _text_parts(dump: list[dict]) -> str:
     return "".join(part.get("text", "") for part in dump if part.get("type") == "text")
 
 
-def _poke_parts(dump: list[dict]) -> list[dict]:
-    out: list[dict] = []
-    for part in dump:
-        origin = part.get("origin")
-        if part.get("type") == "other" and isinstance(origin, dict) and origin.get("type") == "poke":
-            out.append(origin.get("data") or {})
-    return out
+class _Harness:
+    """记录平台调用顺序：消息发送与 send_poke 落在同一条时间线上。"""
 
+    def __init__(self, *, self_id: str = SELF_ID, fail_poke: bool = False) -> None:
+        self.calls: list[tuple] = []
+        self._seq = 0
+        self.fail_poke = fail_poke
+        self.self_id = self_id
+        self.bot = SimpleNamespace(self_id=self_id, call_api=self._call_api)
 
-class OutboundPokeTests(unittest.TestCase):
-    def _send(self, text: str, *, self_id: str = SELF_ID):
-        captured: list = []
+    async def _call_api(self, api: str, **kwargs):
+        self._seq += 1
+        if api == "send_poke" and self.fail_poke:
+            raise RuntimeError("send_poke boom")
+        self.calls.append(("poke", kwargs))
+        return {"retcode": 0}
 
-        async def fake_send(uni, *, bot, target, delivery=None):
-            captured.append(uni)
-            return ["m1"]
+    async def _send(self, uni, *, bot=None, target=None, delivery=None):
+        self._seq += 1
+        self.calls.append(("msg", uni.dump()))
+        return SimpleNamespace(msg_ids=[{"message_id": 1000 + self._seq}])
 
-        with patch.object(outbound, "_send_unimsg", new=fake_send):
+    async def _send_unimsg(self, uni, *, bot=None, target=None, delivery=None):
+        self._seq += 1
+        self.calls.append(("msg", uni.dump()))
+        return [str(1000 + self._seq)]
+
+    def send(self, text: str, *, private: bool = False, media_urls=(), delivery=None,
+             adapter_name: str = "onebotv11"):
+        target = SimpleNamespace(private=private, id=("12345" if private else "54321"))
+        with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+            outbound, "_send_unimsg", new=self._send_unimsg
+        ):
             result = asyncio.run(
                 outbound.send_text_with_media(
-                    bot=SimpleNamespace(self_id=self_id),
-                    target=SimpleNamespace(private=False, id="g1"),
-                    text=text,
-                    media_urls=[],
-                    adapter_name="onebotv11",
+                    bot=self.bot, target=target, text=text,
+                    media_urls=list(media_urls), adapter_name=adapter_name,
+                    delivery=delivery,
                 )
             )
-        self.assertTrue(result.ok, text)
-        self.assertEqual(len(captured), 1, text)
-        return captured[0].dump()
+        return result
 
-    def test_mixed_text_converts_poke_segment(self) -> None:
-        dump = self._send("先戳你 [CQ:poke,type=1,id=10001] 一下")
-        pokes = _poke_parts(dump)
-        self.assertEqual(pokes, [{"type": "1", "id": "10001"}])
-        self.assertNotIn("[CQ:poke", _text_parts(dump))
-        self.assertEqual(_text_parts(dump), "先戳你  一下")
 
-    def test_poke_alone_is_a_real_message(self) -> None:
-        dump = self._send("[CQ:poke,id=12345]")
-        self.assertEqual(_poke_parts(dump), [{"type": "1", "id": "12345"}])
-        self.assertEqual(_text_parts(dump), "")
+class GroupPokeTests(unittest.TestCase):
+    def test_group_poke_uses_public_api_not_message_segment(self) -> None:
+        h = _Harness()
+        result = h.send("[CQ:poke,id=12345]")
+        self.assertTrue(result.ok)
+        self.assertEqual(h.calls, [("poke", {"group_id": 54321, "user_id": 12345})])
+        # 没有消息被发出：poke 不再作为原生段塞进消息体。
+        self.assertNotIn("msg", [kind for kind, _ in h.calls])
 
-    def test_segment_order_is_preserved_with_at(self) -> None:
-        dump = self._send("[CQ:at,qq=20002] 前 [CQ:poke,type=2,id=10001] 后")
-        kinds = []
-        for part in dump:
-            if part.get("type") == "text":
-                kinds.append(("text", part.get("text")))
-            elif part.get("type") == "other":
-                kinds.append(("poke", (part.get("origin") or {}).get("data")))
-            else:
-                kinds.append((part.get("type"), None))
-        self.assertEqual(
-            kinds,
-            [
-                ("at", None),
-                ("text", " 前 "),
-                ("poke", {"type": "2", "id": "10001"}),
-                ("text", " 后"),
-            ],
+    def test_mixed_text_keeps_action_order(self) -> None:
+        h = _Harness()
+        result = h.send("先戳你 [CQ:poke,type=1,id=10001] 一下")
+        self.assertTrue(result.ok)
+        self.assertEqual([kind for kind, _ in h.calls], ["msg", "poke", "msg"])
+        self.assertEqual(h.calls[0][1][0]["text"], "先戳你 ")
+        self.assertEqual(h.calls[1][1], {"group_id": 54321, "user_id": 10001})
+        self.assertEqual(h.calls[2][1][0]["text"], " 一下")
+        self.assertEqual(len(result.msg_ids), 2)
+
+    def test_multiple_pokes_keep_order_and_at_stays_in_message(self) -> None:
+        h = _Harness()
+        h.send("[CQ:at,qq=20002] 前 [CQ:poke,type=2,id=10001] 中 [CQ:poke,id=30003] 后")
+        kinds = [kind for kind, _ in h.calls]
+        self.assertEqual(kinds, ["msg", "poke", "msg", "poke", "msg"])
+        self.assertEqual(h.calls[1][1]["user_id"], 10001)
+        self.assertEqual(h.calls[3][1]["user_id"], 30003)
+        first = h.calls[0][1]
+        self.assertEqual(first[0]["type"], "at")
+        self.assertEqual(_text_parts(first), " 前 ")
+
+    def test_media_and_pokes_share_one_delivery_claim(self) -> None:
+        tracker = MagicMock()
+        tracker.claim_component_attempt.return_value = SimpleNamespace(
+            outcome="send", token="t1"
         )
+        delivery = outbound.DeliveryContext(tracker=tracker, run_id="r1")
+        h = _Harness()
+        result = h.send(
+            "看图 [CQ:poke,id=12345]",
+            media_urls=["https://example.invalid/pic.png"],
+            delivery=delivery,
+        )
+        self.assertTrue(result.ok)
+        tracker.claim_component_attempt.assert_called_once()
+        sent = tracker.mark_component_sent.call_args.kwargs
+        self.assertEqual(len(sent["msg_ids"]), 2)
+        self.assertEqual(
+            [kind for kind, _ in h.calls], ["msg", "poke", "msg"]
+        )
+        # 媒体在 poke 之后单独成条（动作顺序：文本 → 戳 → 图）。
+        self.assertEqual([p["type"] for p in h.calls[2][1]], ["image"])
+        self.assertEqual(h.calls[0][1][0]["text"], "看图 ")
 
+    def test_partial_failure_is_recorded_unknown_not_success(self) -> None:
+        tracker = MagicMock()
+        tracker.claim_component_attempt.return_value = SimpleNamespace(
+            outcome="send", token="t1"
+        )
+        delivery = outbound.DeliveryContext(tracker=tracker, run_id="r1")
+        h = _Harness(fail_poke=True)
+        result = h.send("先说一句 [CQ:poke,id=12345] 再补一句", delivery=delivery)
+        self.assertFalse(result.ok)
+        tracker.mark_component_sent.assert_not_called()
+        unknown = tracker.mark_component_unknown.call_args.kwargs
+        self.assertIn("send_poke boom", str(unknown["error"]))
+
+    def test_already_sent_component_is_not_resent(self) -> None:
+        tracker = MagicMock()
+        tracker.claim_component_attempt.return_value = SimpleNamespace(
+            outcome="sent", token=None
+        )
+        tracker.get_component.return_value = {"msg_ids": ["777"]}
+        delivery = outbound.DeliveryContext(tracker=tracker, run_id="r1")
+        h = _Harness()
+        result = h.send("戳 [CQ:poke,id=12345]", delivery=delivery)
+        self.assertTrue(result.ok)
+        self.assertEqual(result.msg_ids, ["777"])
+        self.assertEqual(h.calls, [])
+
+
+class PrivatePokeTests(unittest.TestCase):
+    def test_private_poke_uses_user_id_only(self) -> None:
+        h = _Harness()
+        result = h.send("[CQ:poke,id=12345]", private=True)
+        self.assertTrue(result.ok)
+        self.assertEqual(h.calls, [("poke", {"user_id": 12345})])
+
+    def test_private_mixed_text_keeps_order(self) -> None:
+        h = _Harness()
+        h.send("戳你 [CQ:poke,id=12345] 一下", private=True)
+        self.assertEqual([kind for kind, _ in h.calls], ["msg", "poke", "msg"])
+
+
+class PokeArgumentGuardTests(unittest.TestCase):
     def test_invalid_params_stay_literal_text(self) -> None:
         for text in (
             "[CQ:poke,id=abc]",
@@ -98,49 +174,47 @@ class OutboundPokeTests(unittest.TestCase):
             "[CQ:poke,id=10001,type=1]",
             "[CQ:poke]",
             "[CQ:poke,id=]",
+            "[CQ:poke,id=0]",
         ):
             with self.subTest(text=text):
-                dump = self._send(text)
-                self.assertEqual(_poke_parts(dump), [])
-                self.assertEqual(_text_parts(dump), text)
+                h = _Harness()
+                result = h.send(text)
+                self.assertTrue(result.ok)
+                self.assertEqual([kind for kind, _ in h.calls], ["msg"])
+                self.assertEqual(_text_parts(h.calls[0][1]), text)
 
     def test_self_poke_is_not_converted(self) -> None:
-        dump = self._send("[CQ:poke,id=999]", self_id=SELF_ID)
-        self.assertEqual(_poke_parts(dump), [])
-        self.assertEqual(_text_parts(dump), "[CQ:poke,id=999]")
-
-    def test_padded_numeric_self_target_is_not_converted(self) -> None:
-        # 自戳判定按数字身份：000999 与 999 是同一个 QQ。
-        for text in ("[CQ:poke,id=000999]", "[CQ:poke,type=2,id=000999]"):
+        for text in ("[CQ:poke,id=999]", "[CQ:poke,type=2,id=000999]"):
             with self.subTest(text=text):
-                dump = self._send(text, self_id=SELF_ID)
-                self.assertEqual(_poke_parts(dump), [])
-                self.assertEqual(_text_parts(dump), text)
+                h = _Harness()
+                h.send(text)
+                self.assertEqual([kind for kind, _ in h.calls], ["msg"])
+                self.assertEqual(_text_parts(h.calls[0][1]), text)
 
     def test_padded_other_target_still_converts(self) -> None:
-        # 前导零只在「数字上等于自己」时拒绝；他人目标保持既有行为。
-        dump = self._send("[CQ:poke,id=000123]")
-        self.assertEqual(_poke_parts(dump), [{"type": "1", "id": "000123"}])
+        h = _Harness()
+        h.send("[CQ:poke,id=000123]")
+        self.assertEqual(h.calls, [("poke", {"group_id": 54321, "user_id": 123})])
 
     def test_at_regression_unchanged(self) -> None:
-        dump = self._send("[CQ:at,qq=12345] 你看")
-        ats = [p for p in dump if p.get("type") == "at"]
+        h = _Harness()
+        h.send("[CQ:at,qq=12345] 你看")
+        self.assertEqual([kind for kind, _ in h.calls], ["msg"])
+        ats = [p for p in h.calls[0][1] if p.get("type") == "at"]
         self.assertEqual(len(ats), 1)
         self.assertEqual(ats[0].get("target"), "12345")
-        self.assertEqual(_poke_parts(dump), [])
 
-    def test_poke_survives_forward_node_packing(self) -> None:
-        # 长文合并转发分支复用同一批片段：poke 段不参与字符预算、也不留在文本里。
+
+class PokeForwardPackingTests(unittest.TestCase):
+    def test_poke_is_not_packed_into_forward_nodes(self) -> None:
         tokens = outbound._parse_inline_markers("前文 [CQ:poke,type=1,id=10001] 后文")
         nodes = outbound._pack_forward_nodes(
             tokens, bot_self_id="999", bot_nickname="Bot", max_chars_per_node=2
         )
         contents = [seg for node in nodes for seg in node.content]
-        pokes = [
-            seg.origin.data for seg in contents
-            if isinstance(seg, alconna.Other) and getattr(seg.origin, "type", "") == "poke"
-        ]
-        self.assertEqual(pokes, [{"type": "1", "id": "10001"}])
+        self.assertFalse(
+            [seg for seg in contents if isinstance(seg, alconna.Other)]
+        )
         text = "".join(str(seg) for seg in contents if isinstance(seg, alconna.Text))
         self.assertNotIn("[CQ:poke", text)
 

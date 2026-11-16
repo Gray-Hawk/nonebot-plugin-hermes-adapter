@@ -360,7 +360,8 @@ def check_plan_before_send() -> None:
 ACCEPTANCE_CASES = {
     # 分节符信封（tests/test_runs_envelope.py）
     "envelope_single": "test_single_body",
-    "envelope_multi": "test_multiple_bodies_share_one_marker_each_side",
+    "envelope_multi": "test_multiple_bodies_have_independent_envelopes",
+    "envelope_legacy_shared_rejected": "test_legacy_shared_boundary_is_no_longer_two_units",
     "envelope_silent": "test_silence_is_two_markers",
     "envelope_silent_rule": "test_silence_is_only_markers_and_whitespace",
     "envelope_empty_segment": "test_empty_segments_are_dropped_without_complaint",
@@ -369,7 +370,7 @@ ACCEPTANCE_CASES = {
     "envelope_no_marker": "test_no_marker_is_not_a_body",
     "envelope_half_line": "test_half_line_markers_are_plain_text",
     "envelope_spaced": "test_spaced_markers_are_plain_text",
-    "envelope_fenced": "test_fenced_marker_splits",
+    "envelope_fenced": "test_fenced_marker_closes_the_unit_and_drops_the_rest",
     "envelope_overflow": "test_over_limit_is_fail_closed",
     "envelope_stream_char_by_char": "test_char_by_char_delta",
     "envelope_stream_marker_split": "test_marker_split_across_frames",
@@ -396,7 +397,7 @@ ACCEPTANCE_CASES = {
     "stream_spaced_separator": "test_separator_with_spaces_does_not_split",
     "stream_interim_one_char": "test_interim_one_char_progress_is_sent",
     "stream_interim_dedupe": "test_interim_and_delta_same_text_sent_once_per_segment",
-    "stream_interim_prefix_shared_marker": "test_interim_prefix_keeps_the_shared_marker_of_the_tail",
+    "stream_interim_prefix_shared_marker": "test_interim_prefix_keeps_both_units_after_interim",
     "stream_interim_prefix_tail_close": "test_interim_prefix_tail_still_needs_its_own_close",
     "stream_interim_prefix_no_invented_marker": "test_interim_prefix_does_not_invent_a_marker",
     "stream_interim_prefix_whole_line_only": "test_interim_prefix_keeps_marker_only_when_it_was_a_whole_line",

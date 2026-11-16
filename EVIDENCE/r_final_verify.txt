@@ -1,0 +1,34 @@
+interpreter=/home/neonsky/NeonBot/.venv/bin/python
+root=/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116
+HEAD=4417d2d fix(outbound): 群聊戳一戳改走 send_poke 公开 API
+[PASS] 交付树无 pyc／pytest 缓存
+[PASS] 全量既有＋新增测试通过 — exit=0 ran=812 Ran 812 tests in 33.428s /  / OK (skipped=1)
+[PASS] 已删除的信封模块／符号零引用 — 文件仍在=[] 引用=[]
+[PASS] Runs 终态／流式／恢复／对账共用同一纯文本解析器
+11-16 22:11:05 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 22:11:05 [INFO] nonebot | Current Env: prod
+11-16 22:11:05 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-16 22:11:05 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='裸'
+11-16 22:11:05 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='你好'
+11-16 22:11:05 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=12 preview='{"body":"旧"}'
+11-16 22:11:05 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='```'
+[PASS] 信封解析语义（单条/多条/静默/缺开缺闭/旧裸正文不兼容） — 失败=[]
+[PASS] Runs／completions 提示词同口径写死信封格式
+[PASS] _DECISION_PROTOCOL_BLOCK_COMPLETIONS 纯文本（无信封字段）
+[PASS] _DECISION_PROTOCOL_BLOCK_RUNS 纯文本（无信封字段）
+[PASS] runs 协议块：§ 独立信封、无 push_message、无布尔箭头
+[PASS] runs 私聊协议块无 push_message
+[PASS] completions 协议块保留 push_message 进度口径
+[PASS] completions 私聊块无信封
+[PASS] 协议渲染：runs/completions 互不串味
+[PASS] 网关插件独立测试（不在 tests/ 全量里） — queued-lane-interim-thin: OK ran=48 (需 >= 48); steer-presentation-thin: OK ran=21 (需 >= 21)
+[PASS] 流式只追加计划／终态与恢复共用计划适配器
+[PASS] 控制 FIFO 与续跑登记各只有一条链路
+[PASS] Runs 轮内 push 硬拒（轮外/completions 不变）
+[PASS] 终态链先落整批计划再发送
+[PASS] 关键验收用例齐全 — 缺=[]
+[PASS] 验收不依赖暂存区 — staged=[]
+[FAIL] 交付树干净（无未提交改动） — ['?? EVIDENCE/r_final_verify.txt']
+[PASS] 交付树无 pyc／pytest 缓存
+
+FAILED: 1/22 项未通过

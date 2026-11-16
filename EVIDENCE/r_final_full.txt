@@ -1,0 +1,1043 @@
+11-16 22:09:09 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 22:09:09 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:149: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.test = loader.discover(self.start, self.pattern, self.top)
+11-16 22:09:09 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 22:09:09 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 22:09:09 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+...11-16 22:09:09 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] hermes_bot_name 含空白,只取首段 'feiyu' 作指令前缀
+.........11-16 22:09:09 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 22:09:09 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+......11-16 22:09:09 [WARNING] nonebot_plugin_hermes_adapter | [runs-delivery] 组件终态回写未生效(令牌不是当前尝试或组件已结算) run=run-p04 component=primary:0 state=sent token='f953421988bf4e92be45de855c109d2b'
+11-16 22:09:09 [WARNING] nonebot_plugin_hermes_adapter | [runs-delivery] 组件终态回写未生效(令牌不是当前尝试或组件已结算) run=run-p04 component=primary:0 state=failed token='73ec65ee767448bdbb11e63a89f887a4-stale'
+.11-16 22:09:09 [WARNING] nonebot_plugin_hermes_adapter | [runs-delivery] 组件终态回写未生效(令牌不是当前尝试或组件已结算) run=run-p04 component=primary:0 state=sent token='481d19b924ff4ab2ae881e269225fb54'
+.11-16 22:09:09 [WARNING] nonebot_plugin_hermes_adapter | [runs-delivery] 组件终态回写未生效(令牌不是当前尝试或组件已结算) run=run-p04 component=primary:0 state=unknown token='ee248d5ef7894a379c7c4503b7216b1d'
+11-16 22:09:09 [ERROR] nonebot_plugin_hermes_adapter | [OUTBOUND] 发送失败 target_type=SimpleNamespace: platform timeout after lease expiry
+.11-16 22:09:09 [WARNING] nonebot_plugin_hermes_adapter | [runs-delivery] 组件终态回写未生效(令牌不是当前尝试或组件已结算) run=run-local-fail component=primary:0 state=failed token=None
+..[background-report] 汇报未送达,按重试排程 event=deleg_queued reason=unsendable:suppressed:bounce
+.[background-report] 汇报未送达,按重试排程 event=deleg_wm_read_fail reason=unsendable:suppressed:bounce
+[background-report] 提交水位不可读,本轮不认领不唤醒 event=deleg_wm_read_fail error=OperationalError
+.........[background-report] 汇报未送达,按重试排程 event=deleg_stuck reason=unsendable:silent
+....[background-report] 汇报未送达,按重试排程 event=deleg_gone reason=unsendable:stream_abandoned:partial
+[background-report] 汇报生成失败终态 event=deleg_gone reason=unsendable:stream_abandoned:partial
+../home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:914: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2364ebe20>
+  r = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:914: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235713790>
+  r = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:914: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235713100>
+  r = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:914: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2357126b0>
+  r = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:914: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2364ebd30>
+  r = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:914: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2364eaf20>
+  r = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:914: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2357127a0>
+  r = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:914: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2357136a0>
+  r = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+......[background-report] 汇报未送达,按重试排程 event=deleg_bad reason=unsendable:terminal:reply_context_mismatch
+[background-report] 汇报生成失败终态 event=deleg_bad reason=unsendable:terminal:reply_context_mismatch
+..[background-report] 汇报未送达,按重试排程 event=kanban:t_queue:4 reason=unsendable:suppressed:bounce
+/usr/lib/python3.13/contextlib.py:486: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2364ebd30>
+  self._exit_callbacks = deque()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/usr/lib/python3.13/contextlib.py:486: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2364eaf20>
+  self._exit_callbacks = deque()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/usr/lib/python3.13/contextlib.py:486: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2364ebe20>
+  self._exit_callbacks = deque()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/usr/lib/python3.13/contextlib.py:486: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235712980>
+  self._exit_callbacks = deque()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/usr/lib/python3.13/contextlib.py:486: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2357127a0>
+  self._exit_callbacks = deque()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/usr/lib/python3.13/contextlib.py:486: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235713880>
+  self._exit_callbacks = deque()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/usr/lib/python3.13/contextlib.py:486: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235713790>
+  self._exit_callbacks = deque()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/usr/lib/python3.13/contextlib.py:486: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235713100>
+  self._exit_callbacks = deque()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/usr/lib/python3.13/contextlib.py:486: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235713e20>
+  self._exit_callbacks = deque()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/usr/lib/python3.13/contextlib.py:486: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2357126b0>
+  self._exit_callbacks = deque()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/usr/lib/python3.13/contextlib.py:486: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235548130>
+  self._exit_callbacks = deque()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/usr/lib/python3.13/contextlib.py:486: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235548310>
+  self._exit_callbacks = deque()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+11-16 22:09:09 [INFO] nonebot_plugin_hermes_adapter | [HERMES wake] 私聊唤起已点火: onebotv11/1581124503 source=Kanban通知
+11-16 22:09:09 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=True text_len=10 media=0 files=0
+.[background-report] 汇报未送达,按重试排程 event=deleg_queue reason=unsendable:suppressed:bounce
+11-16 22:09:09 [INFO] nonebot_plugin_hermes_adapter | [HERMES wake] 私聊唤起已点火: onebotv11/1581124503 source=后台任务完成
+/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235712110>
+  def __init__(self, name, parent):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/usr/lib/python3.13/unittest/mock.py:2247: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235712b60>
+  def __init__(self, name, parent):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+11-16 22:09:09 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=True text_len=10 media=0 files=0
+.[background-report] 汇报未送达,按重试排程 event=kanban:t_retry:3 reason=unsendable:suppressed:bounce
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=True text_len=9 media=0 files=0
+.[background-report] 汇报未送达,按重试排程 event=deleg_retry reason=unsendable:suppressed:bounce
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=True text_len=9 media=0 files=0
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=True text_len=6 media=0 files=0
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=True text_len=6 media=0 files=0
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=True text_len=5 media=0 files=0
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=None private=True ok=True text_len=5 media=0 files=0
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=True text_len=5 media=0 files=0
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=None private=True ok=True text_len=5 media=0 files=0
+.[background-report] 汇报未送达,按重试排程 event=kanban:t_wm_fail:7 reason=unsendable:suppressed:bounce
+[background-report] 提交水位不可读,本轮不认领不唤醒 event=kanban:t_wm_fail:7 error=OperationalError
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES wake] 私聊唤起已点火: onebotv11/1581124503 source=Kanban通知
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=True text_len=10 media=0 files=0
+.[background-report] 汇报未送达,按重试排程 event=deleg_wm_fail reason=unsendable:suppressed:bounce
+[background-report] 提交水位不可读,本轮不认领不唤醒 event=deleg_wm_fail error=OperationalError
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES wake] 私聊唤起已点火: onebotv11/1581124503 source=后台任务完成
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=True text_len=10 media=0 files=0
+.......................................11-16 22:09:10 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] upstream returned empty content (expect_structured=True)
+.11-16 22:09:10 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=14 preview='{"body":"旧格式"}'
+..........11-16 22:09:10 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='甲'
+11-16 22:09:10 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='乙'
+11-16 22:09:10 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=5 preview='直接一句话'
+..................11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] 终态所有份内容为空 (user=u1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] 终态没有正文 (user=u1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [MCP request_continuation] registered scope=group adapter=onebotv11 target=g1
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [MCP request_continuation] registered scope=private adapter=onebotv11 target=u1
+...11-16 22:09:10 [WARNING] nonebot_plugin_hermes_adapter | [MCP request_continuation] 拒绝:调用方身份不可识别(私聊)
+11-16 22:09:10 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] 拒绝越权操作 (onebotv11, g1) —— caller: unresolved caller
+.................../home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2364ebe20>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2364ebd30>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2359c6890>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2359c71f0>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235712b60>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235712a70>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235712890>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235713100>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2357126b0>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235712980>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235713010>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2357127a0>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235713e20>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235549a80>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235548f40>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235549030>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235549300>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2355493f0>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2355496c0>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235548d60>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa235549e40>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2355494e0>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2355495d0>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/run_tracker.py:1029: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7fa2355488b0>
+  row = self._conn.execute(
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+......11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=5 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] anchor merge merged (group=g1 starter=u2 user=u1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=4 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] anchor answered: who=all count=1 (group=g1)
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] anchor released: who=all count=1 (group=g1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=4 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] pin_anchor pinned (group=g1 user=u1 msg_id=None)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['anchor_merge', 'answer_anchor', 'pin_anchor', 'release_anchor', 'should_exit_active'] pending=1
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+...11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] 拒绝控制: reply_to 只接受本会话消息编号 `m:<正整数>` (adapter=onebotv11)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=private adapter=onebotv11 target=u1 fields=['reply_to'] pending=1
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+....11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] pin_anchor pinned (group=g1 user=u1 msg_id=None)
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=57 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+11-16 22:09:10 [ERROR] nonebot_plugin_hermes_adapter | [HERMES] refire raised at depth 1; dropping pending for ('onebotv11', 'group:g1')
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/usr/lib/python3.13/unittest/__main__.py", line 18, in <module>
+    main(module=None)
+  File "/usr/lib/python3.13/unittest/main.py", line 104, in __init__
+    self.runTests()
+  File "/usr/lib/python3.13/unittest/main.py", line 270, in runTests
+    self.result = testRunner.run(self.test)
+  File "/usr/lib/python3.13/unittest/runner.py", line 240, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/case.py", line 707, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/async_case.py", line 135, in run
+    return super().run(result)
+  File "/usr/lib/python3.13/unittest/case.py", line 651, in run
+    self._callTestMethod(testMethod)
+  File "/usr/lib/python3.13/unittest/async_case.py", line 94, in _callTestMethod
+    if self._callMaybeAsync(method) is not None:
+  File "/usr/lib/python3.13/unittest/async_case.py", line 116, in _callMaybeAsync
+    return self._asyncioRunner.run(
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 712, in run_until_complete
+    self.run_forever()
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 683, in run_forever
+    self._run_once()
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 2034, in _run_once
+    handle._run()
+  File "/usr/lib/python3.13/asyncio/events.py", line 89, in _run
+    self._context.run(self._callback, *self._args)
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_control_regressions.py", line 260, in test_refire_exception_exit_drops_leftover_control
+    await relay._refire(
+> File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/handlers/message_relay.py", line 1273, in _refire
+    result = await _run_reactive_turn(
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_control_regressions.py", line 256, in exploding_turn
+    raise RuntimeError("refire boom")
+RuntimeError: refire boom
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=2
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=19 salvaged=False
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+............11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] active_session triggered/renewed: onebotv11/g1 by A
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=True in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=True mode=reactive
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+..11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] active_session triggered/renewed: onebotv11/g1 by B
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=True in_active=False mode=reactive
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] active_session triggered/renewed: onebotv11/g1 by A
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=True in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=True mode=reactive
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+....11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+.11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+..11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=False mode=reactive
+....11-16 22:09:10 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] get_message_images 越权或目标不一致的 message_id 已按 not_found 处理: [1] (caller: dev-mode(未配置任何 key); adapter='snowluma' group='g-1')
+11-16 22:09:10 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] get_message_images 越权或目标不一致的 message_id 已按 not_found 处理: [2] (caller: dev-mode(未配置任何 key); adapter='snowluma' group=None)
+11-16 22:09:10 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] get_message_images 越权或目标不一致的 message_id 已按 not_found 处理: [1] (caller: dev-mode(未配置任何 key); adapter='ob11' group='g-2')
+11-16 22:09:10 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] get_message_images 越权或目标不一致的 message_id 已按 not_found 处理: [2] (caller: dev-mode(未配置任何 key); adapter='ob11' group='g-1')
+.11-16 22:09:10 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] get_message_images 越权或目标不一致的 message_id 已按 not_found 处理: [2] (caller: dev-mode(未配置任何 key); adapter='ob11' group='g-1')
+..[11/16/26 22:09:10] WARNING  Invalid arguments for tool           server.py:1521
+                             'get_message_images':                              
+                             {'error_count': 1, 'error_types':                  
+                             ['missing_argument']}                              
+                    WARNING  Invalid arguments for tool           server.py:1521
+                             'get_message_images':                              
+                             {'error_count': 1, 'error_types':                  
+                             ['string_type']}                                   
+11-16 22:09:10 [INFO] nonebot_plugin_hermes_adapter | [HERMES MCP] tool=get_message_images ids=[1] adapter=ob11 group=None -> images=0 unavailable=[m:1#0=cache_miss]
+...11-16 22:09:10 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] get_message_images 越权或目标不一致的 message_id 已按 not_found 处理: [1, 2] (caller: unresolved; adapter='ob11' group=None)
+.......11-16 22:09:13 [INFO] nonebot_plugin_hermes_adapter | [runs-reconcile] observe 记录缺件 run=run-observe reason=turn_end components=['history:0', 'primary:0']
+......11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=37 preview='{"legacy_unknown":"收尾"} {"body":"正文"}'
+....11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [media] 单轮内联图片超限：丢弃最早 2 张，保留最新 10 张（上限 10，文本与寻址标记保留）
+..11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [media] 单轮内联图片超限：丢弃最早 3 张，保留最新 10 张（上限 10，文本与寻址标记保留）
+...11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [media] 单轮内联图片超限：丢弃最早 2 张，保留最新 10 张（上限 10，文本与寻址标记保留）
+.11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [media] 单轮内联图片超限：丢弃最早 2 张，保留最新 10 张（上限 10，文本与寻址标记保留）
+..............11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES] /compress 轮换采纳: hermes-g1 -> child-1 adopted=True
+.................11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 采纳上游轮换: onebotv11+group+g1 -> child-1
+..11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [OUTBOUND] 发送成功但回执无 msg_ids(消息 id 无法留痕) target=namespace(private=False, id='54321')
+....11-16 22:09:16 [ERROR] nonebot_plugin_hermes_adapter | [OUTBOUND] 发送失败(含 poke) target_type=SimpleNamespace: send_poke boom
+..11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] reply_text 有 1 处 CQ 段形态未转换,按普通文本发送: ['[CQ:poke,']
+.11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [OUTBOUND] 发送成功但回执无 msg_ids(消息 id 无法留痕) target=namespace(private=False, id='54321')
+....11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [OUTBOUND] 发送成功但回执无 msg_ids(消息 id 无法留痕) target=namespace(private=True, id='12345')
+.........................11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=7 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=7 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=7 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=7 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.s11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=4 preview='答复A§'
+11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=8 preview='答复A§ 答复B'
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=2 preview='§B'
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=4 preview='§ B'
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第3份 adapter=onebotv11 group=g1 private=False ok=True text_len=4 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=4 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=5 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=5 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第3份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=5 media=0 files=0
+11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='X'
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=6 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=3 preview='答复B'
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+..........11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES] 引用消息无 sender 字段(adapter 缺归属信息),回退无归属格式
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES] 引用消息无 sender 字段(adapter 缺归属信息),回退无归属格式
+..11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] 拒绝越权操作 (onebotv11, g-1) —— caller: unresolved caller
+........11-16 22:09:16 [WARNING] nonebot_plugin_hermes_adapter | [HERMES MCP] 拒绝未识别调用方读取私聊 (onebotv11, 10001) —— caller: unresolved
+...11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] 交付组件按台账取消出站 run=run-live component=primary:0: delivery component busy/unknown: run=run-live component=primary:0
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-reconcile] 启动对账 1 条未终态 deliveries
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] 交付组件按台账取消出站 run=run-ovl component=primary:0: delivery component busy/unknown: run=run-ovl component=primary:0
+..11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-reconcile] 启动对账 1 条未终态 deliveries
+.................11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-silent state='silent'(不改写 ready,不激活补发)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-silent state='silent'(不改写 ready,不激活补发)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-suppressed state='suppressed'(不改写 ready,不激活补发)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-suppressed state='suppressed'(不改写 ready,不激活补发)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-cancelled state='cancelled'(不改写 ready,不激活补发)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-cancelled state='cancelled'(不改写 ready,不激活补发)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-expired state='expired'(不改写 ready,不激活补发)
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-expired state='expired'(不改写 ready,不激活补发)
+.11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-failed state='failed'(不改写 ready,不激活补发)
+..11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-rearm-suppressed state='suppressed'(不改写 ready,不激活补发)
+...11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-terminal state='terminal'(不改写 ready,不激活补发)
+..11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES run-resume] Bot 连接后恢复送达路由 1 条: adapter=onebotv11 self_id=999
+11-16 22:09:16 [INFO] nonebot_plugin_hermes_adapter | [runs-reconcile] 启动对账 1 条未终态 deliveries
+.11-16 22:09:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES run-resume] Bot 连接后恢复送达路由 1 条: adapter=onebotv11 self_id=999
+11-16 22:09:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES run-resume] 续跑送达完成 run_id=run-active scope=onebotv11:group:g1 part=0/1 sent=SendResult(ok=True, msg_ids=['ack-1'], sticker_id=None) text_len=9 media=0 files=0(turn 生命周期特性:pin/exit/防抖 跳过)
+.11-16 22:09:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES run-resume] Bot 连接后恢复送达路由 1 条: adapter=onebotv11 self_id=999
+11-16 22:09:17 [INFO] nonebot_plugin_hermes_adapter | [runs-reconcile] 启动对账 1 条未终态 deliveries
+11-16 22:09:17 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-overlap state='terminal'(不改写 ready,不激活补发)
+11-16 22:09:17 [WARNING] nonebot_plugin_hermes_adapter | [HERMES run-resume] 交付已处业务终态,恢复零发送 run_id=run-overlap state='terminal'
+.11-16 22:09:18 [INFO] nonebot_plugin_hermes_adapter | [HERMES run-resume] Bot 连接后恢复送达路由 1 条: adapter=onebotv11 self_id=999
+11-16 22:09:18 [INFO] nonebot_plugin_hermes_adapter | [runs-reconcile] 启动对账 1 条未终态 deliveries
+..11-16 22:09:19 [INFO] nonebot_plugin_hermes_adapter | [HERMES run-resume] 启动恢复: 1 个在跑 run 待 reattach
+11-16 22:09:19 [INFO] nonebot_plugin_hermes_adapter | [HERMES run-resume] Bot 连接后恢复送达路由 2 条: adapter=onebotv11 self_id=999
+11-16 22:09:19 [INFO] nonebot_plugin_hermes_adapter | [runs-reconcile] 启动对账 1 条未终态 deliveries
+11-16 22:09:19 [INFO] nonebot_plugin_hermes_adapter | [HERMES run-resume] 续跑送达完成 run_id=run-live2 scope=onebotv11:group:g2 part=0/1 sent=SendResult(ok=True, msg_ids=['ack-2'], sticker_id=None) text_len=9 media=0 files=0(turn 生命周期特性:pin/exit/防抖 跳过)
+..11-16 22:09:20 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-cancelled state='cancelled'(不改写 ready,不激活补发)
+11-16 22:09:20 [WARNING] nonebot_plugin_hermes_adapter | [HERMES run-resume] 交付已处业务终态,恢复零发送 run_id=run-cancelled state='cancelled'
+.11-16 22:09:20 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-expired state='expired'(不改写 ready,不激活补发)
+11-16 22:09:20 [WARNING] nonebot_plugin_hermes_adapter | [HERMES run-resume] 交付已处业务终态,恢复零发送 run_id=run-expired state='expired'
+.11-16 22:09:21 [INFO] nonebot_plugin_hermes_adapter | [HERMES run-resume] 续跑送达完成 run_id=run-failed scope=onebotv11:group:12345 part=0/1 sent=SendResult(ok=True, msg_ids=['ack-1'], sticker_id=None) text_len=6 media=0 files=0(turn 生命周期特性:pin/exit/防抖 跳过)
+.11-16 22:09:21 [INFO] nonebot_plugin_hermes_adapter | [HERMES run-resume] 续跑送达完成 run_id=run-ready scope=onebotv11:group:12345 part=0/1 sent=SendResult(ok=True, msg_ids=['ack-1'], sticker_id=None) text_len=6 media=0 files=0(turn 生命周期特性:pin/exit/防抖 跳过)
+.11-16 22:09:22 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-inflight-suppressed state='suppressed'(不改写 ready,不激活补发)
+11-16 22:09:22 [WARNING] nonebot_plugin_hermes_adapter | [HERMES run-resume] 交付已处业务终态,恢复零发送 run_id=run-inflight-suppressed state='suppressed'
+.11-16 22:09:22 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-silent state='silent'(不改写 ready,不激活补发)
+11-16 22:09:22 [WARNING] nonebot_plugin_hermes_adapter | [HERMES run-resume] 交付已处业务终态,恢复零发送 run_id=run-silent state='silent'
+.11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [runs-delivery] 重复终态落账保持原状态 run=run-suppressed state='suppressed'(不改写 ready,不激活补发)
+11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES run-resume] 交付已处业务终态,恢复零发送 run_id=run-suppressed state='suppressed'
+.....11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=2 preview='§B'
+.11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='裸开头'
+.11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=4 preview='A§ B'
+11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='A§'
+11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=4 preview='A§ B'
+....11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+......11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='甲'
+...11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='```'
+..11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+..11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='裸开头'
+..11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='你好'
+11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=7 preview='第一行 第二段'
+11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=14 preview='{"body":"旧信封"}'
+.............11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=4 preview='还没闭合'
+.11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=4 preview='写到一半'
+......11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=15 preview='主要是表情包引用那条还没接完。'
+11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=15 preview='主要是表情包引用那条还没接完。'
+.......11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['not_final', 'reply_to', 'should_exit_active'] pending=1
+.11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['not_final'] pending=1
+.11-16 22:09:23 [WARNING] nonebot_plugin_hermes_adapter | [HERMES feedback] 接力链达上限(2),照发不接力 ('onebotv11', 'group:g1') tag=not_final
+...11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=4 media=0 files=0
+.11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['not_final'] pending=1
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=10 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+...11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=False text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=None private=True ok=True text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=None private=True ok=True text_len=1 media=0 files=0
+.11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=True text_len=1 media=0 files=0
+.11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=False text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=True text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=None private=True ok=True text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=None private=True ok=True text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=None user=u1)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=private:u1 run_id=paced-run len=121 rows=1)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=None user=u1 run_id=paced-run len=71)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES sched] reactive entry group=g1 user=u1 direct=True addressed=True commission=True ephemeral=False inflight_busy=True
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] queued behind in-flight turn (group=g1 user=u1 direct=True commission=True ephemeral=False runs_channel=True result=queued)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=g1 private=False ok=True text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=paced-run len=144 rows=1)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u1 run_id=paced-run len=94)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=None private=True ok=True text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=None private=True ok=True text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第2份 adapter=onebotv11 group=None private=True ok=False text_len=1 media=0 files=0
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=None user=u1)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=private:u1 run_id=paced-run len=121 rows=1)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=None user=u1 run_id=paced-run len=71)
+.11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 早退: run_tracker 为 None (group=g1)
+....11-16 22:09:23 [ERROR] nonebot_plugin_hermes_adapter | [HERMES] 即时决策处理失败 run_id=paced-run
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/usr/lib/python3.13/unittest/__main__.py", line 18, in <module>
+    main(module=None)
+  File "/usr/lib/python3.13/unittest/main.py", line 104, in __init__
+    self.runTests()
+  File "/usr/lib/python3.13/unittest/main.py", line 270, in runTests
+    self.result = testRunner.run(self.test)
+  File "/usr/lib/python3.13/unittest/runner.py", line 240, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/case.py", line 707, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/async_case.py", line 135, in run
+    return super().run(result)
+  File "/usr/lib/python3.13/unittest/case.py", line 651, in run
+    self._callTestMethod(testMethod)
+  File "/usr/lib/python3.13/unittest/async_case.py", line 94, in _callTestMethod
+    if self._callMaybeAsync(method) is not None:
+  File "/usr/lib/python3.13/unittest/async_case.py", line 116, in _callMaybeAsync
+    return self._asyncioRunner.run(
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 712, in run_until_complete
+    self.run_forever()
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 683, in run_forever
+    self._run_once()
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 2034, in _run_once
+    handle._run()
+  File "/usr/lib/python3.13/asyncio/events.py", line 89, in _run
+    self._context.run(self._callback, *self._args)
+> File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/core/hermes_client.py", line 1060, in _drain
+    await self.callback(decision, self.run_id)
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_reply_pacing.py", line 214, in deliver
+    raise RuntimeError('offline send failure')
+RuntimeError: offline send failure
+.11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=None user=u1)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=private:u1 run_id=r1 len=67 rows=1)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=None user=u1 run_id=r1 len=67)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=None user=u1)
+11-16 22:09:23 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 早退: steer_run 返回 False (group=None run_id=r1)
+...REAL_CLOCK_SEND_SECONDS [('甲', 0.0003020799995283596), ('乙', 3.003708365999046), ('丙', 6.00732349199825)]
+11-16 22:09:30 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] runs turn 被中断 (run_id=paced-run)
+11-16 22:09:30 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] runs turn 被中断 (run_id=paced-run)
+.11-16 22:09:30 [ERROR] nonebot_plugin_hermes_adapter | [HERMES] API 请求异常: False is not true
+....11-16 22:09:33 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=4 preview='写到一半'
+..11-16 22:09:33 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='{"reply_to":"m:1"} {"body":"旧格式正文"}'
+11-16 22:09:33 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='{"reply_to":"m:1"} {"body":"旧格式正文"}'
+.11-16 22:09:33 [ERROR] nonebot_plugin_hermes_adapter | [HERMES] runs 终态正文单位不合法,本轮 fail-closed reason=body_overflow run_id=run-e2-h
+11-16 22:09:33 [ERROR] nonebot_plugin_hermes_adapter | [HERMES] runs 正文单位不合法,本轮零发送 (run_id=run-e2-h reason=body_overflow)
+...11-16 22:09:33 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] runs 订阅断开,保留原 run 待恢复 run_id=run-break: stream reset
+...11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=4 media=0 files=0
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第1份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+.....11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=33 preview='{} {"body":"先记录“E0-FIX 乙取证”待办"}'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=26 preview='{} {"body":"待办已记录，当前为进行中"}'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=64 preview='{"reply_to":"m:7"} {"body":"第一份正文"} {} {"body":"第二份第一行\\n第二份第二行"}'
+.....11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='```'
+.11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='```'
+.11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=3 preview='没闭合'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='没开头'
+.11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=7 preview='写到一半的进度'
+....11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=2 preview='§B'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=4 preview='§ B'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+....11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=1 preview='B'
+....11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=3 preview='没闭合'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=7 preview='裸正文没有标记'
+.11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='{"reply_to":"m:1"} {"body":"旧格式正文"}'
+..11-16 22:09:42 [ERROR] nonebot_plugin_hermes_adapter | [HERMES] runs 正文单位不合法,本轮停止发送 reason=body_overflow
+............11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=4 salvaged=False
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=6 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=17 salvaged=False
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=89 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=4001 preview='正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正正…'
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=54881 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.....11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES passive] 终态没有正文 (user=u1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=4 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:42 [ERROR] nonebot_plugin_hermes_adapter | [HERMES reactive] runs 终态计划落库失败,本轮零发送 (group=g1 run=run-without-ledger): terminal plan rejected for run=run-without-ledger: "no delivery for run_id='run-without-ledger'"
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+........11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='你好'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='你好'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=7 preview='第一行 第二段'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=7 preview='第一行 第二段'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=14 preview='{"body":"旧信封"}'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=14 preview='{"body":"旧信封"}'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=8 preview='第 3 节 §3'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=8 preview='第 3 节 §3'
+...11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='```'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='~~~'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=5 preview='乙 ```'
+...11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='没开头'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='A'
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=3 preview='裸正文'
+.......11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=32 preview='{"reply_to":"m:1"} {"body":"正文"}'
+.....11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] emoji 回执被平台拒绝 (msg_id=m:77 emoji_id=32): result=0 errMsg='被风控'
+...11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 段内重复吞掉,给触发消息贴表情 (group=g1 msg=m:77 len=1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=False should_exit_active=None reply_text_len=0 salvaged=False
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 无正文,静默 (group=g1 user=u1)
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 429 满额丢单,贴表情 (group=g1 msg=m:77)
+...11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 段内重复吞掉,给触发消息贴表情 (group=g1 msg=m:77 len=1)
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 段内重复吞掉,给触发消息贴表情 (group=g1 msg=m:77 len=1)
+...11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 段内重复吞掉,给触发消息贴表情 (group=g1 msg=m:77 len=1)
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] emoji 回执被平台拒绝 (msg_id=m:77 emoji_id=32): result=65011 errMsg='操作失败，请稍后再试哦'
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 段内重复吞掉,给触发消息贴表情 (group=g1 msg=m:77 len=1)
+.......11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [SESSION] session key 前缀迁移: hermes-* -> otherbackend-* (1 条)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 全量播种: 1 个已知会话以开机时刻为活动基准
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 全量播种: 1 个已知会话以开机时刻为活动基准
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+private+10001 (generation=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 空闲自动重置: onebotv11+private+10001 (generation=2)
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [SESSION] session key 前缀迁移: hermes-* -> otherbackend-* (1 条)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [SESSION] session key 前缀迁移: otherbackend-* -> hermes-* (1 条)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 全量播种: 1 个已知会话以开机时刻为活动基准
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 全量播种: 1 个已知会话以开机时刻为活动基准
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 采纳上游轮换: onebotv11+private+10001 -> upstream-uuid-1
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 全量播种: 1 个已知会话以开机时刻为活动基准
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+private+10001 (generation=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 空闲自动重置: onebotv11+private+10001 (generation=2)
+....11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g-1 run_id=run-g len=100 rows=1)
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g-1 run_id=run-g len=97 rows=1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g-1 run_id=run-g len=132 rows=1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g-1 run_id=run-g len=138 rows=2)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g-1 run_id=run-g len=100 rows=1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g-1 run_id=run-g len=105 rows=1)
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=private:10001 run_id=run-p len=68 rows=1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g-1 user=10001)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g-1 run_id=run-g len=101 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g-1 user=10001 run_id=run-g len=101)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g-1 user=10001)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g-1 run_id=run-g len=93 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g-1 user=20001 run_id=run-g len=93)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g-1 user=10001)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g-1 run_id=run-g len=94 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g-1 user=20002 run_id=run-g len=94)
+...11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer回收] 原行仍在接力槽,不追加回收副本 (key=('onebotv11', 'group:g1') absorbed=['101'])
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 早退: steer_run 返回 False (group=g1 run_id=run-overlap)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer回收] 原行仍在接力槽,不追加回收副本 (key=('onebotv11', 'group:g1') absorbed=['101'])
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=85 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u2 run_id=run-overlap len=85)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer回收] 原行仍在接力槽,按 pending 原文校正同批顺序 (key=('onebotv11', 'group:g1') absorbed=['101', '102'])
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer回收] 原行仍在接力槽,不追加回收副本 (key=('onebotv11', 'group:g1') absorbed=['101'])
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=116 rows=2)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u2 run_id=run-overlap len=116)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer回收] 原行仍在接力槽,不追加回收副本 (key=('onebotv11', 'group:g1') absorbed=['101', '102'])
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer回收] 原行仍在接力槽,不追加回收副本 (key=('onebotv11', 'group:g1') absorbed=['101', '102'])
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=115 rows=2)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u2 run_id=run-overlap len=115)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer回收] 原行仍在接力槽,不追加回收副本 (key=('onebotv11', 'group:g1') absorbed=['101'])
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=85 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u2 run_id=run-overlap len=85)
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=84 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u3 run_id=run-overlap len=84)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=85 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u2 run_id=run-overlap len=85)
+....11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=84 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u3 run_id=run-overlap len=84)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=84 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u3 run_id=run-overlap len=84)
+...11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=82 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=82 rows=1)
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=86 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=85 rows=1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES sched] reactive entry group=g1 user=u2 direct=False addressed=False commission=False ephemeral=False inflight_busy=True
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u2)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES sched] reactive entry group=g1 user=u3 direct=False addressed=False commission=False ephemeral=False inflight_busy=True
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u3)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=84 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u2 run_id=run-overlap len=115)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=85 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u2 run_id=run-overlap len=85)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES sched] reactive entry group=g1 user=u2 direct=False addressed=False commission=False ephemeral=False inflight_busy=True
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u2)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES sched] reactive entry group=g1 user=u3 direct=False addressed=False commission=False ephemeral=False inflight_busy=True
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u3)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=84 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u2 run_id=run-overlap len=115)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=85 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u2 run_id=run-overlap len=85)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 早退: steer_run 返回 False (group=g1 run_id=run-overlap)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=85 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 本批原始行均已入账,跳过重复呈递 (run_id=run-overlap rows=1 in_flight=0)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u2 run_id=run-overlap len=85)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=85 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 本批原始行均已入账,跳过重复呈递 (run_id=run-overlap rows=1 in_flight=0)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=85 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 触发: run_id=run-overlap pending=1
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 缺件 1 条 (run_id=run-overlap), 补投
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 原文直插派发成功 (run_id=run-overlap m_id=101)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 触发: run_id=run-overlap pending=1
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 缺件 1 条 (run_id=run-overlap), 补投
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 原文直插派发成功 (run_id=run-overlap m_id=101)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=85 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 触发: run_id=run-overlap pending=1
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 缺件 1 条 (run_id=run-overlap), 补投
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 原文直插派发成功 (run_id=run-overlap m_id=101)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES sched] reactive entry group=g1 user=u2 direct=False addressed=False commission=False ephemeral=False inflight_busy=True
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u2)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=85 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u2 run_id=run-overlap len=85)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES sched] reactive entry group=g1 user=u2 direct=False addressed=False commission=False ephemeral=False inflight_busy=True
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u2)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=85 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u2 run_id=run-overlap len=85)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 触发: run_id=run-overlap pending=1
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 缺件 1 条 (run_id=run-overlap), 补投
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 原文直插派发成功 (run_id=run-overlap m_id=101)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES sched] reactive entry group=g1 user=u2 direct=False addressed=False commission=False ephemeral=False inflight_busy=True
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u2)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-overlap len=85 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u2 run_id=run-overlap len=85)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 触发: run_id=run-overlap pending=1
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 命中 1 条 (run_id=run-overlap)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES sched] reactive entry group=g1 user=u2 direct=False addressed=False commission=False ephemeral=False inflight_busy=True
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u2)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 触发: run_id=run-overlap pending=1
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 缺件 1 条 (run_id=run-overlap), 补投
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 原文直插派发成功 (run_id=run-overlap m_id=101)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 早退: steer_run 返回 False (group=g1 run_id=run-overlap)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] queued behind in-flight turn (group=g1 user=u2 direct=False commission=False ephemeral=False runs_channel=True result=queued)
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES sched] reactive entry group=g1 user=u2 direct=False addressed=False commission=False ephemeral=False inflight_busy=True
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u2)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 早退: steer_run 返回 False (group=g1 run_id=run-overlap)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] queued behind in-flight turn (group=g1 user=u2 direct=False commission=False ephemeral=False runs_channel=True result=queued)
+...11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES] active_session triggered/renewed: onebotv11/g1 by B
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=True in_active=False mode=reactive
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES] dispatch: group=g1 direct=False in_active=True mode=reactive
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=private:BOT run_id=run-1 len=67 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 防抖前直注在跑轮,本消息不再走防抖 (scope=private:BOT)
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=private:A run_id=run-1 len=68 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 防抖前直注在跑轮,本消息不再走防抖 (scope=private:A)
+.11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES steer] 防抖前直注异常,回落原防抖 (scope=private:A)
+..11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=93 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u3 run_id=run-g len=93)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 早退: 投影行仍带 own/quote/forward 媒体,整批留 pending (group=g1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 早退: 投影行仍带 own/quote/forward 媒体,整批留 pending (group=g1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 早退: 投影行仍带 own/quote/forward 媒体,整批留 pending (group=g1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=93 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u3 run_id=run-g len=93)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=92 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u3 run_id=run-g len=92)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 早退: 剥占位后无有效文本(纯表情包条目) (group=g1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 早退: 投影行仍带 own/quote/forward 媒体,整批留 pending (group=g1)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=87 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u3 run_id=run-g len=87)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=93 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u3 run_id=run-g len=93)
+...11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=129 rows=2)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 回收 pending_steer 进 pending (group=g1 len=129)
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES reactive] structured parse failed (group=g1, transport_error=False); fallback=silent; raw_len=0 raw_preview=''
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=129 rows=2)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] pending_steer 回收无可靠台账,按原文整段回收 (group=g1 len=129)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 回收 pending_steer 进 pending (group=g1 len=129)
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES reactive] structured parse failed (group=g1, transport_error=False); fallback=silent; raw_len=0 raw_preview=''
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=129 rows=2)
+11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES steer回收] 台账只覆盖部分 pending_steer, 为避免漏呈递改走原文整段 fallback
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=142 rows=1)
+11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=141 rows=1)
+.....11-16 22:09:42 [WARNING] nonebot_plugin_hermes_adapter | [HERMES steer] 同号身份/正文冲突,发送前整批回退 m:id=101 (run_id=run-g 既有 sender=u1 冲突 sender=u2)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=216 rows=2)
+.11-16 22:09:42 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=91 rows=1)
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=93 rows=1)
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=286 rows=2)
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [identity] 自动创建身份表: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp1z5uk4lm/configured/memory/onebotv11/identities.csv
+..........11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer对账] 无号行虚拟锚 1 条随 run 收尾结算 (run_id=run-old)
+........11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-region len=142 rows=1)
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-region len=92 rows=1)
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-region len=131 rows=2)
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-region len=121 rows=1)
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-region len=128 rows=2)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u3 run_id=run-region len=128)
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-region len=92 rows=1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u3 run_id=run-region len=92)
+.................11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=86 rows=1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u1 run_id=run-g len=86)
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=86 rows=1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=private:u1 run_id=run-p len=62 rows=1)
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=136 rows=1)
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer探针] 进入 followup steer 尝试 (group=g1 user=u1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=136 rows=1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] 跟帖已 steer 注入在跑 turn (group=g1 user=u1 run_id=run-g len=86)
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=group:g1 run_id=run-g len=136 rows=1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES steer] 直注在跑 turn (scope=private:u1 run_id=run-p len=112 rows=1)
+.....11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES sticker] 自动创建表情索引范本: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpib84lbm0/sticker_library/index.csv
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES sticker] 自动创建表情索引范本: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmphvspu38b/sticker_library/index.csv
+.11-16 22:09:43 [WARNING] nonebot_plugin_hermes_adapter | [STICKER] index.csv:4 ID 重复，已跳过: happy
+11-16 22:09:43 [WARNING] nonebot_plugin_hermes_adapter | [STICKER] index.csv:5 ID 非法，已跳过: '坏 ID'
+...11-16 22:09:43 [WARNING] nonebot_plugin_hermes_adapter | [STICKER] index.csv:4 文件不可用，已跳过 escape: [Errno 2] No such file or directory: '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/outside.png'
+.......11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] 本地表情已发送 id=speechless msg_ids=1
+.11-16 22:09:43 [WARNING] nonebot_plugin_hermes_adapter | [OUTBOUND] 本地表情发送失败 id=missing: 未知表情 ID: missing
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES] /reload-config: onebotv11:admin 重载 ['media']，表情 7 条
+.11-16 22:09:43 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] /reload-config 失败: 配置坏档
+.........11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] task anchors disabled: ignored ['pin_anchor', 'release_anchor', 'answer_anchor', 'anchor_merge'] (group=g1 user=u1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] anchor_merge invalid: 'nonexistent' (group=g1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] answer_anchor invalid: who='nonexistent' pinned=['u2'] (group=g1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] anchor_merge invalid: 'nonexistent' (group=g1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] answer_anchor invalid: who='nonexistent' pinned=['u2'] (group=g1)
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] task anchors disabled: ignored ['pin_anchor'] (group=g1 user=u1)
+.........11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] 任务锚开关关闭，丢弃锚字段 scope=group adapter=onebotv11 target=g1 ignored=['pin_anchor']
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['answer_anchor', 'pin_anchor'] pending=1
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] 任务锚开关关闭，丢弃锚字段 scope=group adapter=onebotv11 target=g1 ignored=['pin_anchor', 'release_anchor', 'answer_anchor', 'anchor_merge']
+11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to', 'should_exit_active'] pending=1 ignored=['pin_anchor', 'release_anchor', 'answer_anchor', 'anchor_merge']
+.11-16 22:09:43 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+.................11-16 22:09:43 [WARNING] nonebot_plugin_hermes_adapter | [file] 单消息视频数超过剩余额度 1，其余仅保留消息到达事实
+..........
+----------------------------------------------------------------------
+Ran 812 tests in 33.399s
+
+OK (skipped=1)
