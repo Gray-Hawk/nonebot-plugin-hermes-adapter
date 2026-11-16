@@ -151,7 +151,8 @@ def check_envelope_protocol() -> None:
 
     cases = {
         "单条": units(f"{sep}\n正文\n{sep}") == ["正文"],
-        "两条共享标记": units(f"{sep}\nA\n{sep}\nB\n{sep}") == ["A", "B"],
+        "两条独立信封": units(f"{sep}\nA\n{sep}\n{sep}\nB\n{sep}") == ["A", "B"],
+        "旧共享分界不再拆两份": units(f"{sep}\nA\n{sep}\nB\n{sep}") == ["A"],
         "静默零单位": (
             units(f"{sep}\n{sep}") == []
             and units(f"{sep}{sep}") == []
@@ -165,7 +166,7 @@ def check_envelope_protocol() -> None:
             units(f"{sep}\n第 3 节 §3\n{sep}") == ["第 3 节 §3"]
             and units(f"{sep}\n甲\n § \n乙\n{sep}") == ["甲\n § \n乙"]
         ),
-        "围栏内 § 仍分隔": units(f"{sep}\n```\n§\n```\n{sep}") == ["```", "```"],
+        "围栏内 § 仍闭合信封": units(f"{sep}\n```\n§\n```\n{sep}") == ["```"],
         "超长 fail-closed": raises_overflow(f"{sep}\n" + "长" * 4001 + f"\n{sep}"),
     }
     failed = [name for name, ok in cases.items() if not ok]
@@ -173,9 +174,11 @@ def check_envelope_protocol() -> None:
 
     prompt_ok = all(
         "以独立一行 § 开头，以独立一行 § 结尾" in block
+        and "每份都要自己写开头和结尾" in block
         and "只有被两个 § 完整包住的段才会发出去" in block
         and "只输出两行 §" in block
         and "没有 § 就是一条消息" not in block
+        and "两条之间也单独写一行 §" not in block
         for block in (
             pp.render_mode_text(pp._PROTOCOL, runs=True),
             pp.render_mode_text(pp._PROTOCOL, runs=False),
@@ -206,8 +209,8 @@ def check_prompt_protocol() -> None:
     private_runs = pb._JSON_LINES_PRIVATE_BLOCK_RUNS
     completions = pb._DECISION_PROTOCOL_BLOCK_COMPLETIONS
     check(
-        "runs 协议块：§ 整行分隔、无 push_message、无布尔箭头",
-        "单独写一行 §" in runs
+        "runs 协议块：§ 独立信封、无 push_message、无布尔箭头",
+        "每份都要自己写开头和结尾" in runs
         and "push_message" not in runs
         and "→ true" not in runs
         and "→ false" not in runs

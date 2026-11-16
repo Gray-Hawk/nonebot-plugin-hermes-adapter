@@ -167,16 +167,21 @@ Everything you write outside tool calls is delivered as chat text at that moment
 Silence = output nothing at all. Do not wrap replies in JSON or a `body` field, and do
 not use `push_message` in an active run: the plugin sends your text for you.
 
-To send several messages, separate them with a line that contains exactly `§`:
+To send several messages, give each one its own opening and closing line, each
+containing exactly `§` (the closing `§` of one message never doubles as the opening of
+the next):
 
 ```
+§
 第一句
 §
+§
 第二句
+§
 ```
 
 A blank line or an ordinary newline does not split a message; only a standalone `§`
-line does.
+line does. Text that is not inside its own pair of `§` lines is never sent.
 
 When a reply actually needs a control, register it with the `submit_control` tool first
 and then output the reply text. One tool call registers one control — several fields

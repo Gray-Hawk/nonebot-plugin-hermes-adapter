@@ -39,7 +39,7 @@ class CompletionsTextSeamTests(unittest.TestCase):
     def test_separator_makes_multiple_units(self) -> None:
         from nonebot_plugin_hermes_adapter.core.runs_text import decisions_from_text
 
-        decisions = decisions_from_text("§\n甲\n§\n乙\n§\n丙\n§")
+        decisions = decisions_from_text("§\n甲\n§\n§\n乙\n§\n§\n丙\n§")
         self.assertEqual([d["body"] for d in decisions], ["甲", "乙", "丙"])
 
     def test_bare_text_is_not_a_body(self) -> None:
@@ -181,7 +181,7 @@ class ChatTextUnitTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([d["body"] for d in result.terminal_decisions], ["你好"])
 
     async def test_separator_splits_final_answer(self) -> None:
-        result = await self._chat_with("§\n甲\n§\n乙\n§")
+        result = await self._chat_with("§\n甲\n§\n§\n乙\n§")
         self.assertEqual([d["body"] for d in result.terminal_decisions], ["甲", "乙"])
 
     async def test_legacy_json_is_not_a_body(self) -> None:

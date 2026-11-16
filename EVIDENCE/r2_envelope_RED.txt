@@ -1,0 +1,269 @@
+11-16 21:58:24 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 21:58:24 [INFO] nonebot | Current Env: prod
+FFFF.11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+./usr/lib/python3.13/unittest/suite.py:122: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  test(result)
+11-16 21:58:24 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 21:58:24 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='裸开头'
+F11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=4 preview='A§ B'
+11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='A§'
+11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='B'
+....F.....11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='甲'
+...F.F11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=3 preview='裸尾巴'
+.11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=3 preview='裸开头'
+..11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='你好'
+11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=7 preview='第一行 第二段'
+11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=14 preview='{"body":"旧信封"}'
+........FFFF....11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=4 preview='还没闭合'
+.11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=4 preview='写到一半'
+...F..F...11-16 21:58:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+11-16 21:58:24 [ERROR] nonebot | Failed to import "nonebot_plugin_apscheduler"
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/usr/lib/python3.13/unittest/__main__.py", line 18, in <module>
+    main(module=None)
+  File "/usr/lib/python3.13/unittest/main.py", line 104, in __init__
+    self.runTests()
+  File "/usr/lib/python3.13/unittest/main.py", line 270, in runTests
+    self.result = testRunner.run(self.test)
+  File "/usr/lib/python3.13/unittest/runner.py", line 240, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/case.py", line 707, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/case.py", line 651, in run
+    self._callTestMethod(testMethod)
+  File "/usr/lib/python3.13/unittest/case.py", line 606, in _callTestMethod
+    if method() is not None:
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 490, in test_terminal_stream_recovery_and_reconcile_share_one_protocol
+    from nonebot_plugin_hermes_adapter.tasks import run_resume
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1026, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tasks/__init__.py", line 4, in <module>
+    from .expire_active_sessions import register_expire_active_sessions
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1026, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tasks/expire_active_sessions.py", line 9, in <module>
+    require("nonebot_plugin_apscheduler")
+  File "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/plugin/load.py", line 212, in require
+    plugin = load_plugin(name)
+  File "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/plugin/load.py", line 43, in load_plugin
+    return manager.load_plugin(module_path)
+> File "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/plugin/manager.py", line 183, in load_plugin
+    raise RuntimeError(
+RuntimeError: Module nonebot_plugin_apscheduler is not loaded as a plugin! Make sure not to import it before loading.
+E
+======================================================================
+ERROR: test_terminal_stream_recovery_and_reconcile_share_one_protocol (tests.test_runs_envelope.IndependentEnvelopeIncidentTests.test_terminal_stream_recovery_and_reconcile_share_one_protocol)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 490, in test_terminal_stream_recovery_and_reconcile_share_one_protocol
+    from nonebot_plugin_hermes_adapter.tasks import run_resume
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tasks/__init__.py", line 4, in <module>
+    from .expire_active_sessions import register_expire_active_sessions
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tasks/expire_active_sessions.py", line 9, in <module>
+    require("nonebot_plugin_apscheduler")
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/NeonBot/.venv/lib/python3.13/site-packages/nonebot/plugin/load.py", line 215, in require
+    raise RuntimeError(f'Cannot load plugin "{name}"!')
+RuntimeError: Cannot load plugin "nonebot_plugin_apscheduler"!
+
+======================================================================
+FAIL: test_close_marker_is_consumed_with_its_body (tests.test_runs_envelope.EnvelopeIncrementalQueueTests.test_close_marker_is_consumed_with_its_body)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 210, in test_close_marker_is_consumed_with_its_body
+    self.assertEqual(remainder, "")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+AssertionError: '§\n' != ''
+- §
+
+
+======================================================================
+FAIL: test_closed_units_are_queued_before_the_segment_ends (tests.test_runs_envelope.EnvelopeIncrementalQueueTests.test_closed_units_are_queued_before_the_segment_ends)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 192, in test_closed_units_are_queued_before_the_segment_ends
+    self.assertEqual(parser._seg_text, "")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '§\n' != ''
+- §
+
+
+======================================================================
+FAIL: test_crlf_and_cr_are_the_same_line_ending (tests.test_runs_envelope.EnvelopeIncrementalQueueTests.test_crlf_and_cr_are_the_same_line_ending) (newline="'\\r\\n'")
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 233, in test_crlf_and_cr_are_the_same_line_ending
+    self.assertEqual(remainder, "")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+AssertionError: '§\r\n' != ''
+- §
+
+
+======================================================================
+FAIL: test_crlf_and_cr_are_the_same_line_ending (tests.test_runs_envelope.EnvelopeIncrementalQueueTests.test_crlf_and_cr_are_the_same_line_ending) (newline="'\\r'")
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 233, in test_crlf_and_cr_are_the_same_line_ending
+    self.assertEqual(remainder, "")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+AssertionError: '§\r' != ''
+- §
+
+
+======================================================================
+FAIL: test_head_before_first_marker_is_missing_open (tests.test_runs_envelope.EnvelopeIncrementalQueueTests.test_head_before_first_marker_is_missing_open)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 332, in test_head_before_first_marker_is_missing_open
+    self.assertEqual(remainder, "")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^
+AssertionError: '§\n' != ''
+- §
+
+
+======================================================================
+FAIL: test_legacy_shared_form_yields_one_unit_and_a_missing_open_tail (tests.test_runs_envelope.EnvelopeIncrementalQueueTests.test_legacy_shared_form_yields_one_unit_and_a_missing_open_tail)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 221, in test_legacy_shared_form_yields_one_unit_and_a_missing_open_tail
+    self.assertEqual(units, ["A"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['A', 'B'] != ['A']
+
+First list contains 1 additional elements.
+First extra element 1:
+'B'
+
+- ['A', 'B']
++ ['A']
+
+======================================================================
+FAIL: test_fenced_marker_closes_the_unit_and_drops_the_rest (tests.test_runs_envelope.EnvelopeParseTests.test_fenced_marker_closes_the_unit_and_drops_the_rest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 105, in test_fenced_marker_closes_the_unit_and_drops_the_rest
+    self.assertEqual(runs_text.split_text_units(unit("```\n§\n```")), ["```"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['```', '```'] != ['```']
+
+First list contains 1 additional elements.
+First extra element 1:
+'```'
+
+- ['```', '```']
++ ['```']
+
+======================================================================
+FAIL: test_legacy_shared_boundary_is_no_longer_two_units (tests.test_runs_envelope.EnvelopeParseTests.test_legacy_shared_boundary_is_no_longer_two_units)
+旧共享形态 ``§\nA\n§\nB\n§`` 不再解析成两份：只有 A 完整闭合。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 66, in test_legacy_shared_boundary_is_no_longer_two_units
+    self.assertEqual(runs_text.split_text_units(legacy_batch("A", "B")), ["A"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['A', 'B'] != ['A']
+
+First list contains 1 additional elements.
+First extra element 1:
+'B'
+
+- ['A', 'B']
++ ['A']
+
+======================================================================
+FAIL: test_prompt_multi_body_examples_are_independent (tests.test_runs_envelope.EnvelopePromptTests.test_prompt_multi_body_examples_are_independent) (block='group_runs')
+多条示例必须与解析器同口径：每份自己打开、自己闭合，相邻处是两个 § 行。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 543, in test_prompt_multi_body_examples_are_independent
+    self.assertNotIn("两条之间也单独写一行 §", prompt)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '两条之间也单独写一行 §' unexpectedly found in '<decision_protocol>\n你处于群活跃态。每条新消息都需要决定是否要插话。\n\n【唯一用户可见通道】\n用户能看到你输出的正文。\n想对用户说的话直接输出正文，不要写 JSON、不要写 body 之类的字段；工具调用照常进行，正文里的代码、路径、ID 和 CQ 标记保持原样。\n用户看不到你没输出的部分——不要指望旁白或内部说明被转发。\n凡是希望用户看到的受理回执、进度、阶段结果、阻塞原因和最终答复，都在当下直接输出正文；不要攒到整轮结束。\n无需让用户知道内部过程时保持静默：只输出两行 §（第一行一个 §，第二行一个 §）。\n\n【固定格式】\n正文要用分节符包起来：每份正文以独立一行 § 开头，以独立一行 § 结尾；要分成多条时，两条之间也单独写一行 §（整行只有一个 §，前后不加别的字符）。\n只有被两个 § 完整包住的段才会发出去；缺开头或缺结尾 § 的段一律不发，用户看不到，所以每段都要自己写闭合。普通换行和空行不会分成多条。\n行内 §（如“第 3 节 §3”）和带空格的 §（如“ § ”）都是原文，不是标记；代码块里独占一行的 § 同样算标记。想在正文里显示一行 §，就在这一行末尾加一个空格（写成“§ ”），它就不会被当成分节。\n需要引用消息、提前退窗或操作任务锚时，先调用 submit_control 工具登记，再按顺序输出正文。一次调用可以同时给多个字段，合并算一份控制，配给接下来的一份正文；要分别控制多份正文时才多次调用，按登记顺序依次配给。没有登记就用缺省控制。控制工具只登记，不直接发消息，也不会自己退窗或钉锚。\nsubmit_control 的字段：reply_to 填 `m:<id>` 引用本会话一条消息，只在确需指向原文时用（日常接话不必引用）；should_exit_active=true 表示这轮谈完了要退窗；pin_anchor=true 在委托判断轮钉住当前请求；release_anchor / answer_anchor 填委托人 user_id 或 "all"，分别松锚与标应答；anchor_merge 填在钉任务的发起者 user_id，用于归并进该任务。\nnot_final=true 表示这条正文只是“收到、正在处理”的回执，不是最终结果：插件照原样发出后立刻追加一发继续执行轮（连续接力有上限）；闲聊和正常收尾不要填。\n没有要说的就只输出两行 §（第一行一个 §，第二行一个 §）；不要用空输出表示静默，也不要发空消息或占位字符。\n\n【轮中与工具调用】\n在同一 run 内继续调用工具时，轮中进度直接输出正文，随后即可继续调用工具；进度不需要登记任何控制。\n工具调用前如果要让用户知道正在处理，先输出正文，再调用工具；工具调用之间和拿到阶段结果后也遵守同一规则。\n\n【任务受理与行动诚实】\n能当轮迅速完成的短任务直接给结果，不要另发受理回执。\n对已决定承接、不能即时给出完整答复的任务，必须先用正文明确说明消息已收到、任务正在处理，再执行耗时工作。\n缺少任务必要信息时，直接向用户确认，由用户决定提供信息，还是让你自行查找；不要盲目猜测或长时间搜索。\n没有可执行路径时，必须如实说明阻碍，禁止只说“稍等”“我去处理”后静默结束。\n查询、搜索或外部操作要实际执行，拿到结果才能汇报完成，若操作失败或能力不足，必须如实说明。\n只有确实存在后续执行路径时才可承诺处理：同一 run 的实际后续工具调用，或已成功启动并且有完成通知的后台任务（后台状态用 get_background_tasks 查真实登记，不要凭记忆自报）。\n\n【输出行为规范】\n中文句子必须使用全角标点符号，数字使用半角数字。\n闲聊时输出尽可能单句不分段，简短，不超过15字。\n用户明显还要继续说话、说话说一半、意思没表达完整时，本轮不回答、不调用工具，只输出两行 §（静默），等后续消息到达后再一并处理，无需回复等你说完或继续类的话语。\n如果上一轮回复已经涵盖用户后续补充的内容，本轮只输出两行 §（静默），不要重复回复。\n尽可能不要发送长难句，如出现需要表达超长句，依段落拆分为多条正文一次发送（两条之间单独写一行 §）。\n\n【正误示例】\n\n- 普通回复\n错误：{"body":"你好"}\n原因：这是 JSON 信封，用户只会看到这一串符号。\n正确：\n§\n你好\n§\n\n- 没包分节符的正文\n错误：第一句\n原因：开头和结尾都缺独立一行 §，整段不合规，一条也发不出去。\n正确：\n§\n第一句\n§\n\n- 引用某条原文（只在确需指向它时）\n正确：先调用 submit_control 登记 reply_to=m:123，随后输出下面这一段正文\n§\n这条我按你说的改了\n§\n\n- 三条连发\n正确：\n§\n第一句\n§\n第二句\n§\n第三句\n§\n\n- 静默（本轮什么都不说）\n正确：\n§\n§\n\n- 正文里要显示一行 §\n错误：正文里独立写一行 §，会把这一段切成两份。\n正确：在那一行末尾加一个空格（写成 § 加空格），它就只是普通正文\n§\n第一行\n§ \n第三行\n§\n\n- 长任务受理回执\n正确：输出下面这一段正文，随后在当前 run 调用工具继续任务。\n§\n收到，我马上继续处理\n§\n\n群规没有要说的就只输出两行 §（静默），不要发空消息，也不要写占位字符。\n</decision_protocol>'
+
+======================================================================
+FAIL: test_prompt_multi_body_examples_are_independent (tests.test_runs_envelope.EnvelopePromptTests.test_prompt_multi_body_examples_are_independent) (block='group_completions')
+多条示例必须与解析器同口径：每份自己打开、自己闭合，相邻处是两个 § 行。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 543, in test_prompt_multi_body_examples_are_independent
+    self.assertNotIn("两条之间也单独写一行 §", prompt)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '两条之间也单独写一行 §' unexpectedly found in '<decision_protocol>\n你处于群活跃态。每条新消息都需要决定是否要插话。\n\n【唯一用户可见通道】\n用户能看到你输出的正文，以及 push_message 工具推送的消息。\n想对用户说的最终答复直接输出正文，不要写 JSON、不要写 body 之类的字段；轮中进度用 push_message 工具推送。\n正文里的代码、路径、ID 和 CQ 标记保持原样。\n凡是希望用户看到的受理回执、进度、阶段结果、阻塞原因，都应该使用 push_message 工具推送消息；不要攒到整轮结束，最终答复直接输出正文。\n无需让用户知道内部过程时保持静默：只输出两行 §（第一行一个 §，第二行一个 §），不要为了解释内部动作而使用 push_message 工具推送消息。\n\n【固定格式】\n最终答复要用分节符包起来：每份正文以独立一行 § 开头，以独立一行 § 结尾；要分成多条时，两条之间也单独写一行 §（整行只有一个 §，前后不加别的字符）。\n只有被两个 § 完整包住的段才会发出去；缺开头或缺结尾 § 的段一律不发，用户看不到，所以每段都要自己写闭合。普通换行和空行不会分成多条。\n行内 § 和带空格的 § 都是原文，不是标记；代码块里独占一行的 § 同样算标记。想在正文里显示一行 §，就在这一行末尾加一个空格（写成“§ ”）。\n需要引用消息、提前退窗或操作任务锚时，调用 submit_control 工具登记；一次调用可以同时给多个字段，合并算一份控制，配给接下来的一份正文，规则同普通回复。\n需要结束当前轮并追加继续执行轮时，调用 request_continuation 工具；它不是普通进度标记。后台任务已经在跑且只等系统通知时，不要触发重复续跑。\n没有要说的就只输出两行 §（第一行一个 §，第二行一个 §）；不要用空输出表示静默，也不要发空消息或占位字符。\n\n【轮中与工具调用】\n工具调用前如果要让用户知道正在处理，先使用 push_message 工具输出消息，再调用其他工具；工具调用之间和拿到阶段结果后也遵守同一规则。\n\n【任务受理与行动诚实】\n能当轮迅速完成的短任务直接给结果，不要另发受理回执。\n对已决定承接、不能即时给出完整答复的任务，必须先输出正文说明消息已收到、任务正在处理，再调用 request_continuation 进入继续执行轮。\n缺少任务必要信息时，直接向用户确认，由用户决定提供信息，还是让你自行查找；不要盲目猜测或长时间搜索。\n没有可执行路径时，必须如实说明阻碍，禁止只说“稍等”“我去处理”后静默结束。\n查询、搜索或外部操作要实际执行，拿到结果才能汇报完成，若操作失败或能力不足，必须如实说明。\n只有确实存在后续执行路径时才可承诺处理：必须调用 request_continuation 进入继续执行轮，或已成功启动并且有完成通知的后台任务。\n\n【输出行为规范】\n中文句子必须使用全角标点符号，数字使用半角数字。\n闲聊时输出尽可能单句不分段，简短，不超过15字。\n用户明显还要继续说话、说话说一半、意思没表达完整时，本轮不回答、不调用工具，只输出两行 §（静默），等后续消息到达后再一并处理，无需回复等你说完或继续类的话语。\n如果上一轮回复已经涵盖用户后续补充的内容，本轮只输出两行 §（静默），不要重复回复。\n\n【正误示例】\n\n- 普通回复\n错误：{"body":"你好"}\n原因：这是 JSON 信封，用户只会看到这一串符号。\n正确：\n§\n你好\n§\n\n- 没包分节符的正文\n错误：第一句\n原因：开头和结尾都缺独立一行 §，整段不合规，一条也发不出去。\n正确：\n§\n第一句\n§\n\n- 引用某条原文（只在确需指向它时）\n正确：先调用 submit_control 登记 reply_to=m:123，随后输出下面这一段正文\n§\n这条我按你说的改了\n§\n\n- 三条连发\n正确：\n§\n第一句\n§\n第二句\n§\n第三句\n§\n\n- 静默（本轮什么都不说）\n正确：\n§\n§\n\n- 正文里要显示一行 §\n错误：正文里独立写一行 §，会把这一段切成两份。\n正确：在那一行末尾加一个空格（写成 § 加空格），它就只是普通正文\n§\n第一行\n§ \n第三行\n§\n\n- 长任务受理回执\n正确：先输出下面这一段正文，再调用 request_continuation，由续跑轮调用工具继续任务。\n§\n收到，我马上继续处理\n§\n\n群规没有要说的就只输出两行 §（静默），不要发空消息，也不要写占位字符。\n</decision_protocol>'
+
+======================================================================
+FAIL: test_prompt_multi_body_examples_are_independent (tests.test_runs_envelope.EnvelopePromptTests.test_prompt_multi_body_examples_are_independent) (block='private_runs')
+多条示例必须与解析器同口径：每份自己打开、自己闭合，相邻处是两个 § 行。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 543, in test_prompt_multi_body_examples_are_independent
+    self.assertNotIn("两条之间也单独写一行 §", prompt)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '两条之间也单独写一行 §' unexpectedly found in '<decision_protocol>\n你处于私聊对话。是否回复由你自己决定：有实质内容的消息正常回应；无特殊含义的纯表情、无意义刷屏，或你判断无需回应时，只输出两行 §（静默）。\n\n【唯一用户可见通道】\n用户能看到你输出的正文。\n想对用户说的话直接输出正文，不要写 JSON、不要写 body 之类的字段；工具调用照常进行，正文里的代码、路径、ID 和 CQ 标记保持原样。\n用户看不到你没输出的部分——不要指望旁白或内部说明被转发。\n凡是希望用户看到的受理回执、进度、阶段结果、阻塞原因和最终答复，都在当下直接输出正文；不要攒到整轮结束。\n无需让用户知道内部过程时保持静默：只输出两行 §（第一行一个 §，第二行一个 §）。\n\n【固定格式】\n正文要用分节符包起来：每份正文以独立一行 § 开头，以独立一行 § 结尾；要分成多条时，两条之间也单独写一行 §（整行只有一个 §，前后不加别的字符）。\n只有被两个 § 完整包住的段才会发出去；缺开头或缺结尾 § 的段一律不发，用户看不到，所以每段都要自己写闭合。普通换行和空行不会分成多条。\n行内 §（如“第 3 节 §3”）和带空格的 §（如“ § ”）都是原文，不是标记；代码块里独占一行的 § 同样算标记。想在正文里显示一行 §，就在这一行末尾加一个空格（写成“§ ”），它就不会被当成分节。\n需要引用消息、提前退窗或操作任务锚时，先调用 submit_control 工具登记，再按顺序输出正文。一次调用可以同时给多个字段，合并算一份控制，配给接下来的一份正文；要分别控制多份正文时才多次调用，按登记顺序依次配给。没有登记就用缺省控制。控制工具只登记，不直接发消息，也不会自己退窗或钉锚。\nsubmit_control 的字段：reply_to 填 `m:<id>` 引用本会话一条消息，只在确需指向原文时用（日常接话不必引用）；should_exit_active=true 表示这轮谈完了要退窗；pin_anchor=true 在委托判断轮钉住当前请求；release_anchor / answer_anchor 填委托人 user_id 或 "all"，分别松锚与标应答；anchor_merge 填在钉任务的发起者 user_id，用于归并进该任务。\nnot_final=true 表示这条正文只是“收到、正在处理”的回执，不是最终结果：插件照原样发出后立刻追加一发继续执行轮（连续接力有上限）；闲聊和正常收尾不要填。\n没有要说的就只输出两行 §（第一行一个 §，第二行一个 §）；不要用空输出表示静默，也不要发空消息或占位字符。\n\n【轮中与工具调用】\n在同一 run 内继续调用工具时，轮中进度直接输出正文，随后即可继续调用工具；进度不需要登记任何控制。\n工具调用前如果要让用户知道正在处理，先输出正文，再调用工具；工具调用之间和拿到阶段结果后也遵守同一规则。\n\n【任务受理与行动诚实】\n能当轮迅速完成的短任务直接给结果，不要另发受理回执。\n对已决定承接、不能即时给出完整答复的任务，必须先用正文明确说明消息已收到、任务正在处理，再执行耗时工作。\n缺少任务必要信息时，直接向用户确认，由用户决定提供信息，还是让你自行查找；不要盲目猜测或长时间搜索。\n没有可执行路径时，必须如实说明阻碍，禁止只说“稍等”“我去处理”后静默结束。\n查询、搜索或外部操作要实际执行，拿到结果才能汇报完成，若操作失败或能力不足，必须如实说明。\n只有确实存在后续执行路径时才可承诺处理：同一 run 的实际后续工具调用，或已成功启动并且有完成通知的后台任务（后台状态用 get_background_tasks 查真实登记，不要凭记忆自报）。\n\n【输出行为规范】\n中文句子必须使用全角标点符号，数字使用半角数字。\n闲聊时输出尽可能单句不分段，简短，不超过15字。\n用户明显还要继续说话、说话说一半、意思没表达完整时，本轮不回答、不调用工具，只输出两行 §（静默），等后续消息到达后再一并处理，无需回复等你说完或继续类的话语。\n如果上一轮回复已经涵盖用户后续补充的内容，本轮只输出两行 §（静默），不要重复回复。\n尽可能不要发送长难句，如出现需要表达超长句，依段落拆分为多条正文一次发送（两条之间单独写一行 §）。\n\n【正误示例】\n\n- 普通回复\n错误：{"body":"你好"}\n原因：这是 JSON 信封，用户只会看到这一串符号。\n正确：\n§\n你好\n§\n\n- 没包分节符的正文\n错误：第一句\n原因：开头和结尾都缺独立一行 §，整段不合规，一条也发不出去。\n正确：\n§\n第一句\n§\n\n- 引用某条原文（只在确需指向它时）\n正确：先调用 submit_control 登记 reply_to=m:123，随后输出下面这一段正文\n§\n这条我按你说的改了\n§\n\n- 三条连发\n正确：\n§\n第一句\n§\n第二句\n§\n第三句\n§\n\n- 静默（本轮什么都不说）\n正确：\n§\n§\n\n- 正文里要显示一行 §\n错误：正文里独立写一行 §，会把这一段切成两份。\n正确：在那一行末尾加一个空格（写成 § 加空格），它就只是普通正文\n§\n第一行\n§ \n第三行\n§\n\n- 长任务受理回执\n正确：输出下面这一段正文，随后在当前 run 调用工具继续任务。\n§\n收到，我马上继续处理\n§\n\n私聊只有对方一个人，不必 @ 任何人，正文里不要写 [CQ:at,...] 标记。\n私聊里的控制只用到 reply_to；退窗与任务锚只在群活跃态生效。\n没有要说的就只输出两行 §（静默），不要发空消息，也不要写占位字符。\n</decision_protocol>'
+
+======================================================================
+FAIL: test_prompt_multi_body_examples_are_independent (tests.test_runs_envelope.EnvelopePromptTests.test_prompt_multi_body_examples_are_independent) (block='private_completions')
+多条示例必须与解析器同口径：每份自己打开、自己闭合，相邻处是两个 § 行。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 543, in test_prompt_multi_body_examples_are_independent
+    self.assertNotIn("两条之间也单独写一行 §", prompt)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '两条之间也单独写一行 §' unexpectedly found in '<decision_protocol>\n你处于私聊对话。是否回复由你自己决定：有实质内容的消息正常回应；无特殊含义的纯表情、无意义刷屏，或你判断无需回应时，只输出两行 §（静默）。\n\n【唯一用户可见通道】\n用户能看到你输出的正文，以及 push_message 工具推送的消息。\n想对用户说的最终答复直接输出正文，不要写 JSON、不要写 body 之类的字段；轮中进度用 push_message 工具推送。\n正文里的代码、路径、ID 和 CQ 标记保持原样。\n凡是希望用户看到的受理回执、进度、阶段结果、阻塞原因，都应该使用 push_message 工具推送消息；不要攒到整轮结束，最终答复直接输出正文。\n无需让用户知道内部过程时保持静默：只输出两行 §（第一行一个 §，第二行一个 §），不要为了解释内部动作而使用 push_message 工具推送消息。\n\n【固定格式】\n最终答复要用分节符包起来：每份正文以独立一行 § 开头，以独立一行 § 结尾；要分成多条时，两条之间也单独写一行 §（整行只有一个 §，前后不加别的字符）。\n只有被两个 § 完整包住的段才会发出去；缺开头或缺结尾 § 的段一律不发，用户看不到，所以每段都要自己写闭合。普通换行和空行不会分成多条。\n行内 § 和带空格的 § 都是原文，不是标记；代码块里独占一行的 § 同样算标记。想在正文里显示一行 §，就在这一行末尾加一个空格（写成“§ ”）。\n需要引用消息、提前退窗或操作任务锚时，调用 submit_control 工具登记；一次调用可以同时给多个字段，合并算一份控制，配给接下来的一份正文，规则同普通回复。\n需要结束当前轮并追加继续执行轮时，调用 request_continuation 工具；它不是普通进度标记。后台任务已经在跑且只等系统通知时，不要触发重复续跑。\n没有要说的就只输出两行 §（第一行一个 §，第二行一个 §）；不要用空输出表示静默，也不要发空消息或占位字符。\n\n【轮中与工具调用】\n工具调用前如果要让用户知道正在处理，先使用 push_message 工具输出消息，再调用其他工具；工具调用之间和拿到阶段结果后也遵守同一规则。\n\n【任务受理与行动诚实】\n能当轮迅速完成的短任务直接给结果，不要另发受理回执。\n对已决定承接、不能即时给出完整答复的任务，必须先输出正文说明消息已收到、任务正在处理，再调用 request_continuation 进入继续执行轮。\n缺少任务必要信息时，直接向用户确认，由用户决定提供信息，还是让你自行查找；不要盲目猜测或长时间搜索。\n没有可执行路径时，必须如实说明阻碍，禁止只说“稍等”“我去处理”后静默结束。\n查询、搜索或外部操作要实际执行，拿到结果才能汇报完成，若操作失败或能力不足，必须如实说明。\n只有确实存在后续执行路径时才可承诺处理：必须调用 request_continuation 进入继续执行轮，或已成功启动并且有完成通知的后台任务。\n\n【输出行为规范】\n中文句子必须使用全角标点符号，数字使用半角数字。\n闲聊时输出尽可能单句不分段，简短，不超过15字。\n用户明显还要继续说话、说话说一半、意思没表达完整时，本轮不回答、不调用工具，只输出两行 §（静默），等后续消息到达后再一并处理，无需回复等你说完或继续类的话语。\n如果上一轮回复已经涵盖用户后续补充的内容，本轮只输出两行 §（静默），不要重复回复。\n\n【正误示例】\n\n- 普通回复\n错误：{"body":"你好"}\n原因：这是 JSON 信封，用户只会看到这一串符号。\n正确：\n§\n你好\n§\n\n- 没包分节符的正文\n错误：第一句\n原因：开头和结尾都缺独立一行 §，整段不合规，一条也发不出去。\n正确：\n§\n第一句\n§\n\n- 引用某条原文（只在确需指向它时）\n正确：先调用 submit_control 登记 reply_to=m:123，随后输出下面这一段正文\n§\n这条我按你说的改了\n§\n\n- 三条连发\n正确：\n§\n第一句\n§\n第二句\n§\n第三句\n§\n\n- 静默（本轮什么都不说）\n正确：\n§\n§\n\n- 正文里要显示一行 §\n错误：正文里独立写一行 §，会把这一段切成两份。\n正确：在那一行末尾加一个空格（写成 § 加空格），它就只是普通正文\n§\n第一行\n§ \n第三行\n§\n\n- 长任务受理回执\n正确：先输出下面这一段正文，再调用 request_continuation，由续跑轮调用工具继续任务。\n§\n收到，我马上继续处理\n§\n\n私聊只有对方一个人，不必 @ 任何人，正文里不要写 [CQ:at,...] 标记。\n私聊里的控制只用到 reply_to；退窗与任务锚只在群活跃态生效。\n没有要说的就只输出两行 §（静默），不要发空消息，也不要写占位字符。\n</decision_protocol>'
+
+======================================================================
+FAIL: test_commentary_then_final_sends_each_once_without_composite (tests.test_runs_envelope.IndependentEnvelopeIncidentTests.test_commentary_then_final_sends_each_once_without_composite)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 430, in test_commentary_then_final_sends_each_once_without_composite
+    self.assertEqual(bodies, [self.A, self.B])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['要不要我顺手登记一下？'] != ['要不要我顺手登记一下？', '主要是表情包引用那条还没接完。']
+
+Second list contains 1 additional elements.
+First extra element 1:
+'主要是表情包引用那条还没接完。'
+
+- ['要不要我顺手登记一下？']
++ ['要不要我顺手登记一下？', '主要是表情包引用那条还没接完。']
+
+======================================================================
+FAIL: test_legacy_shared_output_is_not_split_in_two_on_the_terminal_path (tests.test_runs_envelope.IndependentEnvelopeIncidentTests.test_legacy_shared_output_is_not_split_in_two_on_the_terminal_path)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/next-bug-batch-20261116/tests/test_runs_envelope.py", line 510, in test_legacy_shared_output_is_not_split_in_two_on_the_terminal_path
+    self.assertEqual([d["body"] for d in parser.terminal_decisions()], [self.A])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['要不要我顺手登记一下？', '主要是表情包引用那条还没接完。'] != ['要不要我顺手登记一下？']
+
+First list contains 1 additional elements.
+First extra element 1:
+'主要是表情包引用那条还没接完。'
+
+- ['要不要我顺手登记一下？', '主要是表情包引用那条还没接完。']
++ ['要不要我顺手登记一下？']
+
+----------------------------------------------------------------------
+Ran 50 tests in 0.232s
+
+FAILED (failures=14, errors=1)

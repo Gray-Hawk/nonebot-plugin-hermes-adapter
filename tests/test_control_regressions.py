@@ -66,7 +66,7 @@ def _legacy_units(text: str) -> list[str]:
 def _result(text: str) -> ChatResult:
     units = _legacy_units(text)
     decisions = [{"body": body, "should_reply": True} for body in units]
-    result = ChatResult(raw_text="\n§\n".join(units) or text,
+    result = ChatResult(raw_text="\n".join(f"§\n{body}\n§" for body in units) or text,
                         structured=decisions[0] if decisions else {"should_reply": False})
     result.terminal_decisions = decisions
     result.run_id = "run-e2-h"
@@ -91,7 +91,7 @@ class ControlBindingAtArrivalTests(e2._ReactiveHarness):
         sleeps, quotes, observed = [], [], []
         output = "§\n丙\n§"
         events = [
-            {"event": "message.delta", "delta": "§\n甲\n§\n乙\n§\n", "seq": 0},
+            {"event": "message.delta", "delta": "§\n甲\n§\n§\n乙\n§\n", "seq": 0},
             {"event": "tool.started", "tool": "mcp__bridge__submit_control", "seq": 1},
             {"event": "tool.completed", "tool": "mcp__bridge__submit_control", "seq": 2},
             {"event": "message.delta", "delta": "§\n丙\n§", "seq": 3},
@@ -432,8 +432,8 @@ class ControlGroupScopeTests(e2._ReactiveHarness):
             calls = await self._run(
                 None, tracker=tracker,
                 chat=real_chat(tracker, [
-                    {"event": "message.delta", "delta": "§\n甲\n§\n乙\n§\n", "seq": 0},
-                    {"event": "run.completed", "output": "§\n甲\n§\n乙\n§", "seq": 1},
+                    {"event": "message.delta", "delta": "§\n甲\n§\n§\n乙\n§\n", "seq": 0},
+                    {"event": "run.completed", "output": "§\n甲\n§\n§\n乙\n§", "seq": 1},
                 ]),
                 sessions=manager, now_ms=self.now,
                 resolve_reply=MagicMock(side_effect=lambda *a, **kw: resolved.append(kw["reply_to"])),

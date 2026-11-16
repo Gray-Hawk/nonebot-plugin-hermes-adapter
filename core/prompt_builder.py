@@ -1369,7 +1369,7 @@ def build_reactive_user_content(
         )
         reminder = (
             "\n\n请直接输出最终正文，不要写 JSON 信封；每份正文用独立一行 § 开头、独立一行 § 结尾，"
-            "多条之间也单独写一行 §，静默写两行 §；轮中进度用 push_message，需要续跑时调用 request_continuation，"
+            "多条时每份都要自己写开头和结尾（相邻两份是两个 § 行），静默写两行 §；轮中进度用 push_message，需要续跑时调用 request_continuation，"
             + anchor_hint
         )
     elif mode == "runs":
@@ -1380,7 +1380,7 @@ def build_reactive_user_content(
         )
         reminder = (
             "\n\n请直接输出正文，不要写 JSON 信封；每份正文用独立一行 § 开头、独立一行 § 结尾，"
-            "多条之间也单独写一行 §，静默写两行 §；"
+            "多条时每份都要自己写开头和结尾（相邻两份是两个 § 行），静默写两行 §；"
             + anchor_hint
             + _RUNS_VISIBLE_REPLY_REMINDER
         )
