@@ -334,6 +334,7 @@ def _pending_steer_recovery_rows(
                 image_urls=list(media.get("image", [])),
                 sticker_urls=list(media.get("sticker", [])),
                 quote_image_urls=list(media.get("quote", [])),
+                quote_sticker_urls=list(media.get("quote_sticker", [])),
                 forward_image_urls=list(media.get("forward_image", [])),
                 id=fragment_id,
                 at_user_ids=tuple(facts.get("at_user_ids") or ()),

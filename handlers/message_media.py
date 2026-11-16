@@ -798,16 +798,19 @@ class _RepliedMedia:
     sender_label: str = ""
     text: str = ""
     image_urls: list[str] = field(default_factory=list)
+    sticker_urls: list[str] = field(default_factory=list)
     forward_full: str | None = None
     msg_id: object = None
 
 
 async def _extract_replied_media(event: Event, bot: Bot, *, adapter_name: str) -> _RepliedMedia:
-    """抽取被引消息的发送者归属 / 文本 / 图片 / @ 占位 / 折叠转发块。
+    """抽取被引消息的发送者归属 / 文本 / 图片 / 表情 / @ 占位 / 折叠转发块。
 
     perception(priority=1)与触发 handler(priority=98)共用:一条消息的引用图必须
     同源提取——此前只有触发轮临时并入载荷、不入库,历史行/召回拿不到(事故根因之一)。
-    异常一律吞没:提取失败只丢引用,不拖垮主流程。
+    引用里的 QQ 大表情(Image.sticker=True)与普通图分开抽:纯表情引用若只走
+    `_extract_image_urls` 会得到空内容,`_compose_quote_prefix` 于是返回空前缀,
+    「引用了哪个表情」整段丢失。异常一律吞没:提取失败只丢引用,不拖垮主流程。
     被引消息若本身是折叠转发,块内节点图不注册发号(不属本条消息 idx),保持 [图片]。
     """
     out = _RepliedMedia()
@@ -820,6 +823,7 @@ async def _extract_replied_media(event: Event, bot: Bot, *, adapter_name: str) -
         replied_message = await alconna.UniMessage.generate(message=event.reply.message, bot=bot)
         out.text = replied_message.extract_plain_text().strip()
         out.image_urls = await _extract_image_urls(replied_message, bot, adapter_name)
+        out.sticker_urls = await _extract_sticker_urls(replied_message, bot, adapter_name)
         replied_at = _collect_at_placeholders(replied_message)
         if replied_at:
             # 引用内历史@改写成「提及」,见 _rewrite_quoted_ats docstring
@@ -835,17 +839,18 @@ async def _extract_replied_media(event: Event, bot: Bot, *, adapter_name: str) -
 
 
 def _compose_quote_prefix(replied: _RepliedMedia, quote_base: int) -> str:
-    """(引用 …) 前缀的唯一拼装处:字面@改写 → 转发摘要 → 引用图标记 → 归属包装。
+    """(引用 …) 前缀的唯一拼装处:字面@改写 → 转发摘要 → 引用媒体标记 → 归属包装。
 
     主 handler(当轮 current_message)
     与 perception(入库 content)同源调用,保证「出入站同文本」——历史行里的引用
     前缀与当轮呈递形态一致,换窗口/压缩后「谁引用了谁、引文是什么」不再丢失。
-    quote_base = 本条消息 own+sticker 图数;引用图号 (引用图#k) 接排其后
-    (kind='quote',与 message_images 的全局 idx 一致,见规划书 §8)。
+    quote_base = 本条消息 own+sticker 图数;引用图号 (引用图#k) 接排其后,
+    引用表情号 (引用表情#k) 再接排在引用图之后
+    (kind='quote'/'quote_sticker',与 message_images 的全局 idx 一致,见规划书 §8)。
 
-    纯图引用只给 (引用图#k) 标记,不再补裸 [图片]:标记自带可寻址号,已足够;
+    纯图/纯表情引用只给对应标记,不再补裸 [图片]:标记自带可寻址号,已足够;
     再补裸占位只会与标记重复且丢号(旧 L1310 [图片] 兜底的语义由标记继承)。
-    返回空串 = 无可呈递引用(无文本/转发/图),调用方不拼前缀。
+    返回空串 = 无可呈递引用(无文本/转发/媒体),调用方不拼前缀。
     """
     replied_text = replied.text
     if replied_text:
@@ -862,10 +867,23 @@ def _compose_quote_prefix(replied: _RepliedMedia, quote_base: int) -> str:
     # 引用块:引用带图即补图标记(修事故根因——旧条件 [图片] 只在引用纯图(无文字)时才补,
     # 图文混合引用在文本层丢图标记,模型只能按位置猜)。号 = 该引用图在本条
     # message_images 的全局 idx(kind='quote',续排在 own+sticker 之后)。见规划书 §8。
+    image_marks: list[str] = []
     if replied.image_urls:
-        marks = " ".join(
-            f"({media_kind_word('quote')}#{quote_base + j})" for j in range(len(replied.image_urls))
-        )
+        image_marks = [
+            f"({media_kind_word('quote')}#{quote_base + j})"
+            for j in range(len(replied.image_urls))
+        ]
+    # 引用表情:接在引用图之后(枚举序 own→sticker→quote→quote_sticker→forward),
+    # 纯表情引用靠这三行才有可呈递内容,不再退化成空前缀。
+    sticker_marks: list[str] = []
+    if replied.sticker_urls:
+        sticker_base = quote_base + len(replied.image_urls)
+        sticker_marks = [
+            f"({media_kind_word('quote_sticker')}#{sticker_base + j})"
+            for j in range(len(replied.sticker_urls))
+        ]
+    marks = " ".join([*image_marks, *sticker_marks])
+    if marks:
         replied_text = f"{replied_text} {marks}".strip() if replied_text else marks
     if not replied_text:
         return ""
