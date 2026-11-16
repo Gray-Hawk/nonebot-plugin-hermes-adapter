@@ -1,0 +1,343 @@
+# RED 证据：基线 f4b3224 + 仅本轮新增测试（生产代码保持基线）
+# 生成方式：git worktree add --detach /tmp/red-baseline-f4b3224 f4b3224 && cp 三个新测试文件 → tests/ && 用生产 venv 跑 unittest
+# interpreter=/home/neonsky/NeonBot/.venv/bin/python -B
+# baseline=f4b3224
+
+===== 1) tests.test_runs_not_final（基线：submit_control 无 not_final 字段）=====
+11-16 19:22:24 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 19:22:24 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:103: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.parseArgs(argv)
+11-16 19:22:24 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 19:22:24 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 19:22:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+test_completions_rejects_not_final (tests.test_runs_not_final.ControlRegistrationTests.test_completions_rejects_not_final) ... FAIL
+test_not_final_false_registers_nothing (tests.test_runs_not_final.ControlRegistrationTests.test_not_final_false_registers_nothing) ... ok
+test_runs_keeps_existing_control_fields (tests.test_runs_not_final.ControlRegistrationTests.test_runs_keeps_existing_control_fields) ... 11-16 19:22:24 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to', 'should_exit_active'] pending=1
+FAIL
+test_runs_registers_not_final_on_next_decision_only (tests.test_runs_not_final.ControlRegistrationTests.test_runs_registers_not_final_on_next_decision_only) ... FAIL
+test_chain_limit_is_reused (tests.test_runs_not_final.RelayChainTests.test_chain_limit_is_reused) ... 11-16 19:22:24 [WARNING] nonebot_plugin_hermes_adapter | [HERMES feedback] 接力链达上限(2),照发不接力 ('onebotv11', 'group:g1') tag=not_final
+ok
+test_not_final_fires_exactly_once_per_body (tests.test_runs_not_final.RelayChainTests.test_not_final_fires_exactly_once_per_body) ... ok
+test_plain_body_does_not_continue_and_resets_chain (tests.test_runs_not_final.RelayChainTests.test_plain_body_does_not_continue_and_resets_chain) ... ok
+test_plain_body_is_untouched (tests.test_runs_not_final.RunsLiveDeliverTests.test_plain_body_is_untouched) ... 11-16 19:22:24 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=4 media=0 files=0
+ok
+test_registered_not_final_continues_once_after_send (tests.test_runs_not_final.RunsLiveDeliverTests.test_registered_not_final_continues_once_after_send) ... FAIL
+test_completions_protocol_has_no_not_final (tests.test_runs_not_final.RunsPromptTests.test_completions_protocol_has_no_not_final) ... ok
+test_runs_protocol_documents_not_final (tests.test_runs_not_final.RunsPromptTests.test_runs_protocol_documents_not_final) ... FAIL
+
+======================================================================
+FAIL: test_completions_rejects_not_final (tests.test_runs_not_final.ControlRegistrationTests.test_completions_rejects_not_final)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_runs_not_final.py", line 73, in test_completions_rejects_not_final
+    self.assertFalse(result.ok)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_runs_keeps_existing_control_fields (tests.test_runs_not_final.ControlRegistrationTests.test_runs_keeps_existing_control_fields)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_runs_not_final.py", line 82, in test_runs_keeps_existing_control_fields
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        result.fields, ["not_final", "reply_to", "should_exit_active"]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: ['reply_to', 'should_exit_active'] != ['not_final', 'reply_to', 'should_exit_active']
+
+First differing element 0:
+'reply_to'
+'not_final'
+
+Second list contains 1 additional elements.
+First extra element 2:
+'should_exit_active'
+
+- ['reply_to', 'should_exit_active']
++ ['not_final', 'reply_to', 'should_exit_active']
+?  +++++++++++++
+
+
+======================================================================
+FAIL: test_runs_registers_not_final_on_next_decision_only (tests.test_runs_not_final.ControlRegistrationTests.test_runs_registers_not_final_on_next_decision_only)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_runs_not_final.py", line 53, in test_runs_registers_not_final_on_next_decision_only
+    self.assertTrue(result.registered)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_registered_not_final_continues_once_after_send (tests.test_runs_not_final.RunsLiveDeliverTests.test_registered_not_final_continues_once_after_send)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_runs_not_final.py", line 204, in test_registered_not_final_continues_once_after_send
+    self.assertTrue(result.registered, result.error)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_runs_protocol_documents_not_final (tests.test_runs_not_final.RunsPromptTests.test_runs_protocol_documents_not_final)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_runs_not_final.py", line 230, in test_runs_protocol_documents_not_final
+    self.assertIn("not_final", runs)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+AssertionError: 'not_final' not found in '<decision_protocol>\n你处于群活跃态。每条新消息都需要决定是否要插话。\n\n【唯一用户可见通道】\n用户能看到你输出的正文。\n想对用户说的话直接输出正文，不要写 JSON、不要写 body 之类的字段；工具调用照常进行，正文里的代码、路径、ID 和 CQ 标记保持原样。\n用户看不到你没输出的部分——不要指望旁白或内部说明被转发。\n凡是希望用户看到的受理回执、进度、阶段结果、阻塞原因和最终答复，都在当下直接输出正文；不要攒到整轮结束。\n无需让用户知道内部过程时保持静默：只输出两行 §（第一行一个 §，第二行一个 §）。\n\n【固定格式】\n正文要用分节符包起来：每份正文以独立一行 § 开头，以独立一行 § 结尾；要分成多条时，两条之间也单独写一行 §（整行只有一个 §，前后不加别的字符）。\n只有被两个 § 完整包住的段才会发出去；缺开头或缺结尾 § 的段一律不发，用户看不到，所以每段都要自己写闭合。普通换行和空行不会分成多条。\n行内 §（如“第 3 节 §3”）和带空格的 §（如“ § ”）都是原文，不是标记；代码块里独占一行的 § 同样算标记。想在正文里显示一行 §，就在这一行末尾加一个空格（写成“§ ”），它就不会被当成分节。\n需要引用消息、提前退窗或操作任务锚时，先调用 submit_control 工具登记，再按顺序输出正文。一次调用可以同时给多个字段，合并算一份控制，配给接下来的一份正文；要分别控制多份正文时才多次调用，按登记顺序依次配给。没有登记就用缺省控制。控制工具只登记，不直接发消息，也不会自己退窗或钉锚。\nsubmit_control 的字段：reply_to 填 `m:<id>` 引用本会话一条消息，只在确需指向原文时用（日常接话不必引用）；should_exit_active=true 表示这轮谈完了要退窗；pin_anchor=true 在委托判断轮钉住当前请求；release_anchor / answer_anchor 填委托人 user_id 或 "all"，分别松锚与标应答；anchor_merge 填在钉任务的发起者 user_id，用于归并进该任务。\n没有要说的就只输出两行 §（第一行一个 §，第二行一个 §）；不要用空输出表示静默，也不要发空消息或占位字符。\n\n【轮中与工具调用】\n在同一 run 内继续调用工具时，轮中进度直接输出正文，随后即可继续调用工具；进度不需要登记任何控制。\n工具调用前如果要让用户知道正在处理，先输出正文，再调用工具；工具调用之间和拿到阶段结果后也遵守同一规则。\n\n【任务受理与行动诚实】\n能当轮迅速完成的短任务直接给结果，不要另发受理回执。\n对已决定承接、不能即时给出完整答复的任务，必须先用正文明确说明消息已收到、任务正在处理，再执行耗时工作。\n缺少任务必要信息时，直接向用户确认，由用户决定提供信息，还是让你自行查找；不要盲目猜测或长时间搜索。\n没有可执行路径时，必须如实说明阻碍，禁止只说“稍等”“我去处理”后静默结束。\n查询、搜索或外部操作要实际执行，拿到结果才能汇报完成，若操作失败或能力不足，必须如实说明。\n只有确实存在后续执行路径时才可承诺处理：同一 run 的实际后续工具调用，或已成功启动并且有完成通知的后台任务（后台状态用 get_background_tasks 查真实登记，不要凭记忆自报）。\n\n【输出行为规范】\n中文句子必须使用全角标点符号，数字使用半角数字。\n闲聊时输出尽可能单句不分段，简短，不超过15字。\n用户明显还要继续说话、说话说一半、意思没表达完整时，本轮不回答、不调用工具，只输出两行 §（静默），等后续消息到达后再一并处理，无需回复等你说完或继续类的话语。\n如果上一轮回复已经涵盖用户后续补充的内容，本轮只输出两行 §（静默），不要重复回复。\n尽可能不要发送长难句，如出现需要表达超长句，依段落拆分为多条正文一次发送（两条之间单独写一行 §）。\n\n【正误示例】\n\n- 普通回复\n错误：{"body":"你好"}\n原因：这是 JSON 信封，用户只会看到这一串符号。\n正确：\n§\n你好\n§\n\n- 没包分节符的正文\n错误：第一句\n原因：开头和结尾都缺独立一行 §，整段不合规，一条也发不出去。\n正确：\n§\n第一句\n§\n\n- 引用某条原文（只在确需指向它时）\n正确：先调用 submit_control 登记 reply_to=m:123，随后输出下面这一段正文\n§\n这条我按你说的改了\n§\n\n- 三条连发\n正确：\n§\n第一句\n§\n第二句\n§\n第三句\n§\n\n- 静默（本轮什么都不说）\n正确：\n§\n§\n\n- 正文里要显示一行 §\n错误：正文里独立写一行 §，会把这一段切成两份。\n正确：在那一行末尾加一个空格（写成 § 加空格），它就只是普通正文\n§\n第一行\n§ \n第三行\n§\n\n- 长任务受理回执\n正确：输出下面这一段正文，随后在当前 run 调用工具继续任务。\n§\n收到，我马上继续处理\n§\n\n群规则没有要说的就只输出两行 §（静默），不要发空消息，也不要写占位字符。\n</decision_protocol>'
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.006s
+
+FAILED (failures=5)
+
+===== 2) tests.test_video_file_ref（基线：视频只写 [视频]）=====
+11-16 19:22:25 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 19:22:25 [INFO] nonebot | Current Env: prod
+<frozen runpy>:88: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+11-16 19:22:25 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 19:22:25 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 19:22:25 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+test_forward_video_registers_entry_and_addressable_label (tests.test_video_file_ref.ForwardVideoTests.test_forward_video_registers_entry_and_addressable_label) ... ERROR
+test_forward_video_without_mid_keeps_plain_placeholder (tests.test_video_file_ref.ForwardVideoTests.test_forward_video_without_mid_keeps_plain_placeholder) ... ERROR
+test_forward_video_without_url_keeps_plain_placeholder (tests.test_video_file_ref.ForwardVideoTests.test_forward_video_without_url_keeps_plain_placeholder) ... ERROR
+test_file_then_video_share_one_index_space (tests.test_video_file_ref.VideoEntryTests.test_file_then_video_share_one_index_space) ... ERROR
+test_missing_message_id_falls_back_to_plain_labels (tests.test_video_file_ref.VideoEntryTests.test_missing_message_id_falls_back_to_plain_labels) ... FAIL
+test_video_segment_registers_file_ref (tests.test_video_file_ref.VideoEntryTests.test_video_segment_registers_file_ref) ... FAIL
+test_video_without_url_keeps_plain_placeholder (tests.test_video_file_ref.VideoEntryTests.test_video_without_url_keeps_plain_placeholder) ... ok
+test_cached_video_does_not_download_again (tests.test_video_file_ref.VideoFetchTests.test_cached_video_does_not_download_again) ... FAIL
+test_get_message_files_fetches_video_and_file (tests.test_video_file_ref.VideoFetchTests.test_get_message_files_fetches_video_and_file) ... FAIL
+test_ingress_composition_registers_forward_video_after_own_entries (tests.test_video_file_ref.VideoFetchTests.test_ingress_composition_registers_forward_video_after_own_entries)
+按 perception 的组装顺序：own(文件+视频) → 转发视频接排 → 落库后出占位。 ... ERROR
+test_video_metadata_is_registered_with_real_ref (tests.test_video_file_ref.VideoFetchTests.test_video_metadata_is_registered_with_real_ref) ... FAIL
+
+======================================================================
+ERROR: test_forward_video_registers_entry_and_addressable_label (tests.test_video_file_ref.ForwardVideoTests.test_forward_video_registers_entry_and_addressable_label)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 135, in test_forward_video_registers_entry_and_addressable_label
+    block, images, videos = _extract_forward(
+                            ~~~~~~~~~~~~~~~~^
+        _forward_uni(), bot, number_base=0, file_message_id=12, file_idx_base=2
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 123, in _extract_forward
+    _extract_forward_full(uni, bot, adapter_name="onebotv11", **kwargs)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: _extract_forward_full() got an unexpected keyword argument 'file_message_id'
+
+======================================================================
+ERROR: test_forward_video_without_mid_keeps_plain_placeholder (tests.test_video_file_ref.ForwardVideoTests.test_forward_video_without_mid_keeps_plain_placeholder)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 149, in test_forward_video_without_mid_keeps_plain_placeholder
+    block, _images, videos = _extract_forward(
+                             ~~~~~~~~~~~~~~~~^
+        _forward_uni(), bot, number_base=0, file_idx_base=2
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 123, in _extract_forward
+    _extract_forward_full(uni, bot, adapter_name="onebotv11", **kwargs)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: _extract_forward_full() got an unexpected keyword argument 'file_idx_base'
+
+======================================================================
+ERROR: test_forward_video_without_url_keeps_plain_placeholder (tests.test_video_file_ref.ForwardVideoTests.test_forward_video_without_url_keeps_plain_placeholder)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 159, in test_forward_video_without_url_keeps_plain_placeholder
+    block, _images, videos = _extract_forward(
+                             ~~~~~~~~~~~~~~~~^
+        _forward_uni(), bot, number_base=0, file_message_id=12
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 123, in _extract_forward
+    _extract_forward_full(uni, bot, adapter_name="onebotv11", **kwargs)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: _extract_forward_full() got an unexpected keyword argument 'file_message_id'
+
+======================================================================
+ERROR: test_file_then_video_share_one_index_space (tests.test_video_file_ref.VideoEntryTests.test_file_then_video_share_one_index_space)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 76, in test_file_then_video_share_one_index_space
+    self.assertEqual([e["kind"] for e in entries], ["file", "video"])
+                      ~^^^^^^^^
+KeyError: 'kind'
+
+======================================================================
+ERROR: test_ingress_composition_registers_forward_video_after_own_entries (tests.test_video_file_ref.VideoFetchTests.test_ingress_composition_registers_forward_video_after_own_entries)
+按 perception 的组装顺序：own(文件+视频) → 转发视频接排 → 落库后出占位。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 258, in test_ingress_composition_registers_forward_video_after_own_entries
+    _block, _images, forward_videos = _extract_forward(
+                                      ~~~~~~~~~~~~~~~~^
+        uni, bot, number_base=0, file_idx_base=len(entries)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 123, in _extract_forward
+    _extract_forward_full(uni, bot, adapter_name="onebotv11", **kwargs)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: _extract_forward_full() got an unexpected keyword argument 'file_idx_base'
+
+======================================================================
+FAIL: test_missing_message_id_falls_back_to_plain_labels (tests.test_video_file_ref.VideoEntryTests.test_missing_message_id_falls_back_to_plain_labels)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 93, in test_missing_message_id_falls_back_to_plain_labels
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        _collect_file_placeholders(entries, None), ["[文件:报告.pdf]", "[视频]"]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: Lists differ: ['[文件:报告.pdf]'] != ['[文件:报告.pdf]', '[视频]']
+
+Second list contains 1 additional elements.
+First extra element 1:
+'[视频]'
+
+- ['[文件:报告.pdf]']
++ ['[文件:报告.pdf]', '[视频]']
+?               ++++++ ++
+
+
+======================================================================
+FAIL: test_video_segment_registers_file_ref (tests.test_video_file_ref.VideoEntryTests.test_video_segment_registers_file_ref)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 54, in test_video_segment_registers_file_ref
+    self.assertEqual(len(entries), 1)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1
+
+======================================================================
+FAIL: test_cached_video_does_not_download_again (tests.test_video_file_ref.VideoFetchTests.test_cached_video_does_not_download_again)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 297, in test_cached_video_does_not_download_again
+    self.assertTrue(first.results[0].available)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_get_message_files_fetches_video_and_file (tests.test_video_file_ref.VideoFetchTests.test_get_message_files_fetches_video_and_file)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 238, in test_get_message_files_fetches_video_and_file
+    self.assertTrue(video.available, video.error)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_video_metadata_is_registered_with_real_ref (tests.test_video_file_ref.VideoFetchTests.test_video_metadata_is_registered_with_real_ref)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_video_file_ref.py", line 213, in test_video_metadata_is_registered_with_real_ref
+    self.assertEqual(len(rows), 2)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+AssertionError: 1 != 2
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.012s
+
+FAILED (failures=5, errors=5)
+
+===== 3) tests.test_outbound_poke（基线：内联 CQ 只认 at）=====
+11-16 19:22:26 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 19:22:26 [INFO] nonebot | Current Env: prod
+<frozen runpy>:88: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+11-16 19:22:26 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 19:22:26 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+test_at_regression_unchanged (tests.test_outbound_poke.OutboundPokeTests.test_at_regression_unchanged) ... 11-16 19:22:26 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+ok
+test_invalid_params_stay_literal_text (tests.test_outbound_poke.OutboundPokeTests.test_invalid_params_stay_literal_text) ... 11-16 19:22:26 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] reply_text 有 1 处 CQ 段形态未转换,按普通文本发送: ['[CQ:poke,']
+ok
+test_mixed_text_converts_poke_segment (tests.test_outbound_poke.OutboundPokeTests.test_mixed_text_converts_poke_segment) ... FAIL
+test_poke_alone_is_a_real_message (tests.test_outbound_poke.OutboundPokeTests.test_poke_alone_is_a_real_message) ... FAIL
+test_poke_survives_forward_node_packing (tests.test_outbound_poke.OutboundPokeTests.test_poke_survives_forward_node_packing) ... ERROR
+test_segment_order_is_preserved_with_at (tests.test_outbound_poke.OutboundPokeTests.test_segment_order_is_preserved_with_at) ... FAIL
+test_self_poke_is_not_converted (tests.test_outbound_poke.OutboundPokeTests.test_self_poke_is_not_converted) ... ok
+
+======================================================================
+ERROR: test_poke_survives_forward_node_packing (tests.test_outbound_poke.OutboundPokeTests.test_poke_survives_forward_node_packing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_outbound_poke.py", line 121, in test_poke_survives_forward_node_packing
+    tokens = outbound._parse_inline_markers("前文 [CQ:poke,type=1,id=10001] 后文")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'nonebot_plugin_hermes_adapter.core.outbound' has no attribute '_parse_inline_markers'. Did you mean: '_parse_inline_at_markers'?
+
+======================================================================
+FAIL: test_mixed_text_converts_poke_segment (tests.test_outbound_poke.OutboundPokeTests.test_mixed_text_converts_poke_segment)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_outbound_poke.py", line 65, in test_mixed_text_converts_poke_segment
+    self.assertEqual(pokes, [{"type": "1", "id": "10001"}])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != [{'type': '1', 'id': '10001'}]
+
+Second list contains 1 additional elements.
+First extra element 0:
+{'type': '1', 'id': '10001'}
+
+- []
++ [{'id': '10001', 'type': '1'}]
+
+======================================================================
+FAIL: test_poke_alone_is_a_real_message (tests.test_outbound_poke.OutboundPokeTests.test_poke_alone_is_a_real_message)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_outbound_poke.py", line 71, in test_poke_alone_is_a_real_message
+    self.assertEqual(_poke_parts(dump), [{"type": "1", "id": "12345"}])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [] != [{'type': '1', 'id': '12345'}]
+
+Second list contains 1 additional elements.
+First extra element 0:
+{'type': '1', 'id': '12345'}
+
+- []
++ [{'id': '12345', 'type': '1'}]
+
+======================================================================
+FAIL: test_segment_order_is_preserved_with_at (tests.test_outbound_poke.OutboundPokeTests.test_segment_order_is_preserved_with_at)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red-baseline-f4b3224/tests/test_outbound_poke.py", line 84, in test_segment_order_is_preserved_with_at
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        kinds,
+        ^^^^^^
+    ...<5 lines>...
+        ],
+        ^^
+    )
+    ^
+AssertionError: Lists differ: [('at[18 chars] ' 前 [CQ:poke,type=2,id=10001] 后')] != [('at[18 chars] ' 前 '), ('poke', {'type': '2', 'id': '10001'}[13 chars] 后')]
+
+First differing element 1:
+('text', ' 前 [CQ:poke,type=2,id=10001] 后')
+('text', ' 前 ')
+
+Second list contains 2 additional elements.
+First extra element 2:
+('poke', {'type': '2', 'id': '10001'})
+
+- [('at', None), ('text', ' 前 [CQ:poke,type=2,id=10001] 后')]
++ [('at', None),
++  ('text', ' 前 '),
++  ('poke', {'id': '10001', 'type': '2'}),
++  ('text', ' 后')]
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.014s
+
+FAILED (failures=3, errors=1)

@@ -1,0 +1,134 @@
+# GREEN 证据：本轮 HEAD 3ccaa37（干净树）
+
+===== 1) 定向测试：runs not_final =====
+11-16 19:22:20 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 19:22:20 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:103: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.parseArgs(argv)
+11-16 19:22:20 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 19:22:20 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 19:22:20 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+test_completions_rejects_not_final (tests.test_runs_not_final.ControlRegistrationTests.test_completions_rejects_not_final) ... ok
+test_not_final_false_registers_nothing (tests.test_runs_not_final.ControlRegistrationTests.test_not_final_false_registers_nothing) ... ok
+test_runs_keeps_existing_control_fields (tests.test_runs_not_final.ControlRegistrationTests.test_runs_keeps_existing_control_fields) ... 11-16 19:22:20 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['not_final', 'reply_to', 'should_exit_active'] pending=1
+ok
+test_runs_registers_not_final_on_next_decision_only (tests.test_runs_not_final.ControlRegistrationTests.test_runs_registers_not_final_on_next_decision_only) ... 11-16 19:22:20 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['not_final'] pending=1
+ok
+test_chain_limit_is_reused (tests.test_runs_not_final.RelayChainTests.test_chain_limit_is_reused) ... 11-16 19:22:20 [WARNING] nonebot_plugin_hermes_adapter | [HERMES feedback] 接力链达上限(2),照发不接力 ('onebotv11', 'group:g1') tag=not_final
+ok
+test_not_final_fires_exactly_once_per_body (tests.test_runs_not_final.RelayChainTests.test_not_final_fires_exactly_once_per_body) ... ok
+test_plain_body_does_not_continue_and_resets_chain (tests.test_runs_not_final.RelayChainTests.test_plain_body_does_not_continue_and_resets_chain) ... ok
+test_plain_body_is_untouched (tests.test_runs_not_final.RunsLiveDeliverTests.test_plain_body_is_untouched) ... 11-16 19:22:20 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=4 media=0 files=0
+ok
+test_registered_not_final_continues_once_after_send (tests.test_runs_not_final.RunsLiveDeliverTests.test_registered_not_final_continues_once_after_send) ... 11-16 19:22:20 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['not_final'] pending=1
+11-16 19:22:20 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=10 media=0 files=0
+11-16 19:22:20 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+ok
+test_completions_protocol_has_no_not_final (tests.test_runs_not_final.RunsPromptTests.test_completions_protocol_has_no_not_final) ... ok
+test_runs_protocol_documents_not_final (tests.test_runs_not_final.RunsPromptTests.test_runs_protocol_documents_not_final) ... ok
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.006s
+
+OK
+
+===== 2) 定向测试：video m:id =====
+11-16 19:22:20 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 19:22:20 [INFO] nonebot | Current Env: prod
+<frozen runpy>:88: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+11-16 19:22:20 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 19:22:21 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 19:22:21 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+test_forward_video_registers_entry_and_addressable_label (tests.test_video_file_ref.ForwardVideoTests.test_forward_video_registers_entry_and_addressable_label) ... ok
+test_forward_video_without_mid_keeps_plain_placeholder (tests.test_video_file_ref.ForwardVideoTests.test_forward_video_without_mid_keeps_plain_placeholder) ... ok
+test_forward_video_without_url_keeps_plain_placeholder (tests.test_video_file_ref.ForwardVideoTests.test_forward_video_without_url_keeps_plain_placeholder) ... ok
+test_file_then_video_share_one_index_space (tests.test_video_file_ref.VideoEntryTests.test_file_then_video_share_one_index_space) ... ok
+test_missing_message_id_falls_back_to_plain_labels (tests.test_video_file_ref.VideoEntryTests.test_missing_message_id_falls_back_to_plain_labels) ... ok
+test_video_segment_registers_file_ref (tests.test_video_file_ref.VideoEntryTests.test_video_segment_registers_file_ref) ... ok
+test_video_without_url_keeps_plain_placeholder (tests.test_video_file_ref.VideoEntryTests.test_video_without_url_keeps_plain_placeholder) ... ok
+test_cached_video_does_not_download_again (tests.test_video_file_ref.VideoFetchTests.test_cached_video_does_not_download_again) ... ok
+test_get_message_files_fetches_video_and_file (tests.test_video_file_ref.VideoFetchTests.test_get_message_files_fetches_video_and_file) ... ok
+test_ingress_composition_registers_forward_video_after_own_entries (tests.test_video_file_ref.VideoFetchTests.test_ingress_composition_registers_forward_video_after_own_entries)
+按 perception 的组装顺序：own(文件+视频) → 转发视频接排 → 落库后出占位。 ... ok
+test_video_metadata_is_registered_with_real_ref (tests.test_video_file_ref.VideoFetchTests.test_video_metadata_is_registered_with_real_ref) ... ok
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.018s
+
+OK
+
+===== 3) 定向测试：outbound poke =====
+11-16 19:22:21 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 19:22:21 [INFO] nonebot | Current Env: prod
+<frozen runpy>:88: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+11-16 19:22:21 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 19:22:21 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+test_at_regression_unchanged (tests.test_outbound_poke.OutboundPokeTests.test_at_regression_unchanged) ... 11-16 19:22:21 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+ok
+test_invalid_params_stay_literal_text (tests.test_outbound_poke.OutboundPokeTests.test_invalid_params_stay_literal_text) ... 11-16 19:22:21 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] reply_text 有 1 处 CQ 段形态未转换,按普通文本发送: ['[CQ:poke,']
+ok
+test_mixed_text_converts_poke_segment (tests.test_outbound_poke.OutboundPokeTests.test_mixed_text_converts_poke_segment) ... ok
+test_poke_alone_is_a_real_message (tests.test_outbound_poke.OutboundPokeTests.test_poke_alone_is_a_real_message) ... ok
+test_poke_survives_forward_node_packing (tests.test_outbound_poke.OutboundPokeTests.test_poke_survives_forward_node_packing) ... ok
+test_segment_order_is_preserved_with_at (tests.test_outbound_poke.OutboundPokeTests.test_segment_order_is_preserved_with_at) ... ok
+test_self_poke_is_not_converted (tests.test_outbound_poke.OutboundPokeTests.test_self_poke_is_not_converted) ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.014s
+
+OK
+
+===== 全量 tests（discover -s tests -t .）=====
+Ran 773 tests in 33.142s
+
+OK (skipped=1)
+
+===== turn_tests（discover -s turn_tests -p 'test_*.py'）=====
+11-16 19:22:19 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 19:22:19 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:149: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.test = loader.discover(self.start, self.pattern, self.top)
+11-16 19:22:19 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 19:22:19 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 19:22:19 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+...11-16 19:22:19 [ERROR] nonebot_plugin_hermes_adapter | [HERMES passive] 正文协议失败,本轮零发送 reason='text_body_overflow' (group=None)
+...
+----------------------------------------------------------------------
+Ran 6 tests in 0.055s
+
+OK
+
+===== verify.py（干净树，ALL PASS 原文尾部）=====
+interpreter=/home/neonsky/NeonBot/.venv/bin/python
+root=/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/three-small-updates-20261116
+HEAD=3ccaa37 feat(outbound): 正文内联 [CQ:poke,type=1,id=<QQ>] 转 OneBot poke 段
+[PASS] 交付树无 pyc／pytest 缓存
+[PASS] 全量既有＋新增测试通过 — exit=0 ran=773 Ran 773 tests in 33.216s /  / OK (skipped=1)
+[PASS] 已删除的信封模块／符号零引用 — 文件仍在=[] 引用=[]
+[PASS] Runs 终态／流式／恢复／对账共用同一纯文本解析器
+11-16 19:21:39 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 19:21:39 [INFO] nonebot | Current Env: prod
+11-16 19:21:39 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='裸'
+11-16 19:21:39 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='裸'
+11-16 19:21:39 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='你好'
+11-16 19:21:39 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=12 preview='{"body":"旧"}'
+[PASS] 信封解析语义（单条/多条/静默/缺开缺闭/旧裸正文不兼容） — 失败=[]
+[PASS] Runs／completions 提示词同口径写死信封格式
+[PASS] _DECISION_PROTOCOL_BLOCK_COMPLETIONS 纯文本（无信封字段）
+[PASS] _DECISION_PROTOCOL_BLOCK_RUNS 纯文本（无信封字段）
+[PASS] runs 协议块：§ 整行分隔、无 push_message、无布尔箭头
+[PASS] runs 私聊协议块无 push_message
+[PASS] completions 协议块保留 push_message 进度口径
+[PASS] completions 私聊块无信封
+[PASS] 协议渲染：runs/completions 互不串味
+[PASS] 网关插件独立测试（不在 tests/ 全量里） — queued-lane-interim-thin: OK ran=48 (需 >= 48); steer-presentation-thin: OK ran=21 (需 >= 21)
+[PASS] 流式只追加计划／终态与恢复共用计划适配器
+[PASS] 控制 FIFO 与续跑登记各只有一条链路
+[PASS] Runs 轮内 push 硬拒（轮外/completions 不变）
+[PASS] 终态链先落整批计划再发送
+[PASS] 关键验收用例齐全 — 缺=[]
+[PASS] 验收不依赖暂存区 — staged=[]
+[PASS] 交付树干净（无未提交改动）
+[PASS] 交付树无 pyc／pytest 缓存
+
+ALL PASS: 22/22 项通过
