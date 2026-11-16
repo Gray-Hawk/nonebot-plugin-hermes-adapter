@@ -724,16 +724,16 @@ def _is_control_tool_payload(payload: Any) -> bool:
 class RunsEventParser:
     """runs events SSE 行流 → 正文发送单元 + 终态。纯逻辑无网络依赖,可单测。
 
-    分节符正文信封（t_0ecd8f77，解析见 ``core.runs_text``）：
+    分节符正文信封（解析见 ``core.runs_text``）：
     - 段 = 一段连续 assistant 文本，边界是轮开始、``tool.started``、``run.completed``；
     - 段内 ``message.delta`` 增量驱动结构性拆分：每形成一份完整闭合的信封就立刻成为
-      一个独立正文单位进队，``_seg_text`` 只留**未闭合碎片**（下一段正文的开头），
+      一个独立正文单位进队，``_seg_text`` 只留**未消费碎片**（下一份正文的开头），
       不承担完整待发正文的缓冲；不逐帧发送，节奏仍由 ``_RunsReplyQueue`` 控制；
     - ``message.interim`` 是这一段的权威全文快照，也仍然是发送点：它先按同一条信封
       协议取单位，再按「完整单位全文匹配」与 delta 拆出的单位去重（两者是同一段文本
-      的两种切帧）；共享 ``§`` 在拆分时一次处理完，不对整串做前缀裁剪；
-    - 只有完整闭合的段（独立整行 ``§`` 开头、独立整行 ``§`` 结尾）才会进队列，
-      缺开头／缺末尾的段丢弃并留可见日志；
+      的两种切帧）；闭合标记随它自己那份正文消费，绝不兼任下一份的开头；
+    - 只有完整闭合的信封（独立整行 ``§`` 开头、独立整行 ``§`` 结尾）才会进队列，
+      缺开头／缺末尾的段丢弃并留可见日志；旧共享分界 ``§\\nA\\n§\\nB\\n§`` 只出 A；
     - ``tool.started`` 封段：普通工具另起新批，``submit_control`` 只封段不切批；
     - ``run.completed`` 最后一段只认 ``output``，delta 里未闭合的尾部丢弃；终态与本段
       已发出的同一份正文不再重发（同一段文本的两种切帧），跨段同文照发；
@@ -901,16 +901,16 @@ class RunsEventParser:
             # 到这次 tool 调用为止的权威全文，delta 只是同一段文本的增量切帧。
             #   * 完整正文单位在 delta 到达时就已经按闭合拆出去入队了，这里只补它自己
             #     拆出的单位，并按「完整单位全文匹配」段内去重（不吞任何一份正文）；
-            #   * 剩下的是还没闭合的碎片：按原输入行结构判据决定去留（见
-            #     runs_text.rebase_after_interim），不做整串前缀裁剪，也不补标记。
+            #   * 剩下的是还没消费的碎片：按原输入行结构判据决定去留（见
+            #     runs_text.pending_after_interim）。闭合标记随正文消费，不还给尾巴。
             # 段内去重不清零：interim 与 delta 是同一段文本的两种切帧。
             self.interim_count += 1
             text = str(payload.get("text") or "")
             fragment, self._seg_text = self._seg_text, ""
             self._emit_text(text)
-            from .runs_text import rebase_after_interim
+            from .runs_text import pending_after_interim
 
-            self._seg_text = rebase_after_interim(text, fragment)
+            self._seg_text = pending_after_interim(text, fragment)
             return
         if event == "message.delta":
             self.delta_count += 1

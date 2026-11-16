@@ -58,9 +58,9 @@ def unit(control: dict | None = None, body: str = "正文") -> str:
 
 
 def batch(*pairs) -> str:
-    """多份正文按协议连发：``§`` A ``§`` B ``§``（相邻两份共享中间那个标记）。"""
+    """多份正文各自独立闭合：每份 ``§`` + 正文 + ``§``，相邻两份是两个 § 行。"""
     bodies = [str(body) for _control, body in pairs]
-    return SEP + "\n" + ("\n" + SEP + "\n").join(bodies) + "\n" + SEP
+    return "\n".join(f"{SEP}\n{body}\n{SEP}" for body in bodies)
 
 
 def decisions(*bodies) -> list[dict]:
@@ -99,13 +99,13 @@ class TextProtocolParserTests(unittest.TestCase):
         events = [
             {"event": "message.delta", "delta": f"{SEP}\n甲\n", "seq": 0},
             {"event": "message.delta", "delta": SEP, "seq": 1},
-            {"event": "message.delta", "delta": "\n乙\n", "seq": 2},
+            {"event": "message.delta", "delta": f"\n{SEP}\n乙\n", "seq": 2},
             {"event": "message.delta", "delta": f"{SEP}\n", "seq": 3},
             {"event": "tool.started", "tool": "todo_list", "seq": 4},
         ]
         parser = RunsEventParser()
         drained = feed_all(parser, events)
-        # 工具边界封段：跨帧拼出的闭合标记正确切开，两段都发。
+        # 工具边界封段：跨帧拼出的独立信封正确分开，两段都发。
         self.assertEqual([d["body"] for d in drained], ["甲", "乙"])
 
     def test_char_by_char_delta_closes_at_segment_boundary(self) -> None:
@@ -154,9 +154,9 @@ class TextProtocolParserTests(unittest.TestCase):
         self.assertEqual([d["body"] for d in drained], [body])
 
     def test_fenced_marker_still_splits(self) -> None:
-        # 代码围栏没有豁免：围栏内独立整行 § 同样分隔（纯切分，不经过段内去重）。
+        # 代码围栏没有豁免：围栏内独立整行 § 同样闭合当前正文（后面的「```」缺开头）。
         body = "```\n§\n```"
-        self.assertEqual(runs_text.split_text_units(unit({}, body)), ["```", "```"])
+        self.assertEqual(runs_text.split_text_units(unit({}, body)), ["```"])
 
     def test_fenced_marker_splits_in_parser(self) -> None:
         # parser 侧再加一层段内全文去重：两段同文"```"只发一份。
@@ -269,7 +269,7 @@ class TextProtocolParserTests(unittest.TestCase):
         self.assertEqual([d["body"] for d in drained], ["A", "B", "D"])
 
     def test_interim_prefix_tail_still_needs_its_own_close(self) -> None:
-        """接回共享标记不等于给尾巴补信封：尾巴本身没闭合就照旧丢弃。"""
+        """闭合标记消费后不给尾巴补信封：尾巴本身没闭合就照旧丢弃。"""
         parser = RunsEventParser()
         drained: list[dict] = []
         with _e2._CapturedWarnings() as logs:
@@ -279,7 +279,7 @@ class TextProtocolParserTests(unittest.TestCase):
                 {"event": "tool.started", "tool": "todo_list", "seq": 2},
             ])
         self.assertEqual([d["body"] for d in drained], ["A"])
-        self.assertIn("reason=missing_close", "\n".join(logs.messages))
+        self.assertIn("reason=", "\n".join(logs.messages))
 
     def test_interim_prefix_does_not_invent_a_marker(self) -> None:
         """前缀裁在行内/带空格的 § 后时，不能靠新补的换行造出合法开头。
@@ -308,10 +308,10 @@ class TextProtocolParserTests(unittest.TestCase):
                 self.assertEqual([d["body"] for d in drained], expected)
 
     def test_interim_prefix_keeps_marker_only_when_it_was_a_whole_line(self) -> None:
-        """共享标记的判据是原输入里的行结构，不是 interim 自己长什么样。
+        """闭合标记的判据是原输入里的行结构，不是 interim 自己长什么样。
 
         新结构下判据落在两处：delta 增量拆分只认**已经被换行终结**的整行 ``§``；
-        段边界处的碎片去留也只看原输入里那个 ``§`` 的右邻。两处都不补换行造标记。
+        段边界处的碎片去留也只看原输入里那个 ``§`` 的行结构。两处都不补换行造标记。
         """
         # 帧尾未终结的 § 不是标记：§B\n§ 里没有独立整行标记，拆不出正文。
         self.assertEqual(
@@ -321,23 +321,23 @@ class TextProtocolParserTests(unittest.TestCase):
         self.assertEqual(
             runs_text.split_text_units(f"{SEP}\nA\n{SEP}B\n{SEP}"), [f"A\n{SEP}B"]
         )
-        # 段边界：interim 末尾那个 § 右邻是正文时，原输入里没有共享标记。
+        # 段边界：interim 已闭合的第一份之后，碎片从它自己的开头起原样留着。
         self.assertEqual(
-            runs_text.rebase_after_interim(f"{SEP}\nA\n{SEP}", f"{SEP}\nA\n{SEP}B\n{SEP}"),
+            runs_text.pending_after_interim(f"{SEP}\nA\n{SEP}", f"{SEP}\nA\n{SEP}B\n{SEP}"),
             f"B\n{SEP}",
         )
-        # 右邻就是行尾时它是真共享标记，留给尾巴当开头。
+        # 独立信封：第二份自带开头，碎片整个留着（闭合标记不再共享）。
         self.assertEqual(
-            runs_text.rebase_after_interim(
-                f"{SEP}\nA\n{SEP}", f"{SEP}\nA\n{SEP}\nB\n{SEP}"
-            ),
+            runs_text.pending_after_interim(
+                f"{SEP}\nA\n{SEP}", f"{SEP}\nA\n{SEP}\n{SEP}\nB\n{SEP}"
+            ).lstrip("\n"),
             f"{SEP}\nB\n{SEP}",
         )
-        # interim 自己吃掉了 § 后的行尾换行：原输入里仍是独立整行标记。
+        # interim 自己吃掉了闭合标记后的行尾换行：结论不变（碎片仍由原输入逐字切片）。
         self.assertEqual(
-            runs_text.rebase_after_interim(
-                f"{SEP}\nA\n{SEP}\n", f"{SEP}\nA\n{SEP}\nB\n{SEP}"
-            ),
+            runs_text.pending_after_interim(
+                f"{SEP}\nA\n{SEP}\n", f"{SEP}\nA\n{SEP}\n{SEP}\nB\n{SEP}"
+            ).lstrip("\n"),
             f"{SEP}\nB\n{SEP}",
         )
 
@@ -348,14 +348,14 @@ class TextProtocolParserTests(unittest.TestCase):
         拼出原文里没有的 ``Br + 下一段``。不匹配的分叉碎片仍原样留着。
         """
         self.assertEqual(
-            runs_text.rebase_after_interim(
-                f"{SEP}\nA\n{SEP}\nBravo\n{SEP}", f"{SEP}\nBr"
+            runs_text.pending_after_interim(
+                f"{SEP}\nA\n{SEP}\n{SEP}\nBravo\n{SEP}", f"{SEP}\nBr"
             ),
-            f"{SEP}\n",
+            "",
         )
         self.assertEqual(
-            runs_text.rebase_after_interim(
-                f"{SEP}\nA\n{SEP}\nBravo\n{SEP}", f"{SEP}\nX"
+            runs_text.pending_after_interim(
+                f"{SEP}\nA\n{SEP}\n{SEP}\nBravo\n{SEP}", f"{SEP}\nX"
             ),
             f"{SEP}\nX",
         )

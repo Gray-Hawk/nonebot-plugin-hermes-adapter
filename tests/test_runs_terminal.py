@@ -39,9 +39,9 @@ def unit(control: dict | None = None, body: str = "正文") -> str:
 
 
 def batch(*pairs) -> str:
-    """多份正文按协议连发：``§`` A ``§`` B ``§``（相邻两份共享中间那个标记）。"""
+    """多份正文各自独立闭合：每份自己写开头和结尾。"""
     bodies = [str(body) for _control, body in pairs]
-    return SEPARATOR + "\n" + ("\n" + SEPARATOR + "\n").join(bodies) + "\n" + SEPARATOR
+    return "\n".join(f"{SEPARATOR}\n{body}\n{SEPARATOR}" for body in bodies)
 
 
 def decisions(*bodies) -> list[dict]:
@@ -100,11 +100,12 @@ class TextUnitTests(unittest.TestCase):
 
     def test_fenced_separator_still_splits(self) -> None:
         # 唯一规则：整行严格等于 § 就是标记；代码围栏不是例外，也不设转义／豁免。
-        self.assertEqual(split_text_units(unit({}, "```\n§\n```")), ["```", "```"])
-        self.assertEqual(split_text_units(unit({}, "~~~\n§\n~~~")), ["~~~", "~~~"])
+        # 独立信封下围栏内的标记闭合当前正文，围栏剩下的一半缺开头，照旧丢弃。
+        self.assertEqual(split_text_units(unit({}, "```\n§\n```")), ["```"])
+        self.assertEqual(split_text_units(unit({}, "~~~\n§\n~~~")), ["~~~"])
         self.assertEqual(
             split_text_units(unit({}, "说明\n```\n甲\n§\n乙\n```")),
-            ["说明\n```\n甲", "乙\n```"],
+            ["说明\n```\n甲"],
         )
 
     def test_backslash_separator_line_is_plain_text(self) -> None:

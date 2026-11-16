@@ -81,8 +81,8 @@ def _frame(body: str) -> str:
 
 
 def _batch(*bodies: str) -> str:
-    """多份正文连发：``§`` A ``§`` B ``§``（相邻两份共享中间那个标记）。"""
-    return "§\n" + "\n§\n".join(bodies) + "\n§"
+    """多份正文各自独立闭合：每份 ``§`` 正文 ``§``，相邻两份是两个 § 行。"""
+    return "\n".join(f"§\n{body}\n§" for body in bodies)
 
 
 # 新协议帧序：queued-lane 注入的前序答复与 delta 是同文，必须只发一次。
@@ -350,9 +350,9 @@ class QueuedLaneInterimClientTest(_ReactiveHarness):
         import asyncio
 
         frames = [
-            {"event": "message.delta", "delta": f"§\n{A}\n§\n{B}", "seq": 0},
-            {"event": "message.interim", "text": f"§\n{A}\n§\n{B}\n§", "seq": 1},
-            {"event": "message.delta", "delta": f"\n{C}\n§\n", "seq": 2},
+            {"event": "message.delta", "delta": f"§\n{A}\n§\n§\n{B}", "seq": 0},
+            {"event": "message.interim", "text": _batch(A, B), "seq": 1},
+            {"event": "message.delta", "delta": _frame(C), "seq": 2},
             {"event": "tool.started", "tool": "lookup", "seq": 3},
             {"event": "run.completed", "output": f"§\n{B}终\n§", "seq": 4},
         ]
@@ -375,16 +375,16 @@ class QueuedLaneInterimClientTest(_ReactiveHarness):
         first = asyncio.run(self._drive([
             {"event": "message.delta", "delta": "§\nBr", "seq": 0},
             {"event": "message.interim", "text": "§\nBravo\n§", "seq": 1},
-            {"event": "message.delta", "delta": "\nC\n§\n", "seq": 2},
+            {"event": "message.delta", "delta": "§\nC\n§\n", "seq": 2},
             {"event": "tool.started", "tool": "lookup", "seq": 3},
             {"event": "run.completed", "output": "§\nD\n§", "seq": 4},
         ]))
         self.assertEqual([c["text"] for c in first["send"]], ["Bravo", "C", "D"])
 
         second = asyncio.run(self._drive([
-            {"event": "message.delta", "delta": f"§\n{A}\n§\nBr", "seq": 0},
-            {"event": "message.interim", "text": f"§\n{A}\n§\nBravo\n§", "seq": 1},
-            {"event": "message.delta", "delta": "\nC\n§\n", "seq": 2},
+            {"event": "message.delta", "delta": f"§\n{A}\n§\n§\nBr", "seq": 0},
+            {"event": "message.interim", "text": f"§\n{A}\n§\n§\nBravo\n§", "seq": 1},
+            {"event": "message.delta", "delta": "§\nC\n§\n", "seq": 2},
             {"event": "tool.started", "tool": "lookup", "seq": 3},
             {"event": "run.completed", "output": "§\nD\n§", "seq": 4},
         ]))
@@ -396,8 +396,8 @@ class QueuedLaneInterimClientTest(_ReactiveHarness):
         import asyncio
 
         frames = [
-            {"event": "message.delta", "delta": f"§\n{A}\n§\nX", "seq": 0},
-            {"event": "message.interim", "text": f"§\n{A}\n§\nBravo\n§", "seq": 1},
+            {"event": "message.delta", "delta": f"§\n{A}\n§\n§\nX", "seq": 0},
+            {"event": "message.interim", "text": f"§\n{A}\n§\n§\nBravo\n§", "seq": 1},
             {"event": "tool.started", "tool": "lookup", "seq": 2},
             {"event": "run.completed", "output": f"§\n{C}\n§", "seq": 3},
         ]

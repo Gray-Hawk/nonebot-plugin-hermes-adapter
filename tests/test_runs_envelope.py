@@ -1,7 +1,8 @@
-"""分节符正文信封协议（t_0ecd8f77）：解析矩阵、流式边界、提示词示例。
+"""分节符正文信封协议：解析矩阵、流式边界、提示词示例。
 
-协议：每份回复以独立一行 § 开头、以独立一行 § 结尾；多条之间也共享一个独立整行 §。
-只有完整闭合的段可发送；静默 = 整段只含 § 与空白；旧裸正文不保留兼容层。
+协议（取消共享分界）：单条 ``§\\nA\\n§``；两条 ``§\\nA\\n§\\n§\\nB\\n§``——每份正文
+自己打开、自己闭合，闭合标记随当前正文消费。旧共享形态 ``§\\nA\\n§\\nB\\n§`` 不再解析成
+两份（B 缺开头，丢弃），不留兼容协议。静默、严格整行 §、4000 字上限等语义不变。
 """
 from __future__ import annotations
 
@@ -26,6 +27,12 @@ def unit(body: str) -> str:
 
 
 def batch(*bodies: str) -> str:
+    """多份正文各自独立闭合：``§\\nA\\n§\\n§\\nB\\n§``。"""
+    return "\n".join(unit(body) for body in bodies)
+
+
+def legacy_batch(*bodies: str) -> str:
+    """旧共享分界形态 ``§\\nA\\n§\\nB\\n§``（只用于负对照）。"""
     return SEP + "\n" + ("\n" + SEP + "\n").join(bodies) + "\n" + SEP
 
 
@@ -45,11 +52,19 @@ class EnvelopeParseTests(unittest.TestCase):
     def test_single_body(self) -> None:
         self.assertEqual(runs_text.split_text_units(unit("正文")), ["正文"])
 
-    def test_multiple_bodies_share_one_marker_each_side(self) -> None:
+    def test_multiple_bodies_have_independent_envelopes(self) -> None:
         self.assertEqual(runs_text.split_text_units(batch("A", "B")), ["A", "B"])
         self.assertEqual(
             runs_text.split_text_units(batch("甲", "乙", "丙")), ["甲", "乙", "丙"]
         )
+
+    def test_legacy_shared_boundary_is_no_longer_two_units(self) -> None:
+        """旧共享形态 ``§\\nA\\n§\\nB\\n§`` 不再解析成两份：只有 A 完整闭合。"""
+        from tests import test_runs_terminal as _e2
+
+        with _e2._CapturedWarnings() as logs:
+            self.assertEqual(runs_text.split_text_units(legacy_batch("A", "B")), ["A"])
+        self.assertIn("reason=missing_open", "\n".join(logs.messages))
 
     def test_silence_is_two_markers(self) -> None:
         self.assertEqual(runs_text.split_text_units(f"{SEP}\n{SEP}"), [])
@@ -84,11 +99,10 @@ class EnvelopeParseTests(unittest.TestCase):
             body = f"甲\n{line}\n乙"
             self.assertEqual(runs_text.split_text_units(unit(body)), [body], line)
 
-    def test_fenced_marker_splits(self) -> None:
-        # 代码围栏没有豁免：围栏内独立整行 § 同样分隔。
-        self.assertEqual(
-            runs_text.split_text_units(unit("```\n§\n```")), ["```", "```"]
-        )
+    def test_fenced_marker_closes_the_unit_and_drops_the_rest(self) -> None:
+        # 代码围栏没有豁免：围栏内独立整行 § 同样闭合当前正文；闭合后剩下的
+        # 「```」缺自己的开头，照旧丢弃。
+        self.assertEqual(runs_text.split_text_units(unit("```\n§\n```")), ["```"])
 
     def test_over_limit_is_fail_closed(self) -> None:
         with self.assertRaises(runs_text.TextUnitsError) as ctx:
@@ -121,7 +135,7 @@ class EnvelopeStreamTests(unittest.TestCase):
         drained = feed(parser, [
             {"event": "message.delta", "delta": f"{SEP}\n甲\n", "seq": 0},
             {"event": "message.delta", "delta": SEP, "seq": 1},
-            {"event": "message.delta", "delta": f"\n乙\n{SEP}\n", "seq": 2},
+            {"event": "message.delta", "delta": f"\n{SEP}\n乙\n{SEP}\n", "seq": 2},
             {"event": "tool.started", "tool": "todo_list", "seq": 3},
         ])
         self.assertEqual([d["body"] for d in drained], ["甲", "乙"])
@@ -174,8 +188,8 @@ class EnvelopeIncrementalQueueTests(unittest.TestCase):
         self.assertEqual([d["body"] for d in drained], ["甲", "乙"])
         self.assertEqual([d["kind"] for d in drained], ["text", "text"])
         self.assertTrue(all(d["should_reply"] for d in drained))
-        # 段缓冲只剩最后那个共享标记（下一份正文的开头），没有完整正文。
-        self.assertEqual(parser._seg_text, f"{SEP}\n")
+        # 闭合标记随正文消费：两份都闭合后段缓冲为空，不再留共享尾巴。
+        self.assertEqual(parser._seg_text, "")
 
     def test_frame_tail_marker_without_newline_is_not_a_marker(self) -> None:
         # 帧尾的 § 还没有被换行终结：可能是下一帧 §B 的行首字符，不能当标记。
@@ -189,30 +203,44 @@ class EnvelopeIncrementalQueueTests(unittest.TestCase):
             {"event": "tool.started", "tool": "lookup", "seq": 2},
         ]), [])
 
-    def test_shared_marker_is_reused_instead_of_restored(self) -> None:
+    def test_close_marker_is_consumed_with_its_body(self) -> None:
         units, remainder = runs_text.take_closed_units(batch("甲", "乙") + "\n")
         self.assertEqual(units, ["甲", "乙"])
-        # 尾标记同时是下一份正文的开头：拆分时一次处理完，不需要“接回共享标记”。
-        self.assertEqual(remainder, f"{SEP}\n")
+        # 闭合标记属于它自己那份正文：消费掉，下一份必须有自己的独立开头。
+        self.assertEqual(remainder, "")
         units, remainder = runs_text.take_closed_units(batch("甲", "乙"))
-        # 乙 的闭合标记在帧尾、还没终结：只交付甲，乙留在碎片里。
+        # 乙 的闭合标记在帧尾、还没终结：只交付甲，乙（含自己的开头）留在碎片里。
         self.assertEqual(units, ["甲"])
         self.assertEqual(remainder, f"{SEP}\n乙\n{SEP}")
+
+    def test_legacy_shared_form_yields_one_unit_and_a_missing_open_tail(self) -> None:
+        from tests import test_runs_terminal as _e2
+
+        units, remainder = runs_text.take_closed_units(legacy_batch("A", "B") + "\n")
+        self.assertEqual(units, ["A"])
+        # B 前面那个标记已经被 A 消费掉，B 没有自己的开头。
+        self.assertEqual(remainder, f"B\n{SEP}\n")
+        with _e2._CapturedWarnings() as logs:
+            # 碎片再次进入增量解析：缺开头的 B 被丢弃并留可见日志。
+            self.assertEqual(runs_text.take_closed_units(remainder)[0], [])
+        self.assertIn("reason=missing_open", "\n".join(logs.messages))
 
     def test_crlf_and_cr_are_the_same_line_ending(self) -> None:
         for newline in ("\r\n", "\r"):
             with self.subTest(newline=repr(newline)):
                 text = batch("甲", "乙").replace("\n", newline) + newline
-                self.assertEqual(
-                    runs_text.take_closed_units(text), (["甲", "乙"], f"{SEP}{newline}")
-                )
+                units, remainder = runs_text.take_closed_units(text)
+                self.assertEqual(units, ["甲", "乙"])
+                # 闭合标记消费后没有任何共享尾巴可留。
+                self.assertEqual(remainder, "")
                 # 碎片保留原输入的行尾（不归一）：帧尾一个孤立 \r 若被改写成 \n，
                 # 下一帧开头的 \n 就会拼出第二个换行，同一份 CRLF 正文变成 A\n\nB。
+                partial = text[: -len(newline)]
                 self.assertEqual(
-                    runs_text.take_closed_units(text)[1]
+                    runs_text.take_closed_units(partial)[1]
                     .replace("\r\n", "\n")
                     .replace("\r", "\n"),
-                    f"{SEP}\n",
+                    f"{SEP}\n乙\n{SEP}",
                 )
 
     def test_crlf_split_between_frames_equals_one_frame(self) -> None:
@@ -253,9 +281,9 @@ class EnvelopeIncrementalQueueTests(unittest.TestCase):
         """interim 补齐第二份尾巴后，碎片换成 interim 的结构剩余，不再合成新正文。"""
         parser = RunsEventParser()
         drained = feed(parser, [
-            {"event": "message.delta", "delta": f"{SEP}\n甲\n{SEP}\n乙", "seq": 0},
-            {"event": "message.interim", "text": f"{SEP}\n甲\n{SEP}\n乙\n{SEP}", "seq": 1},
-            {"event": "message.delta", "delta": f"\n丙\n{SEP}\n", "seq": 2},
+            {"event": "message.delta", "delta": f"{SEP}\n甲\n{SEP}\n{SEP}\n乙", "seq": 0},
+            {"event": "message.interim", "text": batch("甲", "乙"), "seq": 1},
+            {"event": "message.delta", "delta": unit("丙") + "\n", "seq": 2},
             {"event": "tool.started", "tool": "lookup", "seq": 3},
             {"event": "run.completed", "output": unit("丁"), "seq": 4},
         ])
@@ -267,14 +295,15 @@ class EnvelopeIncrementalQueueTests(unittest.TestCase):
     def test_interim_covering_a_strict_prefix_of_the_second_unit_does_not_glue(self) -> None:
         """interim 把第二份正文补齐到比碎片更长（``Br`` → ``Bravo``）时同样已覆盖。
 
-        碎片只是同一份正文更早的切帧；留着它就会和下一帧的 ``丙`` 拼成原文里没有的
+        碎片只是同一份正文更早的切帧；留着它就会和下一帧的``丙``拼成原文里没有的
         ``Br\\n丙``（reviewer t_049df793 第四轮）。首份正文本来就是这个严格前缀口径。
         """
         parser = RunsEventParser()
         drained = feed(parser, [
-            {"event": "message.delta", "delta": f"{SEP}\n甲\n{SEP}\n乙", "seq": 0},
-            {"event": "message.interim", "text": f"{SEP}\n甲\n{SEP}\n乙完整\n{SEP}", "seq": 1},
-            {"event": "message.delta", "delta": f"\n丙\n{SEP}\n", "seq": 2},
+            {"event": "message.delta", "delta": f"{SEP}\n甲\n{SEP}\n{SEP}\n乙", "seq": 0},
+            {"event": "message.interim",
+             "text": f"{SEP}\n甲\n{SEP}\n{SEP}\n乙完整\n{SEP}", "seq": 1},
+            {"event": "message.delta", "delta": unit("丙") + "\n", "seq": 2},
             {"event": "tool.started", "tool": "lookup", "seq": 3},
             {"event": "run.completed", "output": unit("丁"), "seq": 4},
         ])
@@ -289,7 +318,7 @@ class EnvelopeIncrementalQueueTests(unittest.TestCase):
         drained = feed(parser, [
             {"event": "message.delta", "delta": f"{SEP}\n甲\n{SEP}\n", "seq": 0},
             {"event": "message.interim", "text": f"{SEP}\n甲", "seq": 1},
-            {"event": "message.delta", "delta": f"\n乙\n{SEP}\n", "seq": 2},
+            {"event": "message.delta", "delta": unit("乙") + "\n", "seq": 2},
             {"event": "tool.started", "tool": "lookup", "seq": 3},
             {"event": "run.completed", "output": unit("丙"), "seq": 4},
         ])
@@ -302,13 +331,14 @@ class EnvelopeIncrementalQueueTests(unittest.TestCase):
         with _e2._CapturedWarnings() as logs:
             units, remainder = runs_text.take_closed_units(f"裸开头\n{SEP}\nB\n{SEP}\n")
         self.assertEqual(units, ["B"])
-        self.assertEqual(remainder, f"{SEP}\n")
+        self.assertEqual(remainder, "")
         self.assertIn("reason=missing_open", "\n".join(logs.messages))
 
     def test_open_fragment_is_not_a_unit_until_it_closes(self) -> None:
         parser = RunsEventParser()
         drained = feed(parser, [
-            {"event": "message.delta", "delta": f"{SEP}\n甲\n{SEP}\n乙\n", "seq": 0},
+            {"event": "message.delta",
+             "delta": f"{SEP}\n甲\n{SEP}\n{SEP}\n乙\n", "seq": 0},
         ])
         self.assertEqual([d["body"] for d in drained], ["甲"])
         self.assertEqual(parser._seg_text, f"{SEP}\n乙\n")
@@ -323,7 +353,7 @@ class EnvelopeIncrementalQueueTests(unittest.TestCase):
         drained = feed(parser, [
             {"event": "message.delta", "delta": f"{SEP}\n甲", "seq": 0},
             {"event": "message.interim", "text": unit("甲"), "seq": 1},
-            {"event": "message.delta", "delta": f"\n乙\n{SEP}\n", "seq": 2},
+            {"event": "message.delta", "delta": unit("乙") + "\n", "seq": 2},
             {"event": "tool.started", "tool": "lookup", "seq": 3},
         ])
         self.assertEqual([d["body"] for d in drained], ["甲", "乙"])
@@ -378,6 +408,114 @@ class EnvelopeIncrementalQueueTests(unittest.TestCase):
         self.assertEqual([d["body"] for d in parser.terminal_decisions()], ["甲"])
 
 
+class IndependentEnvelopeIncidentTests(unittest.TestCase):
+    """真实事故 run_a355…：commentary 已发 A，final 发 B。
+
+    旧共享分界把「A 的闭合 §」当成 B 的开头，拼出 ``A\\n§§\\nB`` 复合单元或把 B 重发。
+    独立信封下：A 的闭合随 A 消费，B 必须自己带开头；两条各发一次。
+    """
+
+    A = "要不要我顺手登记一下？"
+    B = "主要是表情包引用那条还没接完。"
+
+    def test_commentary_then_final_sends_each_once_without_composite(self) -> None:
+        parser = RunsEventParser()
+        seen: list[tuple[str, str, str]] = []
+        parser.on_suppressed = lambda reason, text, source: seen.append((reason, text, source))
+        drained = feed(parser, [
+            {"event": "message.delta", "delta": unit(self.A) + "\n", "seq": 0},
+            {"event": "message.interim", "text": unit(self.A), "seq": 1},
+            {"event": "message.delta", "delta": unit(self.B) + "\n", "seq": 2},
+            {"event": "run.completed", "output": unit(self.B), "seq": 3},
+        ])
+        bodies = [d["body"] for d in drained]
+        self.assertEqual(bodies, [self.A, self.B])
+        self.assertNotIn(f"{self.A}\n§§\n{self.B}", bodies)
+        # B 不被终态重发：只出现「同一段文本的两种切帧」这两条既有信号，没有任何
+        # 复合单元（那种情况会是 missing_open / 直接发出 A+§§+B）。
+        self.assertEqual([d["body"] for d in parser.terminal_decisions()], [])
+        self.assertEqual(
+            sorted(reason for reason, _t, _s in seen),
+            ["segment_duplicate", "terminal_same_segment"],
+        )
+
+    def test_final_output_carrying_both_units_only_sends_the_new_one(self) -> None:
+        parser = RunsEventParser()
+        feed(parser, [
+            {"event": "message.interim", "text": unit(self.A), "seq": 0},
+            {"event": "run.completed", "output": batch(self.A, self.B), "seq": 1},
+        ])
+        self.assertEqual(
+            [d["body"] for d in parser.terminal_decisions()], [self.B]
+        )
+
+    def test_same_body_twice_in_one_segment_is_deduped_once(self) -> None:
+        """段内全文去重不变：同一段里两份同文只发一份，另一份记 segment_duplicate。"""
+        parser = RunsEventParser()
+        seen: list[str] = []
+        parser.on_suppressed = lambda reason, text, source: seen.append(reason)
+        drained = feed(parser, [
+            {"event": "message.delta", "delta": batch("同一句", "同一句") + "\n", "seq": 0},
+        ])
+        self.assertEqual([d["body"] for d in drained], ["同一句"])
+        self.assertEqual(seen, ["segment_duplicate"])
+
+    def test_same_body_across_tool_boundary_is_sent_twice(self) -> None:
+        parser = RunsEventParser()
+        drained = feed(parser, [
+            {"event": "message.delta", "delta": unit("同一句") + "\n", "seq": 0},
+            {"event": "tool.started", "tool": "lookup", "seq": 1},
+            {"event": "message.delta", "delta": unit("同一句") + "\n", "seq": 2},
+            {"event": "tool.started", "tool": "lookup", "seq": 3},
+        ])
+        self.assertEqual([d["body"] for d in drained], ["同一句", "同一句"])
+
+    def test_silence_between_units_is_still_silence(self) -> None:
+        self.assertEqual(runs_text.split_text_units(unit("§")), [])
+        self.assertEqual(runs_text.split_text_units(f"{SEP}\n{SEP}"), [])
+        parser = RunsEventParser()
+        self.assertEqual(feed(parser, [
+            {"event": "message.delta", "delta": f"{SEP}\n{SEP}\n", "seq": 0},
+            {"event": "tool.started", "tool": "lookup", "seq": 1},
+        ]), [])
+
+    def test_every_delta_split_point_gives_the_same_two_units(self) -> None:
+        source = batch(self.A, self.B) + "\n"
+        for cut in range(len(source) + 1):
+            with self.subTest(cut=cut):
+                parser = RunsEventParser()
+                drained = feed(parser, [
+                    {"event": "message.delta", "delta": source[:cut], "seq": 0},
+                    {"event": "message.delta", "delta": source[cut:], "seq": 1},
+                    {"event": "tool.started", "tool": "lookup", "seq": 2},
+                ])
+                self.assertEqual([d["body"] for d in drained], [self.A, self.B])
+
+    def test_terminal_stream_recovery_and_reconcile_share_one_protocol(self) -> None:
+        from nonebot_plugin_hermes_adapter.core import runs_terminal
+
+        text = batch(self.A, self.B)
+        expected = [self.A, self.B]
+        self.assertEqual([d["body"] for d in runs_text.decisions_from_text(text)], expected)
+        self.assertEqual([u["body"] for u in runs_text.units_from_text(text)], expected)
+        # 恢复/对账链（tasks/run_resume._build_units、run_delivery_monitor）都转调
+        # runs_terminal.units_from_output，没有第二套切分（verify.py 另有一项闸）。
+        self.assertEqual(
+            [u["body"] for u in runs_terminal.units_from_output(text) or []], expected
+        )
+
+    def test_legacy_shared_output_is_not_split_in_two_on_the_terminal_path(self) -> None:
+        from nonebot_plugin_hermes_adapter.core import runs_terminal
+
+        parser = RunsEventParser()
+        feed(parser, [
+            {"event": "run.completed", "output": legacy_batch(self.A, self.B), "seq": 0},
+        ])
+        self.assertEqual([d["body"] for d in parser.terminal_decisions()], [self.A])
+        units = runs_terminal.units_from_output(legacy_batch(self.A, self.B)) or []
+        self.assertEqual([u["body"] for u in units], [self.A])
+
+
 class EnvelopePromptTests(unittest.TestCase):
     """提示词与解析器同批：四处渲染都要写明信封，示例能被真解析器读成正文。"""
 
@@ -401,6 +539,19 @@ class EnvelopePromptTests(unittest.TestCase):
                 self.assertIn("空输出", prompt)  # 明确空输出不再表示静默
                 self.assertNotIn("没有 § 就是一条消息", prompt)
                 self.assertNotIn("什么都没有输出", prompt)
+
+    def test_prompt_multi_body_examples_are_independent(self) -> None:
+        """多条示例必须与解析器同口径：每份自己打开、自己闭合，相邻处是两个 § 行。"""
+        for name, prompt in self.renders().items():
+            with self.subTest(block=name):
+                self.assertNotIn("两条之间也单独写一行 §", prompt)
+                self.assertNotIn("多条之间也单独写一行 §", prompt)
+                self.assertIn("每份都要自己写开头和结尾", prompt)
+                block = _example_block(prompt, "- 三条连发")
+                self.assertEqual(
+                    block,
+                    f"{SEP}\n第一句\n{SEP}\n{SEP}\n第二句\n{SEP}\n{SEP}\n第三句\n{SEP}",
+                )
 
     def test_prompt_three_body_example_parses_to_three(self) -> None:
         for name, prompt in self.renders().items():

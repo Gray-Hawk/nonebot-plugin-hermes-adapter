@@ -78,7 +78,7 @@ def _body_of(text: str) -> str:
                 bodies.append(obj["body"])
     if not bodies:
         return ""
-    return "§\n" + "\n§\n".join(bodies) + "\n§"
+    return "\n".join(f"§\n{body}\n§" for body in bodies)
 
 
 class ControlIntentQueueTests(unittest.TestCase):
