@@ -138,9 +138,16 @@ def log(payload: dict) -> None:
 
 
 def log_argv() -> None:
-    """记下真实启动命令行，供测试断言 `--agent` 等 argv 项的落点。"""
+    """记下真实启动命令行，供测试断言 `--agent` 等 argv 项的落点。
+
+    同时记下子进程实际看到的 `BASH_ENV`（`<log>.env`），供 ACP 沙箱绕行用例区分
+    「继承父进程」与「被插件覆盖」——只看 argv 证明不了 env。
+    """
     with open(LOG_PATH + ".argv", "w", encoding="utf-8") as handle:
         json.dump(sys.argv, handle, ensure_ascii=False)
+        handle.flush()
+    with open(LOG_PATH + ".env", "w", encoding="utf-8") as handle:
+        json.dump({"BASH_ENV": os.environ.get("BASH_ENV")}, handle, ensure_ascii=False)
         handle.flush()
 
 

@@ -15,7 +15,7 @@ PLUGIN_MODULE_NAME = "nonebot_plugin_agent_adapter"
 
 
 class Config(BaseModel):
-    """进程启动时读取的 10 个配置项；修改后重启生效。"""
+    """进程启动时读取的 11 个配置项；修改后重启生效。"""
 
     hermes_api_key: str = Field(default="", alias="agent_api_key")
     """AGENT_API_KEY：默认 Hermes API Server 的 Bearer 凭据。空串仅用于无鉴权开发环境。"""
@@ -42,6 +42,9 @@ class Config(BaseModel):
 
     hermes_antigravity_persona: str = Field(default="", alias="agent_antigravity_persona")
     """AGENT_ANTIGRAVITY_PERSONA：显式 ACP 自定义 agent 名（`agy --agent <名>`）；空串保持官方默认 agent。"""
+
+    hermes_antigravity_args: str = Field(default="", alias="agent_antigravity_args")
+    """AGENT_ANTIGRAVITY_ARGS：追加给 `agy acp` 的额外命令行参数（空白分隔，如 `--sandbox`）；空串保持原命令行。"""
 
     hermes_mcp_enabled: bool = Field(default=False, alias="agent_mcp_enabled")
     """AGENT_MCP_ENABLED：是否启动反向 MCP server。"""

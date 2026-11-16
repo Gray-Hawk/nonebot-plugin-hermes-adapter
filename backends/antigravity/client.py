@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+import shlex
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -24,6 +26,13 @@ from ...core.storage.session_key_store import SessionKeyStore
 
 DEFAULT_ACP_ARGS: tuple[str, ...] = ("acp", "--process-per-session")
 _CLIENT_INFO = {"name": "nonebot-acp-client", "version": "0.1.0"}
+
+# 终端沙箱绕行（2026-11-16 官方 agy 1.5.9 实测）：ACP argv 里带 `--sandbox` 才是
+# opt-in——直接用真实命令行参数本身判定，不另造 sandbox 专用布尔开关。
+SANDBOX_FLAG = "--sandbox"
+# 受控 BASH_ENV 文件名：生成在原 ACP workspace 内（沙箱里是只读 cwd），
+# 不放可写缓存，避免 agent 自改后续启动脚本。
+SANDBOX_BASH_ENV_NAME = ".acp-sandbox-bash-env"
 
 # 阶段2C1 起：ACP 反向 MCP 只暴露只读工具（同一个 HTTP 服务；其它后端仍全量）。
 # 阶段2C3：第三个只读工具 `get_message_files` —— 模型拿 refs 换 FileCache 的 local_path，
@@ -101,6 +110,41 @@ def build_acp_args(cli_args: Sequence[str], agent: str) -> tuple[str, ...]:
     if not name:
         return args
     return (*args, "--agent", name)
+
+
+def sandbox_enabled(cli_args: Sequence[str]) -> bool:
+    """ACP 终端沙箱是否开启：只认 argv 里精确的 `--sandbox` 一项。"""
+    return SANDBOX_FLAG in tuple(cli_args)
+
+
+def sandbox_shell_workspace() -> Path:
+    """沙箱模式下真正可写的 shell 工作区。
+
+    固定在运行用户 `~/.cache/agent-adapter/acp-workspace`：`~/.cache` 未被声明为
+    session cwd／additionalDirectories，沙箱不会把它挂成只读；而声明成工作区根会
+    重新触发只读挂载（实测），所以这个路径绝不能进那两处。
+    """
+    return Path.home() / ".cache" / "agent-adapter" / "acp-workspace"
+
+
+def sandbox_workspace_notice(shell_workspace: Path) -> str:
+    """一句中性任务文本：告诉原生文件工具实际工作区绝对路径。"""
+    return f"本次任务的实际工作目录是 {shell_workspace}，相对路径的读写都以此目录为准。"
+
+
+def append_workspace_notice(system_prompt: str, shell_workspace: Path) -> str:
+    """把工作区说明追加到既有系统提示尾部（不新建提示词框架，不引入身份）。"""
+    text = (system_prompt or "").rstrip()
+    notice = sandbox_workspace_notice(shell_workspace)
+    return f"{text}\n\n{notice}" if text else notice
+
+
+def parse_extra_args(raw: str) -> tuple[str, ...]:
+    """配置里的附加 ACP 参数 → 独立 argv 项；空值返回 `()`（命令行与改造前一致）。"""
+    text = (raw or "").strip()
+    if not text:
+        return ()
+    return tuple(shlex.split(text))
 
 
 class ACPError(Exception):
@@ -206,6 +250,7 @@ class AntigravityACPClient:
         prompt_timeout: float = 300.0,
         rpc_timeout: float = 60.0,
         permission_timeout: float | None = None,
+        sandbox_shell_dir: Path | None = None,
     ) -> None:
         self._cli_path = cli_path or "agy"
         self._cli_args = tuple(DEFAULT_ACP_ARGS if cli_args is None else cli_args)
@@ -214,6 +259,18 @@ class AntigravityACPClient:
         # 只能用官方命令行参数显式指定，空串保持官方默认 agent。
         self._agent = (agent or "").strip()
         self._workspace = Path(workspace)
+        # 终端沙箱绕过：只在 argv 带 `--sandbox` 时生效，缺省完全不动 env／文件／提示词。
+        self._sandbox = sandbox_enabled(self._cli_args)
+        # sandbox_shell_dir 只给测试注入隔离目录；生产走运行用户 ~/.cache 的固定子目录。
+        self._sandbox_shell = (
+            Path(sandbox_shell_dir)
+            if sandbox_shell_dir is not None
+            else sandbox_shell_workspace()
+        )
+        # 受控 BASH_ENV 落在原 ACP workspace（沙箱只读 cwd）里；非 sandbox 不生成。
+        self._bash_env: Path | None = (
+            self._workspace / SANDBOX_BASH_ENV_NAME if self._sandbox else None
+        )
         self._prompt_timeout = float(prompt_timeout)
         self._rpc_timeout = float(rpc_timeout)
         # None = 现读既有审批过期秒数（与 /approve 同源），测试可注入更短窗口。
@@ -246,12 +303,31 @@ class AntigravityACPClient:
 
     # --- 进程与握手 -------------------------------------------------------
 
+    def _prepare_sandbox_env(self) -> dict[str, str] | None:
+        """sandbox 模式的启动准备：创建可写 shell 工作区 + 生成受控 BASH_ENV。
+
+        返回子进程 env 覆盖（仅 sandbox 模式）；缺省返回 None = 完全继承父进程环境，
+        与改造前的启动行为逐字节一致。
+        """
+        if not self._sandbox or self._bash_env is None:
+            return None
+        try:
+            self._sandbox_shell.mkdir(parents=True, exist_ok=True)
+            # 内容只有一行 cd：文件在沙箱只读 cwd 内，agent 改不动后续启动脚本。
+            self._bash_env.write_text(
+                f"cd {shlex.quote(str(self._sandbox_shell))}\n", encoding="utf-8"
+            )
+        except OSError as exc:
+            raise ACPProcessError(f"ACP 沙箱工作区准备失败: {exc}") from exc
+        return {**os.environ, "BASH_ENV": str(self._bash_env)}
+
     async def _ensure_started(self) -> None:
         async with self._start_lock:
             if self._proc is not None and self._proc.returncode is None:
                 return
             self._workspace.mkdir(parents=True, exist_ok=True)
             argv = [self._cli_path, *build_acp_args(self._cli_args, self._agent)]
+            env = self._prepare_sandbox_env()
             try:
                 self._proc = await asyncio.create_subprocess_exec(
                     *argv,
@@ -259,6 +335,7 @@ class AntigravityACPClient:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(self._workspace),
+                    env=env,
                 )
             except Exception as exc:
                 self._proc = None
@@ -271,6 +348,11 @@ class AntigravityACPClient:
                 f"[HERMES antigravity] ACP 进程已启动 pid={self._proc.pid} "
                 f"workspace={self._workspace}"
             )
+            if env is not None:
+                logger.info(
+                    f"[HERMES antigravity] ACP 沙箱模式 shell 工作区={self._sandbox_shell}"
+                    f" bash_env={self._bash_env}"
+                )
             try:
                 await self._rpc(
                     "initialize",
@@ -1070,7 +1152,19 @@ class AntigravityACPClient:
             await self._ensure_started()
             record = self._load_session(store, session_key)
             control = system_prompt is None
-            system_hash = "" if control else system_prompt_hash(system_prompt)
+            if system_prompt is None:
+                # 控制命令轮（`/compact`）不追加提示词、也不改保存的 system hash。
+                prompt_text = ""
+                system_hash = ""
+            else:
+                # sandbox 轮让原生文件工具知道实际可写工作区：复用同一条 `_meta` 追加链，
+                # new／resume 共用这一份文本，缓存路径不进 additionalDirectories。
+                prompt_text = (
+                    append_workspace_notice(system_prompt, self._sandbox_shell)
+                    if self._sandbox
+                    else system_prompt
+                )
+                system_hash = system_prompt_hash(prompt_text)
             # 阶段2C1：本轮消息上下文对应的 MCP 定义；new/resume 传同一份。
             mcp_servers = mcp_servers_for_turn(turn_meta)
             if mcp_servers:
@@ -1087,7 +1181,7 @@ class AntigravityACPClient:
                 session_id = await self._create_session(
                     store=store,
                     session_key=session_key,
-                    system_prompt=system_prompt,
+                    system_prompt=prompt_text,
                     system_hash=system_hash,
                     model=self._model,
                     mcp_servers=mcp_servers,
@@ -1104,7 +1198,7 @@ class AntigravityACPClient:
                     # 标准 ACP systemPrompt 字段不生效；扩展只在变化时追加，
                     # 避免同一段系统上下文在会话里叠加多份。
                     params["_meta"] = {
-                        "antigravity": {"systemPrompt": {"append": system_prompt}}
+                        "antigravity": {"systemPrompt": {"append": prompt_text}}
                     }
                 try:
                     await self._rpc("session/resume", params)
@@ -1122,7 +1216,7 @@ class AntigravityACPClient:
                     session_id = await self._create_session(
                         store=store,
                         session_key=session_key,
-                        system_prompt=system_prompt,
+                        system_prompt=prompt_text,
                         system_hash=system_hash,
                         model=self._model,
                         mcp_servers=mcp_servers,
@@ -1372,8 +1466,15 @@ def get_client() -> AntigravityACPClient:
     if _client is None:
         from ...config import plugin_config
 
+        try:
+            extra_args = parse_extra_args(plugin_config.hermes_antigravity_args)
+        except ValueError:
+            # 引号不配对这些配置错误不拖垮 turn：按空值处理并留一条警告。
+            logger.warning("[HERMES antigravity] AGENT_ANTIGRAVITY_ARGS 无法解析，按空值处理")
+            extra_args = ()
         _client = AntigravityACPClient(
             cli_path=plugin_config.hermes_antigravity_cli,
+            cli_args=(*DEFAULT_ACP_ARGS, *extra_args),
             model=plugin_config.hermes_antigravity_model,
             agent=plugin_config.hermes_antigravity_persona,
             workspace=_acp_workspace(),
