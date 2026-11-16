@@ -2,7 +2,40 @@
 
 基线：`f4b3224`（dev 新基线）。只本地提交，**未部署、未重启、未推送、未合入 ACP/agy 代码**。
 
-## 提交
+## 返修轮（首轮审查 R1/R2/R3，均 P2）
+
+首轮候选 `835b08a` 被 reviewer_gpt 退回三条 P2（评论 301），本轮只做局部修复：
+
+| 提交 | 内容 |
+|------|------|
+| `81bbaba` | fix(media): 视频 ref 逐段保位并共用文件总预算（R1+R2） |
+| `565359f` | fix(outbound): 自戳判定按数字身份，前导零目标不再绕过（R3） |
+| 本文件 | test(evidence): 返修轮 RED/GREEN 原始输出与说明 |
+
+- **R1 逐段保位**：`_node_video_entries` → `_node_video_segments`，每个原 video 段给一个候选
+  （无可下载 url → `None`）。块内标签严格按段位置生成，只有**登记成功**的段递增文件 idx；
+  `[视频][视频 m:12#f0]`（无 url 段在前）与反向、交错三种排布都有用例，并核验块内 `#f0`
+  指向的正是入库行 `#f0` 的同一段 url（真实 `handle_perception` + 主路径 `_extract_forward_full`）。
+- **R2 共用总预算**：新增 `_file_registration_cap` / `_remaining_file_slots`；文件先占
+  `max_files_per_message`，普通视频只用剩余额度，转发视频再扣一次（`_extract_forward_full`
+  新增 `file_slots`，进缓存键）。占位改按「确实登记成功」判定（`_collect_video_placeholders`），
+  不再按「有 url」抑制：cap=1 时 File+Video → 入库 1 行、content `[文件 m:1#f0:a.pdf] [视频]`；
+  两个普通视频 → 入库 1 行、`[视频 m:1#f0] [视频]`；转发两个视频 → 入库 1 行、尾部只有 `#f0`。
+  未登记视频一律留普通 `[视频]`，不产生指向未入库项的 ref；无 url 视频单条消息仍正常入库。
+- **R3 数字身份自戳**：`_is_self_poke_target` 用 `int` 比较，`[CQ:poke,id=000999]` 与
+  `self_id=999` 视为同一目标 → 保持原样文本；他人前导零目标与 @ 行为不变。
+- 未扩框架、未改已通过的 Runs `not_final` 链；`git diff --check` 通过，树干净。
+- 返修轮 numstat（`835b08a..565359f`，6 文件 +330/−45）：`core/outbound.py` +11/−1、
+  `handlers/message.py` +2/−0、`handlers/message_media.py` +88/−34、
+  `handlers/message_perception.py` +19/−8、`tests/test_outbound_poke.py` +13/−0、
+  `tests/test_video_file_ref.py` +197/−2。
+- 验收（代码提交 `565359f`；`verify.py` 在代码提交与证据提交上各跑一次，均 ALL PASS 22/22）：
+  定向 42 OK（video 22 / poke 9 / runs 11）、全量 **786 OK (skipped=1)**、
+  turn **6 OK**、`verify.py` **ALL PASS 22/22**；reviewer 探针（attachment 59，未改一行）
+  `FINDINGS []`，三条缺陷全部复现为期望形态，`automatic_downloads == 0`。
+  证据：`EVIDENCE/three_small_updates_20261116_FIX_{RED,GREEN}.txt` + `..._FIX_NOTES.md`。
+
+## 提交（首轮）
 
 | # | 提交 | 内容 |
 |---|------|------|

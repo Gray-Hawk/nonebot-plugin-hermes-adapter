@@ -1,0 +1,105 @@
+11-16 19:58:42 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 19:58:42 [INFO] nonebot | Current Env: prod
+<frozen runpy>:88: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+11-16 19:58:42 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 19:58:42 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 19:58:43 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+............11-16 19:58:43 [WARNING] nonebot_plugin_hermes_adapter | [file] 单消息视频数超过剩余额度 1，其余仅保留消息到达事实
+...........11-16 19:58:43 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] reply_text 有 1 处 CQ 段形态未转换,按普通文本发送: ['[CQ:poke,']
+..........11-16 19:58:43 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['not_final', 'reply_to', 'should_exit_active'] pending=1
+.11-16 19:58:43 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['not_final'] pending=1
+.11-16 19:58:43 [WARNING] nonebot_plugin_hermes_adapter | [HERMES feedback] 接力链达上限(2),照发不接力 ('onebotv11', 'group:g1') tag=not_final
+...11-16 19:58:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=4 media=0 files=0
+.11-16 19:58:43 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['not_final'] pending=1
+11-16 19:58:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=10 media=0 files=0
+11-16 19:58:43 [INFO] nonebot_plugin_hermes_adapter | [HERMES live] 即时发送第0份 adapter=onebotv11 group=g1 private=False ok=True text_len=3 media=0 files=0
+...
+----------------------------------------------------------------------
+Ran 42 tests in 0.044s
+
+OK
+11-16 19:59:18 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 19:59:18 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:149: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.test = loader.discover(self.start, self.pattern, self.top)
+11-16 19:59:18 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 19:59:18 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 19:59:18 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+...11-16 19:59:18 [ERROR] nonebot_plugin_hermes_adapter | [HERMES passive] 正文协议失败,本轮零发送 reason='text_body_overflow' (group=None)
+...
+----------------------------------------------------------------------
+Ran 6 tests in 0.053s
+
+OK
+interpreter=/home/neonsky/NeonBot/.venv/bin/python
+root=/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/three-small-updates-20261116
+HEAD=565359f fix(outbound): 自戳判定按数字身份，前导零目标不再绕过
+[PASS] 交付树无 pyc／pytest 缓存
+[PASS] 全量既有＋新增测试通过 — exit=0 ran=786 Ran 786 tests in 33.420s /  / OK (skipped=1)
+[PASS] 已删除的信封模块／符号零引用 — 文件仍在=[] 引用=[]
+[PASS] Runs 终态／流式／恢复／对账共用同一纯文本解析器
+11-16 19:58:29 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 19:58:29 [INFO] nonebot | Current Env: prod
+11-16 19:58:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='裸'
+11-16 19:58:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='裸'
+11-16 19:58:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='你好'
+11-16 19:58:29 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=12 preview='{"body":"旧"}'
+[PASS] 信封解析语义（单条/多条/静默/缺开缺闭/旧裸正文不兼容） — 失败=[]
+[PASS] Runs／completions 提示词同口径写死信封格式
+[PASS] _DECISION_PROTOCOL_BLOCK_COMPLETIONS 纯文本（无信封字段）
+[PASS] _DECISION_PROTOCOL_BLOCK_RUNS 纯文本（无信封字段）
+[PASS] runs 协议块：§ 整行分隔、无 push_message、无布尔箭头
+[PASS] runs 私聊协议块无 push_message
+[PASS] completions 协议块保留 push_message 进度口径
+[PASS] completions 私聊块无信封
+[PASS] 协议渲染：runs/completions 互不串味
+[PASS] 网关插件独立测试（不在 tests/ 全量里） — queued-lane-interim-thin: OK ran=48 (需 >= 48); steer-presentation-thin: OK ran=21 (需 >= 21)
+[PASS] 流式只追加计划／终态与恢复共用计划适配器
+[PASS] 控制 FIFO 与续跑登记各只有一条链路
+[PASS] Runs 轮内 push 硬拒（轮外/completions 不变）
+[PASS] 终态链先落整批计划再发送
+[PASS] 关键验收用例齐全 — 缺=[]
+[PASS] 验收不依赖暂存区 — staged=[]
+[PASS] 交付树干净（无未提交改动）
+[PASS] 交付树无 pyc／pytest 缓存
+
+ALL PASS: 22/22 项通过
+11-16 19:59:17 [WARNING] nonebot_plugin_hermes_adapter | [STICKER] index.csv:5 ID 非法，已跳过: '坏 ID'
+...11-16 19:59:17 [WARNING] nonebot_plugin_hermes_adapter | [STICKER] index.csv:4 文件不可用，已跳过 escape: [Errno 2] No such file or directory: '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/outside.png'
+.......11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] 本地表情已发送 id=speechless msg_ids=1
+.11-16 19:59:17 [WARNING] nonebot_plugin_hermes_adapter | [OUTBOUND] 本地表情发送失败 id=missing: 未知表情 ID: missing
+.11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES] /reload-config: onebotv11:admin 重载 ['media']，表情 7 条
+.11-16 19:59:17 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] /reload-config 失败: 配置坏档
+.........11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] task anchors disabled: ignored ['pin_anchor', 'release_anchor', 'answer_anchor', 'anchor_merge'] (group=g1 user=u1)
+11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=g1)
+.11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] anchor_merge invalid: 'nonexistent' (group=g1)
+11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] answer_anchor invalid: who='nonexistent' pinned=['u2'] (group=g1)
+11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] anchor_merge invalid: 'nonexistent' (group=g1)
+11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] answer_anchor invalid: who='nonexistent' pinned=['u2'] (group=g1)
+11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+.11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] decision adapter=onebotv11 group=g1 user=u1 direct=True should_reply=True should_exit_active=None reply_text_len=1 salvaged=False
+11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [HERMES reactive] task anchors disabled: ignored ['pin_anchor'] (group=g1 user=u1)
+.........11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] 任务锚开关关闭，丢弃锚字段 scope=group adapter=onebotv11 target=g1 ignored=['pin_anchor']
+.11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['answer_anchor', 'pin_anchor'] pending=1
+.11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] 任务锚开关关闭，丢弃锚字段 scope=group adapter=onebotv11 target=g1 ignored=['pin_anchor', 'release_anchor', 'answer_anchor', 'anchor_merge']
+11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to', 'should_exit_active'] pending=1 ignored=['pin_anchor', 'release_anchor', 'answer_anchor', 'anchor_merge']
+.11-16 19:59:17 [INFO] nonebot_plugin_hermes_adapter | [MCP submit_control] registered scope=group adapter=onebotv11 target=g1 fields=['reply_to'] pending=1
+.................11-16 19:59:17 [WARNING] nonebot_plugin_hermes_adapter | [file] 单消息视频数超过剩余额度 1，其余仅保留消息到达事实
+..........
+----------------------------------------------------------------------
+Ran 786 tests in 33.351s
+
+OK (skipped=1)
+R1_MIXED_FORWARD {"actual_block": "<forwarded_messages count=\"1\">\nSender: [视频][视频 m:1#f0]\n</forwarded_messages>", "correct_order": true, "persisted": {"id": 1, "content": "<forwarded_messages count=\"1\" preview=\"Sender: [视频][视频]\"/> [视频 m:1#f0]", "forward_content": "<forwarded_messages count=\"1\">\nSender: [视频][视频]\n</forwarded_messages>", "files": [{"idx": 0, "url": "https://example.invalid/second.mp4"}], "bot_calls": [["get_forward_msg", {"id": "mixed-video"}], ["get_forward_msg", {"id": "mixed-video"}]], "automatic_downloads": 0}, "entries": [{"kind": "video", "file_id": "clip.mp4", "name": "clip.mp4", "size": 0, "url": "https://example.invalid/second.mp4", "qq_message_id": null}]}
+R2_TOTAL_CAP {"id": 1, "content": "[文件 m:1#f0:a.pdf] [视频]", "forward_content": null, "files": [{"idx": 0, "url": "https://example.invalid/a.pdf"}], "bot_calls": [], "automatic_downloads": 0}
+R2_OVERFLOW_PLACEHOLDER {"id": 1, "content": "[视频 m:1#f0] [视频]", "forward_content": null, "files": [{"idx": 0, "url": "https://example.invalid/1.mp4"}], "bot_calls": [], "automatic_downloads": 0}
+R2_FORWARD_CAP {"id": 1, "content": "<forwarded_messages count=\"1\" preview=\"Sender: [视频][视频]\"/> [视频 m:1#f0]", "forward_content": "<forwarded_messages count=\"1\">\nSender: [视频][视频]\n</forwarded_messages>", "files": [{"idx": 0, "url": "https://example.invalid/f1.mp4"}], "bot_calls": [["get_forward_msg", {"id": "forward-cap"}]], "automatic_downloads": 0}
+CONTROL_ORDINARY_FILE {"id": 1, "content": "[文件 m:1#f0:a.pdf]", "forward_content": null, "files": [{"idx": 0, "url": "https://example.invalid/a.pdf"}], "bot_calls": [], "automatic_downloads": 0}
+POKE_EXPORTED {"text": "A[CQ:at,qq=12345]B[CQ:poke,id=12345]C", "message": [{"type": "text", "data": {"text": "A"}}, {"type": "at", "data": {"qq": "12345"}}, {"type": "text", "data": {"text": "B"}}, {"type": "poke", "data": {"type": "1", "id": "12345"}}, {"type": "text", "data": {"text": "C"}}]}
+POKE_EXPORTED {"text": "[CQ:poke,id=999]", "message": [{"type": "text", "data": {"text": "[CQ:poke,id=999]"}}]}
+POKE_EXPORTED {"text": "[CQ:poke,id=000999]", "message": [{"type": "text", "data": {"text": "[CQ:poke,id=000999]"}}]}
+FINDINGS []

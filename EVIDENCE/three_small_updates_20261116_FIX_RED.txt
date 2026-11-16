@@ -1,0 +1,136 @@
+11-16 19:58:38 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 19:58:38 [INFO] nonebot | Current Env: prod
+<frozen runpy>:88: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+11-16 19:58:38 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 19:58:38 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 19:58:38 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+EEFF....FFF.11-16 19:58:39 [WARNING] nonebot_plugin_hermes_adapter | [file] 单消息视频数超过 1，其余仅保留消息到达事实
+F..........11-16 19:58:39 [INFO] nonebot_plugin_hermes_adapter | [OUTBOUND] reply_text 有 1 处 CQ 段形态未转换,按普通文本发送: ['[CQ:poke,']
+..FF.....
+======================================================================
+ERROR: test_forward_video_respects_remaining_file_slots (tests.test_video_file_ref.ForwardVideoBudgetTests.test_forward_video_respects_remaining_file_slots)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red2-835b08a/tests/test_video_file_ref.py", line 374, in test_forward_video_respects_remaining_file_slots
+    block, _images, videos = _extract_forward(
+                             ~~~~~~~~~~~~~~~~^
+        _forward_uni(), bot, number_base=0, file_message_id=12, file_slots=1
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/tmp/red2-835b08a/tests/test_video_file_ref.py", line 132, in _extract_forward
+    _extract_forward_full(uni, bot, adapter_name="onebotv11", **kwargs)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: _extract_forward_full() got an unexpected keyword argument 'file_slots'
+
+======================================================================
+ERROR: test_zero_file_slots_keep_plain_video_labels (tests.test_video_file_ref.ForwardVideoBudgetTests.test_zero_file_slots_keep_plain_video_labels)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red2-835b08a/tests/test_video_file_ref.py", line 383, in test_zero_file_slots_keep_plain_video_labels
+    block, _images, videos = _extract_forward(
+                             ~~~~~~~~~~~~~~~~^
+        _forward_uni(), bot, number_base=0, file_message_id=12, file_slots=0
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/tmp/red2-835b08a/tests/test_video_file_ref.py", line 132, in _extract_forward
+    _extract_forward_full(uni, bot, adapter_name="onebotv11", **kwargs)
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: _extract_forward_full() got an unexpected keyword argument 'file_slots'
+
+======================================================================
+FAIL: test_interleaved_videos_number_only_registered_segments (tests.test_video_file_ref.ForwardVideoPositionTests.test_interleaved_videos_number_only_registered_segments)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red2-835b08a/tests/test_video_file_ref.py", line 366, in test_interleaved_videos_number_only_registered_segments
+    self.assertIn("[视频][视频 m:12#f0][视频][视频 m:12#f1]", block)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '[视频][视频 m:12#f0][视频][视频 m:12#f1]' not found in '<forwarded_messages count="1">\n阿光: [视频 m:12#f0][视频 m:12#f1][视频][视频]\n</forwarded_messages>'
+
+======================================================================
+FAIL: test_url_less_video_before_url_video_keeps_its_position (tests.test_video_file_ref.ForwardVideoPositionTests.test_url_less_video_before_url_video_keeps_its_position)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red2-835b08a/tests/test_video_file_ref.py", line 346, in test_url_less_video_before_url_video_keeps_its_position
+    self.assertIn("[视频][视频 m:12#f0]", block)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '[视频][视频 m:12#f0]' not found in '<forwarded_messages count="1">\n阿光: [视频 m:12#f0][视频]\n</forwarded_messages>'
+
+======================================================================
+FAIL: test_file_and_video_share_one_total_budget (tests.test_video_file_ref.IngressBudgetTests.test_file_and_video_share_one_total_budget)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red2-835b08a/tests/test_video_file_ref.py", line 448, in test_file_and_video_share_one_total_budget
+    self.assertEqual(len(result["files"]), 1)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 1
+
+======================================================================
+FAIL: test_forward_videos_share_remaining_budget (tests.test_video_file_ref.IngressBudgetTests.test_forward_videos_share_remaining_budget)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red2-835b08a/tests/test_video_file_ref.py", line 469, in test_forward_videos_share_remaining_budget
+    self.assertEqual(len(result["files"]), 1)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 2 != 1
+
+======================================================================
+FAIL: test_ingress_and_main_path_agree_on_forward_video_positions (tests.test_video_file_ref.IngressBudgetTests.test_ingress_and_main_path_agree_on_forward_video_positions)
+R1 真实链路：入库行的 url 与主路径块内 ref 位置必须指同一段。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red2-835b08a/tests/test_video_file_ref.py", line 501, in test_ingress_and_main_path_agree_on_forward_video_positions
+    self.assertIn(f"[视频][视频 m:{result['id']}#f0]", block)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '[视频][视频 m:1#f0]' not found in '<forwarded_messages count="1">\n阿光: [视频 m:1#f0][视频]\n</forwarded_messages>'
+
+======================================================================
+FAIL: test_overflow_plain_videos_keep_plain_placeholder (tests.test_video_file_ref.IngressBudgetTests.test_overflow_plain_videos_keep_plain_placeholder)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red2-835b08a/tests/test_video_file_ref.py", line 462, in test_overflow_plain_videos_keep_plain_placeholder
+    self.assertEqual(result["content"], f"[视频 m:{result['id']}#f0] [视频]")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '[视频 m:1#f0]' != '[视频 m:1#f0] [视频]'
+- [视频 m:1#f0]
++ [视频 m:1#f0] [视频]
+?            +++++
+
+
+======================================================================
+FAIL: test_padded_numeric_self_target_is_not_converted (tests.test_outbound_poke.OutboundPokeTests.test_padded_numeric_self_target_is_not_converted) (text='[CQ:poke,id=000999]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red2-835b08a/tests/test_outbound_poke.py", line 117, in test_padded_numeric_self_target_is_not_converted
+    self.assertEqual(_poke_parts(dump), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [{'type': '1', 'id': '000999'}] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+{'type': '1', 'id': '000999'}
+
+- [{'id': '000999', 'type': '1'}]
++ []
+
+======================================================================
+FAIL: test_padded_numeric_self_target_is_not_converted (tests.test_outbound_poke.OutboundPokeTests.test_padded_numeric_self_target_is_not_converted) (text='[CQ:poke,type=2,id=000999]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/red2-835b08a/tests/test_outbound_poke.py", line 117, in test_padded_numeric_self_target_is_not_converted
+    self.assertEqual(_poke_parts(dump), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [{'type': '2', 'id': '000999'}] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+{'type': '2', 'id': '000999'}
+
+- [{'id': '000999', 'type': '2'}]
++ []
+
+----------------------------------------------------------------------
+Ran 31 tests in 0.040s
+
+FAILED (failures=8, errors=2)
