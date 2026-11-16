@@ -23,8 +23,9 @@ from typing import Any
 
 from .decision_contract import parse_reply_to
 
-# 控制字段 = 现有真实字段，一个不多一个不少。not_final 不在此列：它仍是信封
-# 旧兼容字段（completions 正常用法、Runs 旧信封继续认），不进控制队列。
+# 控制字段 = 现有真实字段，一个不多一个不少。not_final 不在此列：它不是「发送后副作用」
+# 控制，而是 Runs 续跑声明（completions 用 request_continuation）。它随控制一起登记，
+# 由 bind_control 复制到 decision 顶层，供 decision.get('not_final') 既有续跑链读取。
 CONTROL_FIELDS: tuple[str, ...] = (
     "reply_to",
     "should_exit_active",
@@ -65,6 +66,7 @@ def build_control(
     release_anchor: Any = None,
     answer_anchor: Any = None,
     anchor_merge: Any = None,
+    not_final: Any = None,
 ) -> dict[str, Any]:
     """把一次工具调用的入参收敛成一份控制（只保留真正给了值的字段）。
 
@@ -78,7 +80,11 @@ def build_control(
         if not isinstance(reply_to, str) or parse_reply_to(reply_to) is None:
             raise ControlIntentError("reply_to 只接受本会话消息编号 `m:<正整数>`")
         control["reply_to"] = reply_to
-    for name, value in (("should_exit_active", should_exit_active), ("pin_anchor", pin_anchor)):
+    for name, value in (
+        ("should_exit_active", should_exit_active),
+        ("pin_anchor", pin_anchor),
+        ("not_final", not_final),
+    ):
         if value is None:
             continue
         if not isinstance(value, bool):
@@ -196,6 +202,10 @@ def bind_control(
     control = queue.pop(key)
     if control:
         decision["_control"] = control
+        if control.get("not_final"):
+            # Runs not_final：只在这一份正文上生效，复用 decision.get('not_final')
+            # → _post_send_feedback → relay 的既有续跑链，不另建状态机。
+            decision["not_final"] = True
     return control
 
 

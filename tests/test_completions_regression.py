@@ -254,8 +254,11 @@ class CompletionsPromptTests(unittest.TestCase):
         prompt = self._as_interface("runs", lambda: self.pb.build_reactive_system_prompt())
         self.assertIn("整行只有一个 §", prompt)
         self.assertIn("submit_control", prompt)
-        for legacy in ("每份决策就是一行 JSON", "submit_decision", "should_reply", "reply_text", "not_final"):
+        for legacy in ("每份决策就是一行 JSON", "submit_decision", "should_reply", "reply_text"):
             self.assertNotIn(legacy, prompt)
+        # Runs 恢复的 not_final 走 submit_control 字段口径，不是旧 JSON 字段行。
+        self.assertIn("not_final=true", prompt)
+        self.assertNotIn("not_final:", prompt)
         self.assertNotIn("background_task 便签", prompt)
         # Runs 没有 push_message 工具：正文/进度都走同一条正文通道。
         self.assertNotIn("push_message", prompt)

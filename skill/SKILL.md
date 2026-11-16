@@ -194,6 +194,9 @@ with default controls.
 - `pin_anchor` — commission judgement turns only; `true` pins the current request
 - `release_anchor` / `answer_anchor` — commissioner user_id or `"all"` (unpin / mark answered)
 - `anchor_merge` — starter user_id of a pinned task this message belongs to
+- `not_final` (Runs only) — `true` marks this reply text as a receipt, not the final
+  result: the plugin sends it as-is and then appends one continue turn on the same relay
+  chain (chain limit applies). Ordinary replies omit it.
 
 Private chats only ever use `reply_to`; exit windows and task anchors are group-state
 concepts.

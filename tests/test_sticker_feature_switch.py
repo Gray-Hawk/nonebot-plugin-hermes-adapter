@@ -70,7 +70,8 @@ class StickerFeatureSwitchTests(unittest.TestCase):
                 if enabled:
                     self.assertIn(text_guidance, prompt)
                     self.assertIn("闲聊时可以自然地用表情表达想法和情绪", prompt)
-                    self.assertNotIn("not_final", prompt)
+                    # Runs 恢复的 not_final 走 submit_control 字段；旧 JSON 字段行不再出现。
+                    self.assertNotIn("not_final: ", prompt)
                     self.assertIn("可只回一个表情，不附文字", prompt)
                 else:
                     self.assertNotIn(text_guidance, prompt)

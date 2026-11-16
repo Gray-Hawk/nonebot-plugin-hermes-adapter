@@ -637,6 +637,7 @@ def build_mcp_app(
         release_anchor: str | None = None,
         answer_anchor: str | None = None,
         anchor_merge: str | None = None,
+        not_final: bool | None = None,
         group_id: str | None = None,
         user_id: str | None = None,
     ) -> SubmitControlResult:
@@ -650,6 +651,11 @@ def build_mcp_app(
           - pin_anchor: commission judgement turns only; true pins the current request
           - release_anchor / answer_anchor: commissioner user_id or "all" (unpin / mark answered)
           - anchor_merge: starter user_id of a pinned task this message belongs to
+
+        Runs only: not_final=true marks the NEXT reply text as a receipt rather than the
+        final result — the plugin sends it as-is and then appends one continue turn on the
+        same relay chain (chain limit applies). Leave it out for ordinary replies. On
+        completions this field is rejected: use request_continuation there.
 
         The four anchor fields above only work when task anchors are enabled
         (chat_config.yaml task_anchor_enabled, default true). When that switch is off they are
@@ -673,6 +679,7 @@ def build_mcp_app(
             release_anchor=release_anchor,
             answer_anchor=answer_anchor,
             anchor_merge=anchor_merge,
+            not_final=not_final,
         )
         result = submit_control_impl(
             inp,
