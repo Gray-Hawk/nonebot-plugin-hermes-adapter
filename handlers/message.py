@@ -33,6 +33,7 @@ from .message_media import (
     _extract_image_urls,
     _extract_replied_media,
     _extract_sticker_urls,
+    _remaining_file_slots,
 )
 
 from .message_ingress import (
@@ -315,6 +316,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     forward_full, _forward_image_urls, forward_video_entries = await _extract_forward_full(
         uni_msg, bot, adapter_name=adapter_name, number_base=forward_base,
         file_message_id=event_db_id, file_idx_base=len(own_file_entries),
+        file_slots=_remaining_file_slots(len(own_file_entries)),
     )
     if forward_full is not None:
         msg_text = f"{msg_text}\n{forward_full}" if msg_text else forward_full
