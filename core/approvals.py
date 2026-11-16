@@ -28,7 +28,7 @@ from pathlib import Path
 
 from nonebot import logger
 
-from .misc_config import load_misc_config
+from .misc_config import load_misc_config, startup_command_prefix
 
 
 def _approval_expiry_sec() -> int:
@@ -226,9 +226,13 @@ def drop_expired() -> int:
 
 
 def _approve_prefix() -> str:
-    """与 handlers.commands 注册前缀一致，通知里的命令必须能直接照抄执行。"""
-    parts = load_misc_config().bot_name.strip().split()
-    return f"/{parts[0]} " if parts else "/"
+    """与 handlers.commands 注册前缀同源（启动期定型），通知里的命令必须能直接照抄执行。
+
+    不能读 ``load_misc_config()`` 的实时快照：``/reload-config`` 会提交含新 bot_name
+    的快照，而命令 matcher 在启动注册期已定型，重启前旧命令才是真正能执行的那条。
+    """
+    prefix = startup_command_prefix()
+    return f"/{prefix} " if prefix else "/"
 
 
 def build_admin_notice(entry: PendingApproval) -> str:

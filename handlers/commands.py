@@ -28,7 +28,7 @@ from ..core.run_tracker import make_scope_key
 from ..core.sticker_library import default_sticker_library
 from ..core.config_reload import reload_runtime_config
 from ..core.chat_config import load_chat_config
-from ..core.misc_config import load_misc_config
+from ..core.misc_config import load_misc_config, startup_command_prefix
 from ..core.user_lists import load_user_lists
 from ..core.session import session_manager
 from ..utils import check_isolation, get_adapter_name
@@ -36,11 +36,9 @@ from .message_perception import _claim_event_db_id
 
 # 本部署补丁: 指令寻址前缀(多 bot 共群指令域区分)。
 # 注册期定型(下面全部 on_command 在插件加载期执行),改名需重启 nb 生效。
-_raw_bot_name = load_misc_config().bot_name.strip()
-_name_parts = _raw_bot_name.split()
-CMD_PREFIX = _name_parts[0] if _name_parts else ""
-if len(_name_parts) > 1:
-    logger.warning(f"[HERMES] hermes_bot_name 含空白,只取首段 {CMD_PREFIX!r} 作指令前缀")
+# 前缀口径由 misc_config.startup_command_prefix() 单点提供:审批通知读同一个值,
+# /reload-config 换了 bot_name 也不会让通知给出未注册的新命令名。
+CMD_PREFIX = startup_command_prefix()
 
 
 def _cmd(name: str) -> str:

@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+
+from nonebot import logger
 
 from ..config import resolve_custom_dir
 from .config_fields import bool_field, int_field, str_field
@@ -69,3 +72,26 @@ _store = ConfigSnapshotStore(
 
 def load_misc_config() -> MiscConfig:
     return _store.get()
+
+
+def bot_name_prefix(bot_name: str) -> str:
+    """``bot_name`` → 指令寻址前缀：首段分词；空／纯空白 → 空串（旧直连形态）。"""
+    parts = bot_name.strip().split()
+    return parts[0] if parts else ""
+
+
+@lru_cache(maxsize=1)
+def startup_command_prefix() -> str:
+    """启动期定型的指令寻址前缀：命令 matcher 与审批通知同源。
+
+    ``bot_name`` 规定重启生效；``/reload-config`` 只提交新快照、不重跑启动初始化。
+    因此这里在首次调用（插件加载期 ``handlers.commands`` 注册 matcher）定型并缓存，
+    之后快照怎么改都不跟随——否则热重载后重启前，审批通知会给出管理员实际无法
+    执行的 ``/新名 approve``，而旧命令才是真正注册着的那条。重启（新进程）自然
+    重新定型，改名生效。
+    """
+    raw = load_misc_config().bot_name
+    prefix = bot_name_prefix(raw)
+    if len(raw.strip().split()) > 1:
+        logger.warning(f"[HERMES] hermes_bot_name 含空白,只取首段 {prefix!r} 作指令前缀")
+    return prefix
