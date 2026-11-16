@@ -177,23 +177,33 @@ def _clean_file_name(name) -> str:
     return cleaned[:160]
 
 
+def _file_registration_cap(cap: int | None = None) -> int | None:
+    """本条消息文件引用行的总上限：文件、普通视频、转发视频共用一份预算。"""
+    return cap if cap is not None else load_file_config().max_files_per_message
+
+
+def _remaining_file_slots(used: int, cap: int | None = None) -> int | None:
+    """已登记 `used` 行后还剩多少登记额度；None = 不限。"""
+    limit = _file_registration_cap(cap)
+    return None if limit is None else max(0, limit - used)
+
+
 def _extract_file_entries(uni_msg: alconna.UniMessage, *, cap: int | None = None) -> list[dict]:
     """提取普通 File 段元数据；接收阶段只登记，不发起下载。
 
     视频段复用同一条文件引用通道：能拿到可下载 url 的 video 段也登记成一行
-    (kind="video")，编号与文件共用 `m:<mid>#f<idx>`；拿不到 url 的视频不登记，
-    占位退回普通 `[视频]`。不下载、不抽帧。
+    (kind="video")，编号与文件共用 `m:<mid>#f<idx>`，并与文件共用
+    max_files_per_message 这一份总预算（文件先占，视频只用剩余额度）；拿不到 url
+    或超出预算的视频不登记，占位退回普通 `[视频]`。不下载、不抽帧。
     """
     entries: list[dict] = []
-    effective_cap = cap
-    if (effective_cap is not None and effective_cap <= 0) or not uni_msg.has(alconna.File):
+    limit = _file_registration_cap(cap)
+    if (limit is not None and limit <= 0) or not uni_msg.has(alconna.File):
         entries = []
     else:
         for seg in uni_msg[alconna.File]:
-            if effective_cap is None:
-                effective_cap = load_file_config().max_files_per_message
-            if len(entries) >= effective_cap:
-                logger.warning(f"[file] 单消息文件数超过 {effective_cap}，其余仅保留消息到达事实")
+            if limit is not None and len(entries) >= limit:
+                logger.warning(f"[file] 单消息文件数超过 {limit}，其余仅保留消息到达事实")
                 break
             size_raw = None
             origin = getattr(seg, "origin", None)
@@ -217,7 +227,7 @@ def _extract_file_entries(uni_msg: alconna.UniMessage, *, cap: int | None = None
                 "url": url,
                 "qq_message_id": None,
             })
-    entries.extend(_extract_video_entries(uni_msg, cap=cap))
+    entries.extend(_extract_video_entries(uni_msg, slots=_remaining_file_slots(len(entries), cap)))
     return entries
 
 
@@ -250,17 +260,18 @@ def _video_file_entry(seg) -> dict | None:
     }
 
 
-def _extract_video_entries(uni_msg: alconna.UniMessage, *, cap: int | None = None) -> list[dict]:
-    """普通消息里的 video 段 → 文件引用行（与文件同一上限，只登记元数据）。"""
-    if not uni_msg.has(alconna.Video):
+def _extract_video_entries(uni_msg: alconna.UniMessage, *, slots: int | None) -> list[dict]:
+    """普通消息里的 video 段 → 文件引用行，只登记元数据。
+
+    slots = 本条消息文件总预算扣除文件后剩下的额度（None = 不限）；超出的视频
+    段不登记，由占位侧保留普通 `[视频]`。
+    """
+    if not uni_msg.has(alconna.Video) or (slots is not None and slots <= 0):
         return []
-    limit = cap if cap is not None else load_file_config().max_files_per_message
     entries: list[dict] = []
     for seg in uni_msg[alconna.Video]:
-        if limit is not None and limit <= 0:
-            break
-        if limit is not None and len(entries) >= limit:
-            logger.warning(f"[file] 单消息视频数超过 {limit}，其余仅保留消息到达事实")
+        if slots is not None and len(entries) >= slots:
+            logger.warning(f"[file] 单消息视频数超过剩余额度 {slots}，其余仅保留消息到达事实")
             break
         entry = _video_file_entry(seg)
         if entry is not None:
@@ -286,12 +297,34 @@ def _collect_file_placeholders(
     return labels
 
 
+def _collect_video_placeholders(
+    uni_msg: alconna.UniMessage, file_entries: list[dict]
+) -> list[str]:
+    """未登记（无 url 或超出文件预算）的 video 段 → 普通 `[视频]`，按段序。
+
+    已登记的段由 _collect_file_placeholders 出 `[视频 m:<mid>#f<idx>]`；这里只负责
+    剩余段的普通占位，调用方把它接在 ref 之后输出，保持「段序 ↔ 占位」一致。
+    """
+    if not uni_msg.has(alconna.Video):
+        return []
+    pending = sum(1 for entry in file_entries if entry.get("kind") == _VIDEO_ENTRY_KIND)
+    labels: list[str] = []
+    for video in uni_msg[alconna.Video]:
+        # 登记按段序取前 N 个可下载段（省略无 url 的），与 _extract_video_entries 同口径。
+        if pending > 0 and _video_file_entry(video) is not None:
+            pending -= 1
+            continue
+        labels.append("[视频]")
+    return labels
+
+
 def _collect_nontext_placeholders(
     uni_msg: alconna.UniMessage,
     *,
     file_entries: list[dict] | None = None,
     file_message_id: int | None = None,
     include_files: bool = True,
+    include_videos: bool = True,
 ) -> list[str]:
     """扫描非文本/普通图段,返回占位文本列表 (顺序近似按段类型聚合)。
 
@@ -304,8 +337,15 @@ def _collect_nontext_placeholders(
 
     与现有 [图片] 占位策略一致——仅追加到 msg_text 末尾,不试图与文本段 interleave。
     普通 (非 sticker) Image 不在本函数处理,沿用 _extract_image_urls + [图片] 占位流。
+
+    file_entries: 本条消息已登记的文件引用行(文件/视频共用编号空间)。视频段按段序
+    与登记顺序一致:只有**确实登记成功**的段由 _collect_file_placeholders 出 ref,
+    其余(无 url 或超出总预算)在这里保留普通 [视频]——不能按「有 url」抑制占位,
+    也不可让占位指向未入库的 idx。
     """
     placeholders: list[str] = []
+    video_placeholders: list[str] = []
+    entries = file_entries if file_entries is not None else _extract_file_entries(uni_msg)
     if uni_msg.has(alconna.Image):
         for img in uni_msg[alconna.Image]:
             if getattr(img, "sticker", False):
@@ -313,19 +353,17 @@ def _collect_nontext_placeholders(
     if uni_msg.has(alconna.Voice):
         for _v in uni_msg[alconna.Voice]:
             placeholders.append("[语音]")
-    if uni_msg.has(alconna.Video):
-        for video in uni_msg[alconna.Video]:
-            # 已登记成文件引用（有可下载 url）的视频由调用方按 m:<mid>#f<idx> 出占位；
-            # 拿不到引用的才退回普通 [视频]。
-            if _video_file_entry(video) is None:
-                placeholders.append("[视频]")
+    if uni_msg.has(alconna.Video) and include_videos:
+        video_placeholders = _collect_video_placeholders(uni_msg, entries)
     if uni_msg.has(alconna.Emoji):
         for face in uni_msg[alconna.Emoji]:
             name = getattr(face, "name", None)
             placeholders.append(f"[表情:{name}]" if name else "[表情]")
     if include_files:
-        entries = file_entries if file_entries is not None else _extract_file_entries(uni_msg)
+        # 视频与文件共用同一个 ref 编号组：普通 [视频] 紧跟文件/视频 ref 之后输出，
+        # 让「ref ↔ 未登记占位」在同一段里保持先后次序。
         placeholders.extend(_collect_file_placeholders(entries, file_message_id))
+    placeholders.extend(video_placeholders)
     return placeholders
 
 
@@ -474,12 +512,14 @@ def _node_image_urls(node: dict) -> list[str | None]:
     return urls
 
 
-def _node_video_entries(node: dict) -> list[dict]:
-    """节点内 video 段 → 文件引用行(按段序;无可下载 url 的段跳过)。
+def _node_video_segments(node: dict) -> list[dict | None]:
+    """节点内 video 段 → 逐段候选引用行（与段一一对应，按段序）。
 
-    与 _node_summary 的 video_labels 同一顺序遍历,保证块内标签与登记行一一对应。
+    没有可下载 url 的段给 None（该位置只能渲染普通 `[视频]`）：块内标签必须严格
+    按原段位置贴 ref，不能让后面的段顶替前面的位置。是否真的登记（预算没超）
+    由调用方决定，None 永远不登记。
     """
-    entries: list[dict] = []
+    segments: list[dict | None] = []
     segs = node.get("content") or node.get("message") or []
     for seg in segs:
         if not isinstance(seg, dict) or seg.get("type") != "video":
@@ -487,8 +527,9 @@ def _node_video_entries(node: dict) -> list[dict]:
         data = seg.get("data", {}) if isinstance(seg.get("data"), dict) else {}
         url = data.get("url")
         if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+            segments.append(None)
             continue
-        entries.append({
+        segments.append({
             "kind": _VIDEO_ENTRY_KIND,
             "file_id": str(data.get("file_id") or data.get("file") or ""),
             "name": _clean_file_name(data.get("name") or data.get("file") or "video.mp4"),
@@ -496,7 +537,7 @@ def _node_video_entries(node: dict) -> list[dict]:
             "url": url,
             "qq_message_id": None,
         })
-    return entries
+    return segments
 
 
 # 折叠转发 get_forward_msg 的短 TTL 结果缓存:
@@ -511,7 +552,7 @@ _FORWARD_FULL_TTL_S = 60.0
 # 锚在 dict 里不释放,重连换新实例后旧条目也永远 miss。无 self_id 的调用方
 # (离线冒烟的 FakeBot)退化 id(bot),实例天然隔离的语义不变。
 _forward_full_cache: dict[
-    tuple[str, str, int | None, int | None, int | None, int],
+    tuple[str, str, int | None, int | None, int | None, int, int | None],
     tuple[str, tuple[str, ...], tuple[dict, ...], float],
 ] = {}
 
@@ -525,6 +566,7 @@ async def _extract_forward_full(
     cap: int | None = None,
     file_message_id: int | None = None,
     file_idx_base: int = 0,
+    file_slots: int | None = None,
 ) -> tuple[str | None, list[str], list[dict]]:
     """提取合并转发消息,返回 (块文本, 转发图 URL 列表, 转发视频引用行)。
 
@@ -546,6 +588,10 @@ async def _extract_forward_full(
     本条消息的真实 m:id 时块内直接渲染 `[视频 m:<mid>#f<idx>]`;perception 落库前
     还不知道 m:id(file_message_id=None),块内保留普通 `[视频]`,引用行随消息落库后
     由调用方补占位。拿不到 url 的视频段一律保留 `[视频]`。
+
+    file_slots: 本条消息还剩多少文件引用登记额度(文件/普通视频已占用的部分已扣除;
+    None = 不限)。按节点/段序先到先得,用尽后其余视频段保留普通 `[视频]` 且不产生
+    指向未入库项的 ref。块内标签始终按原 video 段位置一一对应。
     """
     # TODO(B-1.3): onebotv12 uses the same `get_forward_msg` API name based on OneBot
     # spec convergence, but this has not been verified against a live v12 deployment.
@@ -569,7 +615,7 @@ async def _extract_forward_full(
     # 同一 ref 渲染形态不同,不能互相命中。
     cache_key = (
         str(getattr(bot, "self_id", "") or id(bot)), ref_id, number_base, cap,
-        file_message_id, file_idx_base,
+        file_message_id, file_idx_base, file_slots,
     )
     now_mono = time.monotonic()
     cached = _forward_full_cache.get(cache_key)
@@ -604,6 +650,7 @@ async def _extract_forward_full(
     seen_img_urls: set[str] = set()
     registered: list[str] = []
     registered_videos: list[dict] = []
+    video_slots = file_slots
     img_truncated = False
 
     lines: list[str] = []
@@ -625,9 +672,16 @@ async def _extract_forward_full(
                     registered.append(u)
                     image_labels.append(f"[转发图#{number_base + len(registered) - 1}]")
             video_labels: list[str] = []
-            for entry in _node_video_entries(node):
+            for candidate in _node_video_segments(node):
+                # 逐原段保位：无 url 或已用尽本条消息文件预算的段只留普通 [视频]，
+                # 只有真正登记成引用行的段才递增文件 idx。
+                if candidate is None or (video_slots is not None and video_slots <= 0):
+                    video_labels.append("[视频]")
+                    continue
+                if video_slots is not None:
+                    video_slots -= 1
                 idx = file_idx_base + len(registered_videos)
-                registered_videos.append(entry)
+                registered_videos.append(candidate)
                 video_labels.append(
                     f"[视频 m:{file_message_id}#f{idx}]" if file_message_id is not None else "[视频]"
                 )

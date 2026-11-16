@@ -15,8 +15,10 @@ import asyncio
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -25,10 +27,17 @@ from tests import _bootstrap  # noqa: E402,F401
 
 import nonebot_plugin_alconna as alconna  # noqa: E402
 
-from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
+from nonebot_plugin_hermes_adapter import mcp  # noqa: E402
+from nonebot_plugin_hermes_adapter.core.file_config import FileConfig  # noqa: E402
+from nonebot_plugin_hermes_adapter.core.message_buffer import (  # noqa: E402
+    BufferedMessage,
+    MessageBuffer,
+)
 from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.routing import CallerScope  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.storage.message_store import MessageStore  # noqa: E402
+from nonebot_plugin_hermes_adapter.handlers import message_media as media  # noqa: E402
+from nonebot_plugin_hermes_adapter.handlers import message_perception as perception  # noqa: E402
 from nonebot_plugin_hermes_adapter.handlers.message_media import (  # noqa: E402
     _collect_file_placeholders,
     _collect_nontext_placeholders,
@@ -124,7 +133,14 @@ def _extract_forward(uni, bot, **kwargs):
     )
 
 
-class ForwardVideoTests(unittest.TestCase):
+class _CacheClearingTest(unittest.TestCase):
+    """_extract_forward_full 有 60s 模块级缓存：每个用例从干净缓存起步。"""
+
+    def setUp(self) -> None:
+        media._forward_full_cache.clear()
+
+
+class ForwardVideoTests(_CacheClearingTest):
     def test_forward_video_registers_entry_and_addressable_label(self) -> None:
         bot = _FakeBot(
             _forward_payload(
@@ -304,6 +320,185 @@ class VideoFetchTests(unittest.TestCase):
         )
         self.assertTrue(second.results[0].available)
         self.assertEqual(len(downloader.calls), 1)
+
+
+SECOND_URL = "https://example.invalid/second.mp4"
+THIRD_URL = "https://example.invalid/third.mp4"
+
+
+def _video_seg(url: str | None, name: str = "clip.mp4") -> dict:
+    data = {"file": name}
+    if url:
+        data["url"] = url
+    return {"type": "video", "data": data}
+
+
+class ForwardVideoPositionTests(_CacheClearingTest):
+    """R1：块内标签严格按原 video 段位置；只有登记成功的段才递增文件 idx。"""
+
+    def test_url_less_video_before_url_video_keeps_its_position(self) -> None:
+        bot = _FakeBot(_forward_payload(_video_seg(None), _video_seg(SECOND_URL)))
+        block, _images, videos = _extract_forward(
+            _forward_uni(), bot, number_base=0, file_message_id=12
+        )
+        self.assertEqual([e["url"] for e in videos], [SECOND_URL])
+        # 第一段无 url 只能 [视频]；ref 必须贴在第二段上，不能前移。
+        self.assertIn("[视频][视频 m:12#f0]", block)
+
+    def test_url_video_before_url_less_video_keeps_its_position(self) -> None:
+        bot = _FakeBot(_forward_payload(_video_seg(SECOND_URL), _video_seg(None)))
+        block, _images, videos = _extract_forward(
+            _forward_uni(), bot, number_base=0, file_message_id=12
+        )
+        self.assertEqual([e["url"] for e in videos], [SECOND_URL])
+        self.assertIn("[视频 m:12#f0][视频]", block)
+
+    def test_interleaved_videos_number_only_registered_segments(self) -> None:
+        bot = _FakeBot(
+            _forward_payload(
+                _video_seg(None), _video_seg(SECOND_URL), _video_seg(None), _video_seg(THIRD_URL)
+            )
+        )
+        block, _images, videos = _extract_forward(
+            _forward_uni(), bot, number_base=0, file_message_id=12
+        )
+        self.assertEqual([e["url"] for e in videos], [SECOND_URL, THIRD_URL])
+        self.assertIn("[视频][视频 m:12#f0][视频][视频 m:12#f1]", block)
+
+
+class ForwardVideoBudgetTests(_CacheClearingTest):
+    """R2：转发视频与文件/普通视频共用剩余登记预算，超预算段保留普通 [视频]。"""
+
+    def test_forward_video_respects_remaining_file_slots(self) -> None:
+        bot = _FakeBot(_forward_payload(_video_seg(SECOND_URL), _video_seg(THIRD_URL)))
+        block, _images, videos = _extract_forward(
+            _forward_uni(), bot, number_base=0, file_message_id=12, file_slots=1
+        )
+        self.assertEqual([e["url"] for e in videos], [SECOND_URL])
+        self.assertIn("[视频 m:12#f0][视频]", block)
+        self.assertNotIn("#f1", block)
+
+    def test_zero_file_slots_keep_plain_video_labels(self) -> None:
+        bot = _FakeBot(_forward_payload(_video_seg(SECOND_URL)))
+        block, _images, videos = _extract_forward(
+            _forward_uni(), bot, number_base=0, file_message_id=12, file_slots=0
+        )
+        self.assertEqual(videos, [])
+        self.assertIn("[视频]", block)
+        self.assertNotIn("#f", block)
+
+
+class IngressBudgetTests(_CacheClearingTest):
+    """真实 handle_perception → MessageBuffer → 临时 SQLite 的总预算与占位回归。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self._seq = 0
+        self.addCleanup(self._tmp.cleanup)
+
+    def _ingest(self, uni, bot, *, max_files: int) -> dict:
+        self._seq += 1
+        store = MessageStore(self.root / f"ingress-{self._seq}.db")
+        fetcher = MagicMock()
+        buffer = MessageBuffer(store=store, fetcher=fetcher)
+        event = SimpleNamespace(message=uni, message_id=101, get_user_id=lambda: "12345")
+        target = SimpleNamespace(id="54321", private=False)
+
+        with ExitStack() as stack:
+            for obj, key, value in (
+                (mcp, "message_buffer", buffer),
+                (mcp, "bot_registry", MagicMock()),
+                (alconna, "get_target", lambda: target),
+                (
+                    alconna.UniMessage,
+                    "generate_without_reply",
+                    lambda **kwargs: kwargs["event"].message,
+                ),
+                (perception, "get_adapter_name", lambda _adapter: "onebotv11"),
+                (perception, "sync_buddy_to_group", lambda *args: None),
+                (
+                    media,
+                    "load_file_config",
+                    lambda: FileConfig(max_files_per_message=max_files),
+                ),
+            ):
+                stack.enter_context(patch.object(obj, key, value))
+            asyncio.run(perception.handle_perception(bot, event))
+        rows = store.get_recent("onebotv11", "54321", 10)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        files = store.get_message_files([row.id]).get(row.id, [])
+        result = {
+            "id": row.id,
+            "content": row.content,
+            "files": files,
+            "automatic_downloads": fetcher.submit.call_count,
+        }
+        store.close()
+        return result
+
+    def test_file_and_video_share_one_total_budget(self) -> None:
+        uni = _msg(
+            alconna.File(name="a.pdf", url="https://example.invalid/a.pdf"),
+            alconna.Video(url=SECOND_URL),
+        )
+        result = self._ingest(uni, _FakeBot({}), max_files=1)
+        self.assertEqual(len(result["files"]), 1)
+        self.assertEqual(result["files"][0]["url"], "https://example.invalid/a.pdf")
+        # 超预算视频不拿 ref，占位退回普通 [视频]，且排在 ref 之后（段序一致）。
+        self.assertEqual(result["content"], f"[文件 m:{result['id']}#f0:a.pdf] [视频]")
+        self.assertEqual(result["automatic_downloads"], 0)
+
+    def test_overflow_plain_videos_keep_plain_placeholder(self) -> None:
+        uni = _msg(
+            alconna.Video(url=SECOND_URL),
+            alconna.Video(url=THIRD_URL),
+        )
+        result = self._ingest(uni, _FakeBot({}), max_files=1)
+        self.assertEqual(len(result["files"]), 1)
+        self.assertEqual(result["files"][0]["url"], SECOND_URL)
+        self.assertEqual(result["content"], f"[视频 m:{result['id']}#f0] [视频]")
+
+    def test_forward_videos_share_remaining_budget(self) -> None:
+        bot = _FakeBot(
+            _forward_payload(_video_seg(SECOND_URL), _video_seg(THIRD_URL))
+        )
+        result = self._ingest(_msg(alconna.Reference(id="fwd-cap")), bot, max_files=1)
+        self.assertEqual(len(result["files"]), 1)
+        self.assertEqual(result["files"][0]["url"], SECOND_URL)
+        self.assertTrue(result["content"].endswith(f"[视频 m:{result['id']}#f0]"))
+        self.assertNotIn("#f1", result["content"])
+
+    def test_video_without_url_only_message_still_stored(self) -> None:
+        # 无 url 的视频只能出普通 [视频]；空内容闸门不能把这类消息丢掉。
+        result = self._ingest(_msg(alconna.Video(id="tg-file-id")), _FakeBot({}), max_files=1)
+        self.assertEqual(result["files"], [])
+        self.assertEqual(result["content"], "[视频]")
+
+    def test_ordinary_file_control_still_registers(self) -> None:
+        uni = _msg(alconna.File(name="a.pdf", url="https://example.invalid/a.pdf"))
+        result = self._ingest(uni, _FakeBot({}), max_files=1)
+        self.assertEqual(len(result["files"]), 1)
+        self.assertIn(f"[文件 m:{result['id']}#f0:a.pdf]", result["content"])
+
+    def test_ingress_and_main_path_agree_on_forward_video_positions(self) -> None:
+        """R1 真实链路：入库行的 url 与主路径块内 ref 位置必须指同一段。"""
+        bot = _FakeBot(_forward_payload(_video_seg(None), _video_seg(SECOND_URL)))
+        uni = _msg(alconna.Reference(id="fwd-position"))
+        result = self._ingest(uni, bot, max_files=4)
+        self.assertEqual([row["url"] for row in result["files"]], [SECOND_URL])
+        self.assertEqual(result["files"][0]["idx"], 0)
+
+        block, _images, videos = _extract_forward(
+            _msg(alconna.Reference(id="fwd-position")),
+            _FakeBot(_forward_payload(_video_seg(None), _video_seg(SECOND_URL))),
+            number_base=0,
+            file_message_id=result["id"],
+        )
+        self.assertEqual([e["url"] for e in videos], [SECOND_URL])
+        self.assertIn(f"[视频][视频 m:{result['id']}#f0]", block)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ from .message_media import (
     _collect_at_targets,
     _collect_file_placeholders,
     _collect_nontext_placeholders,
+    _collect_video_placeholders,
     _compose_quote_prefix,
     _extract_file_entries,
     _extract_forward_full,
@@ -30,6 +31,7 @@ from .message_media import (
     _extract_replied_media,
     _extract_sticker_urls,
     _forward_full_for_store,
+    _remaining_file_slots,
     _summarize_forward,
 )
 
@@ -134,8 +136,12 @@ async def handle_perception(bot: Bot, event: Event):
     for entry in file_entries:
         entry["qq_message_id"] = qq_message_id
 
-    # B-0: 非文本段占位；文件标签等入库拿到真实 db id 后单独补写。
-    nontext_placeholders = _collect_nontext_placeholders(uni_msg, include_files=False)
+    # B-0: 非文本段占位；文件/视频标签等入库拿到真实 db id 后单独补写。
+    # 视频占位与文件 ref 同一编号组，压到落库后一起追加，保持「ref → 未登记占位」次序。
+    nontext_placeholders = _collect_nontext_placeholders(
+        uni_msg, file_entries=file_entries, include_files=False, include_videos=False
+    )
+    video_placeholders = _collect_video_placeholders(uni_msg, file_entries)
     if nontext_placeholders:
         suffix = " ".join(nontext_placeholders)
         msg_text = (msg_text + " " + suffix) if msg_text else suffix
@@ -157,6 +163,7 @@ async def handle_perception(bot: Bot, event: Event):
     forward_full, forward_image_urls, forward_video_entries = await _extract_forward_full(
         uni_msg, bot, adapter_name=adapter_name, number_base=forward_base,
         file_idx_base=len(file_entries),
+        file_slots=_remaining_file_slots(len(file_entries)),
     )
     # 合并转发里的视频与文件/普通视频共用 m:<mid>#f<idx> 编号：落库前先接在
     # 本条消息已有引用行之后，落库后由 _collect_file_placeholders 统一补占位。
@@ -166,7 +173,7 @@ async def handle_perception(bot: Bot, event: Event):
         summary = _summarize_forward(forward_full)
         msg_text = f"{msg_text}\n{summary}" if msg_text else summary
 
-    if not msg_text and not image_urls and not quote_image_urls and not forward_image_urls and not file_entries:
+    if not msg_text and not image_urls and not quote_image_urls and not forward_image_urls and not file_entries and not video_placeholders:
         return
 
     # 引用前缀与主 handler 同源调
@@ -200,11 +207,15 @@ async def handle_perception(bot: Bot, event: Event):
         qq_message_id=qq_message_id,
     )
     _mcp.message_buffer.append(buffered)
-    if file_entries and buffered.id is not None:
-        labels = _collect_file_placeholders(file_entries, buffered.id)
-        suffix = " ".join(labels)
-        buffered.content = f"{buffered.content} {suffix}".strip() if buffered.content else suffix
-        _mcp.message_buffer.update_content(buffered.id, buffered.content)
+    if buffered.id is not None:
+        suffix_parts: list[str] = []
+        if file_entries:
+            suffix_parts.extend(_collect_file_placeholders(file_entries, buffered.id))
+        suffix_parts.extend(video_placeholders)
+        if suffix_parts:
+            suffix = " ".join(suffix_parts)
+            buffered.content = f"{buffered.content} {suffix}".strip() if buffered.content else suffix
+            _mcp.message_buffer.update_content(buffered.id, buffered.content)
     # B 方案:入库即挂号,主 handler 凭同一 event 的 message_id 领真实 db id
     _register_event_db_id(adapter_name, getattr(event, "message_id", None), buffered.id)
 
