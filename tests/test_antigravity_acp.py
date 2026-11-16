@@ -173,6 +173,11 @@ class FakeACPBase(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self._tmp.cleanup)
         self.tmp = Path(self._tmp.name)
         self.log_path = self.tmp / "acp.log"
+        # 沙箱常开：把缓存工作区与 agy 持久设置钉在临时目录，
+        # 既不碰真实 ~/.cache／~/.gemini，也让这里的 argv 断言保持「未追加 --sandbox」。
+        self.sandbox_shell = self.tmp / "shell-workspace"
+        self.agy_settings = self.tmp / "agy-settings.json"
+        self.agy_settings.write_text('{"enableTerminalSandbox": true}', encoding="utf-8")
         self.store = SessionKeyStore(self.tmp / "session_keys.db")
         self.addCleanup(self.store.close)
         self._clients = []
@@ -195,6 +200,8 @@ class FakeACPBase(unittest.IsolatedAsyncioTestCase):
             agent=kwargs.pop("agent", ""),
             prompt_timeout=kwargs.pop("prompt_timeout", 5.0),
             rpc_timeout=kwargs.pop("rpc_timeout", 5.0),
+            sandbox_shell_dir=kwargs.pop("sandbox_shell_dir", self.sandbox_shell),
+            agy_settings_file=kwargs.pop("agy_settings_file", self.agy_settings),
             **kwargs,
         )
         self._clients.append(client)
@@ -226,6 +233,14 @@ class FakeACPBase(unittest.IsolatedAsyncioTestCase):
 
     def entries(self, method: str) -> list[dict]:
         return [item for item in self.log() if item.get("method") == method]
+
+    def append_text(self, system_prompt: str) -> str:
+        """系统提示的实际落点：沙箱常开，尾部总带一句实际工作区说明。"""
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
+            append_workspace_notice,
+        )
+
+        return append_workspace_notice(system_prompt, self.sandbox_shell)
 
 
 class ACPAgentSpawnTests(FakeACPBase):
@@ -311,7 +326,8 @@ class ACPHandshakeTests(FakeACPBase):
         new = self.entries("session/new")[0]
         self.assertEqual(new["params"]["cwd"], str(self.tmp))
         self.assertEqual(
-            new["params"]["_meta"]["antigravity"]["systemPrompt"]["append"], "SYS-ONE"
+            new["params"]["_meta"]["antigravity"]["systemPrompt"]["append"],
+            self.append_text("SYS-ONE"),
         )
         # 标准 ACP systemPrompt 字段实测不生效，禁止拿它替代 _meta 扩展。
         self.assertNotIn("systemPrompt", new["params"])
@@ -319,7 +335,7 @@ class ACPHandshakeTests(FakeACPBase):
         record = self.store.load_acp_session("k1")
         self.assertIsNotNone(record)
         acp_session_id, system_hash, model = record
-        self.assertEqual(system_hash, sha("SYS-ONE"))
+        self.assertEqual(system_hash, sha(self.append_text("SYS-ONE")))
         self.assertEqual(model, "")
 
         prompt = self.entries("session/prompt")[0]
@@ -412,9 +428,12 @@ class ACPResumeTests(FakeACPBase):
         self.assertEqual(len(self.entries("session/new")), 1)
         resume = self.entries("session/resume")[0]
         self.assertEqual(
-            resume["params"]["_meta"]["antigravity"]["systemPrompt"]["append"], "SYS-B"
+            resume["params"]["_meta"]["antigravity"]["systemPrompt"]["append"],
+            self.append_text("SYS-B"),
         )
-        self.assertEqual(self.store.load_acp_session("k1")[1], sha("SYS-B"))
+        self.assertEqual(
+            self.store.load_acp_session("k1")[1], sha(self.append_text("SYS-B"))
+        )
 
     async def test_stale_resume_falls_back_to_a_new_session(self) -> None:
         client = self.make_client()

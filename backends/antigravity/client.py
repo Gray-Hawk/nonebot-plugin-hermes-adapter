@@ -27,9 +27,12 @@ from ...core.storage.session_key_store import SessionKeyStore
 DEFAULT_ACP_ARGS: tuple[str, ...] = ("acp", "--process-per-session")
 _CLIENT_INFO = {"name": "nonebot-acp-client", "version": "0.1.0"}
 
-# 终端沙箱绕行（2026-11-16 官方 agy 1.5.9 实测）：ACP argv 里带 `--sandbox` 才是
-# opt-in——直接用真实命令行参数本身判定，不另造 sandbox 专用布尔开关。
+# 终端沙箱（2026-11-16 官方 agy 1.5.9 实测）：插件 ACP 侧统一保证沙箱生效，没有
+# 关闭分支。唯一区别是生效来源——agy 持久设置 `enableTerminalSandbox: true` 时直接
+# 复用，否则由插件在 argv 里补 `--sandbox`；不另造 sandbox 专用布尔开关。
 SANDBOX_FLAG = "--sandbox"
+# agy 持久设置（settings.json 顶层键）里的终端沙箱开关。
+SANDBOX_SETTING_KEY = "enableTerminalSandbox"
 # 受控 BASH_ENV 文件名：生成在原 ACP workspace 内（沙箱里是只读 cwd），
 # 不放可写缓存，避免 agent 自改后续启动脚本。
 SANDBOX_BASH_ENV_NAME = ".acp-sandbox-bash-env"
@@ -112,13 +115,85 @@ def build_acp_args(cli_args: Sequence[str], agent: str) -> tuple[str, ...]:
     return (*args, "--agent", name)
 
 
-def sandbox_enabled(cli_args: Sequence[str]) -> bool:
-    """ACP 终端沙箱是否开启：只认 argv 里精确的 `--sandbox` 一项。"""
-    return SANDBOX_FLAG in tuple(cli_args)
+def _option_value(args: Sequence[str], *names: str) -> str:
+    """从 argv 里取 `--name value` / `--name=value` 的值；没有返回空串。"""
+    items = list(args)
+    for index, item in enumerate(items):
+        for name in names:
+            if item == name and index + 1 < len(items):
+                return items[index + 1]
+            prefix = f"{name}="
+            if item.startswith(prefix):
+                return item[len(prefix) :]
+    return ""
+
+
+def agy_settings_path(cli_args: Sequence[str] = ()) -> Path:
+    """agy 持久 settings.json 的实际路径（与 `agy acp` 的目录口径一致）。
+
+    官方默认 `~/.gemini/antigravity-cli/settings.json`；`--gemini-dir`／
+    `--app-data-dir`（含环境变量）会改目录，插件读设置时跟着走，否则会读到错的文件
+    而悄悄把沙箱行为判反。
+    """
+    gemini_dir = _option_value(cli_args, "--gemini-dir", "--gemini_dir")
+    if not gemini_dir:
+        gemini_dir = str(os.environ.get("ANTIGRAVITY_GEMINI_DIR") or "").strip() or ".gemini"
+    app_dir = _option_value(cli_args, "--app-data-dir", "--app_data_dir")
+    if not app_dir:
+        app_dir = (
+            str(os.environ.get("ANTIGRAVITY_APP_DATA_DIR") or "").strip()
+            or "antigravity-cli"
+        )
+    base = Path(gemini_dir).expanduser()
+    if not base.is_absolute():
+        base = Path.home() / base
+    return base / app_dir / "settings.json"
+
+
+def persisted_sandbox_enabled(settings_path: Path) -> bool:
+    """agy 持久设置 `enableTerminalSandbox` 是否为 true。
+
+    只认 JSON 里精确的 `true`：文件缺失、不是对象、坏 JSON、false、缺键都按「未开启」
+    处理（这时插件补 `--sandbox`）。本函数只读，绝不改写 agy settings。
+    """
+    try:
+        data = json.loads(Path(settings_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get(SANDBOX_SETTING_KEY) is True
+
+
+def _sandbox_explicitly_off(args: Sequence[str]) -> bool:
+    """argv 里是否有 `--sandbox=false` 这类显式关闭（Go 布尔开关形态）。"""
+    for item in args:
+        if item.startswith(f"{SANDBOX_FLAG}="):
+            value = item.split("=", 1)[1].strip().lower()
+            if value in {"false", "0", "f"}:
+                return True
+    return False
+
+
+def effective_sandbox_args(
+    cli_args: Sequence[str], persisted_sandbox: bool
+) -> tuple[tuple[str, ...], bool]:
+    """实际喂给 `agy acp` 的 argv，以及沙箱是否靠 agy 持久设置生效。
+
+    插件侧统一保证沙箱生效，三条路互斥且不重复：argv 里已有精确 `--sandbox`（用户经
+    `AGENT_ANTIGRAVITY_ARGS` 显式给的通用参数）原样保留；持久设置为 true 直接复用；
+    其余（false／缺省／读不到）由插件追加一项 `--sandbox`。`--sandbox=false` 这种显式
+    关闭不属于「通用参数」范畴——沙箱没有关闭分支，照样补一项（后者覆盖前者）。
+    """
+    args = tuple(cli_args)
+    explicit_off = _sandbox_explicitly_off(args)
+    if SANDBOX_FLAG in args and not explicit_off:
+        return args, False
+    if persisted_sandbox and SANDBOX_FLAG not in args and not explicit_off:
+        return args, True
+    return (*args, SANDBOX_FLAG), False
 
 
 def sandbox_shell_workspace() -> Path:
-    """沙箱模式下真正可写的 shell 工作区。
+    """真正可写的 shell 工作区（ACP 沙箱常开，所以每次启动都用它）。
 
     固定在运行用户 `~/.cache/agent-adapter/acp-workspace`：`~/.cache` 未被声明为
     session cwd／additionalDirectories，沙箱不会把它挂成只读；而声明成工作区根会
@@ -251,6 +326,7 @@ class AntigravityACPClient:
         rpc_timeout: float = 60.0,
         permission_timeout: float | None = None,
         sandbox_shell_dir: Path | None = None,
+        agy_settings_file: Path | None = None,
     ) -> None:
         self._cli_path = cli_path or "agy"
         self._cli_args = tuple(DEFAULT_ACP_ARGS if cli_args is None else cli_args)
@@ -259,18 +335,25 @@ class AntigravityACPClient:
         # 只能用官方命令行参数显式指定，空串保持官方默认 agent。
         self._agent = (agent or "").strip()
         self._workspace = Path(workspace)
-        # 终端沙箱绕过：只在 argv 带 `--sandbox` 时生效，缺省完全不动 env／文件／提示词。
-        self._sandbox = sandbox_enabled(self._cli_args)
+        # 终端沙箱常开：agy 持久设置 true 时复用（不追加 --sandbox），否则插件补一项。
+        # agy_settings_file 只给测试注入隔离设置；生产按 agy 的目录口径现读。
+        self._agy_settings_file = (
+            Path(agy_settings_file)
+            if agy_settings_file is not None
+            else agy_settings_path(self._cli_args)
+        )
+        self._persisted_sandbox = persisted_sandbox_enabled(self._agy_settings_file)
+        self._effective_cli_args, self._sandbox_reused = effective_sandbox_args(
+            self._cli_args, self._persisted_sandbox
+        )
         # sandbox_shell_dir 只给测试注入隔离目录；生产走运行用户 ~/.cache 的固定子目录。
         self._sandbox_shell = (
             Path(sandbox_shell_dir)
             if sandbox_shell_dir is not None
             else sandbox_shell_workspace()
         )
-        # 受控 BASH_ENV 落在原 ACP workspace（沙箱只读 cwd）里；非 sandbox 不生成。
-        self._bash_env: Path | None = (
-            self._workspace / SANDBOX_BASH_ENV_NAME if self._sandbox else None
-        )
+        # 受控 BASH_ENV 落在原 ACP workspace（沙箱只读 cwd）里，每次启动重写。
+        self._bash_env = self._workspace / SANDBOX_BASH_ENV_NAME
         self._prompt_timeout = float(prompt_timeout)
         self._rpc_timeout = float(rpc_timeout)
         # None = 现读既有审批过期秒数（与 /approve 同源），测试可注入更短窗口。
@@ -303,17 +386,15 @@ class AntigravityACPClient:
 
     # --- 进程与握手 -------------------------------------------------------
 
-    def _prepare_sandbox_env(self) -> dict[str, str] | None:
-        """sandbox 模式的启动准备：创建可写 shell 工作区 + 生成受控 BASH_ENV。
+    def _prepare_sandbox_env(self) -> dict[str, str]:
+        """启动准备：创建可写 shell 工作区 + 重写受控 BASH_ENV，返回子进程 env。
 
-        返回子进程 env 覆盖（仅 sandbox 模式）；缺省返回 None = 完全继承父进程环境，
-        与改造前的启动行为逐字节一致。
+        ACP 沙箱常开，所以每次拉起进程都做这三件事：缓存工作区必须已存在（BASH_ENV
+        里 `cd` 的目标），受控文件每次重写（内容只有一行 `cd`，agent 改不动后续启动
+        脚本）。BASH_ENV 始终显式传给 agy 子进程，其余环境原样继承。
         """
-        if not self._sandbox or self._bash_env is None:
-            return None
         try:
             self._sandbox_shell.mkdir(parents=True, exist_ok=True)
-            # 内容只有一行 cd：文件在沙箱只读 cwd 内，agent 改不动后续启动脚本。
             self._bash_env.write_text(
                 f"cd {shlex.quote(str(self._sandbox_shell))}\n", encoding="utf-8"
             )
@@ -326,7 +407,7 @@ class AntigravityACPClient:
             if self._proc is not None and self._proc.returncode is None:
                 return
             self._workspace.mkdir(parents=True, exist_ok=True)
-            argv = [self._cli_path, *build_acp_args(self._cli_args, self._agent)]
+            argv = [self._cli_path, *build_acp_args(self._effective_cli_args, self._agent)]
             env = self._prepare_sandbox_env()
             try:
                 self._proc = await asyncio.create_subprocess_exec(
@@ -348,11 +429,16 @@ class AntigravityACPClient:
                 f"[HERMES antigravity] ACP 进程已启动 pid={self._proc.pid} "
                 f"workspace={self._workspace}"
             )
-            if env is not None:
-                logger.info(
-                    f"[HERMES antigravity] ACP 沙箱模式 shell 工作区={self._sandbox_shell}"
-                    f" bash_env={self._bash_env}"
-                )
+            if self._sandbox_reused:
+                source = "agy 持久设置"
+            elif SANDBOX_FLAG in self._cli_args:
+                source = "AGENT_ANTIGRAVITY_ARGS 显式"
+            else:
+                source = "插件补 --sandbox"
+            logger.info(
+                f"[HERMES antigravity] ACP 沙箱 shell 工作区={self._sandbox_shell}"
+                f" bash_env={self._bash_env} 来源={source}"
+            )
             try:
                 await self._rpc(
                     "initialize",
@@ -1157,13 +1243,9 @@ class AntigravityACPClient:
                 prompt_text = ""
                 system_hash = ""
             else:
-                # sandbox 轮让原生文件工具知道实际可写工作区：复用同一条 `_meta` 追加链，
+                # 沙箱常开：让原生文件工具知道实际可写工作区。复用同一条 `_meta` 追加链，
                 # new／resume 共用这一份文本，缓存路径不进 additionalDirectories。
-                prompt_text = (
-                    append_workspace_notice(system_prompt, self._sandbox_shell)
-                    if self._sandbox
-                    else system_prompt
-                )
+                prompt_text = append_workspace_notice(system_prompt, self._sandbox_shell)
                 system_hash = system_prompt_hash(prompt_text)
             # 阶段2C1：本轮消息上下文对应的 MCP 定义；new/resume 传同一份。
             mcp_servers = mcp_servers_for_turn(turn_meta)

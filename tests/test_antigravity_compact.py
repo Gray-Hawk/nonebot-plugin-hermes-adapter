@@ -102,6 +102,10 @@ class _ACPCompactBase(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self._tmp.cleanup)
         self.tmp = Path(self._tmp.name)
         self.log_path = self.tmp / "wire.jsonl"
+        # 沙箱常开：缓存工作区与 agy 持久设置钉在临时目录（不碰真实 ~/.cache／~/.gemini）。
+        self.sandbox_shell = self.tmp / "shell-workspace"
+        self.agy_settings = self.tmp / "agy-settings.json"
+        self.agy_settings.write_text('{"enableTerminalSandbox": false}', encoding="utf-8")
         self.store = SessionKeyStore(self.tmp / "session_keys.db")
         self.addCleanup(self.store.close)
         self.clients = []
@@ -123,6 +127,8 @@ class _ACPCompactBase(unittest.IsolatedAsyncioTestCase):
             workspace=self.tmp,
             prompt_timeout=kwargs.pop("prompt_timeout", 5.0),
             rpc_timeout=kwargs.pop("rpc_timeout", 5.0),
+            sandbox_shell_dir=kwargs.pop("sandbox_shell_dir", self.sandbox_shell),
+            agy_settings_file=kwargs.pop("agy_settings_file", self.agy_settings),
             **kwargs,
         )
         self.clients.append(client)
@@ -139,6 +145,14 @@ class _ACPCompactBase(unittest.IsolatedAsyncioTestCase):
 
     def rows(self, method: str) -> list[dict]:
         return [item for item in self.wire() if item.get("method") == method]
+
+    def append_text(self, system_prompt: str) -> str:
+        """系统提示的实际落点：沙箱常开，尾部总带一句实际工作区说明。"""
+        from nonebot_plugin_agent_adapter.backends.antigravity.client import (
+            append_workspace_notice,
+        )
+
+        return append_workspace_notice(system_prompt, self.sandbox_shell)
 
     def group_meta(self) -> dict:
         return {
@@ -192,7 +206,9 @@ class ACPCompactWireTests(_ACPCompactBase):
         self.assertEqual(
             prompts[-1]["params"]["prompt"], [{"type": "text", "text": "/compact"}]
         )
-        self.assertEqual(self.store.load_acp_session("k1")[1], sha("SYS-A"))
+        self.assertEqual(
+            self.store.load_acp_session("k1")[1], sha(self.append_text("SYS-A"))
+        )
 
     async def test_compact_without_any_session_is_false_and_sends_no_rpc(self) -> None:
         client = self.make_client()
@@ -297,9 +313,12 @@ class ACPCompactWireTests(_ACPCompactBase):
         resume = self.rows("session/resume")
         self.assertEqual(len(resume), 2, resume)
         self.assertEqual(
-            resume[-1]["params"]["_meta"]["antigravity"]["systemPrompt"]["append"], "SYS-B"
+            resume[-1]["params"]["_meta"]["antigravity"]["systemPrompt"]["append"],
+            self.append_text("SYS-B"),
         )
-        self.assertEqual(self.store.load_acp_session("k1")[1], sha("SYS-B"))
+        self.assertEqual(
+            self.store.load_acp_session("k1")[1], sha(self.append_text("SYS-B"))
+        )
         prompts = self.rows("session/prompt")
         self.assertEqual(prompt_text(prompts[-1]), "two")
 

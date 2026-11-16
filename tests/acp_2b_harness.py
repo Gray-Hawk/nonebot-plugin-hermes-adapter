@@ -184,6 +184,11 @@ class ACPHandlerHarness(unittest.IsolatedAsyncioTestCase):
                 f"--chunk-delay={delay}",
             ]
         args += list(flags)
+        # 沙箱常开：把缓存工作区与 agy 持久设置钉在这棵临时目录里，
+        # 不碰真实 ~/.cache／~/.gemini；持久 true 时复用沙箱（argv 不追加 --sandbox）。
+        settings = self.base / "agy-settings.json"
+        if not settings.exists():
+            settings.write_text('{"enableTerminalSandbox": true}', encoding="utf-8")
         client = ag.AntigravityACPClient(
             cli_path=sys.executable,
             cli_args=args,
@@ -191,6 +196,8 @@ class ACPHandlerHarness(unittest.IsolatedAsyncioTestCase):
             prompt_timeout=10.0,
             rpc_timeout=5.0,
             permission_timeout=permission_timeout,
+            sandbox_shell_dir=self.base / "shell-workspace",
+            agy_settings_file=settings,
         )
         self.clients.append(client)
         self.stack.enter_context(patch.object(ag, "get_client", return_value=client))

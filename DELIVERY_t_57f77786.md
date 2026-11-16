@@ -1,5 +1,9 @@
 # DELIVERY t_57f77786 — ACP 沙箱缓存工作区 BASH_ENV 启动补丁
 
+> 口径已更新：本文件记录的「缺省零变化／仅 argv 含 `--sandbox` 时启用」已被主人 2026-11-16
+> 定案覆盖，现行契约见 `DELIVERY_t_dd244228.md`（沙箱在插件 ACP 侧常开、跟随 agy 持久
+> `enableTerminalSandbox`）。本文件仅作历史记录。
+
 分支 `wt/t_57f77786`（基线 `dev=28b95c3`）。把 2026-11-16 早晨实测通过的 ACP 沙箱
 PoC 转正：**只碰 antigravity ACP 后端**，主实例与 completions／runs／astrbot 后端一行未改。
 未合并、未部署、未上传，未跑真实 `agy` 模型（真实 agy 验收由主会话负责）。

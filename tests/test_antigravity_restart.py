@@ -139,7 +139,7 @@ class ProcessDeathMidTurnTests(RestartFixture):
         self.assertIsNotNone(record, "acp_sessions 行必须保留")
         session_id, system_hash, model = record
         self.assertTrue(session_id)
-        self.assertEqual(system_hash, sha("SYS"))
+        self.assertEqual(system_hash, sha(self.append_text("SYS")))
         self.assertEqual(model, "")
 
     async def test_dead_turn_has_no_result_frame_or_stop_reason(self) -> None:
@@ -265,7 +265,7 @@ class RestartResumeContractTests(RestartFixture):
         )
         self.assertEqual(self.entries("session/load"), [], "不得用 session/load 回灌")
         self.assertEqual(
-            store.load_acp_session(SESSION_KEY), (session_id, sha("SYS"), "")
+            store.load_acp_session(SESSION_KEY), (session_id, sha(self.append_text("SYS")), "")
         )
 
     async def test_restart_with_changed_system_prompt_appends_meta_only_that_turn(self) -> None:
@@ -282,9 +282,12 @@ class RestartResumeContractTests(RestartFixture):
         resume = self.entries("session/resume")
         self.assertEqual(len(resume), 1)
         self.assertEqual(
-            resume[0]["params"]["_meta"]["antigravity"]["systemPrompt"]["append"], "SYS-B"
+            resume[0]["params"]["_meta"]["antigravity"]["systemPrompt"]["append"],
+            self.append_text("SYS-B"),
         )
-        self.assertEqual(store.load_acp_session(SESSION_KEY)[1], sha("SYS-B"))
+        self.assertEqual(
+            store.load_acp_session(SESSION_KEY)[1], sha(self.append_text("SYS-B"))
+        )
 
         # 哈希已更新：下一轮同上下文 resume 不再带 _meta。
         await self.turn(

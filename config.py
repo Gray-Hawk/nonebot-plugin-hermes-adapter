@@ -44,7 +44,7 @@ class Config(BaseModel):
     """AGENT_ANTIGRAVITY_PERSONA：显式 ACP 自定义 agent 名（`agy --agent <名>`）；空串保持官方默认 agent。"""
 
     hermes_antigravity_args: str = Field(default="", alias="agent_antigravity_args")
-    """AGENT_ANTIGRAVITY_ARGS：追加给 `agy acp` 的额外命令行参数（空白分隔，如 `--sandbox`）；空串保持原命令行。"""
+    """AGENT_ANTIGRAVITY_ARGS：追加给 `agy acp` 的额外命令行参数（空白分隔，如 `--model x`）。它只是通用 argv 入口，不是沙箱开关——ACP 沙箱由插件统一保证（agy 持久 `enableTerminalSandbox` 为 true 时复用，否则补 `--sandbox`）。"""
 
     hermes_mcp_enabled: bool = Field(default=False, alias="agent_mcp_enabled")
     """AGENT_MCP_ENABLED：是否启动反向 MCP server。"""

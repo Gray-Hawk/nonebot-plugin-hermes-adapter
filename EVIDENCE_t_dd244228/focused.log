@@ -1,0 +1,579 @@
+11-16 12:33:49 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 12:33:49 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:153: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.test = self.testLoader.loadTestsFromNames(self.testNames,
+11-16 12:33:49 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 12:33:49 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+....11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61558 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpami7z_z4
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpami7z_z4/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpami7z_z4/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61560 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpwfzweuar
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpwfzweuar/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpwfzweuar/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61562 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp9mqi4xfp
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp9mqi4xfp/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp9mqi4xfp/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61564 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpnnwx7wya
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpnnwx7wya/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpnnwx7wya/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [SESSION] 会话已重置: onebotv11+private+10001 (generation=1)
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61567 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp79mae93_
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp79mae93_/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp79mae93_/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61569 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpxq4esdwn
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpxq4esdwn/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpxq4esdwn/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61571 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpam09o629/data/acp-workspace
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpam09o629/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpam09o629/data/acp-workspace/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61574 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpkttx98ln
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpkttx98ln/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpkttx98ln/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61576 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpuvahhrm5
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpuvahhrm5/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpuvahhrm5/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [SESSION] session key 前缀迁移: hermes-* -> antigravity-* (1 条)
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [SESSION] T1 全量播种: 1 个已知会话以开机时刻为活动基准
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61578 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpuvahhrm5
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpuvahhrm5/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpuvahhrm5/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61580 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpt_m_3cfg
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpt_m_3cfg/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpt_m_3cfg/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61582 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpgbcusgn1
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpgbcusgn1/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpgbcusgn1/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61584 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpcb3iur1_
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpcb3iur1_/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpcb3iur1_/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61586 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpb5t8sn0q
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpb5t8sn0q/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpb5t8sn0q/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61589 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmplngs3_hw
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmplngs3_hw/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmplngs3_hw/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61592 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp8ahvd_l_
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp8ahvd_l_/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp8ahvd_l_/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:49 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] session/resume 失败 code=-32602，重建会话
+...11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61594 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpz2lntooy
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpz2lntooy/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpz2lntooy/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61596 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpvppd42y5/data/nonebot_plugin_agent_adapter/antigravity-workspace
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpvppd42y5/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpvppd42y5/data/nonebot_plugin_agent_adapter/antigravity-workspace/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61598 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpvppd42y5/data/acp-workspace
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpvppd42y5/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpvppd42y5/data/acp-workspace/.acp-sandbox-bash-env 来源=agy 持久设置
+............11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61600 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp9namhwdp
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp9namhwdp/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp9namhwdp/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61602 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpm76_3ha0
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpm76_3ha0/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpm76_3ha0/.acp-sandbox-bash-env 来源=agy 持久设置
+..11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61604 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp8n3q1_b_
+11-16 12:33:49 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp8n3q1_b_/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp8n3q1_b_/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程结束 code=7
+11-16 12:33:50 [ERROR] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 调用失败 code=None: ACPProcessError
+..11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61606 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp2o7s0bzw
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp2o7s0bzw/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp2o7s0bzw/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [ERROR] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 调用失败 code=-32603: ACPError
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61608 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpg74r7f_u
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpg74r7f_u/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpg74r7f_u/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [ERROR] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 调用失败 code=None: ACPTimeoutError
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61610 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpb1rq40rs
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpb1rq40rs/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpb1rq40rs/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES] AGENT_PLUGIN_CUSTOM_DIR 指向的目录不可用: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-7e8oruog/config;定制功能(规则/群档案/媒体配置等)将回退内置默认
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61611 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-7e8oruog
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-7e8oruog/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-7e8oruog/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=17 wrote_history=True
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 跳过控制命令轮，回落正常消息链 session=sess-1
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 /compact session=antigravity-onebotv11+private+123
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES] /compress ACP 已压缩 session=antigravity-onebotv11+private+123
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=17 wrote_history=True
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61615 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-0ka339p9
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-0ka339p9/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-0ka339p9/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 /compact session=antigravity-onebotv11+private+123
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES] /compress ACP 已压缩 session=antigravity-onebotv11+private+123
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61618 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-sa4q3lwy
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-sa4q3lwy/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-sa4q3lwy/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='COMPACT-AGY-OUTPUT-MUST-NOT-SURFACE'
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 跳过控制命令轮，回落正常消息链 session=sess-1
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61620 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-dhkk9mth
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-dhkk9mth/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-dhkk9mth/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='COMPACT-AGY-OUTPUT-MUST-NOT-SURFACE'
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=12
+.Future exception was never retrieved
+future: <Future finished exception=ACPProcessError('agy acp 进程已退出 (code=-15)') created at /usr/lib/python3.13/asyncio/base_events.py:459>
+source_traceback: Object created at (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/usr/lib/python3.13/unittest/__main__.py", line 18, in <module>
+    main(module=None)
+  File "/usr/lib/python3.13/unittest/main.py", line 104, in __init__
+    self.runTests()
+  File "/usr/lib/python3.13/unittest/main.py", line 270, in runTests
+    self.result = testRunner.run(self.test)
+  File "/usr/lib/python3.13/unittest/runner.py", line 240, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/suite.py", line 84, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/suite.py", line 122, in run
+    test(result)
+  File "/usr/lib/python3.13/unittest/case.py", line 707, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.13/unittest/async_case.py", line 135, in run
+    return super().run(result)
+  File "/usr/lib/python3.13/unittest/case.py", line 651, in run
+    self._callTestMethod(testMethod)
+  File "/usr/lib/python3.13/unittest/async_case.py", line 94, in _callTestMethod
+    if self._callMaybeAsync(method) is not None:
+  File "/usr/lib/python3.13/unittest/async_case.py", line 116, in _callMaybeAsync
+    return self._asyncioRunner.run(
+  File "/usr/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 712, in run_until_complete
+    self.run_forever()
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 683, in run_forever
+    self._run_once()
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 2034, in _run_once
+    handle._run()
+  File "/usr/lib/python3.13/asyncio/events.py", line 89, in _run
+    self._context.run(self._callback, *self._args)
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/t_dd244228/tests/test_antigravity_compact.py", line 481, in test_ordinary_turn_still_accepts_steer
+    ok = await client.steer(session_key="k1", text="§\nSTEER-OK\n§")
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/t_dd244228/backends/antigravity/client.py", line 1453, in steer
+    await self._submit_prompt(turn, text)
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/t_dd244228/backends/antigravity/client.py", line 1051, in _submit_prompt
+    future: asyncio.Future = loop.create_future()
+  File "/usr/lib/python3.13/asyncio/base_events.py", line 459, in create_future
+    return futures.Future(loop=self)
+nonebot_plugin_agent_adapter.backends.antigravity.client.ACPProcessError: agy acp 进程已退出 (code=-15)
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61623 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-kdocdtdx
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-kdocdtdx/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-kdocdtdx/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='COMPACT-AGY-OUTPUT-MUST-NOT-SURFACE'
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 /compact session=k1
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61626 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-1_om4zvo
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-1_om4zvo/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-1_om4zvo/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='COMPACT-AGY-OUTPUT-MUST-NOT-SURFACE'
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 /compact session=k1
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61629 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-29zjnfqh
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-29zjnfqh/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-29zjnfqh/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18643/mcp bearer=yes
+11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='COMPACT-AGY-OUTPUT-MUST-NOT-SURFACE'
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18643/mcp bearer=yes
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 /compact session=k1
+..11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61632 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-5tjxlyr_
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-5tjxlyr_/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-5tjxlyr_/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='COMPACT-AGY-OUTPUT-MUST-NOT-SURFACE'
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 /compact session=k1
+11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES] 正文信封无效 reason=no_marker chars=35 preview='COMPACT-AGY-OUTPUT-MUST-NOT-SURFACE'
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61636 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-31zr0d_p
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-31zr0d_p/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-compact-31zr0d_p/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18643/mcp bearer=yes
+11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] /compact 会话已失效，不重建
+..11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61637 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-d4dr3u6x
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-d4dr3u6x/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-d4dr3u6x/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=35 wrote_history=True
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 /compact session=antigravity-onebotv11+private+123
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES] /compress ACP 已压缩 session=antigravity-onebotv11+private+123
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61640 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-t8kq34hv
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-t8kq34hv/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-t8kq34hv/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 /compact session=antigravity-onebotv11+private+123
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES] /compress ACP 已压缩 session=antigravity-onebotv11+private+123
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61643 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-95r90aww
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-95r90aww/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-95r90aww/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+...11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61645 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-aqyvup52
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-aqyvup52/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-aqyvup52/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 /compact session=antigravity-onebotv11+private+123
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES] /compress ACP 已压缩 session=antigravity-onebotv11+private+123
+.....11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61648 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp_mx0_ehn
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp_mx0_ehn/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp_mx0_ehn/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程结束 code=8
+11-16 12:33:50 [ERROR] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 调用失败 code=None: ACPProcessError
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61650 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmprp_ljvdh
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmprp_ljvdh/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmprp_ljvdh/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程结束 code=8
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61652 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpu23oknm4
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpu23oknm4/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpu23oknm4/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程结束 code=8
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61654 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpmdgna4ab
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpmdgna4ab/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpmdgna4ab/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程结束 code=8
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61656 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpmdgna4ab
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpmdgna4ab/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpmdgna4ab/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61658 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp1lrdhrok
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp1lrdhrok/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp1lrdhrok/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61660 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp1lrdhrok
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp1lrdhrok/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmp1lrdhrok/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61662 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpv2l92u75
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpv2l92u75/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpv2l92u75/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61664 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpv2l92u75
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpv2l92u75/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpv2l92u75/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61666 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpaqzr58d8
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpaqzr58d8/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpaqzr58d8/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61668 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpaqzr58d8
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpaqzr58d8/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/tmpaqzr58d8/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61672 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-jh0gy6b9/acp-workspace
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-jh0gy6b9/cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-jh0gy6b9/acp-workspace/.acp-sandbox-bash-env 来源=插件补 --sandbox
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61674 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-2j6iuxiw/acp-workspace
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-2j6iuxiw/cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-2j6iuxiw/acp-workspace/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61676 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-7pfmdrgh/acp-workspace
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-7pfmdrgh/cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-7pfmdrgh/acp-workspace/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 /compact session=k1
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61679 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-zco86llj/acp-workspace
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-zco86llj/cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-zco86llj/acp-workspace/.acp-sandbox-bash-env 来源=AGENT_ANTIGRAVITY_ARGS 显式
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61681 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-3cxasac1/acp-workspace
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-3cxasac1/cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-3cxasac1/acp-workspace/.acp-sandbox-bash-env 来源=AGENT_ANTIGRAVITY_ARGS 显式
+.11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61683 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-uj0s4739/acp-workspace
+11-16 12:33:50 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-uj0s4739/cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-uj0s4739/acp-workspace/.acp-sandbox-bash-env 来源=插件补 --sandbox
+.11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61685 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-9z9oyw4j/acp-workspace
+11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-9z9oyw4j/cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-9z9oyw4j/acp-workspace/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61689 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-68qjj14t/acp-workspace
+11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-68qjj14t/cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-68qjj14t/acp-workspace/.acp-sandbox-bash-env 来源=插件补 --sandbox
+.11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61691 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-wqzrkyb3/acp-workspace
+11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-wqzrkyb3/cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-wqzrkyb3/acp-workspace/.acp-sandbox-bash-env 来源=插件补 --sandbox
+.11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61693 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-_1nt9wmd/acp-workspace
+11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-_1nt9wmd/cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-_1nt9wmd/acp-workspace/.acp-sandbox-bash-env 来源=agy 持久设置
+.11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61695 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-oog_jw7o/acp-workspace
+11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-oog_jw7o/cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-sandbox-oog_jw7o/acp-workspace/.acp-sandbox-bash-env 来源=agy 持久设置
+...........11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61697 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-kupk_54a
+11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-kupk_54a/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+11-16 12:33:51 [WARNING] nonebot_plugin_agent_adapter | [HERMES] 正文信封无效 reason=missing_close chars=13 preview='TAIL-NO-CLOSE'
+11-16 12:33:51 [WARNING] nonebot_plugin_agent_adapter | [HERMES] 正文信封无效 reason=missing_close chars=13 preview='TAIL-NO-CLOSE'
+.11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61700 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-legr65ef
+11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-legr65ef/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+.11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61702 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-zgrqydxo
+11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-zgrqydxo/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+11-16 12:33:51 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+.11-16 12:33:52 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61704 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-p52_5_r6
+11-16 12:33:52 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-p52_5_r6/.acp-sandbox-bash-env 来源=插件补 --sandbox
+.11-16 12:33:52 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61707 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-9bsq1w01
+11-16 12:33:52 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-9bsq1w01/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:52 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+.11-16 12:33:52 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61709 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-gn1nd602
+11-16 12:33:52 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-gn1nd602/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:52 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+.11-16 12:33:53 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61711 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-equ6cmce
+11-16 12:33:53 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-equ6cmce/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:53 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=7
+..11-16 12:33:53 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61713 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-ijw3ixlc
+11-16 12:33:53 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-ijw3ixlc/.acp-sandbox-bash-env 来源=插件补 --sandbox
+.11-16 12:33:53 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61715 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-po8lka4o
+11-16 12:33:53 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-po8lka4o/.acp-sandbox-bash-env 来源=插件补 --sandbox
+.11-16 12:33:53 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61717 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-c0_tdzkn
+11-16 12:33:53 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-c0_tdzkn/.acp-sandbox-bash-env 来源=插件补 --sandbox
+.11-16 12:33:54 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61720 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-1vzsmsop
+11-16 12:33:54 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-1vzsmsop/.acp-sandbox-bash-env 来源=插件补 --sandbox
+.11-16 12:33:54 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61722 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-8rhr9f1o
+11-16 12:33:54 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-8rhr9f1o/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:54 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+11-16 12:33:54 [INFO] nonebot_plugin_agent_adapter | [SESSION] 会话已重置: onebotv11+private+123 (generation=1)
+11-16 12:33:54 [INFO] nonebot_plugin_agent_adapter | [OUTBOUND] 交付组件按台账取消出站 run= component=primary: stale generation: run=-
+11-16 12:33:54 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=False text_len=4 wrote_history=False
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61724 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-8rhr9f1o
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-8rhr9f1o/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+.11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61726 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-fs_8pe45
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-fs_8pe45/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=68
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES steer] ACP 接管在跑轮 (scope=private:123) rows=1 len=68
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=68
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES steer] ACP 接管在跑轮 (scope=private:123) rows=1 len=68
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-fs_8pe45/config/memory/onebotv11/groups/100.md
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61730 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-fs_8pe45
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-fs_8pe45/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=100
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=100
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=100
+11-16 12:33:55 [INFO] nonebot_plugin_agent_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=100
+11-16 12:33:56 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=4 wrote_history=True
+11-16 12:33:56 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=4 wrote_history=True
+11-16 12:33:56 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61732 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-fs_8pe45
+11-16 12:33:56 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-fs_8pe45/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:56 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] session/resume 失败 code=-32602，重建会话
+11-16 12:33:56 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:56 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=100
+11-16 12:33:56 [INFO] nonebot_plugin_agent_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=100
+11-16 12:33:56 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=100
+11-16 12:33:56 [INFO] nonebot_plugin_agent_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=100
+11-16 12:33:56 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=4 wrote_history=True
+11-16 12:33:56 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=4 wrote_history=True
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+.11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-vm6bxlaz/config/memory/onebotv11/groups/100.md
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61736 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-vm6bxlaz
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-vm6bxlaz/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+.11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-lf7vhgvi/config/memory/onebotv11/groups/100.md
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61738 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-lf7vhgvi
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-lf7vhgvi/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=98
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=98
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=98
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=98
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+.11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61742 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-v8a_kg5y
+11-16 12:33:57 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-v8a_kg5y/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=70
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES steer] ACP 接管在跑轮 (scope=private:123) rows=1 len=70
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-v8a_kg5y/config/memory/onebotv11/groups/100.md
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61744 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-v8a_kg5y
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-v8a_kg5y/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=102
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=102
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61747 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-v8a_kg5y
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-v8a_kg5y/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:58 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] session/resume 失败 code=-32602，重建会话
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=102
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES steer] ACP 接管在跑轮 (scope=group:100) rows=1 len=102
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=2 salvaged=False
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+.11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61749 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-j3uhu0nn
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-j3uhu0nn/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=68
+11-16 12:33:58 [INFO] nonebot_plugin_agent_adapter | [HERMES steer] ACP 接管在跑轮 (scope=private:123) rows=1 len=68
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+.11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61751 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-0vh7qntz
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-0vh7qntz/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+.11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61753 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-dfuiio7r
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-stream-handler-dfuiio7r/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES passive] 终态没有正文 (user=123)
+.11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES group-profile] 自动创建群档案: /home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-config-mkp2tb6v/memory/onebotv11/groups/100.md
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61755 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-h2tjc2fm
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-h2tjc2fm/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:59 [WARNING] nonebot_plugin_agent_adapter | [HERMES] /clear 未取到命令 db id，本轮不设置前文截断 (adapter=onebotv11)
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [SESSION] 会话已重置: onebotv11+group+100 (generation=1)
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [OUTBOUND] 交付组件按台账取消出站 run= component=primary: stale generation: run=-
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=False text_len=3 wrote_history=False
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=3 wrote_history=True
+.11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61758 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-yoj2qeao
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-yoj2qeao/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:59 [WARNING] nonebot_plugin_agent_adapter | [HERMES] /clear 未取到命令 db id，本轮不设置前文截断 (adapter=onebotv11)
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [SESSION] 会话已重置: onebotv11+group+100 (generation=1)
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [OUTBOUND] 交付组件按台账取消出站 run= component=primary: stale generation: run=-
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=False text_len=3 wrote_history=False
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=3 wrote_history=True
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+.11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61761 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-ora5ytmh
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-ora5ytmh/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+.11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61763 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-5knop97i
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-clear-fence-5knop97i/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [SESSION] 会话已重置: onebotv11+private+123 (generation=1)
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [OUTBOUND] 交付组件按台账取消出站 run= component=primary: stale generation: run=-
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=False text_len=3 wrote_history=False
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+.11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61766 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-qbreapws
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-qbreapws/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:33:59 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+.11-16 12:34:00 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61769 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-_h2y_dqv
+11-16 12:34:00 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-_h2y_dqv/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:34:00 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+.11-16 12:34:00 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61771 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-1iu2fexv
+11-16 12:34:00 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-1iu2fexv/.acp-sandbox-bash-env 来源=插件补 --sandbox
+.11-16 12:34:00 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61773 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-j7edpz_o
+11-16 12:34:00 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-j7edpz_o/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:34:00 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+.11-16 12:34:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61776 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-sl7l0eyf
+11-16 12:34:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-sl7l0eyf/.acp-sandbox-bash-env 来源=插件补 --sandbox
+.11-16 12:34:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61779 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-_kg0py2i
+11-16 12:34:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-cancel-_kg0py2i/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:34:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=1
+11-16 12:34:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] steer 已接管在跑轮 session=sess-1 len=1
+11-16 12:34:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+.11-16 12:34:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61781 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-2wqxaqx4
+11-16 12:34:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-2wqxaqx4/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-2wqxaqx4/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:01 [ERROR] nonebot_plugin_agent_adapter | [HERMES antigravity] 流式正文单位不合法 reason=body_overflow
+11-16 12:34:01 [ERROR] nonebot_plugin_agent_adapter | [HERMES antigravity] 终态正文单位不合法 reason=body_overflow
+11-16 12:34:01 [ERROR] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 调用失败 code=None: ACPError
+11-16 12:34:01 [WARNING] nonebot_plugin_agent_adapter | [HERMES passive] transport error fallback (group=None, is_private=True, fallback=friendly_text); upstream raw_text suppressed (len=43)
+.11-16 12:34:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61783 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-5ud7fgpk
+11-16 12:34:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-5ud7fgpk/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-5ud7fgpk/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:01 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:34:01 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-16 12:34:02 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-16 12:34:02 [INFO] nonebot_plugin_agent_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+.11-16 12:34:02 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61786 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-bl2qxi06
+11-16 12:34:02 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-bl2qxi06/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-bl2qxi06/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:02 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:34:02 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-16 12:34:02 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-16 12:34:02 [INFO] nonebot_plugin_agent_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+11-16 12:34:02 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:34:02 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+.11-16 12:34:02 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61791 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-n7_u03li
+11-16 12:34:02 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-n7_u03li/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-n7_u03li/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:02 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=4 wrote_history=True
+11-16 12:34:03 [ERROR] nonebot_plugin_agent_adapter | [HERMES antigravity] 流式正文单位不合法 reason=body_overflow
+11-16 12:34:03 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-16 12:34:03 [ERROR] nonebot_plugin_agent_adapter | [HERMES antigravity] 取消收尾时忽略正文单位错误 reason=body_overflow
+11-16 12:34:03 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-16 12:34:03 [INFO] nonebot_plugin_agent_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+.11-16 12:34:03 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61794 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-h5gr3nmm
+11-16 12:34:03 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-h5gr3nmm/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-h5gr3nmm/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:03 [ERROR] nonebot_plugin_agent_adapter | [HERMES antigravity] 流式正文单位不合法 reason=body_overflow
+11-16 12:34:03 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-16 12:34:03 [ERROR] nonebot_plugin_agent_adapter | [HERMES antigravity] 取消收尾时忽略正文单位错误 reason=body_overflow
+11-16 12:34:03 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-16 12:34:03 [INFO] nonebot_plugin_agent_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+.11-16 12:34:03 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61796 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-xjbp_35v
+11-16 12:34:03 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-xjbp_35v/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-xjbp_35v/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:03 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=2 wrote_history=True
+11-16 12:34:03 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+..11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61798 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-t373dz8y
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-t373dz8y/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-t373dz8y/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES approval] 审批挂起 #1 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61800 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-ne5nazzk
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-ne5nazzk/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-ne5nazzk/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES approval] 审批挂起 #2 run=- backend=antigravity scope=群 100 通知管理员 1 人
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=3 wrote_history=True
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=3 wrote_history=True
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61802 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-e1d1jfe3
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-e1d1jfe3/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-e1d1jfe3/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES approval] 审批挂起 #3 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61804 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-vx2axlr8
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-vx2axlr8/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-vx2axlr8/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:04 [WARNING] nonebot_plugin_agent_adapter | [HERMES approval] 审批通知发送失败 admin=123: qq down
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES approval] 审批挂起 #4 run=- backend=antigravity scope=私聊 123 通知管理员 0 人
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61806 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-6pes42g3
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-6pes42g3/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-6pes42g3/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES approval] 审批挂起 #5 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61808 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-skrifv1c
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-skrifv1c/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-skrifv1c/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES approval] 审批挂起 #6 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61810 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-2q61u1n6
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-2q61u1n6/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-2q61u1n6/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES approval] 审批挂起 #7 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 已发送 session/cancel session=sess-1
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 本轮已被 /run-stop 取消
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES passive] turn 被终止,硬静默 (group=None is_private=True)
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61812 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-2q61u1n6
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-2q61u1n6/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-2q61u1n6/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES approval] 审批挂起 #8 run=- backend=antigravity scope=群 100 通知管理员 1 人
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=2 wrote_history=True
+.11-16 12:34:04 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限应答写入失败（请求保持挂起）
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61814 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-0zdwwulf
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-0zdwwulf/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61816 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-7m10zgi9
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-7m10zgi9/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61818 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-5_u_loye
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-5_u_loye/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限请求超时，已安全拒绝
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61820 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-elx4v5mu
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-elx4v5mu/.acp-sandbox-bash-env 来源=插件补 --sandbox
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61822 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-u1cy7sdi
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-u1cy7sdi/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61825 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-yl779uou
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-perm-yl779uou/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+...11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES approval] 从存档装回 1 条未过期挂起审批
+.....11-16 12:34:04 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限应答写入失败（请求保持挂起）
+11-16 12:34:04 [WARNING] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP 工具权限自动应答写帧失败 tool=mcp_nonebot-bridge_get_recent_messages（不登记人工审批）
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61827 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-perm-dzxiikin
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-perm-dzxiikin/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP 工具自动放行 tool=mcp_nonebot-bridge_get_recent_messages
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61829 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-perm-4jdkpff4
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-perm-4jdkpff4/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP 工具自动放行 tool=mcp_nonebot-bridge_get_message_images
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61831 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-perm-sbdyxutd
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-perm-sbdyxutd/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限已应答 choice=deny session=sess-1
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61833 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-1hxv99ce
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-1hxv99ce/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-1hxv99ce/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP 工具自动放行 tool=mcp_nonebot-bridge_get_recent_messages
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=100 private=False ok=True text_len=3 wrote_history=True
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] decision adapter=onebotv11 group=100 user=123 direct=True should_reply=True should_exit_active=None reply_text_len=3 salvaged=False
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES reactive] ephemeral turn spoke; active window opened (group=100)
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61835 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-drrqqh2h
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-drrqqh2h/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-drrqqh2h/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP 工具自动放行 tool=mcp_nonebot-bridge_get_recent_messages
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61837 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-dp38j3so
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-dp38j3so/shell-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp-2b-handler-dp38j3so/.acp-sandbox-bash-env 来源=agy 持久设置
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES approval] 审批挂起 #5 run=- backend=antigravity scope=私聊 123 通知管理员 1 人
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] 权限已应答 choice=once session=sess-1
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES acp live] 即时发送 adapter=onebotv11 group=None private=True ok=True text_len=3 wrote_history=True
+...11-16 12:34:04 [WARNING] nonebot_plugin_agent_adapter | [HERMES MCP] 拒绝越权操作 (onebotv11, 100) —— caller: unresolved caller
+11-16 12:34:04 [WARNING] nonebot_plugin_agent_adapter | [HERMES MCP] 拒绝未识别调用方读取私聊 (onebotv11, 123) —— caller: unresolved
+......11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61839 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-session-owco6p9t
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-session-owco6p9t/.acp-sandbox-bash-env 来源=插件补 --sandbox
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61841 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-session-cyh8_r8g
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-session-cyh8_r8g/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+.11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 进程已启动 pid=61844 workspace=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-session-vbubui5s
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] ACP 沙箱 shell 工作区=/home/neonsky/.cache/agent-adapter/acp-workspace bash_env=/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/acp2c1-session-vbubui5s/.acp-sandbox-bash-env 来源=插件补 --sandbox
+11-16 12:34:04 [INFO] nonebot_plugin_agent_adapter | [HERMES antigravity] MCP tools=get_recent_messages,get_message_images,get_message_files server=nonebot-bridge url=http://127.0.0.1:18877/mcp bearer=yes
+.....
+----------------------------------------------------------------------
+Ran 171 tests in 15.361s
+
+OK
