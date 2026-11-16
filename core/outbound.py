@@ -251,6 +251,16 @@ def _ob11_poke_segment(ptype: str, qq: str):
     return _Ob11MessageSegment("poke", {"type": ptype, "id": qq})
 
 
+def _is_self_poke_target(qq: str, self_id: str | None) -> bool:
+    """自戳判定按数字身份：`000999` 与 `999` 是同一个 QQ，不能只比字符串。"""
+    if self_id is None:
+        return False
+    try:
+        return int(qq) == int(str(self_id).strip())
+    except (TypeError, ValueError):
+        return qq == str(self_id)
+
+
 def _parse_inline_markers(
     text: str, *, self_id: str | None = None
 ) -> list[str | _InlineAt | _InlinePoke]:
@@ -278,7 +288,7 @@ def _parse_inline_markers(
     for match in _INLINE_POKE_MARKER_RE.finditer(text):
         ptype = match.group(1) or "1"
         qq = match.group(2)
-        if int(qq) == 0 or (self_id is not None and qq == str(self_id)):
+        if int(qq) == 0 or _is_self_poke_target(qq, self_id):
             # 0/自己不是合法戳一戳目标：不切断文本，原样留下。
             continue
         segment = _ob11_poke_segment(ptype, qq)
