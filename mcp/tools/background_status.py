@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Sequence
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -89,14 +89,29 @@ class GetBackgroundTasksResult(BaseModel):
     note: str = ""
 
 
-def _session_prefix(adapter: str, is_private: bool, target_id: str) -> str:
-    """会话在真实登记里的 origin_session_id 前缀（含 `-g<代际>` 变体）。"""
+def _session_prefixes(adapter: str, is_private: bool, target_id: str) -> list[str]:
+    """会话在真实登记里的 origin_session_id 前缀（含 `-g<代际>` 变体）。
+
+    session key 按真实后端命名：前缀取自 ``session_manager.session_key_prefixes()``
+    （当前后端在前）。Hermes 后端只有 `hermes-`；换成别的后端前缀时还要认升级前
+    登记的 `hermes-*`，否则老事件会被当成别人的。
+    """
+    from ...core.session import session_manager
+
     kind = "private" if is_private else "group"
-    return f"hermes-{adapter}+{kind}+{target_id}"
+    return [
+        f"{prefix}-{adapter}+{kind}+{target_id}"
+        for prefix in session_manager.session_key_prefixes()
+    ]
 
 
-def _belongs(origin_session_id: str, prefix: str) -> bool:
-    return origin_session_id == prefix or origin_session_id.startswith(prefix + "-g")
+def _belongs(origin_session_id: str, prefixes: str | Sequence[str]) -> bool:
+    if isinstance(prefixes, str):
+        prefixes = (prefixes,)
+    return any(
+        origin_session_id == prefix or origin_session_id.startswith(prefix + "-g")
+        for prefix in prefixes
+    )
 
 
 def _summary(event: dict) -> str:
@@ -106,6 +121,39 @@ def _summary(event: dict) -> str:
         return ""
     first = text.splitlines()[0].strip()
     return first if len(first) <= 120 else first[:120] + "…"
+
+
+def _collect_running(running_sources, *, prefixes: list[str], limit: int):
+    """按会话前缀聚合运行源（换过后端前缀时可能有两个真实前缀）。
+
+    单前缀时行为与 ``collect_running`` 完全一致；多前缀时逐前缀查、按
+    ``(source, task_id)`` 去重，读失败来源名也去重——不让一次换名前缀把旧登记算成别人的。
+    """
+    if len(prefixes) <= 1:
+        return collect_running(
+            running_sources, session_prefix=prefixes[0] if prefixes else "", limit=limit,
+        )
+    items: list[dict] = []
+    ok_sources: list[str] = []
+    errors: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for prefix in prefixes:
+        found, sources_ok, source_errors = collect_running(
+            running_sources, session_prefix=prefix, limit=limit,
+        )
+        for name in sources_ok:
+            if name not in ok_sources:
+                ok_sources.append(name)
+        for error in source_errors:
+            if error not in errors:
+                errors.append(error)
+        for item in found:
+            key = (str(item.get("source") or ""), str(item.get("task_id") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(item)
+    return items[:limit], ok_sources, errors
 
 
 def get_background_tasks_impl(
@@ -133,11 +181,12 @@ def get_background_tasks_impl(
     elif scope is None:
         return _fail("unresolved caller — the bridge could not identify this endpoint")
 
-    prefix = _session_prefix(inp.adapter, is_private, target_id)
+    prefixes = _session_prefixes(inp.adapter, is_private, target_id)
 
     # 运行中：真实运行源只读聚合；读不到就是「未知」，不是「没有」。
-    running_items, running_sources_ok, running_errors = collect_running(
-        running_sources, session_prefix=prefix, limit=limit,
+    # 换过后端前缀时还要认升级前的 hermes- 登记，按前缀各查一次再合并。
+    running_items, running_sources_ok, running_errors = _collect_running(
+        running_sources, prefixes=prefixes, limit=limit,
     )
     running = [
         BackgroundRunningItem(
@@ -165,7 +214,7 @@ def get_background_tasks_impl(
         else:
             for event in events:
                 origin = str(event.get("origin_session_id") or "")
-                if not _belongs(origin, prefix):
+                if not _belongs(origin, prefixes):
                     continue
                 reports.append(
                     BackgroundReportItem(

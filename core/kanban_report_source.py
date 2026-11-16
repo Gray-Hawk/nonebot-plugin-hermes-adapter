@@ -110,8 +110,13 @@ def _event_body(*, kind: str, task: dict, payload: dict) -> str:
 def _routable(session_id: str) -> bool:
     """会话键能否还原成 NB 路由（与信箱 route 解析同一份语法）。"""
     from .background_report_runtime import resolve_background_route
+    from .session import session_manager
 
-    return bool(session_id) and resolve_background_route(session_id, ()) is not None
+    if not session_id:
+        return False
+    return resolve_background_route(
+        session_id, (), prefixes=session_manager.session_key_prefixes()
+    ) is not None
 
 
 class KanbanReportSource:

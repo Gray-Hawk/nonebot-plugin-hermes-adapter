@@ -19,9 +19,16 @@ _DEFAULT_SOURCE_LABEL = "后台任务完成"
 
 
 def resolve_background_route(
-    origin_session_id: str, known_sessions: Iterable[tuple]
+    origin_session_id: str,
+    known_sessions: Iterable[tuple],
+    *,
+    prefixes: Iterable[str] = ("hermes",),
 ) -> dict[str, Any] | None:
-    """现会话用登记路由；T1 后旧 session key 从稳定事件身份还原目标。"""
+    """现会话用登记路由；T1 后旧 session key 从稳定事件身份还原目标。
+
+    session key 按真实后端命名：``prefixes`` 是**本会话可能出现的全部** key 前缀
+    （当前在后、升级前登记的旧前缀在后）。默认只有 ``hermes-``，即旧行为。
+    """
     for row in known_sessions:
         if len(row) == 6 and row[5] == origin_session_id:
             _, adapter, is_private, user_id, group_id, _ = row
@@ -29,8 +36,11 @@ def resolve_background_route(
                 "adapter_name": adapter, "is_private": bool(is_private),
                 "user_id": user_id, "group_id": group_id,
             }
+    joined = "|".join(re.escape(prefix) for prefix in prefixes if prefix)
+    if not joined:
+        return None
     match = re.fullmatch(
-        r"hermes-(?P<adapter>[^+]+)\+(?P<scope>private|group)\+"
+        rf"(?:{joined})-(?P<adapter>[^+]+)\+(?P<scope>private|group)\+"
         r"(?P<target>[^+]+?)(?:-g\d+)?",
         origin_session_id,
     )
@@ -108,7 +118,11 @@ class BackgroundCompletionGateway:
 async def _resolve_route(origin_session_id: str) -> dict | None:
     from .session import session_manager
 
-    return resolve_background_route(origin_session_id, session_manager.known_sessions())
+    return resolve_background_route(
+        origin_session_id,
+        session_manager.known_sessions(),
+        prefixes=session_manager.session_key_prefixes(),
+    )
 
 
 async def _wake(route: dict, text: str, source_event_id: str, source_kind: str = "subagent") -> str | None:
