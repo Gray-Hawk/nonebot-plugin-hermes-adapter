@@ -109,6 +109,19 @@ class OutboundPokeTests(unittest.TestCase):
         self.assertEqual(_poke_parts(dump), [])
         self.assertEqual(_text_parts(dump), "[CQ:poke,id=999]")
 
+    def test_padded_numeric_self_target_is_not_converted(self) -> None:
+        # 自戳判定按数字身份：000999 与 999 是同一个 QQ。
+        for text in ("[CQ:poke,id=000999]", "[CQ:poke,type=2,id=000999]"):
+            with self.subTest(text=text):
+                dump = self._send(text, self_id=SELF_ID)
+                self.assertEqual(_poke_parts(dump), [])
+                self.assertEqual(_text_parts(dump), text)
+
+    def test_padded_other_target_still_converts(self) -> None:
+        # 前导零只在「数字上等于自己」时拒绝；他人目标保持既有行为。
+        dump = self._send("[CQ:poke,id=000123]")
+        self.assertEqual(_poke_parts(dump), [{"type": "1", "id": "000123"}])
+
     def test_at_regression_unchanged(self) -> None:
         dump = self._send("[CQ:at,qq=12345] 你看")
         ats = [p for p in dump if p.get("type") == "at"]
