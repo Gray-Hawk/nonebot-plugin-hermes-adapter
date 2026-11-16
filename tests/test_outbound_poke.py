@@ -218,6 +218,21 @@ class PokeForwardPackingTests(unittest.TestCase):
         text = "".join(str(seg) for seg in contents if isinstance(seg, alconna.Text))
         self.assertNotIn("[CQ:poke", text)
 
+    def test_long_forward_still_sends_pokes_after_the_forward(self) -> None:
+        async def nickname(_bot):
+            return "Bot"
+
+        h = _Harness()
+        with patch.object(outbound, "get_bot_nickname", new=nickname), patch.object(
+            outbound, "load_misc_config", return_value=SimpleNamespace(max_length=5)
+        ), patch.object(
+            outbound, "load_chat_config", return_value=SimpleNamespace(long_reply_forward=True)
+        ):
+            result = h.send("很长的前文 [CQ:poke,id=10001] 很长的后文")
+        self.assertTrue(result.ok)
+        self.assertEqual([kind for kind, _ in h.calls], ["msg", "poke"])
+        self.assertEqual(h.calls[1][1], {"group_id": 54321, "user_id": 10001})
+
 
 if __name__ == "__main__":
     unittest.main()
