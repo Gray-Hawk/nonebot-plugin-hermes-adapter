@@ -220,3 +220,37 @@ for new in RELOADS:
     assert prefix + "approve" == commands._display_cmd("approve")
     assert f"回复 {commands._display_cmd('approve')} " in notice
 print(f"PASS startup={STARTUP!r} reloads={RELOADS} 重启前通知与注册命令一致")
+
+================================================
+[5] 负向反证（证明这条回归真能抓住缺陷）
+    仅把 core/approvals.py 回退成 33dbbab 版本,其余文件为 32dc502:
+    git checkout 33dbbab -- core/approvals.py
+    python -B -m unittest ...ApprovalCommandDisplayTests.test_reload_config_keeps_notice_prefix_until_restart
+    失败点正是 R1/P2 症状:热重载成 new 后通知写 /new approve,而实际注册的是 /old approve。
+    随后 git checkout HEAD -- core/approvals.py 复原,工作树干净。
+------------------------------------------------
+F
+======================================================================
+FAIL: test_reload_config_keeps_notice_prefix_until_restart (tests.test_approval_command_display.ApprovalCommandDisplayTests.test_reload_config_keeps_notice_prefix_until_restart)
+R1/P2 回归:热重载换了 bot_name,通知仍须给出实际注册着的旧命令。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/hermes-mainline-shared-20261116/tests/test_approval_command_display.py", line 110, in test_reload_config_keeps_notice_prefix_until_restart
+    self.assertEqual(approvals.build_admin_notice(self._entry()), before)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: '⚠️ 审[76 chars]n回复 /new approve once 批准一次;/new approve deny 拒[67 chars]时拒绝)' != '⚠️ 审[76 chars]n回复 /old approve once 批准一次;/old approve deny 拒[67 chars]时拒绝)'
+  ⚠️ 审批请求 #1
+  run: run-1
+  来源: 私聊 123
+  命令: pwd
+  选项: once / session / always / deny
+- 回复 /new approve once 批准一次;/new approve deny 拒绝;/new approve session 本会话放行;/new approve always 永久放行。(约 300s 不答自动超时拒绝)
+?     ^^^                    ^^^                  ^^^                        ^^^
++ 回复 /old approve once 批准一次;/old approve deny 拒绝;/old approve session 本会话放行;/old approve always 永久放行。(约 300s 不答自动超时拒绝)
+?     ^^^                    ^^^                  ^^^                        ^^^
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.001s
+
+FAILED (failures=1)
