@@ -21,8 +21,8 @@ import nonebot_plugin_alconna as alconna
 from nonebot import logger
 from nonebot.adapters import Bot
 
-# OneBot v11 没有 alconna 内置的 poke 段：出站戳一戳只能用原生消息段包成
-# alconna.Other。adapter 不在时整条链路保持「poke 标记原样留文本」的旧行为。
+# 以 onebotv11 adapter 是否在场作为 poke 能力探测；依赖缺失时保留字面标记，
+# 不伪造已戳。实际出站统一走 send_poke 公开 API，不再拼原生 poke 消息段。
 try:  # pragma: no cover - 依赖部署是否装 onebotv11 adapter
     from nonebot.adapters.onebot.v11.message import MessageSegment as _Ob11MessageSegment
 except Exception:  # noqa: BLE001
@@ -171,8 +171,8 @@ _TRUNCATION_SUFFIX = "\n\n…（消息过长,已截断）"
 #
 # reply_text 里允许出现**两种**控制标记（可多次、任意位置，与前后文字保持原序）：
 #   - `[CQ:at,qq=<ASCII 数字>]`        → alconna At 段
-#   - `[CQ:poke,type=<数字>,id=<数字>]` → OneBot poke 段（type 省略时按 1）
-# 出站前逐个转成对应消息段，绝不让标记字面进 QQ。这里刻意不是「CQ 码解析器」：
+#   - `[CQ:poke,type=<数字>,id=<数字>]` → send_poke 动作（type 省略时按 1）
+# 出站前逐个转成对应消息段／动作，绝不让标记字面进 QQ。这里刻意不是「CQ 码解析器」：
 # 除 at / poke 之外的任何 CQ 段(image/face/record/music/share…)、以及非数字形态
 # 都不转换，原样留在正文里当普通文本。理由:模型能写的标记面越小,越不会有
 # 「用户收到不可见段」这类无从解释的故障;需要扩类型时按需显式加白,不做形态猜测。
@@ -819,6 +819,8 @@ async def _send_with_pokes(
                     f"客户端展示待实测 target={target} reply_id={reply_id}"
                 )
             steps.append(alconna.UniMessage([alconna.Reference()(*nodes)]))
+            # poke 不进转发节点；整包发出后按它们在原文里的相对顺序补发。
+            steps.extend(tok for tok in tokens if isinstance(tok, _InlinePoke))
         except Exception as exc:
             logger.warning(f"[OUTBOUND] long-reply forward failed, falling back to truncation: {exc}")
             steps = []
@@ -906,7 +908,7 @@ async def send_text_with_media(
 
     - target 是 alconna Target(只在内存可用)
     - text 里允许受控内联标记 `[CQ:at,qq=<数字>]` 与 `[CQ:poke,type=<数字>,id=<数字>]`
-      (可多次、任意位置),逐个转成 alconna At / OneBot poke 段并与前后文字保持原序;
+      (可多次、任意位置),分别转成 alconna At 段和 send_poke 动作，与前后文字保持原序;
       非 at/poke、非数字形态、自戳与参数顺序不符的标记原样当普通文本。合法标记
       绝不会字面发出去。
     - reply_qq_message_id: 合法 OneBot int32 时在消息最前面构造 Reply(id=...) 引用;
