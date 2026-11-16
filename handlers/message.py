@@ -25,8 +25,10 @@ from ..utils import check_isolation, get_adapter_name
 from .message_media import (
     _collect_at_placeholders,
     _collect_at_targets,
+    _collect_file_placeholders,
     _collect_nontext_placeholders,
     _compose_quote_prefix,
+    _extract_file_entries,
     _extract_forward_full,
     _extract_image_urls,
     _extract_replied_media,
@@ -281,7 +283,10 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # collect: 引用消息已通过引用前缀((引用:...) 形态)进来,
     # 引用里的 voice/video 用户感知较低,且会让占位重复堆叠。
     event_db_id = _peek_event_db_id(adapter_name, getattr(event, "message_id", None))
-    nontext_placeholders = _collect_nontext_placeholders(uni_msg, file_message_id=event_db_id)
+    own_file_entries = _extract_file_entries(uni_msg)
+    nontext_placeholders = _collect_nontext_placeholders(
+        uni_msg, file_entries=own_file_entries, file_message_id=event_db_id
+    )
     if nontext_placeholders:
         suffix = " ".join(nontext_placeholders)
         msg_text = (msg_text + " " + suffix).strip() if msg_text else suffix
@@ -307,12 +312,22 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # 不内联);base = own + sticker + quote,与 perception 侧同一编号。在 keyword-stripping
     # 之前追加:keyword 前缀作用于 msg_text 开头的手打文本,转发块拼在末尾。
     forward_base = quote_base + len(replied_image_urls)
-    forward_full, _forward_image_urls = await _extract_forward_full(
-        uni_msg, bot, adapter_name=adapter_name, number_base=forward_base
+    forward_full, _forward_image_urls, forward_video_entries = await _extract_forward_full(
+        uni_msg, bot, adapter_name=adapter_name, number_base=forward_base,
+        file_message_id=event_db_id, file_idx_base=len(own_file_entries),
     )
     if forward_full is not None:
         msg_text = f"{msg_text}\n{forward_full}" if msg_text else forward_full
         has_real_content = True
+    if forward_video_entries:
+        # 转发视频与文件/普通视频共用 m:<mid>#f<idx>；perception 已把同样的行落库，
+        # 这里只补当前 turn 的可寻址占位。
+        video_labels = " ".join(
+            _collect_file_placeholders(
+                forward_video_entries, event_db_id, idx_base=len(own_file_entries)
+            )
+        )
+        msg_text = f"{msg_text} {video_labels}".strip() if msg_text else video_labels
 
     logger.debug(
         f"[HERMES recv] adapter={adapter_name} target={target.id} private={target.private} "

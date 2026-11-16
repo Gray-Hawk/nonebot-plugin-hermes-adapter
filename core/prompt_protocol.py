@@ -233,6 +233,7 @@ def anchor_prompt_residue(text: str) -> list[str]:
 
 FILE_TOOL_GUIDANCE = '''QQ 文件工具：
 - [文件 m:X#fN:名称] 只代表元数据，不包含任何实际内容；需要读取文件内容时，调用 get_message_files，参数写 refs=[{"message_id": X, "idx": N}] 下载，下载后再用本地文件工具读取，不要把文件名当成实际内容。
+- [视频 m:X#fN] 同样只是可寻址引用：用户发来视频（含合并转发里的视频）时按同一 refs 形式调用 get_message_files 下载，插件不会自动下载也不自动抽帧；拿不到引用时才会只剩 [视频] 占位。
 - 群文件库要先用 browse_group_files 浏览根目录，或者传入 folder_id 浏览指定文件夹，从返回列表中取得目标文件的 file_id，再用 file_id 调用 download_group_file 下载；浏览不会自动下载文件，不要无目标批量拉取文件列表。
 - 下载成功后，根据返回的 local_path 读取本地文件；失败时按返回的 error 说明原因。'''
 
