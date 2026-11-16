@@ -51,7 +51,9 @@ class FinalPromptTests(unittest.TestCase):
                     self.assertIn('闲聊时输出尽可能单句不分段，简短，不超过15字。', prompt)
                     self.assertNotRegex(prompt, r'(?m)^[%#]|[%#]$')
                     if mode == 'runs':
-                        self.assertNotIn('not_final', prompt)
+                        # Runs 恢复 not_final（submit_control 字段），completions 仍无此字段。
+                        self.assertIn('not_final=true', prompt)
+                        self.assertIn('继续执行轮', prompt)
                         self.assertNotIn('使用 push_message 工具', prompt)
                         self.assertIn('依段落拆分为多条正文一次发送', prompt)
                         self.assertIn('随后在当前 run 调用工具继续任务。', prompt)

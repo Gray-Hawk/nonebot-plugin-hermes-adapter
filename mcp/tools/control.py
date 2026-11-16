@@ -51,6 +51,14 @@ class SubmitControlInput(BaseModel):
     anchor_merge: str | None = Field(
         default=None, description="starter user_id of a pinned task this message belongs to (merge instead of pinning)"
     )
+    not_final: bool | None = Field(
+        default=None,
+        description=(
+            "Runs only: true = this reply text is a receipt, not the final result; the plugin sends it "
+            "as-is and appends one continue turn (same relay chain/limit). False/omitted = ordinary reply. "
+            "completions uses request_continuation instead."
+        ),
+    )
 
     @model_validator(mode="after")
     def _exactly_one_target(self) -> "SubmitControlInput":
@@ -101,6 +109,11 @@ def submit_control_impl(
         return _fail(
             f"control tools need a text-body decision channel (current interface: {interface!r})"
         )
+    if inp.not_final and interface != "runs":
+        # 续跑入口按接口分家：completions 只认 request_continuation（Runs 才恢复 not_final）。
+        return _fail(
+            "not_final is Runs-only; completions continues with request_continuation"
+        )
     if is_private:
         if scope is None:
             logger.warning("[MCP submit_control] 拒绝:调用方身份不可识别(私聊)")
@@ -118,6 +131,7 @@ def submit_control_impl(
             release_anchor=inp.release_anchor,
             answer_anchor=inp.answer_anchor,
             anchor_merge=inp.anchor_merge,
+            not_final=inp.not_final,
         )
     except control_intent.ControlIntentError as exc:
         logger.info(f"[MCP submit_control] 拒绝控制: {exc} (adapter={inp.adapter})")
