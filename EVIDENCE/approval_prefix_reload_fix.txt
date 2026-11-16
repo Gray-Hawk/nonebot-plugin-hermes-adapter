@@ -1,0 +1,222 @@
+审批通知前缀 R1/P2 修正回归 — 原始输出
+================================================
+HEAD=32dc502 fix(approval): 审批通知前缀沿用启动注册的实例前缀
+baseline=bd84b42  分支=feat/hermes-mainline-shared-20261116
+interpreter=/home/neonsky/NeonBot/.venv/bin/python
+root=本卡工作区 .worktrees/hermes-mainline-shared-20261116
+
+修正面:core/misc_config.py 新增 bot_name_prefix() 与 startup_command_prefix()
+（启动期一次定型并缓存）;handlers/commands.py 的 CMD_PREFIX 与 core/approvals.py
+的 _approve_prefix() 都读它。热重载后、重启前维持旧命令;重启（新进程）采用新名字。
+
+[1] 隔离实链（真实临时定制目录 + 真实 misc_config 快照 + 真实 reload_runtime_config
+    + 真实 handlers.commands 注册期前缀 + 真实 approvals._approve_prefix）
+    探针脚本全文见文末附录 A，按 <定制目录> <启动 bot_name> [重载 bot_name...] 运行。
+    进程1: old 启动 → 热重载 new → 热重载 空串
+    进程2/3/4: 重启（新进程）分别读到 空串 / new / 'normi 二号'
+------------------------------------------------
+[startup] bot_name='old'
+[startup] snapshot_bot_name='old' CMD_PREFIX='old' registered='/old approve' notice_command='/old approve' notice==registered=True
+[reload -> 'new'] 配置重载完成: chat_config、misc_config、media_config、user_lists
+[after reload 'new'] snapshot_bot_name='new' CMD_PREFIX='old' registered='/old approve' notice_command='/old approve' notice==registered=True
+[reload -> ''] 配置重载完成: chat_config、misc_config、media_config、user_lists
+[after reload ''] snapshot_bot_name='' CMD_PREFIX='old' registered='/old approve' notice_command='/old approve' notice==registered=True
+PASS startup='old' reloads=['new', ''] 重启前通知与注册命令一致
+rc=0
+--- 重启(新进程,快照已改空串)
+[startup] bot_name=''
+[startup] snapshot_bot_name='' CMD_PREFIX='' registered='/approve' notice_command='/approve' notice==registered=True
+PASS startup='' reloads=[] 重启前通知与注册命令一致
+--- 重启(新进程,快照=new)
+[startup] bot_name='new'
+[startup] snapshot_bot_name='new' CMD_PREFIX='new' registered='/new approve' notice_command='/new approve' notice==registered=True
+PASS startup='new' reloads=[] 重启前通知与注册命令一致
+--- 重启(新进程,bot_name 含空白首段)
+[startup] bot_name='normi 二号'
+[startup] snapshot_bot_name='normi 二号' CMD_PREFIX='normi' registered='/normi approve' notice_command='/normi approve' notice==registered=True
+PASS startup='normi 二号' reloads=[] 重启前通知与注册命令一致
+
+[2] 定向单测（审批通知 5 项含新增载前/载后一致回归与同源断言；session key 15 项）
+    python -B -m unittest tests.test_approval_command_display tests.test_session_key_backend_prefix
+------------------------------------------------
+11-16 17:13:11 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 17:13:11 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:103: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.parseArgs(argv)
+11-16 17:13:11 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 17:13:11 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 17:13:11 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+test_empty_prefix_preserves_original_commands (tests.test_approval_command_display.ApprovalCommandDisplayTests.test_empty_prefix_preserves_original_commands) ... ok
+test_matcher_and_notice_share_one_startup_prefix_source (tests.test_approval_command_display.ApprovalCommandDisplayTests.test_matcher_and_notice_share_one_startup_prefix_source)
+handlers.commands 的注册前缀与审批通知读同一处,防止再次分叉。 ... ok
+test_notice_uses_instance_command_prefix (tests.test_approval_command_display.ApprovalCommandDisplayTests.test_notice_uses_instance_command_prefix) ... ok
+test_prefix_takes_first_word_only (tests.test_approval_command_display.ApprovalCommandDisplayTests.test_prefix_takes_first_word_only) ... 11-16 17:13:11 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] hermes_bot_name 含空白,只取首段 'feiyu' 作指令前缀
+ok
+test_reload_config_keeps_notice_prefix_until_restart (tests.test_approval_command_display.ApprovalCommandDisplayTests.test_reload_config_keeps_notice_prefix_until_restart)
+R1/P2 回归:热重载换了 bot_name,通知仍须给出实际注册着的旧命令。 ... ok
+test_collect_running_dedupes_multiple_prefixes (tests.test_session_key_backend_prefix.BackgroundPrefixMatchTests.test_collect_running_dedupes_multiple_prefixes) ... ok
+test_kanban_routable_uses_configured_prefixes (tests.test_session_key_backend_prefix.BackgroundPrefixMatchTests.test_kanban_routable_uses_configured_prefixes) ... ok
+test_prefix_candidates_follow_backend (tests.test_session_key_backend_prefix.BackgroundPrefixMatchTests.test_prefix_candidates_follow_backend) ... ok
+test_report_filter_accepts_current_and_legacy_origin_ids (tests.test_session_key_backend_prefix.BackgroundPrefixMatchTests.test_report_filter_accepts_current_and_legacy_origin_ids) ... ok
+test_route_resolution_accepts_configured_prefixes (tests.test_session_key_backend_prefix.BackgroundPrefixMatchTests.test_route_resolution_accepts_configured_prefixes) ... ok
+test_is_derived_key_only_matches_own_prefixed_forms (tests.test_session_key_backend_prefix.DerivedKeyRenameTests.test_is_derived_key_only_matches_own_prefixed_forms) ... ok
+test_legacy_derived_key_renamed_and_persisted (tests.test_session_key_backend_prefix.DerivedKeyRenameTests.test_legacy_derived_key_renamed_and_persisted) ... 11-16 17:13:11 [INFO] nonebot_plugin_hermes_adapter | [SESSION] session key 前缀迁移: hermes-* -> otherbackend-* (1 条)
+11-16 17:13:11 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 全量播种: 1 个已知会话以开机时刻为活动基准
+11-16 17:13:11 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 全量播种: 1 个已知会话以开机时刻为活动基准
+ok
+test_new_session_clear_and_t1_use_registered_prefix (tests.test_session_key_backend_prefix.DerivedKeyRenameTests.test_new_session_clear_and_t1_use_registered_prefix) ... 11-16 17:13:11 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+private+10001 (generation=1)
+11-16 17:13:11 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 空闲自动重置: onebotv11+private+10001 (generation=2)
+ok
+test_prefix_candidates_current_first_then_legacy (tests.test_session_key_backend_prefix.DerivedKeyRenameTests.test_prefix_candidates_current_first_then_legacy) ... ok
+test_prefix_switch_back_renames_local_keys_again (tests.test_session_key_backend_prefix.DerivedKeyRenameTests.test_prefix_switch_back_renames_local_keys_again) ... 11-16 17:13:11 [INFO] nonebot_plugin_hermes_adapter | [SESSION] session key 前缀迁移: hermes-* -> otherbackend-* (1 条)
+11-16 17:13:11 [INFO] nonebot_plugin_hermes_adapter | [SESSION] session key 前缀迁移: otherbackend-* -> hermes-* (1 条)
+ok
+test_upstream_rotated_id_never_renamed (tests.test_session_key_backend_prefix.DerivedKeyRenameTests.test_upstream_rotated_id_never_renamed) ... 11-16 17:13:11 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 全量播种: 1 个已知会话以开机时刻为活动基准
+ok
+test_all_mainline_interfaces_resolve_to_hermes (tests.test_session_key_backend_prefix.HermesBackendKeyTests.test_all_mainline_interfaces_resolve_to_hermes) ... ok
+test_cached_key_survives_rebind_and_continues_upstream_history (tests.test_session_key_backend_prefix.HermesBackendKeyTests.test_cached_key_survives_rebind_and_continues_upstream_history) ... 11-16 17:13:11 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 全量播种: 1 个已知会话以开机时刻为活动基准
+11-16 17:13:11 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 采纳上游轮换: onebotv11+private+10001 -> upstream-uuid-1
+11-16 17:13:11 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 全量播种: 1 个已知会话以开机时刻为活动基准
+ok
+test_clear_and_t1_generation_stay_hermes (tests.test_session_key_backend_prefix.HermesBackendKeyTests.test_clear_and_t1_generation_stay_hermes) ... 11-16 17:13:11 [INFO] nonebot_plugin_hermes_adapter | [SESSION] 会话已重置: onebotv11+private+10001 (generation=1)
+11-16 17:13:11 [INFO] nonebot_plugin_hermes_adapter | [SESSION] T1 空闲自动重置: onebotv11+private+10001 (generation=2)
+ok
+test_new_session_key_keeps_hermes_prefix (tests.test_session_key_backend_prefix.HermesBackendKeyTests.test_new_session_key_keeps_hermes_prefix) ... ok
+
+----------------------------------------------------------------------
+Ran 20 tests in 0.013s
+
+OK
+tests exit=0
+
+[3] turn 门禁
+    python -B -m unittest discover -s turn_tests -p 'test_*.py'
+------------------------------------------------
+11-16 17:13:12 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 17:13:12 [INFO] nonebot | Current Env: prod
+/usr/lib/python3.13/unittest/main.py:149: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+  self.test = loader.discover(self.start, self.pattern, self.top)
+11-16 17:13:12 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 17:13:12 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 17:13:12 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+test_empty_output_stays_silent (test_envelope_entry.PassiveTurnTextProtocolTests.test_empty_output_stays_silent) ... ok
+test_legacy_json_line_is_sent_verbatim (test_envelope_entry.PassiveTurnTextProtocolTests.test_legacy_json_line_is_sent_verbatim) ... ok
+test_plain_text_units_sent_in_order (test_envelope_entry.PassiveTurnTextProtocolTests.test_plain_text_units_sent_in_order) ... ok
+test_protocol_failure_is_fail_closed (test_envelope_entry.PassiveTurnTextProtocolTests.test_protocol_failure_is_fail_closed) ... 11-16 17:13:12 [ERROR] nonebot_plugin_hermes_adapter | [HERMES passive] 正文协议失败,本轮零发送 reason='text_body_overflow' (group=None)
+ok
+test_request_continuation_is_consumed_once_after_send (test_envelope_entry.PassiveTurnTextProtocolTests.test_request_continuation_is_consumed_once_after_send) ... ok
+test_stale_continuation_from_previous_turn_is_dropped (test_envelope_entry.PassiveTurnTextProtocolTests.test_stale_continuation_from_previous_turn_is_dropped) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.055s
+
+OK
+turn exit=0
+
+[4] 全门验收（clean 树 = 本提交；全量 744 skip1、网关 48+21）
+    python -B verify.py
+------------------------------------------------
+interpreter=/home/neonsky/NeonBot/.venv/bin/python
+root=/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/npha-upload-20261106/.worktrees/hermes-mainline-shared-20261116
+HEAD=32dc502 fix(approval): 审批通知前缀沿用启动注册的实例前缀
+[PASS] 交付树无 pyc／pytest 缓存
+[PASS] 全量既有＋新增测试通过 — exit=0 ran=744 Ran 744 tests in 33.177s /  / OK (skipped=1)
+[PASS] 已删除的信封模块／符号零引用 — 文件仍在=[] 引用=[]
+[PASS] Runs 终态／流式／恢复／对账共用同一纯文本解析器
+11-16 17:11:21 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 17:11:21 [INFO] nonebot | Current Env: prod
+11-16 17:11:22 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_open chars=1 preview='裸'
+11-16 17:11:22 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=missing_close chars=1 preview='裸'
+11-16 17:11:22 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=2 preview='你好'
+11-16 17:11:22 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] 正文信封无效 reason=no_marker chars=12 preview='{"body":"旧"}'
+[PASS] 信封解析语义（单条/多条/静默/缺开缺闭/旧裸正文不兼容） — 失败=[]
+[PASS] Runs／completions 提示词同口径写死信封格式
+[PASS] _DECISION_PROTOCOL_BLOCK_COMPLETIONS 纯文本（无信封字段）
+[PASS] _DECISION_PROTOCOL_BLOCK_RUNS 纯文本（无信封字段）
+[PASS] runs 协议块：§ 整行分隔、无 push_message、无布尔箭头
+[PASS] runs 私聊协议块无 push_message
+[PASS] completions 协议块保留 push_message 进度口径
+[PASS] completions 私聊块无信封
+[PASS] 协议渲染：runs/completions 互不串味
+[PASS] 网关插件独立测试（不在 tests/ 全量里） — queued-lane-interim-thin: OK ran=48 (需 >= 48); steer-presentation-thin: OK ran=21 (需 >= 21)
+[PASS] 流式只追加计划／终态与恢复共用计划适配器
+[PASS] 控制 FIFO 与续跑登记各只有一条链路
+[PASS] Runs 轮内 push 硬拒（轮外/completions 不变）
+[PASS] 终态链先落整批计划再发送
+[PASS] 关键验收用例齐全 — 缺=[]
+[PASS] 验收不依赖暂存区 — staged=[]
+[PASS] 交付树干净（无未提交改动）
+[PASS] 交付树无 pyc／pytest 缓存
+
+ALL PASS: 22/22 项通过
+
+================================================
+附录 A：隔离探针脚本原文（approval_prefix_reload_probe.py）
+================================================
+"""隔离实证:旧名启动 → /reload-config 换新名/空串 → 重启前审批通知仍是旧命令。
+
+用法: probe.py <startup_bot_name> <reload_bot_names...>
+每个进程只模拟一次「启动」;要验重启后生效,用新名字再跑一次本脚本。
+真实 misc_config 快照 + 真实 reload_runtime_config + 真实 handlers.commands matcher
+注册期前缀,只在临时定制目录里写 YAML(不碰生产配置)。
+"""
+
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+CUSTOM = Path(sys.argv[1])
+STARTUP = sys.argv[2]
+RELOADS = sys.argv[3:]
+ROOT = Path(os.environ["REPO_ROOT"])
+sys.path.insert(0, str(ROOT))
+os.environ["AGENT_PLUGIN_CUSTOM_DIR"] = str(CUSTOM)
+CUSTOM.mkdir(parents=True, exist_ok=True)
+(CUSTOM / "misc_config.yaml").write_text(f"bot_name: {STARTUP!r}\n", encoding="utf-8")
+
+from tests import _bootstrap  # noqa: E402,F401
+from nonebot_plugin_hermes_adapter.core import approvals, misc_config  # noqa: E402
+from nonebot_plugin_hermes_adapter.core.config_reload import (  # noqa: E402
+    reload_runtime_config,
+)
+from nonebot_plugin_hermes_adapter.handlers import commands  # noqa: E402
+
+entry = approvals.PendingApproval(
+    approval_id=1,
+    run_id="run-1",
+    adapter="onebotv11",
+    scope_desc="私聊 123",
+    command="pwd",
+    choices=["once", "deny"],
+)
+
+
+def report(tag: str) -> tuple[str, str]:
+    notice = approvals.build_admin_notice(entry)
+    prefix = approvals._approve_prefix()
+    registered = commands._display_cmd("approve")
+    assert commands.CMD_PREFIX == misc_config.startup_command_prefix()
+    assert notice.count(prefix + "approve") == 4, notice
+    print(
+        f"[{tag}] snapshot_bot_name={misc_config.load_misc_config().bot_name!r} "
+        f"CMD_PREFIX={commands.CMD_PREFIX!r} registered={registered!r} "
+        f"notice_command={prefix + 'approve'!r} "
+        f"notice==registered={prefix + 'approve' == registered}"
+    )
+    return prefix, notice
+
+
+print(f"[startup] bot_name={STARTUP!r}")
+registered_at_startup, _ = report("startup")
+for new in RELOADS:
+    (CUSTOM / "misc_config.yaml").write_text(f"bot_name: {new!r}\n", encoding="utf-8")
+    result = reload_runtime_config()
+    assert result.ok, result.message
+    print(f"[reload -> {new!r}] {result.message}")
+    prefix, notice = report(f"after reload {new!r}")
+    assert misc_config.load_misc_config().bot_name == new, "快照必须真的换了"
+    assert prefix == registered_at_startup, "重启前通知前缀必须仍是启动期注册的那条"
+    assert prefix + "approve" == commands._display_cmd("approve")
+    assert f"回复 {commands._display_cmd('approve')} " in notice
+print(f"PASS startup={STARTUP!r} reloads={RELOADS} 重启前通知与注册命令一致")
