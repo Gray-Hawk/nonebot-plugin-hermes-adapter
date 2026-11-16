@@ -311,6 +311,7 @@ class MessageStore:
         urls_by_msg: dict[int, list[str]] = defaultdict(list)
         stickers_by_msg: dict[int, list[str]] = defaultdict(list)
         quote_by_msg: dict[int, list[str]] = defaultdict(list)
+        quote_sticker_by_msg: dict[int, list[str]] = defaultdict(list)
         fwdimg_by_msg: dict[int, list[str]] = defaultdict(list)
         for ir in img_rows:
             kind = ir["kind"]
@@ -320,6 +321,8 @@ class MessageStore:
                 bucket = stickers_by_msg
             elif kind == "quote":
                 bucket = quote_by_msg
+            elif kind == "quote_sticker":
+                bucket = quote_sticker_by_msg
             elif kind == "forward_image":
                 bucket = fwdimg_by_msg
             else:
@@ -358,6 +361,7 @@ class MessageStore:
                 image_urls=urls_by_msg.get(r["id"], []),
                 sticker_urls=stickers_by_msg.get(r["id"], []),
                 quote_image_urls=quote_by_msg.get(r["id"], []),
+                quote_sticker_urls=quote_sticker_by_msg.get(r["id"], []),
                 forward_image_urls=fwdimg_by_msg.get(r["id"], []),
                 reply_to_ts=r["reply_to_ts"],
                 at_user_ids=_decode_at_ids(r["at_ids"]),

@@ -36,6 +36,10 @@ class BufferedMessage:
     quote_image_urls: list[str] = field(default_factory=list)
     """被本条消息引用的消息里的图片 URL(kind='quote')。idx 续排在 sticker 之后。
     入库即走 ImageFetcher 落字节,与普通图同语义(可召回、可内联)。"""
+    quote_sticker_urls: list[str] = field(default_factory=list)
+    """被本条消息引用的消息里的 QQ 大表情(Image.sticker=True) URL(kind='quote_sticker')。
+    idx 续排在引用图之后、转发图之前。只注册发号(呈递 `(引用表情#k)`),不内联;
+    要字节时按 m:id#idx 走 get_message_images。纯表情引用靠它才不会退化成空前缀。"""
     forward_image_urls: list[str] = field(default_factory=list)
     """本条合并转发展开(第一层)内节点的图片 URL(kind='forward_image')。idx 接在
     引用图之后连续编号。只注册发号、按需拉图,恒不内联。"""
@@ -91,16 +95,22 @@ class BufferedMessage:
 
 
 # --- 媒体枚举序不变量(焊死) ---
-# 一条消息的 message_images idx 连续编号 = 普通图 → 表情包 → 引用图 → 转发图。
+# 一条消息的 message_images idx 连续编号 = 普通图 → 表情包 → 引用图 → 引用表情 → 转发图。
 # 写入侧(MessageStore.append 的 idx、MessageBuffer.append 给 fetcher 的 start_index)
 # 与渲染侧(历史行清单、parts 标签、转发块计数)共用同一序列——即下方
 # iter_message_media 的迭代顺序(原 MEDIA_KINDS 常量零引用已删);
 # 禁止各处各自拼序。
 
-# kind → 中文种类词。compact 是历史行清单里的简称("图"/"表情"/"引用"/"转发"),
-# full 是 parts 全称标签里的写法("图"/"表情包"/"引用图"/"转发图")。
-_MEDIA_KIND_COMPACT = {"image": "图", "sticker": "表情", "quote": "引用", "forward_image": "转发"}
-_MEDIA_KIND_FULL = {"image": "图", "sticker": "表情包", "quote": "引用图", "forward_image": "转发图"}
+# kind → 中文种类词。compact 是历史行清单里的简称("图"/"表情"/"引用"/"引用表情"/"转发"),
+# full 是 parts 全称标签里的写法("图"/"表情包"/"引用图"/"引用表情"/"转发图")。
+_MEDIA_KIND_COMPACT = {
+    "image": "图", "sticker": "表情", "quote": "引用",
+    "quote_sticker": "引用表情", "forward_image": "转发",
+}
+_MEDIA_KIND_FULL = {
+    "image": "图", "sticker": "表情包", "quote": "引用图",
+    "quote_sticker": "引用表情", "forward_image": "转发图",
+}
 
 
 def iter_message_media(msg: "BufferedMessage") -> list[tuple[str, str]]:
@@ -110,6 +120,7 @@ def iter_message_media(msg: "BufferedMessage") -> list[tuple[str, str]]:
         ("image", msg.image_urls),
         ("sticker", msg.sticker_urls),
         ("quote", msg.quote_image_urls),
+        ("quote_sticker", msg.quote_sticker_urls),
         ("forward_image", msg.forward_image_urls),
     ):
         for u in urls:
@@ -179,7 +190,10 @@ class MessageBuffer:
         # MessageStore.append 的编号同一份定义)。用 start_index 把每段的
         # offset 告诉 fetcher,回填 sha 时 (msg_id, idx) 才能对上行。
         base = 0
-        for urls in (msg.image_urls, msg.sticker_urls, msg.quote_image_urls, msg.forward_image_urls):
+        for urls in (
+            msg.image_urls, msg.sticker_urls, msg.quote_image_urls,
+            msg.quote_sticker_urls, msg.forward_image_urls,
+        ):
             if urls:
                 self._fetcher.submit(msg_id, list(urls), start_index=base)
             base += len(urls)
@@ -224,7 +238,7 @@ class MessageBuffer:
         不从渲染文本里反推。未入库的 id 返回空桶。
         """
         buckets: dict[str, list[str]] = {
-            "image": [], "sticker": [], "quote": [], "forward_image": [],
+            "image": [], "sticker": [], "quote": [], "quote_sticker": [], "forward_image": [],
         }
         try:
             meta = self._store.get_message_images_meta([int(message_id)])

@@ -100,6 +100,7 @@ def _build_current_fragment(
     quote_image_urls: list[str], forward_image_urls: list[str],
     delivery_generation: int | None, event_msg_id,
     at_user_ids: tuple[str, ...] = (),
+    quote_sticker_urls: list[str] | None = None,
 ) -> BufferedMessage:
     """构造本事件的触发 fragment(P-08:生产唯一构造点)。
 
@@ -115,6 +116,7 @@ def _build_current_fragment(
         nickname=nickname, content=msg_text, origin=MessageOrigin.human(),
         image_urls=list(own_image_urls), sticker_urls=list(sticker_urls),
         quote_image_urls=list(quote_image_urls),
+        quote_sticker_urls=list(quote_sticker_urls or []),
         forward_image_urls=list(forward_image_urls),
         reply_to_ts=None, is_bot=False,
         at_user_ids=tuple(at_user_ids),
@@ -253,6 +255,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # 引用消息提取(与 perception 共用同一 helper:引用图入库/呈递必须同源)
     replied = await _extract_replied_media(event, bot, adapter_name=adapter_name)
     replied_image_urls: list[str] = list(replied.image_urls)
+    replied_sticker_urls: list[str] = list(replied.sticker_urls)
     replied_msg_id = replied.msg_id  # 任务锚 quote 自动归并用(规划书§2.2)
 
     try:
@@ -312,7 +315,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # 同一次 get_forward_msg 响应内兼收转发图 URL 发号(kind='forward_image',只注册
     # 不内联);base = own + sticker + quote,与 perception 侧同一编号。在 keyword-stripping
     # 之前追加:keyword 前缀作用于 msg_text 开头的手打文本,转发块拼在末尾。
-    forward_base = quote_base + len(replied_image_urls)
+    forward_base = quote_base + len(replied_image_urls) + len(replied_sticker_urls)
     forward_full, _forward_image_urls, forward_video_entries = await _extract_forward_full(
         uni_msg, bot, adapter_name=adapter_name, number_base=forward_base,
         file_message_id=event_db_id, file_idx_base=len(own_file_entries),
@@ -452,6 +455,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         nickname=nickname, msg_text=msg_text,
         own_image_urls=list(own_image_urls), sticker_urls=list(sticker_urls),
         quote_image_urls=list(replied_image_urls),
+        quote_sticker_urls=list(replied_sticker_urls),
         forward_image_urls=list(_forward_image_urls or []),
         delivery_generation=delivery_generation,
         event_msg_id=getattr(event, "message_id", None),

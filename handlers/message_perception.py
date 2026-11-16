@@ -117,6 +117,9 @@ async def handle_perception(bot: Bot, event: Event):
     # (事故根因之一:图文混合的引用只呈递文字)。
     replied = await _extract_replied_media(event, bot, adapter_name=adapter_name)
     quote_image_urls = list(replied.image_urls)
+    # 引用里的 QQ 大表情与引用图分开入库(kind='quote_sticker'):纯表情引用此前
+    # 在 content 里只剩空前缀,历史行/召回看不到「引用了哪个表情」。
+    quote_sticker_urls = list(replied.sticker_urls)
     nickname = _extract_sender_nickname(event, adapter_name) or user_id
 
     # 文本太长截断(入库与渲染共用 history_text_max_chars,取消「入库 200、渲染 800」双层口径)
@@ -159,7 +162,7 @@ async def handle_perception(bot: Bot, event: Event):
     # B-1.1: 合并转发提取 (perception 入站存 summary 版,避免 buffer 膨胀)。
     # 同一次 get_forward_msg 响应内兼收 image 段 URL(kind='forward_image',只注册发号、
     # 不内联);base = own + sticker + quote,号即该图在本条 message_images 的 idx。
-    forward_base = len(image_urls) + len(sticker_urls) + len(quote_image_urls)
+    forward_base = len(image_urls) + len(sticker_urls) + len(quote_image_urls) + len(quote_sticker_urls)
     forward_full, forward_image_urls, forward_video_entries = await _extract_forward_full(
         uni_msg, bot, adapter_name=adapter_name, number_base=forward_base,
         file_idx_base=len(file_entries),
@@ -173,7 +176,7 @@ async def handle_perception(bot: Bot, event: Event):
         summary = _summarize_forward(forward_full)
         msg_text = f"{msg_text}\n{summary}" if msg_text else summary
 
-    if not msg_text and not image_urls and not quote_image_urls and not forward_image_urls and not file_entries and not video_placeholders:
+    if not msg_text and not image_urls and not quote_image_urls and not quote_sticker_urls and not forward_image_urls and not file_entries and not video_placeholders:
         return
 
     # 引用前缀与主 handler 同源调
@@ -200,6 +203,7 @@ async def handle_perception(bot: Bot, event: Event):
         sticker_urls=sticker_urls,
         file_entries=file_entries,
         quote_image_urls=quote_image_urls,
+        quote_sticker_urls=quote_sticker_urls,
         forward_image_urls=forward_image_urls,
         at_user_ids=at_user_ids,
         is_bot=False,
