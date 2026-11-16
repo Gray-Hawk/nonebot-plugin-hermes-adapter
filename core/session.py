@@ -12,14 +12,46 @@ from nonebot import logger
 
 from .storage.session_key_store import SessionKeyStore
 
+# session key 前缀按**真实后端**命名(不再把 Hermes 名字硬绑在 key 上):
+# - 上游 session id 不可本地强改,已缓存的 key 必须原样续用,否则断上游历史;
+# - 换后端前缀时只改**本地派生**形态 ``{prefix}-{internal_id}[-gN]`` 的名字。
+KEY_PREFIX_HERMES = "hermes"
+# 升级前所有后端都用 hermes- 前缀,换前缀时由它识别"旧派生 key"。
+LEGACY_KEY_PREFIX = KEY_PREFIX_HERMES
+# 接口名 -> session key 前缀。主线现有后端(completions / runs / astrbot)都是
+# Hermes 后端本体,沿用 hermes-;接入独立后端(自带上游会话命名)时在这里登记,
+# 未登记一律 hermes-(即旧行为)。
+_KEY_PREFIX_BY_INTERFACE: dict[str, str] = {}
+
+
+def session_key_prefix_for_interface(interface: str) -> str:
+    """接口名对应的 session key 前缀(未登记的后端用 hermes-)。"""
+    return _KEY_PREFIX_BY_INTERFACE.get(str(interface or ""), KEY_PREFIX_HERMES)
+
+
+def resolve_session_key_prefix() -> str:
+    """当前后端使用的 session key 前缀(只读启动配置,不新增配置项)。
+
+    配置未初始化(离线工具/单测)时按 Hermes 形态,旧行为不变。
+    """
+    try:
+        from ..config import plugin_config
+
+        interface = str(getattr(plugin_config, "hermes_api_interface", "") or "")
+    except Exception:  # pragma: no cover - 配置导入失败时保持旧行为
+        interface = ""
+    return session_key_prefix_for_interface(interface)
+
 
 class SessionManager:
-    """管理 Hermes session key 的生成、采纳与过期"""
+    """管理 session key 的生成、采纳与过期"""
 
     def __init__(self) -> None:
         self._cache: dict[str, str] = {}
         self._generation: dict[str, int] = {}
         self._store: SessionKeyStore | None = None
+        # 当前 session key 前缀(按后端;bind_store / 取 key 时校准并给旧派生 key 改名)。
+        self._key_prefix = KEY_PREFIX_HERMES
         # T1 空闲重置的三份状态(内存态,重启即清——重启后没有活动记录,
         # idle_expired 只挑有记录的会话,不会重启完立刻清人):
         self._components: dict[str, tuple[str, bool, str, str | None]] = {}
@@ -72,9 +104,15 @@ class SessionManager:
         仅为本地计数器 +1(不上游、无消息、无 LLM 调用),可接受。
         """
         self._store = store
+        self._key_prefix = resolve_session_key_prefix()
         for internal_id, (session_key, generation) in store.load_all().items():
             self._cache[internal_id] = session_key
             self._generation[internal_id] = generation
+        # 一次性改本地 key:后端前缀与旧 hermes- 不同时,把缓存的派生 key
+        # ``hermes-{internal_id}[-gN]`` 换成 ``{新前缀}-...``。旧上游会话映射保持
+        # 无引用历史(不迁移、不别名),下一轮按真实行为新建上游会话。
+        # Hermes 后端前缀不变,这里绝不动任何 key。
+        self._rename_derived_keys(LEGACY_KEY_PREFIX, self._key_prefix)
         # /delay 暂停集合装回(原内存态重启即失效)。
         self._idle_paused.update(store.load_idle_paused())
         now = time.time()
@@ -123,6 +161,75 @@ class SessionManager:
             now=time.time(),
         )
 
+    # --- session key 前缀(按真实后端命名)---
+
+    @property
+    def key_prefix(self) -> str:
+        """当前后端的 session key 前缀(未登记的后端用 hermes-)。"""
+        return self._key_prefix
+
+    def session_key_prefixes(self) -> tuple[str, ...]:
+        """本会话可能在真实登记里出现的全部前缀。
+
+        当前后端前缀在前;后端前缀不是 hermes- 时额外保留 hermes-——升级前登记的
+        后台事件(看板卡片 session_id / 子代理 origin_session_id)仍是旧 key,
+        不能当别人的。
+        """
+        self._ensure_key_prefix()
+        if self._key_prefix == LEGACY_KEY_PREFIX:
+            return (self._key_prefix,)
+        return (self._key_prefix, LEGACY_KEY_PREFIX)
+
+    @staticmethod
+    def _is_derived_key(session_key: str, internal_id: str, prefix: str) -> bool:
+        """是否本地派生形态 ``{prefix}-{internal_id}[-gN]``。
+
+        上游轮换回传的 id(任意 uuid)不是派生形态,任何时候都不改名——那是上游
+        session id,本地改名等于断上游历史。
+        """
+        base = f"{prefix}-{internal_id}"
+        if session_key == base:
+            return True
+        return session_key.startswith(base + "-g") and session_key[len(base) + 2 :].isdigit()
+
+    def _rename_derived_keys(self, old_prefix: str, new_prefix: str) -> int:
+        """把缓存的派生 key 从 old 前缀换到 new 前缀(只改本地 key 名字)。
+
+        只动 ``{old}-{internal_id}[-gN]``;上游轮换回传的 id 不是派生形态,永不改名。
+        换名后旧上游会话映射成为无引用历史(本地 key 已不再指向它),不迁移、不别名:
+        新 key 下一轮按真实行为新建上游会话,绝不会错误续读旧映射。
+        """
+        if old_prefix == new_prefix:
+            return 0
+        renamed = 0
+        for internal_id, session_key in list(self._cache.items()):
+            if not self._is_derived_key(session_key, internal_id, old_prefix):
+                continue
+            self._cache[internal_id] = new_prefix + session_key[len(old_prefix) :]
+            # key 变了,增量推送水位作废(旧水位绑在旧 key 上,get 侧也会校验兜底)。
+            self._push_watermark.pop(internal_id, None)
+            if self._store is not None:
+                self._persist(internal_id)
+            renamed += 1
+        if renamed:
+            logger.info(
+                f"[SESSION] session key 前缀迁移: {old_prefix}-* -> {new_prefix}-* "
+                f"({renamed} 条)"
+            )
+        self._key_prefix = new_prefix
+        return renamed
+
+    def _ensure_key_prefix(self) -> str:
+        """取 key 前校准前缀:后端配置与当前前缀不一致时只做一次迁移。"""
+        prefix = resolve_session_key_prefix()
+        if prefix != self._key_prefix:
+            self._rename_derived_keys(self._key_prefix, prefix)
+        return self._key_prefix
+
+    def _render_key(self, internal_id: str, generation: int) -> str:
+        key = f"{self._key_prefix}-{internal_id}"
+        return f"{key}-g{generation}" if generation > 0 else key
+
     def _get_internal_id(
         self,
         adapter_name: str,
@@ -154,18 +261,17 @@ class SessionManager:
         user_id: str,
         group_id: str | None = None,
     ) -> str:
-        """获取或创建 Hermes session key,通过 X-Hermes-Session-Id 头送给上游。"""
+        """获取或创建当前后端的 session key,通过 X-Hermes-Session-Id 头送给上游。"""
         internal_id = self._get_internal_id(adapter_name, is_private, user_id, group_id)
         # 登记组件,供 T1 空闲重置反查(internal_id → clear / inflight key 都需要)
         self._components[internal_id] = (adapter_name, is_private, user_id, group_id)
+        self._ensure_key_prefix()
         cached = self._cache.get(internal_id)
         if cached is not None:
             return cached
 
         gen = self._generation.get(internal_id, 0)
-        session_key = f"hermes-{internal_id}"
-        if gen > 0:
-            session_key = f"{session_key}-g{gen}"
+        session_key = self._render_key(internal_id, gen)
 
         self._cache[internal_id] = session_key
         self._persist(internal_id)
@@ -349,9 +455,10 @@ class SessionManager:
         重置后活动基准刷新为现在,给新会话一个完整 T1 周期。"""
         self._cache.pop(internal_id, None)
         self._push_watermark.pop(internal_id, None)  # 转录清空,增量推送水位归零
+        self._ensure_key_prefix()
         gen = self._generation.get(internal_id, 0) + 1
         self._generation[internal_id] = gen
-        self._cache[internal_id] = f"hermes-{internal_id}-g{gen}"
+        self._cache[internal_id] = self._render_key(internal_id, gen)
         self._persist(internal_id)
         comp = self._parse_internal_id(internal_id)
         if comp is not None:
