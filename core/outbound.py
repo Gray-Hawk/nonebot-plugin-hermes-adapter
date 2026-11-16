@@ -21,6 +21,13 @@ import nonebot_plugin_alconna as alconna
 from nonebot import logger
 from nonebot.adapters import Bot
 
+# OneBot v11 没有 alconna 内置的 poke 段：出站戳一戳只能用原生消息段包成
+# alconna.Other。adapter 不在时整条链路保持「poke 标记原样留文本」的旧行为。
+try:  # pragma: no cover - 依赖部署是否装 onebotv11 adapter
+    from nonebot.adapters.onebot.v11.message import MessageSegment as _Ob11MessageSegment
+except Exception:  # noqa: BLE001
+    _Ob11MessageSegment = None
+
 from .chat_config import load_chat_config
 from .log_throttle import throttled_info
 from .media_config import load_media_config
@@ -160,15 +167,18 @@ def _parse_image_data_url(url: str) -> tuple[bytes, str, str] | None:
 # 所有已知 adapter 上限 ≥ 4500,默认 max_len=4000,溢出安全。
 _TRUNCATION_SUFFIX = "\n\n…（消息过长,已截断）"
 
-# ---------------------------------------------------------------- 受控内联 @ 原语
+# ---------------------------------------------------------------- 受控内联 CQ 原语
 #
-# reply_text 里允许出现**唯一一种**控制标记:`[CQ:at,qq=<ASCII 数字>]`,可多次、
-# 可出现在任意位置,与前后文字保持原序。出站前逐个转成 alconna At 段,绝不让标记
-# 字面进 QQ。这里刻意不是「CQ 码解析器」:除 at 之外的任何 CQ 段(image/face/
-# record/music/share…)、以及 at 的非数字形态都不转换,原样留在正文里当普通文本。
-# 理由:模型能写的标记面越小,越不会有「用户收到不可见段」这类无从解释的故障;
-# 需要扩类型时按需显式加白,不做形态猜测。
+# reply_text 里允许出现**两种**控制标记（可多次、任意位置，与前后文字保持原序）：
+#   - `[CQ:at,qq=<ASCII 数字>]`        → alconna At 段
+#   - `[CQ:poke,type=<数字>,id=<数字>]` → OneBot poke 段（type 省略时按 1）
+# 出站前逐个转成对应消息段，绝不让标记字面进 QQ。这里刻意不是「CQ 码解析器」：
+# 除 at / poke 之外的任何 CQ 段(image/face/record/music/share…)、以及非数字形态
+# 都不转换，原样留在正文里当普通文本。理由:模型能写的标记面越小,越不会有
+# 「用户收到不可见段」这类无从解释的故障;需要扩类型时按需显式加白,不做形态猜测。
 _INLINE_AT_MARKER_RE = re.compile(r"\[CQ:at,qq=([0-9]{1,20})\]")
+# type 缺省 = 1（OneBot 戳一戳）；id/type 只接受 ASCII 数字，且参数顺序固定。
+_INLINE_POKE_MARKER_RE = re.compile(r"\[CQ:poke,(?:type=([0-9]{1,3}),)?id=([0-9]{1,20})\]")
 
 # 观测用:正文里残留的 CQ 段形态。只统计与记日志,一个字节都不改。
 _CQ_LIKE_RE = re.compile(r"\[CQ:[A-Za-z_]+[,\]]")
@@ -226,27 +236,63 @@ class _InlineAt:
     qq: str
 
 
-def _parse_inline_at_markers(text: str) -> list[str | _InlineAt]:
-    """把 reply_text 切成 文本 / 内联 @ 的有序片段。
+@dataclass(frozen=True)
+class _InlinePoke:
+    """解析结果里的一个受控内联戳一戳目标（type 已归一成数字串）。"""
 
-    只有精确形态 `[CQ:at,qq=<ASCII 数字>]` 转段;其余一律留在文本片段里:
-      - `[CQ:at,qq=all]`、`[CQ:at,qq=0]`:OneBot 侧等同 @全体成员,不开放;
-      - `[CQ:at,qq=]`、`[CQ:at,qq=abc]`、全角逗号等形态不符的:不认;
-      - 任何非 at 类型(`[CQ:image,…]` 等):不认。
-    相邻标记不产生空文本片段;空串返回空列表。
+    type: str
+    qq: str
+
+
+def _ob11_poke_segment(ptype: str, qq: str):
+    """OneBot v11 poke 消息段；adapter 不可用时返回 None（调用方保留原样文本）。"""
+    if _Ob11MessageSegment is None:
+        return None
+    return _Ob11MessageSegment("poke", {"type": ptype, "id": qq})
+
+
+def _parse_inline_markers(
+    text: str, *, self_id: str | None = None
+) -> list[str | _InlineAt | _InlinePoke]:
+    """把 reply_text 切成 文本 / 内联 @ / 内联 poke 的有序片段。
+
+    只有精确形态才转段，其余一律留在文本片段里：
+      - `[CQ:at,qq=<ASCII 数字>]`；
+      - `[CQ:poke,type=<数字>,id=<数字>]` 与省略 type 的 `[CQ:poke,id=<数字>]`
+        （type 缺省按 1；id/type 只接受 ASCII 数字，参数顺序固定）；
+      - `[CQ:at,qq=all]`、`[CQ:at,qq=0]`：OneBot 侧等同 @全体成员，不开放；
+      - `[CQ:poke,id=<自己>]`：自戳是非法目标，不转换，原样留在正文；
+      - 形态不符（全角逗号、空值、非数字、参数顺序不同）与任何其它类型：不认。
+    相邻标记不产生空文本片段；空串返回空列表。
     """
 
-    tokens: list[str | _InlineAt] = []
+    tokens: list[str | _InlineAt | _InlinePoke] = []
     pos = 0
+    events: list[tuple[int, int, str | _InlineAt | _InlinePoke]] = []
     for match in _INLINE_AT_MARKER_RE.finditer(text):
         qq = match.group(1)
         if int(qq) == 0:
             # OneBot v11 把 qq=0 当 @全体成员,不在受控面内:不切断文本,原样留下。
             continue
-        if match.start() > pos:
-            tokens.append(text[pos : match.start()])
-        tokens.append(_InlineAt(qq))
-        pos = match.end()
+        events.append((match.start(), match.end(), _InlineAt(qq)))
+    for match in _INLINE_POKE_MARKER_RE.finditer(text):
+        ptype = match.group(1) or "1"
+        qq = match.group(2)
+        if int(qq) == 0 or (self_id is not None and qq == str(self_id)):
+            # 0/自己不是合法戳一戳目标：不切断文本，原样留下。
+            continue
+        segment = _ob11_poke_segment(ptype, qq)
+        if segment is None:  # pragma: no cover - 依赖 onebotv11 adapter 是否安装
+            continue
+        events.append((match.start(), match.end(), _InlinePoke(ptype, qq)))
+    for start, end, token in sorted(events, key=lambda item: item[0]):
+        if start < pos:
+            # 已被更早的标记覆盖（两种形态本不会重叠），保守跳过。
+            continue
+        if start > pos:
+            tokens.append(text[pos:start])
+        tokens.append(token)
+        pos = end
     if pos < len(text):
         tokens.append(text[pos:])
     if not tokens and text:
@@ -254,25 +300,37 @@ def _parse_inline_at_markers(text: str) -> list[str | _InlineAt]:
     return tokens
 
 
-def _tokens_to_segments(tokens: Sequence[str | _InlineAt]) -> list:
+def _tokens_to_segments(tokens: Sequence[str | _InlineAt | _InlinePoke]) -> list:
     """片段 → alconna 段列表(文本用裸 str,由 UniMessage 构造期收成 Text)。"""
 
-    return [alconna.At("user", tok.qq) if isinstance(tok, _InlineAt) else tok for tok in tokens]
+    segments: list = []
+    for tok in tokens:
+        if isinstance(tok, _InlineAt):
+            segments.append(alconna.At("user", tok.qq))
+        elif isinstance(tok, _InlinePoke):
+            segment = _ob11_poke_segment(tok.type, tok.qq)
+            if segment is None:  # pragma: no cover - 解析期已挡
+                segments.append(f"[CQ:poke,type={tok.type},id={tok.qq}]")
+            else:
+                segments.append(alconna.Other(segment))
+        else:
+            segments.append(tok)
+    return segments
 
 
 def _truncate_tokens(
-    tokens: Sequence[str | _InlineAt], max_len: int
-) -> tuple[list[str | _InlineAt], bool]:
+    tokens: Sequence[str | _InlineAt | _InlinePoke], max_len: int
+) -> tuple[list[str | _InlineAt | _InlinePoke], bool]:
     """按文本字符数截断片段序列,返回 (截断后片段, 是否发生截断)。
 
-    @ 段不占文本预算(它不是文本);截断点之后的片段(含 @)整体丢弃——与「截断就是
-    不要后半段」的既有语义一致,也保证不会把半个标记发出去。
+    @ / poke 段不占文本预算(它们不是文本);截断点之后的片段(含段)整体丢弃——
+    与「截断就是不要后半段」的既有语义一致,也保证不会把半个标记发出去。
     """
 
-    kept: list[str | _InlineAt] = []
+    kept: list[str | _InlineAt | _InlinePoke] = []
     used = 0
     for tok in tokens:
-        if isinstance(tok, _InlineAt):
+        if isinstance(tok, (_InlineAt, _InlinePoke)):
             kept.append(tok)
             continue
         remain = max_len - used
@@ -286,7 +344,7 @@ def _truncate_tokens(
     return kept, False
 
 
-def _warn_residual_cq(tokens: Sequence[str | _InlineAt]) -> None:
+def _warn_residual_cq(tokens: Sequence[str | _InlineAt | _InlinePoke]) -> None:
     """正文里残留 CQ 段形态(被拒的 at 或其它类型)时留一条节流观测。"""
 
     samples: list[str] = []
@@ -418,17 +476,17 @@ def _split_text_chunks(text: str, max_chars: int) -> list[str]:
 
 
 def _pack_forward_nodes(
-    tokens: Sequence[str | _InlineAt],
+    tokens: Sequence[str | _InlineAt | _InlinePoke],
     *,
     bot_self_id: str,
     bot_nickname: str,
     max_chars_per_node: int = 3500,
 ) -> list[alconna.CustomNode]:
-    """把 文本/@ 片段装进合并转发的自定义节点。
+    """把 文本/@/poke 片段装进合并转发的自定义节点。
 
-    与纯文本分包的区别:**@ 段是独立段,不参与字符预算、也不会被切断**——先按片段
-    切分文本,再按预算开新节点,@ 落在它当时所在的节点里,跨节点时各节点自带自己的
-    @,整包不丢人也不重排。返回至少一个节点(空文本返回一个空内容节点)。
+    与纯文本分包的区别:**@ / poke 段是独立段,不参与字符预算、也不会被切断**——先按
+    片段切分文本,再按预算开新节点,段落在它当时所在的节点里,跨节点时各节点自带自己的
+    段,整包不丢人也不重排。返回至少一个节点(空文本返回一个空内容节点)。
     """
 
     contents: list[list] = [[]]
@@ -436,6 +494,15 @@ def _pack_forward_nodes(
     for tok in tokens:
         if isinstance(tok, _InlineAt):
             contents[-1].append(alconna.At("user", tok.qq))
+            continue
+        if isinstance(tok, _InlinePoke):
+            segment = _ob11_poke_segment(tok.type, tok.qq)
+            if segment is not None:
+                contents[-1].append(alconna.Other(segment))
+            else:  # pragma: no cover - 解析期已挡
+                contents[-1].append(
+                    alconna.Text(f"[CQ:poke,type={tok.type},id={tok.qq}]")
+                )
             continue
         for chunk in _split_text_chunks(tok, max_chars_per_node):
             if not chunk:
@@ -623,8 +690,9 @@ async def send_text_with_media(
     """组装并发送一条消息,分别返回发送状态与平台消息 ID。
 
     - target 是 alconna Target(只在内存可用)
-    - text 里允许受控内联 @ 标记 `[CQ:at,qq=<数字>]`(可多次、任意位置),逐个转成
-      alconna At 段并与前后文字保持原序;非 at/非数字形态原样当普通文本。合法标记
+    - text 里允许受控内联标记 `[CQ:at,qq=<数字>]` 与 `[CQ:poke,type=<数字>,id=<数字>]`
+      (可多次、任意位置),逐个转成 alconna At / OneBot poke 段并与前后文字保持原序;
+      非 at/poke、非数字形态、自戳与参数顺序不符的标记原样当普通文本。合法标记
       绝不会字面发出去。
     - reply_qq_message_id: 合法 OneBot int32 时在消息最前面构造 Reply(id=...) 引用;
       None/空串/空白/非数字不引用(非数字留 WARN 后忽略,避免导出期崩掉整条回复)
@@ -696,7 +764,7 @@ async def send_text_with_media(
     original_len = len(text)
     max_len = load_misc_config().max_length
 
-    tokens = _parse_inline_at_markers(text)
+    tokens = _parse_inline_markers(text, self_id=str(getattr(bot, "self_id", "") or "") or None)
     _warn_residual_cq(tokens)
     reply_id = _normalize_reply_id(reply_qq_message_id, target=target)
     reply_at = ""
@@ -766,7 +834,8 @@ async def send_text_with_media(
             logger.debug(
                 f"[OUTBOUND] sent-via-forward target={target} text_len={original_len} "
                 f"nodes={len(nodes)} media={forward_media_count} ats="
-                f"{sum(1 for t in tokens if isinstance(t, _InlineAt))} msg_ids={len(msg_ids)}"
+                f"{sum(1 for t in tokens if isinstance(t, _InlineAt))} pokes="
+                f"{sum(1 for t in tokens if isinstance(t, _InlinePoke))} msg_ids={len(msg_ids)}"
             )
             return SendResult(ok=True, msg_ids=msg_ids)
         except DeliveryClaimBusy as exc:
@@ -833,6 +902,7 @@ async def send_text_with_media(
             f"[OUTBOUND] sent target={target} text_len={original_len} "
             f"truncated={truncated} media_sent={sent_media_count}/{len(media_urls)} "
             f"ats={sum(1 for t in tokens if isinstance(t, _InlineAt))} "
+            f"pokes={sum(1 for t in tokens if isinstance(t, _InlinePoke))} "
             f"reply={reply_id or '-'} msg_ids={len(msg_ids)}"
         )
         return SendResult(ok=True, msg_ids=msg_ids)

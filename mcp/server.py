@@ -286,7 +286,9 @@ def build_mcp_app(
             Rate-limited per target by the same token bucket as wake_turn (shared).
           - group_id and user_id are mutually exclusive — give exactly one.
           - reply_to optionally quotes a message by its plugin m:id (for example m:123).
-            Inline [CQ:at,qq=数字] in text creates ordered mentions; other CQ codes are not enabled.
+            Inline [CQ:at,qq=数字] in text creates ordered mentions and
+            [CQ:poke,type=1,id=数字] creates an ordered OneBot poke segment; other CQ
+            codes stay literal text.
         """
         inp = PushMessageInput(
             adapter=adapter,
