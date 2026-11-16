@@ -1,0 +1,479 @@
+11-16 22:11:16 [SUCCESS] nonebot | NoneBot is initializing...
+11-16 22:11:16 [INFO] nonebot | Current Env: prod
+<frozen runpy>:88: RuntimeWarning: No adapters found, please make sure you have installed at least one adapter.
+11-16 22:11:16 [SUCCESS] nonebot | Succeeded to load plugin "uniseg" from "nonebot_plugin_alconna.uniseg"
+11-16 22:11:16 [SUCCESS] nonebot | Succeeded to load plugin "nonebot_plugin_waiter"
+11-16 22:11:16 [WARNING] nonebot_plugin_hermes_adapter | [HERMES] localstore 调用栈识别失败,定制目录按名解析为 /home/neonsky/.local/share/nonebot2/nonebot_plugin_hermes_adapter(不吃 localstore_plugin_data_dir 重映射);插件正常加载时不应出现本警告
+.E.EEEEEE11-16 22:11:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES] 引用消息无 sender 字段(adapter 缺归属信息),回退无归属格式
+E11-16 22:11:16 [INFO] nonebot_plugin_hermes_adapter | [HERMES] 引用消息无 sender 字段(adapter 缺归属信息),回退无归属格式
+EEEEEEEEEEEEEEEEEFEE
+======================================================================
+ERROR: test_mixed_image_and_sticker_reference_keeps_global_idx (tests.test_quote_sticker.QuotePrefixStickerTests.test_mixed_image_and_sticker_reference_keeps_global_idx)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 99, in test_mixed_image_and_sticker_reference_keeps_global_idx
+    _replied(image_urls=[IMAGE_URL], sticker_urls=[STICKER_URL]), 2
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 42, in _replied
+    return media._RepliedMedia(**kwargs)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+TypeError: _RepliedMedia.__init__() got an unexpected keyword argument 'sticker_urls'
+
+======================================================================
+ERROR: test_pure_sticker_reference_has_a_prefix (tests.test_quote_sticker.QuotePrefixStickerTests.test_pure_sticker_reference_has_a_prefix)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 83, in test_pure_sticker_reference_has_a_prefix
+    prefix = media._compose_quote_prefix(_replied(sticker_urls=[STICKER_URL]), 0)
+                                         ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 42, in _replied
+    return media._RepliedMedia(**kwargs)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+TypeError: _RepliedMedia.__init__() got an unexpected keyword argument 'sticker_urls'
+
+======================================================================
+ERROR: test_text_plus_sticker_reference (tests.test_quote_sticker.QuotePrefixStickerTests.test_text_plus_sticker_reference)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 88, in test_text_plus_sticker_reference
+    _replied(sender_label="小光(1001)", text="看这个", sticker_urls=[STICKER_URL]), 0
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 42, in _replied
+    return media._RepliedMedia(**kwargs)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+TypeError: _RepliedMedia.__init__() got an unexpected keyword argument 'sticker_urls'
+
+======================================================================
+ERROR: test_enumeration_order_puts_quote_sticker_after_quote_image (tests.test_quote_sticker.QuoteStickerStoreTests.test_enumeration_order_puts_quote_sticker_after_quote_image)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 126, in test_enumeration_order_puts_quote_sticker_after_quote_image
+    msg = BufferedMessage(
+        ts=1, adapter="onebotv11", group_id="g1", user_id="u1", nickname="小光",
+    ...<5 lines>...
+        forward_image_urls=["https://example.invalid/fwd.png"],
+    )
+TypeError: BufferedMessage.__init__() got an unexpected keyword argument 'quote_sticker_urls'. Did you mean 'quote_image_urls'?
+
+======================================================================
+ERROR: test_fetcher_gets_quote_sticker_offsets (tests.test_quote_sticker.QuoteStickerStoreTests.test_fetcher_gets_quote_sticker_offsets)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 162, in test_fetcher_gets_quote_sticker_offsets
+    self._append(
+    ~~~~~~~~~~~~^
+        image_urls=["https://example.invalid/own.png"],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        quote_image_urls=[IMAGE_URL],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        quote_sticker_urls=[STICKER_URL],
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 118, in _append
+    msg = BufferedMessage(
+        ts=1, adapter="onebotv11", group_id="g1", user_id="u1", nickname="小光",
+        content="看这个", origin=MessageOrigin.human(), **kwargs,
+    )
+TypeError: BufferedMessage.__init__() got an unexpected keyword argument 'quote_sticker_urls'. Did you mean 'quote_image_urls'?
+
+======================================================================
+ERROR: test_get_media_urls_exposes_quote_sticker_bucket (tests.test_quote_sticker.QuoteStickerStoreTests.test_get_media_urls_exposes_quote_sticker_bucket)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 156, in test_get_media_urls_exposes_quote_sticker_bucket
+    msg = self._append(quote_sticker_urls=[STICKER_URL])
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 118, in _append
+    msg = BufferedMessage(
+        ts=1, adapter="onebotv11", group_id="g1", user_id="u1", nickname="小光",
+        content="看这个", origin=MessageOrigin.human(), **kwargs,
+    )
+TypeError: BufferedMessage.__init__() got an unexpected keyword argument 'quote_sticker_urls'. Did you mean 'quote_image_urls'?
+
+======================================================================
+ERROR: test_historical_row_roundtrip_keeps_kind_and_index (tests.test_quote_sticker.QuoteStickerStoreTests.test_historical_row_roundtrip_keeps_kind_and_index)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 145, in test_historical_row_roundtrip_keeps_kind_and_index
+    self._append(quote_image_urls=[IMAGE_URL], quote_sticker_urls=[STICKER_URL])
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 118, in _append
+    msg = BufferedMessage(
+        ts=1, adapter="onebotv11", group_id="g1", user_id="u1", nickname="小光",
+        content="看这个", origin=MessageOrigin.human(), **kwargs,
+    )
+TypeError: BufferedMessage.__init__() got an unexpected keyword argument 'quote_sticker_urls'. Did you mean 'quote_image_urls'?
+
+======================================================================
+ERROR: test_sticker_and_text_reply_keeps_both (tests.test_quote_sticker.RepliedStickerExtractionTests.test_sticker_and_text_reply_keeps_both)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 77, in test_sticker_and_text_reply_keeps_both
+    self.assertEqual(replied.sticker_urls, [STICKER_URL])
+                     ^^^^^^^^^^^^^^^^^^^^
+AttributeError: '_RepliedMedia' object has no attribute 'sticker_urls'
+
+======================================================================
+ERROR: test_sticker_only_reply_is_extracted (tests.test_quote_sticker.RepliedStickerExtractionTests.test_sticker_only_reply_is_extracted)
+纯表情引用：sticker 单独抽出，image_urls 仍为空。
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_quote_sticker.py", line 66, in test_sticker_only_reply_is_extracted
+    self.assertEqual(replied.sticker_urls, [STICKER_URL])
+                     ^^^^^^^^^^^^^^^^^^^^
+AttributeError: '_RepliedMedia' object has no attribute 'sticker_urls'
+
+======================================================================
+ERROR: test_already_sent_component_is_not_resent (tests.test_outbound_poke.GroupPokeTests.test_already_sent_component_is_not_resent)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 150, in test_already_sent_component_is_not_resent
+    result = h.send("戳 [CQ:poke,id=12345]", delivery=delivery)
+             ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_group_poke_uses_public_api_not_message_segment (tests.test_outbound_poke.GroupPokeTests.test_group_poke_uses_public_api_not_message_segment)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 79, in test_group_poke_uses_public_api_not_message_segment
+    result = h.send("[CQ:poke,id=12345]")
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_media_and_pokes_share_one_delivery_claim (tests.test_outbound_poke.GroupPokeTests.test_media_and_pokes_share_one_delivery_claim)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 113, in test_media_and_pokes_share_one_delivery_claim
+    result = h.send(
+        "看图 [CQ:poke,id=12345]",
+        media_urls=["https://example.invalid/pic.png"],
+        delivery=delivery,
+    )
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_mixed_text_keeps_action_order (tests.test_outbound_poke.GroupPokeTests.test_mixed_text_keeps_action_order)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 87, in test_mixed_text_keeps_action_order
+    result = h.send("先戳你 [CQ:poke,type=1,id=10001] 一下")
+             ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_multiple_pokes_keep_order_and_at_stays_in_message (tests.test_outbound_poke.GroupPokeTests.test_multiple_pokes_keep_order_and_at_stays_in_message)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 97, in test_multiple_pokes_keep_order_and_at_stays_in_message
+    h.send("[CQ:at,qq=20002] 前 [CQ:poke,type=2,id=10001] 中 [CQ:poke,id=30003] 后")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_partial_failure_is_recorded_unknown_not_success (tests.test_outbound_poke.GroupPokeTests.test_partial_failure_is_recorded_unknown_not_success)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 136, in test_partial_failure_is_recorded_unknown_not_success
+    result = h.send("先说一句 [CQ:poke,id=12345] 再补一句", delivery=delivery)
+             ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_at_regression_unchanged (tests.test_outbound_poke.PokeArgumentGuardTests.test_at_regression_unchanged)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 201, in test_at_regression_unchanged
+    h.send("[CQ:at,qq=12345] 你看")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_invalid_params_stay_literal_text (tests.test_outbound_poke.PokeArgumentGuardTests.test_invalid_params_stay_literal_text) (text='[CQ:poke,id=abc]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 181, in test_invalid_params_stay_literal_text
+    result = h.send(text)
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_invalid_params_stay_literal_text (tests.test_outbound_poke.PokeArgumentGuardTests.test_invalid_params_stay_literal_text) (text='[CQ:poke,type=x,id=10001]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 181, in test_invalid_params_stay_literal_text
+    result = h.send(text)
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_invalid_params_stay_literal_text (tests.test_outbound_poke.PokeArgumentGuardTests.test_invalid_params_stay_literal_text) (text='[CQ:poke,id=10001,type=1]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 181, in test_invalid_params_stay_literal_text
+    result = h.send(text)
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_invalid_params_stay_literal_text (tests.test_outbound_poke.PokeArgumentGuardTests.test_invalid_params_stay_literal_text) (text='[CQ:poke]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 181, in test_invalid_params_stay_literal_text
+    result = h.send(text)
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_invalid_params_stay_literal_text (tests.test_outbound_poke.PokeArgumentGuardTests.test_invalid_params_stay_literal_text) (text='[CQ:poke,id=]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 181, in test_invalid_params_stay_literal_text
+    result = h.send(text)
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_invalid_params_stay_literal_text (tests.test_outbound_poke.PokeArgumentGuardTests.test_invalid_params_stay_literal_text) (text='[CQ:poke,id=0]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 181, in test_invalid_params_stay_literal_text
+    result = h.send(text)
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_padded_other_target_still_converts (tests.test_outbound_poke.PokeArgumentGuardTests.test_padded_other_target_still_converts)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 196, in test_padded_other_target_still_converts
+    h.send("[CQ:poke,id=000123]")
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_self_poke_is_not_converted (tests.test_outbound_poke.PokeArgumentGuardTests.test_self_poke_is_not_converted) (text='[CQ:poke,id=999]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 190, in test_self_poke_is_not_converted
+    h.send(text)
+    ~~~~~~^^^^^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_self_poke_is_not_converted (tests.test_outbound_poke.PokeArgumentGuardTests.test_self_poke_is_not_converted) (text='[CQ:poke,type=2,id=000999]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 190, in test_self_poke_is_not_converted
+    h.send(text)
+    ~~~~~~^^^^^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_private_mixed_text_keeps_order (tests.test_outbound_poke.PrivatePokeTests.test_private_mixed_text_keeps_order)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 165, in test_private_mixed_text_keeps_order
+    h.send("戳你 [CQ:poke,id=12345] 一下", private=True)
+    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+ERROR: test_private_poke_uses_user_id_only (tests.test_outbound_poke.PrivatePokeTests.test_private_poke_uses_user_id_only)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 159, in test_private_poke_uses_user_id_only
+    result = h.send("[CQ:poke,id=12345]", private=True)
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 63, in send
+    with patch.object(outbound, "_send_msg", new=self._send), patch.object(
+         ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1497, in __enter__
+    original, local = self.get_original()
+                      ~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.13/unittest/mock.py", line 1467, in get_original
+    raise AttributeError(
+        "%s does not have the attribute %r" % (target, name)
+    )
+AttributeError: <module 'nonebot_plugin_hermes_adapter.core.outbound' from '/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/core/outbound.py'> does not have the attribute '_send_msg'
+
+======================================================================
+FAIL: test_poke_is_not_packed_into_forward_nodes (tests.test_outbound_poke.PokeForwardPackingTests.test_poke_is_not_packed_into_forward_nodes)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/neonsky/.hermes/profiles/coder_deepseek/cache/scratch/baseline-21a0954/tests/test_outbound_poke.py", line 215, in test_poke_is_not_packed_into_forward_nodes
+    self.assertFalse(
+    ~~~~~~~~~~~~~~~~^
+        [seg for seg in contents if isinstance(seg, alconna.Other)]
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: [Other(origin=MessageSegment(type='poke', data={'type': '1', 'id': '10001'}))] is not false
+
+----------------------------------------------------------------------
+Ran 24 tests in 0.017s
+
+FAILED (failures=1, errors=27)
