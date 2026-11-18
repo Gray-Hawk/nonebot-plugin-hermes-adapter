@@ -261,7 +261,8 @@ class DeliveryTests(unittest.TestCase):
         self.assertEqual(row["content"], text)
         self.assertNotIn("OUT-OF-BAND", row["content"])
 
-    def test_two_batches_in_one_tool_batch_are_delivered_verbatim(self) -> None:
+    def test_two_batches_in_one_tool_batch_get_clean_boundaries(self) -> None:
+        """一次 drain 的两批：各保留自己的区域块，批间空一行（不再被单换行糊在一起）。"""
         self.registry.remember(BLOCK_A)
         self.registry.remember(BLOCK_B)
         agent = self._agent()
@@ -269,7 +270,42 @@ class DeliveryTests(unittest.TestCase):
         self.assertTrue(agent.steer(BLOCK_B))
         messages = [{"role": "assistant", "tool_calls": []}, {"role": "tool", "content": "ok"}]
         helpers.apply_pending_steer_to_tool_results(agent, messages, 1)
-        self.assertEqual(messages[-1]["content"], f"{BLOCK_A}\n{BLOCK_B}")
+        self.assertEqual(messages[-1]["content"], f"{BLOCK_A}\n\n{BLOCK_B}")
+        self.assertNotIn("OUT-OF-BAND", messages[-1]["content"])
+
+    def test_two_batches_hoist_the_declared_hint_to_the_end(self) -> None:
+        """每批的批尾系统提示只留一条，落在整段最后（不夹在两批中间）。"""
+        first = f"{BLOCK_A}\n\n{CONVENTION}"
+        second = f"{BLOCK_B}\n\n{CONVENTION}"
+        self.registry.remember(first, CONVENTION)
+        self.registry.remember(second, CONVENTION)
+        agent = self._agent()
+        self.assertTrue(agent.steer(first))
+        self.assertTrue(agent.steer(second))
+        messages = [{"role": "assistant", "tool_calls": []}, {"role": "tool", "content": "ok"}]
+        helpers.apply_pending_steer_to_tool_results(agent, messages, 1)
+        content = messages[-1]["content"]
+        self.assertEqual(content, "\n\n".join([BLOCK_A, BLOCK_B, CONVENTION]))
+        self.assertEqual(content.count(CONVENTION), 1)
+
+    def test_compose_batches_keeps_single_batch_bytes(self) -> None:
+        self.assertEqual(patches.compose_batches([BLOCK_A]), BLOCK_A)
+        self.assertEqual(patches.compose_batches([]), "")
+        # 未声明提示时只加批间空行，不猜文案。
+        self.assertEqual(
+            patches.compose_batches([BLOCK_A, BLOCK_B]), f"{BLOCK_A}\n\n{BLOCK_B}"
+        )
+        # 各批声明不一致：不合并提示，保持每批原样（只加批间空行）。
+        first = f"{BLOCK_A}\n\n{CONVENTION}"
+        self.assertEqual(
+            patches.compose_batches([first, BLOCK_B], [CONVENTION, ""]),
+            f"{first}\n\n{BLOCK_B}",
+        )
+        # 声明了提示但某批尾巴不是那一段（上游归一改写过）：不猜，也不重复追加。
+        self.assertEqual(
+            patches.compose_batches([first, f"{BLOCK_B}\n\n别的提示"], [CONVENTION, CONVENTION]),
+            f"{first}\n\n{BLOCK_B}\n\n别的提示",
+        )
 
     def test_body_containing_the_shell_literal_is_not_stripped(self) -> None:
         literal = "[OUT-OF-BAND USER MESSAGE — a direct message from the user, delivered once]"

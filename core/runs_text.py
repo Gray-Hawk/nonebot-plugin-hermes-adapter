@@ -224,6 +224,43 @@ def _recuts_a_closed_unit(fragment_norm: str, interim_norm: str) -> bool:
     return bool(last) and last.startswith(body)
 
 
+def _consume_confirmed_envelopes(interim_norm: str, frag: str) -> int:
+    """碎片头部由 interim 末尾确认过的完整信封 → 已消费的字符数（归一坐标）。
+
+    只在碎片是**完整信封**（独立整行 ``§`` 开、独立整行 ``§`` 闭）且它逐字等于
+    interim 的结尾时才消费：interim 是这一段到这次 tool 调用为止的权威全文，它的
+    末份信封（含闭合行）已经在 ``_emit_text`` 里交付过，这些字节再回到碎片区就会
+    和下一帧粘成原文里没有的新正文（``§\\n乙\\n§`` + ``§\\n丙\\n§`` → ``乙\\n§§\\n丙``）。
+
+    半个标记、半个正文（delta 更早的切帧）一律不动：下一帧还可能补全它。整条判据
+    只看原输入的行结构，不补换行、不造标记。
+    """
+    pos = 0
+    consumed = 0
+    rest_interim = interim_norm
+    while True:
+        rest = frag[pos:]
+        lead = len(rest) - len(rest.lstrip("\n"))
+        rest = rest[lead:]
+        pos += lead
+        lines = rest.split("\n")
+        if len(lines) < 3 or lines[0] != SEPARATOR:
+            break
+        close = next(
+            (index for index in range(1, len(lines)) if lines[index] == SEPARATOR),
+            None,
+        )
+        if close is None:
+            break
+        envelope = "\n".join(lines[: close + 1])
+        if not rest_interim.endswith(envelope):
+            break
+        rest_interim = rest_interim[: len(rest_interim) - len(envelope)]
+        pos += len(envelope)
+        consumed += 1
+    return pos if consumed else 0
+
+
 def pending_after_interim(interim: str, fragment: str) -> str:
     """interim（本段到这次 tool 调用为止的全文快照）之后，delta 碎片还剩什么。
 
@@ -260,6 +297,14 @@ def pending_after_interim(interim: str, fragment: str) -> str:
         return tail
     if not tail_norm and _recuts_a_closed_unit(frag, interim_norm):
         return ""
+    consumed = _consume_confirmed_envelopes(interim_norm, frag)
+    if consumed:
+        # interim 已确认的完整末份信封（含闭合行）随它自己那份正文消费掉；后面的
+        # 碎片（真正的下一份信封）原样保留，一个字符都不补。
+        rest = frag[consumed:]
+        if rest.strip():
+            return fragment[origin[consumed] :]
+        return tail
     return fragment
 
 
@@ -305,6 +350,12 @@ def split_text_units(text: str, *, max_body_chars: int = MAX_BODY_CHARS) -> list
         tail = "\n".join(lines[positions[-1] + 1 :]).strip()
         if tail:
             _warn_dropped(_MISSING_CLOSE, tail)
+    elif previous_close is not None:
+        # 所有信封都闭合了：闭合行之后如果还有游离正文，它没有自己的开头（下一份
+        # 正文必须自带独立开头），同样拒发，并留一条准确的 missing_open。
+        stray = "\n".join(lines[previous_close + 1 :]).strip()
+        if stray:
+            _warn_dropped(_MISSING_OPEN, stray)
     return units
 
 

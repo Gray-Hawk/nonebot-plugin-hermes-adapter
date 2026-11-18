@@ -85,6 +85,35 @@ class EnvelopeParseTests(unittest.TestCase):
     def test_missing_close_drops_the_tail(self) -> None:
         self.assertEqual(runs_text.split_text_units(f"{SEP}\nA\n{SEP}\n裸尾巴"), ["A"])
 
+    def test_bare_tail_after_the_last_close_warns_missing_open(self) -> None:
+        """闭合行之后的游离正文：拒发之外还要留准确的 missing_open（可观测性）。"""
+        from tests import test_runs_terminal as _e2
+
+        with _e2._CapturedWarnings() as logs:
+            self.assertEqual(
+                runs_text.split_text_units(f"{SEP}\nA\n{SEP}\n裸尾"), ["A"]
+            )
+        self.assertIn("reason=missing_open", "\n".join(logs.messages))
+
+    def test_bare_tail_after_several_closed_envelopes_warns_once(self) -> None:
+        from tests import test_runs_terminal as _e2
+
+        with _e2._CapturedWarnings() as logs:
+            self.assertEqual(
+                runs_text.split_text_units(batch("A", "B") + "\n裸尾"), ["A", "B"]
+            )
+        self.assertEqual(
+            "\n".join(logs.messages).count("reason=missing_open"), 1, logs.messages
+        )
+
+    def test_silence_after_close_is_not_a_stray(self) -> None:
+        """闭合后只剩空白不是缺开头：静默不报错。"""
+        from tests import test_runs_terminal as _e2
+
+        with _e2._CapturedWarnings() as logs:
+            self.assertEqual(runs_text.split_text_units(unit("A") + "\n\n"), ["A"])
+        self.assertEqual(logs.messages, [])
+
     def test_no_marker_is_not_a_body(self) -> None:
         for text in ("你好", "第一行\n第二段", '{"body":"旧信封"}'):
             self.assertEqual(runs_text.split_text_units(text), [], text)

@@ -114,7 +114,7 @@ class SteerRowPresentationTests(_TrackerCase):
     def _direct(self, rows, *, image_urls=None, sticker_urls=None) -> tuple[bool, list[str]]:
         captured: list[str] = []
 
-        async def fake_steer_run(*, tgt, run_id, text, presented=False):
+        async def fake_steer_run(*, tgt, run_id, text, presented=False, presentation_hint=""):
             self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
             captured.append(text)
             return True
@@ -291,7 +291,7 @@ class FollowupSteerGateTests(_TrackerCase):
     def _try(self, *, during_await=None) -> tuple[bool, list[str]]:
         captured: list[str] = []
 
-        async def fake_steer_run(*, tgt, run_id, text, presented=False):
+        async def fake_steer_run(*, tgt, run_id, text, presented=False, presentation_hint=""):
             self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
             captured.append(text)
             if during_await is not None:
@@ -491,7 +491,7 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
         """用真实直注入口记两行台账,返回上游形态的 pending_steer 拼接文本。"""
         captured: list[str] = []
 
-        async def fake_steer_run(*, tgt, run_id, text, presented=False):
+        async def fake_steer_run(*, tgt, run_id, text, presented=False, presentation_hint=""):
             self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
             captured.append(text)
             return True
@@ -635,7 +635,7 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
         """多条 steer 各自成批(每批都挂约定行)时仍能逐行还原。"""
         captured: list[str] = []
 
-        async def fake_steer_run(*, tgt, run_id, text, presented=False):
+        async def fake_steer_run(*, tgt, run_id, text, presented=False, presentation_hint=""):
             self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
             captured.append(text)
             return True

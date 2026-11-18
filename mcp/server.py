@@ -87,6 +87,11 @@ from .tools.recall_message import (
     RecallMessageResult,
     recall_message_impl,
 )
+from .tools.poke_user import (
+    PokeUserInput,
+    PokeUserResult,
+    poke_user_impl,
+)
 from .tools.wake_turn import (
     WakeTurnInput,
     WakeTurnResult,
@@ -286,9 +291,10 @@ def build_mcp_app(
             Rate-limited per target by the same token bucket as wake_turn (shared).
           - group_id and user_id are mutually exclusive — give exactly one.
           - reply_to optionally quotes a message by its plugin m:id (for example m:123).
-            Inline [CQ:at,qq=数字] in text creates ordered mentions and
-            [CQ:poke,type=1,id=数字] creates an ordered OneBot poke segment; other CQ
-            codes stay literal text.
+            Mention people inline with `@QQ号` (ASCII digits) — it becomes an At segment
+            at that exact position; nicknames, `@all` and other CQ codes stay literal
+            text. Poking is a separate action: call poke_user, never write a poke marker
+            in the text.
         """
         inp = PushMessageInput(
             adapter=adapter,
@@ -349,6 +355,37 @@ def build_mcp_app(
         _log_tool_call(
             "recall_message",
             f"adapter={adapter} group={group_id} user={user_id} message={message_id}",
+            f"ok={result.ok}"
+            + (f" kind={result.error_kind}" if result.error_kind else "")
+            + (f" error={_clip(result.error)!r}" if result.error else ""),
+        )
+        return result
+
+    @mcp.tool()
+    async def poke_user(
+        adapter: str,
+        user_id: str,
+        group_id: str | None = None,
+    ) -> PokeUserResult:
+        """Poke one user with OneBot ``send_poke`` — a standalone action, never chat text.
+
+        Poking is only available through this tool: never put a poke marker in a
+        reply body, and never mix a poke with a message. Give the QQ id of the person
+        to poke; pass group_id for a group chat and omit it for the private chat with
+        that same person. Poking the bot itself is refused. The result reports the
+        platform receipt (retcode when available); platform refusals and unconfirmed
+        network outcomes are reported without automatic retry.
+        """
+        inp = PokeUserInput(adapter=adapter, user_id=user_id, group_id=group_id)
+        result = await poke_user_impl(
+            inp,
+            active_sessions=active_sessions,
+            bot_registry=bot_registry,
+            scope=caller_scope_from_request(),
+        )
+        _log_tool_call(
+            "poke_user",
+            f"adapter={adapter} group={group_id} user={user_id}",
             f"ok={result.ok}"
             + (f" kind={result.error_kind}" if result.error_kind else "")
             + (f" error={_clip(result.error)!r}" if result.error else ""),

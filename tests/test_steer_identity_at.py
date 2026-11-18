@@ -110,7 +110,7 @@ class _SteerBoundaryBase(unittest.TestCase):
         )
         self.sent: list[str] = []
 
-    async def _fake_steer_run(self, *, tgt, run_id, text, presented=False) -> bool:
+    async def _fake_steer_run(self, *, tgt, run_id, text, presented=False, presentation_hint="") -> bool:
         self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
         self.sent.append(text)
         return True

@@ -495,12 +495,14 @@ async def _steer_text_into_live_run(
     # 普通消息是同一外观(`<聊天消息区域起始>…<聊天消息区域结束>`),媒体寻址/身份/
     # m:id 都在行内原样保留。
     text = render_steer_batch(send_rows)
+    hint = ""
     if steer_reply_push_active():
+        hint = _STEER_REPLY_CONVENTION_LINE
         text = _with_steer_reply_convention(text)
     try:
         ok = await hermes_client.steer_run(
             tgt=resolve_target(adapter_name, is_private, group_id),
-            run_id=live.run_id, text=text, presented=True,
+            run_id=live.run_id, text=text, presented=True, presentation_hint=hint,
         )
     except BaseException:
         # 任务被取消/中断(steer_run 自身把网络异常都归 False):在途认领必须撤销,

@@ -100,8 +100,11 @@ class _Base(unittest.TestCase):
         )
         self.sent: list[dict] = []
 
-    async def _fake_steer_run(self, *, tgt, run_id, text, presented=False):
-        self.sent.append({"text": text, "presented": presented, "run_id": run_id})
+    async def _fake_steer_run(self, *, tgt, run_id, text, presented=False, presentation_hint=""):
+        self.sent.append({
+            "text": text, "presented": presented, "run_id": run_id,
+            "hint": presentation_hint,
+        })
         return True
 
     def _patch_common(self):
@@ -167,10 +170,9 @@ class RegionShapeTests(unittest.TestCase):
             presentation.text,
             wrap_region("[m:101] [id=u1 user=小光]:\n你怎么看"),
         )
-        self.assertEqual(
-            presentation.text.split("\n")[0], CHAT_OPEN,
-        )
-        self.assertEqual(presentation.text.split("\n")[1], CHAT_NOTE)
+        self.assertEqual(presentation.text.split("\n")[0], CHAT_OPEN)
+        self.assertEqual(presentation.text.split("\n")[1], "")
+        self.assertEqual(presentation.text.split("\n")[2], CHAT_NOTE)
         self.assertEqual(presentation.text.split("\n")[-1], CHAT_CLOSE)
 
     def test_multi_row_separated_by_blank_line(self) -> None:
@@ -339,11 +341,13 @@ class SteerRequestMarkerTests(unittest.TestCase):
 
     TGT = SimpleNamespace(base_url="http://gw.test", api_key="k")
 
-    def _post(self, *, presented: bool, text: str = "<聊天消息区域起始>\n…\n<聊天消息区域结束>", status=200):
+    def _post(self, *, presented: bool, text: str = "<聊天消息区域起始>\n…\n<聊天消息区域结束>", status=200,
+              hint: str = ""):
         client = _RecordingClient(_FakeResponse(status))
         with patch.object(hc, "_get_http_client", lambda: client):
             ok = asyncio.run(hc.hermes_client.steer_run(
                 tgt=self.TGT, run_id="run-1", text=text, presented=presented,
+                presentation_hint=hint,
             ))
         return ok, client.calls
 
@@ -356,6 +360,19 @@ class SteerRequestMarkerTests(unittest.TestCase):
             "schema": steer_presentation.PRESENTATION_SCHEMA,
             "format": steer_presentation.PRESENTATION_FORMAT,
         })
+
+    def test_presented_batch_declares_the_batch_hint(self) -> None:
+        """批尾系统提示随标记声明：多批被上游拼成一段时插件据此只留一条。"""
+        ok, calls = self._post(presented=True, hint="（系统提示：本条为中途插入的消息。）")
+        self.assertTrue(ok)
+        self.assertEqual(
+            calls[0]["json"]["presentation"],
+            {
+                "schema": steer_presentation.PRESENTATION_SCHEMA,
+                "format": steer_presentation.PRESENTATION_FORMAT,
+                steer_presentation.PRESENTATION_HINT_FIELD: "（系统提示：本条为中途插入的消息。）",
+            },
+        )
 
     def test_default_keeps_upstream_body_unchanged(self) -> None:
         ok, calls = self._post(presented=False)
@@ -393,6 +410,9 @@ class ContractTests(unittest.TestCase):
         self.assertIn(f'PRESENTATION_SCHEMA = "{steer_presentation.PRESENTATION_SCHEMA}"', source)
         self.assertIn(f'PRESENTATION_FORMAT = "{steer_presentation.PRESENTATION_FORMAT}"', source)
         self.assertIn('PRESENTATION_FIELD = "presentation"', source)
+        self.assertIn(
+            f'PRESENTATION_HINT_FIELD = "{steer_presentation.PRESENTATION_HINT_FIELD}"', source
+        )
 
     def test_plugin_module_imports_without_gateway(self) -> None:
         """插件顶层只依赖标准库:NB 侧测试进程能直接加载它做契约比对。"""
@@ -470,7 +490,9 @@ class PendingSteerRestoreTests(_Base):
 
     def test_decorations_come_from_one_place(self) -> None:
         decorations = steer_region_decorations()
-        self.assertEqual(decorations, (CHAT_OPEN + "\n", CHAT_NOTE + "\n", CHAT_CLOSE))
+        self.assertEqual(
+            decorations, (CHAT_OPEN + "\n\n", CHAT_NOTE + "\n\n", CHAT_CLOSE)
+        )
 
 
 if __name__ == "__main__":

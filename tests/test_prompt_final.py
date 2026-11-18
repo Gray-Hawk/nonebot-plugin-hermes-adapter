@@ -68,7 +68,7 @@ class FinalPromptTests(unittest.TestCase):
                         self.assertNotIn('正文内联 @', prompt)
                     else:
                         self.assertNotIn('私聊只有对方一个人', prompt)
-                        self.assertIn('[CQ:at,qq=<QQ号>]', prompt)
+                        self.assertIn('`@QQ号`', prompt)
                         self.assertIn('退出门槛', prompt)
                         self.assertIn('引用后不要再手写同一个首位 @', prompt)
                     self.assertIn('第一次使用某个表情、还不清楚内容时', prompt)
