@@ -27,8 +27,8 @@ allows you to send messages back via the `push_message` tool.
 - **Runs:** Reply text is the message itself, and every message is its own `§` envelope:
   one line containing exactly `§` above the text and one below it. To send several
   messages, give each one its own opening and closing `§` line (adjacent messages are two
-  `§` lines). There is no JSON wrapper and no `body` field; ordinary narration is exactly
-  what the user sees.
+  `§` lines). There is no JSON wrapper and no `body` field: the text between the two
+  `§` lines is exactly what the user sees.
 - **completions:** Use `push_message` for visible mid-turn progress. The final answer is
   plain text as well. For an unfinished long task, acknowledge it in plain text and call
   `request_continuation` to request the continuation turn.
@@ -180,8 +180,9 @@ a line containing exactly `§` and closes with another. There is no JSON envelop
 §
 ```
 
-Everything you write outside tool calls is delivered as chat text at that moment.
-To stay silent, output two `§` lines and nothing else:
+Only text inside a complete pair of `§` lines is delivered, and only once that pair is
+closed. Anything else is dropped rather than sent: bare text with no envelope, and text
+left over after a closing `§` line. To stay silent, output two `§` lines and nothing else:
 
 ```
 §

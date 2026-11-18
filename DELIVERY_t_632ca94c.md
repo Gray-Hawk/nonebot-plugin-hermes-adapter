@@ -109,3 +109,28 @@
 * 长群消息的合并转发路径本身未改（本次只在删除混合 poke 路径后回到单条出口）；原复核项 3 的
   截断回退分支随混合路径删除，不再单独存在。
 * 附件路径与引用身份改造未在本卡范围内（planned-mods 条目 98 只取排版三项）。
+
+## 10. 复核返修（run 304 → 本卡第二轮）
+
+复核意见 1：`mcp/tools/poke_user.py` 丢弃了适配器已保留的拒绝码。
+
+* `ActionFailed.info` 由 OneBot v11 适配器以 `ActionFailed(**线形回执)` 保留，拒绝时
+  含真实数值 `retcode`；新增 `_rejected_retcode()` 只取这一个字段，`platform_rejected`
+  结果如实带回，不暴露原始异常、不重试。
+* 成功路径不伪造 `0`：适配器 `handle_api_result` 成功时只返回 `data`（`send_poke` 为
+  `null`），因此删除原先对 `response["retcode"]` 的嗅探，成功结果 `retcode=null`。
+* 测试改为真实 `Bot.call_api` → `Adapter._call_api`（只替换 WebSocket I/O：`_LineSocket`
+  记录帧并把线形回执交回真实 `ResultStore`，`_StubDriver` 只提供配置与 shutdown 钩子）。
+  成功线形 `{status:ok,retcode:0,data:null}` → `ok=True, retcode=None` 且帧参数为
+  `{"group_id":54321,"user_id":10001}`；拒绝线形 `{status:failed,retcode:1400,...}` →
+  `platform_rejected, retcode=1400`，只发一帧。原来用 fake bot 回 `{retcode:7}` 断言成功的
+  证据已删除。
+
+复核意见 2：`skill/SKILL.md` 同节两套可见性口径。
+
+* 183 行无条件「tool call 以外写的文字都会即时发」改为「只有成对 `§` 内的正文才发，且要
+  闭合后才发；裸正文与闭合后的残留一律丢弃」，与 Modes 的「不在自己那对 `§` 里就不发」
+  统一。解析器未改。
+
+验证：`tests/test_poke_tool.py` 13 OK（含两条线形回执用例）；完整 unittest 827 OK（1 skip）；
+turn 门禁 6 OK；`verify.py` 22/22 ALL PASS（提交后复跑）。未部署、未重启、未推送、未发真实 QQ。

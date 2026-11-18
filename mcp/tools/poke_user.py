@@ -12,7 +12,9 @@
 私聊主动下行白名单里；调用方身份认不出就拒。自戳一律拒绝。
 
 结果如实反映平台回执：平台异常/拒绝记 ``platform_rejected``，网络结果不明记
-``unconfirmed``（不自动重试），成功时把平台回执里的 ``retcode`` 原样带回。
+``unconfirmed``（不自动重试）。OneBot 适配器拒绝时把线形回执原样放进
+``ActionFailed.info``，其中的数值 ``retcode`` 照实带回；成功时适配器只返回
+``data``（``send_poke`` 为 ``null``），所以成功结果不带 ``retcode``，也不伪造 ``0``。
 """
 
 from __future__ import annotations
@@ -60,8 +62,18 @@ class PokeUserResult(BaseModel):
     note: str | None = None
 
 
-def _failure(kind: ErrorKind, error: str) -> PokeUserResult:
-    return PokeUserResult(ok=False, error=error, error_kind=kind)
+def _failure(kind: ErrorKind, error: str, *, retcode: int | None = None) -> PokeUserResult:
+    return PokeUserResult(ok=False, error=error, error_kind=kind, retcode=retcode)
+
+
+def _rejected_retcode(exc: ActionFailed) -> int | None:
+    """适配器以 ``ActionFailed(**回执)`` 保留线形拒绝回执，数值码就在 ``info`` 里。"""
+    info = getattr(exc, "info", None)
+    if isinstance(info, dict):
+        raw = info.get("retcode")
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            return raw
+    return None
 
 
 def _resolve_target(inp: PokeUserInput, *, bot_registry):
@@ -126,19 +138,21 @@ async def poke_user_impl(
 
     try:
         if inp.group_id is not None:
-            response = await bot.call_api(
+            await bot.call_api(
                 "send_poke", group_id=int(inp.group_id.strip()), user_id=int(target_qq)
             )
         else:
-            response = await bot.call_api("send_poke", user_id=int(target_qq))
+            await bot.call_api("send_poke", user_id=int(target_qq))
     except ActionFailed as exc:
+        retcode = _rejected_retcode(exc)
         logger.warning(
             f"[MCP poke_user] 平台拒绝 adapter={inp.adapter} target={target_qq} "
-            f"error={type(exc).__name__}"
+            f"error={type(exc).__name__} retcode={retcode}"
         )
         return _failure(
             "platform_rejected",
             "the platform refused this poke; permission or target state may apply",
+            retcode=retcode,
         )
     except (NetworkError, TimeoutError) as exc:
         logger.warning(
@@ -157,17 +171,12 @@ async def poke_user_impl(
         )
         return _failure("unconfirmed", "poke call failed before a confirmed receipt")
 
-    retcode = None
-    if isinstance(response, dict):
-        raw = response.get("retcode")
-        if isinstance(raw, int):
-            retcode = raw
+    # 适配器成功只返回 data（send_poke 为 null）：成功码不可见，就不写 retcode。
     logger.info(
         f"[MCP poke_user] sent adapter={inp.adapter} group={inp.group_id} "
-        f"target={target_qq} retcode={retcode}"
+        f"target={target_qq}"
     )
     return PokeUserResult(
         ok=True,
-        retcode=retcode,
         note="platform accepted one poke request; no chat message was sent",
     )
