@@ -8,8 +8,10 @@ steer 记进台账(steer_ledger, status=pending), 本模块在 run 终态后:
   2. 搜不到 = 被吞, 按情形 A/B 构造补投消息发新 turn(置 replayed);
   3. 查询失败/会话 404 = 全部置 replay_failed, 不补(故障面归 run_resume 层)。
 全链每步局部捕获, 任何失败只 WARN 不抛, 不炸主 turn(对账是终态钩子 fire-and-forget
-起的后台任务)。补投是正常消息, 走 message_relay 的 passive/reactive 外壳, 复用防抖/
-合并/排队语义, 不新建旁路。
+起的后台任务)。认领(pending→reconciling)之后仍有兜底:未处理异常一律把未处置的认领行
+释放回 pending(原 m:id/原文/会话键不动),下一次对账重新接管,台账不会停在 reconciling。
+补投是正常消息, 走 message_relay 的 passive/reactive 外壳, 复用防抖/合并/排队语义,
+不新建旁路。
 """
 
 from __future__ import annotations
@@ -55,6 +57,23 @@ async def reconcile_run_finished(tracked) -> None:
         return
     if not pending:
         return  # 常态零开销路径到此为止: 该 run 没有已接受待对账的 steer。
+    try:
+        await _reconcile_claimed(tracked, pending)
+    except Exception:
+        # 认领(pending→reconciling)已经落库,处置必须闭环:任何未处理异常都在这里
+        # 收口,把仍在 reconciling 的行释放回 pending——m:id／原文／会话键一概不动,
+        # 下一次对账重新认领接管。逃出后台任务就会让台账永久卡死(现场:转录里的
+        # 多模态行让搜索抛 TypeError,steer_ledger 停在 reconciling)。
+        _release_reconcile_claim(tracked, [p["m_id"] for p in pending])
+        logger.warning(
+            f"[HERMES steer对账] 对账处理异常, 已认领 {len(pending)} 行释放回 "
+            f"pending 等待下次对账接管 (run_id={tracked.run_id})",
+            exc_info=True,
+        )
+
+
+async def _reconcile_claimed(tracked, pending: list[dict]) -> None:
+    """处置已认领的台账行:虚拟锚结算 → 转录核验 → 缺件补投。"""
     # 无号行的虚拟锚只承载原文供 native 回收,没有可搜的转录锚:按 m:id 搜必然落空,
     # 会被误判成「被吞」而重复补投,所以不做转录核验——run 已正常收尾即结算。
     # 真被吞的时候,回收点(pending_steer 上浮)已经先按原文把这些账项核销成
@@ -96,7 +115,7 @@ async def reconcile_run_finished(tracked) -> None:
     missing: list[dict] = []
     for p in pending:
         hit = _steer_line_hit_pattern(p["m_id"])
-        if any(hit.search(r.get("content") or "") for r in rows):
+        if any(hit.search(transcript_text(r.get("content"))) for r in rows):
             reconciled.append(p["m_id"])
         else:
             missing.append(p)
@@ -116,6 +135,49 @@ async def reconcile_run_finished(tracked) -> None:
         return
     logger.info(f"[HERMES steer对账] 缺件 {len(missing)} 条 (run_id={tracked.run_id}), 补投")
     await _replay_missing(tracked, rows, missing)
+
+
+def transcript_text(content) -> str:
+    """转录行的 content → 纯文本视图(对账/回收两个消费者共用的唯一读取口径)。
+
+    上游会话 API 的 content 有两种合法形态:字符串(常见),或部件列表(多模态行,
+    例如 ``[{type:text}, {type:text}, {type:image_url}]``)。正则搜索与证据文案只能
+    吃文本,列表必须先在**读取处**归一:字符串原样返回;列表只拼接可见文本部件并按
+    行拼接(聊天行仍在行首,m:id 命中判据不受影响),``image_url``/``image``/
+    ``audio`` 等非文本部件整段忽略——既不进正则输入,也不把 base64 正文漏进补投
+    文案。只读视图,不改写原始 content(台账与转录行仍保留原形态)。
+
+    语义对齐 Hermes 上游 ``agent.message_content.flatten_message_text``;这里自带一份
+    精简实现,不跨环境 import(NB 侧没有 agent 包)。
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, (list, tuple)):
+        return "\n".join(part for part in map(_content_part_text, content) if part)
+    return _content_part_text(content)
+
+
+_NON_TEXT_PART_TYPES = frozenset({"image", "image_url", "input_image", "audio", "input_audio"})
+_TEXT_PART_KEYS = ("text", "content", "input_text", "output_text", "summary_text")
+
+
+def _content_part_text(part) -> str:
+    """单个 content 部件 → 可见文本(非文本部件一律空串)。"""
+    if part is None:
+        return ""
+    if isinstance(part, str):
+        return part
+    if not isinstance(part, dict):
+        return ""
+    if str(part.get("type") or "").strip().lower() in _NON_TEXT_PART_TYPES:
+        return ""
+    for key in _TEXT_PART_KEYS:
+        value = part.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
 
 
 async def _fetch_transcript(tracked, pending: list[dict] | None = None):
@@ -189,7 +251,7 @@ async def _fetch_transcript(tracked, pending: list[dict] | None = None):
                         seen.add(rid)
                     rows.append(r)
                 if needles and all(
-                    any(n.search(r.get("content") or "") for r in rows)
+                    any(n.search(transcript_text(r.get("content"))) for r in rows)
                     for n in needles
                 ):
                     return rows, True
@@ -380,7 +442,7 @@ def _build_case_a_text(rows, missing) -> tuple[str | None, bool]:
     for row in rows:
         role = row.get("role")
         if role == "assistant":
-            content = row.get("content") or ""
+            content = transcript_text(row.get("content"))
             tcs = row.get("tool_calls") or []
             if tcs:
                 tool_count += len(tcs)
@@ -400,11 +462,12 @@ def _build_case_a_text(rows, missing) -> tuple[str | None, bool]:
             continue  # 工具结果行: 不进入文案。
         if role == "user":
             if row.get("display_kind") == "steer":
-                stripped = _strip_out_of_band(row.get("content") or "")
+                stripped = _strip_out_of_band(transcript_text(row.get("content")))
                 if stripped:
                     delivered_steers.append(stripped)
                 continue
-            trigger_text = (row.get("content") or "")[:500]  # 普通 user 行 = 触发批。
+            # 普通 user 行 = 触发批(多模态行的正文同样走纯文本视图)。
+            trigger_text = transcript_text(row.get("content"))[:500]
             break
 
     if trigger_text is None:
@@ -599,6 +662,20 @@ def _strip_out_of_band(content: str) -> str:
         if nl >= 0:
             text = text[nl + 1:]
     return text.strip()
+
+
+def _release_reconcile_claim(tracked, m_ids: list[str]) -> None:
+    """对账异常时把未处置的认领行释放回 pending(已结算行保持终端态)。失败只 WARN。"""
+    tracker = _mcp.run_tracker
+    if tracker is None:
+        return
+    try:
+        tracker.release_reconcile_claims(tracked.run_id, m_ids)
+    except Exception:
+        logger.warning(
+            f"[HERMES steer对账] 释放对账认领失败 (run_id={tracked.run_id})",
+            exc_info=True,
+        )
 
 
 def _mark_status(tracked, m_ids: list[str], status: str) -> None:

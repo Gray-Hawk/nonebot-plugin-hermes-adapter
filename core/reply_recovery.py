@@ -20,7 +20,7 @@ from .outbound import (
     send_text_with_media,
 )
 from .reply_resolution import resolve_reply
-from .steer_reconcile import _fetch_transcript
+from .steer_reconcile import _fetch_transcript, transcript_text
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,8 +45,10 @@ def extract_overwritten_replies(
     for row in rows:
         if row.get("role") != "assistant":
             continue
-        content = row.get("content")
-        if not isinstance(content, str) or not content.lstrip().startswith("{"):
+        # 与 steer 对账同一纯文本视图:多模态 content(部件列表)先归一成文本,
+        # 字符串行原样不变——决策行是否可用只回答「可见正文是不是结构化答复」。
+        content = transcript_text(row.get("content"))
+        if not content.lstrip().startswith("{"):
             continue
         parsed = _try_parse_first_json_block(content)
         if not isinstance(parsed, dict) or not isinstance(

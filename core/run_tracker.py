@@ -743,6 +743,26 @@ class RunTracker:
         ).fetchall()
         return {str(r[0]): str(r[1]) for r in rows}
 
+    def release_reconcile_claims(self, run_id: str, m_ids: list[str]) -> int:
+        """对账异常收口:把仍在 reconciling 的认领行释放回 pending,返回行数。
+
+        只碰 status='reconciling' 的行——同一批里已经结算(reconciled/replayed/
+        recovered)的行走终端态,绝不能被拉回 pending,否则下一次对账会把已经补投
+        过的插话再投一遍。pending→reconciling 的认领没有过期时间(进程内瞬态,
+        重启时 __init__ 会归位),所以异常路径必须显式归还,台账才不会永久卡死。
+        """
+        if not m_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in m_ids)
+        cur = self._conn.execute(
+            f"UPDATE steer_ledger SET status='pending'"
+            f" WHERE run_id=? AND status='reconciling'"
+            f" AND m_id IN ({placeholders})",
+            (run_id, *[str(m) for m in m_ids]),
+        )
+        self._conn.commit()
+        return cur.rowcount
+
     def mark_steers(self, run_id: str, m_ids: list[str], status: str) -> None:
         """按 run_id+m_id 批量置状态(reconciled/recovered/replayed 核销用)。"""
         if not m_ids:
