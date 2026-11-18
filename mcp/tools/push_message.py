@@ -53,7 +53,7 @@ class PushMessageInput(BaseModel):
         description="Private-chat target user id (mutually exclusive with group_id; "
         "must be listed in private_allow / the admin set)",
     )
-    text: str = Field(..., description="Reply text. Empty allowed only if image_urls non-empty. Inline [CQ:at,qq=数字] supports ordered multi-mention; [CQ:poke,type=1,id=数字] creates an ordered OneBot poke segment. Other CQ codes stay literal.")
+    text: str = Field(..., description="Reply text. Empty allowed only if image_urls non-empty. Mention people inline with `@QQ号` (ASCII digits, 5-12, e.g. `@10001 你那边呢`) — the plugin converts it in place into an At segment; nicknames, `@all` and other CQ codes stay literal. Poking is not a text marker: call the poke_user tool.")
     image_urls: list[str] = Field(default_factory=list, description="Image URLs")
     reply_to: str | None = Field(default=None, description="Optional message to quote, exactly m:<positive integer> from this chat")
     task_id: str | None = Field(default=None, description="(M1: 不使用,M2 bg_tasks 接入)")

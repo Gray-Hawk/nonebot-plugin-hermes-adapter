@@ -8,6 +8,7 @@ description: |
 tools:
   - push_message
   - recall_message
+  - poke_user
   - list_active_sessions
   - get_recent_messages
   - get_message_images
@@ -23,10 +24,11 @@ allows you to send messages back via the `push_message` tool.
 - **reactive** (M1): A user invited you into an active group conversation. Follow the
   current system prompt's interface-specific contract; private chats use their own
   addressing rules and never need mention markers.
-- **Runs:** Reply text is the message itself: write it as plain text at the moment you
-  want it sent, and keep doing tool work in the same run. To send several messages, put
-  a line containing only `§` between them. There is no JSON wrapper and no `body` field;
-  ordinary narration is exactly what the user sees.
+- **Runs:** Reply text is the message itself, and every message is its own `§` envelope:
+  one line containing exactly `§` above the text and one below it. To send several
+  messages, give each one its own opening and closing `§` line (adjacent messages are two
+  `§` lines). There is no JSON wrapper and no `body` field: the text between the two
+  `§` lines is exactly what the user sees.
 - **completions:** Use `push_message` for visible mid-turn progress. The final answer is
   plain text as well. For an unfinished long task, acknowledge it in plain text and call
   `request_continuation` to request the continuation turn.
@@ -40,9 +42,10 @@ Send one message into a group. Constraints:
   `m:123`; never pass a NapCat/OneBot message id. Invalid or unavailable mappings degrade
   to an ordinary unquoted message and are logged. A resolved group Reply automatically
   adds `At(quoted sender) + one space` after the Reply segment; private replies do not.
-- Insert `[CQ:at,qq=数字]` directly in `text` (or in your plain-text reply) for ordered
-  mentions. Multiple markers and arbitrary positions are supported. Other CQ codes and
-  `@all` are not enabled.
+- Insert `@QQ号` directly in `text` (or in your plain-text reply) for ordered
+  mentions; the plugin converts it in place into an At segment. Only ASCII digits are
+  recognised (nicknames, `@all`, `@全体成员` and other `@…` text stay literal). Poking is
+  not a text marker — call `poke_user` instead.
 - `image_urls` accepts **only** `http(s)://` and `data:` URLs. A path on this host
   (`/root/.hermes/cache/images/…`) is not reachable from the bot process and is
   **not** delivered — the result reports it in `skipped_images` with a `warning`,
@@ -77,6 +80,17 @@ is ambiguous, do not call it.
   or message state may apply); `"unconfirmed"` means the response was lost or timed out
   and the message may already have been withdrawn. Do not blindly retry platform refusals
   or unconfirmed outcomes.
+
+### `poke_user(adapter, user_id, group_id?)`
+
+Poke one person — a standalone action, never chat text. `user_id` is the QQ id of the
+person to poke; pass `group_id` for a group chat or omit it for the private chat with
+that same person. Reuses the same target rules as `push_message` (group: active reactive
+session + known route; private: same private allowlist) and refuses to poke the bot
+itself. The result reports the platform receipt (`retcode` when available);
+`error_kind="platform_rejected"` means QQ/NapCat refused, `"unconfirmed"` means the
+response was lost — do not blindly retry either. Never write a poke marker in a reply
+body and never mix a poke with a message.
 
 ### `list_active_sessions(adapter?)`
 
@@ -157,15 +171,26 @@ multiple frames (up to the configured fetch frame cap) with per-frame markers.
 
 ## Output contract (Runs)
 
-Your visible reply is the plain text you output — there is no JSON envelope:
+Your visible reply is a `§` envelope — every message, including a single one, opens with
+a line containing exactly `§` and closes with another. There is no JSON envelope:
 
 ```
+§
 你好，这条会原样发出去
+§
 ```
 
-Everything you write outside tool calls is delivered as chat text at that moment.
-Silence = output nothing at all. Do not wrap replies in JSON or a `body` field, and do
-not use `push_message` in an active run: the plugin sends your text for you.
+Only text inside a complete pair of `§` lines is delivered, and only once that pair is
+closed. Anything else is dropped rather than sent: bare text with no envelope, and text
+left over after a closing `§` line. To stay silent, output two `§` lines and nothing else:
+
+```
+§
+§
+```
+
+Do not wrap replies in JSON or a `body` field, and do not use `push_message` in an
+active run: the plugin sends your text for you.
 
 To send several messages, give each one its own opening and closing line, each
 containing exactly `§` (the closing `§` of one message never doubles as the opening of
@@ -210,11 +235,12 @@ completions uses the same plain-text output, with two differences: mid-turn prog
 through `push_message`, and an unfinished long task calls `request_continuation` (there is
 no `not_final` field) to request the next turn.
 
-Mentions live in the reply text: write `[CQ:at,qq=12345]` exactly where each strong
-notification belongs. Multiple people and arbitrary positions are supported; the plugin
-preserves segment order and does not prepend or infer mentions. A poke is
-`[CQ:poke,type=1,id=12345]` (type may be omitted, digits only, never yourself). Omit
-markers for ordinary replies, and do not use any other CQ codes or `@all`.
+Mentions live in the reply text: write `@12345` (the numeric QQ id, ASCII digits only)
+exactly where each strong notification belongs. Multiple people and arbitrary positions
+are supported; the plugin preserves segment order and does not prepend or infer mentions.
+Nicknames (`@小光`), `@all`/`@全体成员` and any non-numeric `@…` text stay literal — do
+not write CQ codes. Poking is not a text marker: call the `poke_user` tool when a poke is
+actually wanted, never mix a poke into a message.
 
 `reply_to` independently quotes one specific message: register it with
 `submit_control(reply_to="m:123")`, using the plugin `m:id` already shown in history. Never

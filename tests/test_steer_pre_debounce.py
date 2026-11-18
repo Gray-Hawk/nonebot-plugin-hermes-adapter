@@ -75,7 +75,7 @@ class _PreDebounceHarness(unittest.IsolatedAsyncioTestCase):
     def ledger(self, run_id: str = RUN_ID) -> list[dict]:
         return self.tracker.pending_steers(run_id)
 
-    async def _fake_steer_run(self, *, tgt, run_id, text, presented=False):
+    async def _fake_steer_run(self, *, tgt, run_id, text, presented=False, presentation_hint=""):
         self.steered.append((self._clock.now - BASE_MONO, run_id, text))
         return True
 

@@ -24,10 +24,14 @@ Runs 车道中途 steer 的呈递收口：**NB 渲染的聊天区区域块原样
    `_normalize_chat_content(...).strip()`）登记到本进程的 `PresentedBatches`；上游返回非
    200（409/400…）时撤销登记。aiohttp 的 `request.read()` 会缓存字节，下游
    `_read_json_body` 仍读到同一份请求体。
-2. **`steer_user_row`**：文本命中登记表 → 原样落行（`{"role": "user", "content": 文本,
+2. **`steer_user_row`**：文本命中登记表 → 落行（`{"role": "user", "content": 文本,
    "display_kind": "steer"}`）；未命中 → 走上游 `format_steer_marker` 原样。
    `agent.agent_runtime_helpers` 在模块顶层按名导入过 `steer_user_row`，所以两处名字
    绑定一起换指（只换指向原函数的那个）。
+   单批投递逐字节等于登记文本；一次 drain 的多批（上游用单个换行拼接）由
+   `compose_batches` 重排：批间空一行、每批仍是自己的区域块（m:id/身份/顺序原样），
+   批尾系统提示（标记里声明的 `hint`）从各批尾部摘掉、整段最后只留一条——提示不再
+   夹在两批中间，也不会重复。
 3. **`agent.system_prompt.STEER_CHANNEL_NOTE`**：只在其后**追加一段**说明——本部署里
    区域块外观的 steer 同样是可信的真实用户消息。原标记说明一字不改，所以 CLI/桌面/
    Kanban 工具注入这些仍走上游标记的通道语义不变。没有这一段，模型面对"没有标记的
@@ -48,8 +52,12 @@ Runs 车道中途 steer 的呈递收口：**NB 渲染的聊天区区域块原样
 ```http
 POST /v1/runs/{run_id}/steer
 {"input": "<聊天区区域块>",
- "presentation": {"schema": "hermes.steer.presentation/1", "format": "chat_region"}}
+ "presentation": {"schema": "hermes.steer.presentation/1", "format": "chat_region",
+                  "hint": "<本批批尾的系统提示（可选）>"}}
 ```
+
+`hint` 可选：NB 在批尾挂系统提示时一并声明，插件只对「命中声明的那一段」做收拢——
+没有声明的批次不猜文案，原样保留。
 
 * NB 侧字面量在 `nonebot_plugin_hermes_adapter/core/steer_presentation.py`，两侧靠
   `gateway_plugins/steer-presentation-thin/tests/test_plugin.py::SchemaParityTests` 与
@@ -75,8 +83,8 @@ python scripts/install_gateway_plugin.py steer-presentation-thin           # 装
 
 * steer 行不再被上游按 `[OUT-OF-BAND` 前缀归为「合成脚手架」：上下文压缩的 verbatim
   用户消息段会把它当真实用户消息收录（内容本来就该保留），摘要预算占用略增；
-* 一次 drain 投递多批时，上游用 `"\n"` 拼接，两段区域块之间是单换行（NB 每批内部仍是
-  空行分隔）；组成关系有测试覆盖；
+* 一次 drain 投递多批时，上游用 `"\n"` 拼接；插件已把多批重排为「批间空行 + 每批自己的
+  区域块 + 末尾一条系统提示」（`compose_batches`），单批仍逐字节不动；
 * 登记表键跨 agent 共享（进程内）：「同一段文本」在此之前被另一个 run 声明过且未投递时，
   理论上后到那次会被当作已声明。文本含真实 `m:id`/身份栏，实际不可碰撞；上限 32 批。
 

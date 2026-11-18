@@ -170,7 +170,7 @@ class OverlappingFollowupEntryTests(_Base):
         release = asyncio.Event()
         sent: list[str] = []
 
-        async def steer(*, tgt, run_id, text, presented=False):
+        async def steer(*, tgt, run_id, text, presented=False, presentation_hint=""):
             sent.append(text)
             if len(sent) == 1:
                 started.set()
@@ -264,7 +264,7 @@ class RepeatedTriggerTests(_Base):
     def _direct(self, row: BufferedMessage) -> tuple[bool, list[str]]:
         sent: list[str] = []
 
-        async def steer(*, tgt, run_id, text, presented=False):
+        async def steer(*, tgt, run_id, text, presented=False, presentation_hint=""):
             sent.append(text)
             return True
 
@@ -302,7 +302,7 @@ class RepeatedTriggerTests(_Base):
         registry.add_followup(KEY, entry)
         sent: list[str] = []
 
-        async def steer(*, tgt, run_id, text, presented=False):
+        async def steer(*, tgt, run_id, text, presented=False, presentation_hint=""):
             sent.append(text)
             return True
 
@@ -322,7 +322,7 @@ class RepeatedTriggerTests(_Base):
         entry = PendingEntry(msg=msg("u3", 103, "跟一句"), is_direct=False, original_msg_id=103)
         registry.add_followup(KEY, entry)
 
-        async def steer(*, tgt, run_id, text, presented=False):
+        async def steer(*, tgt, run_id, text, presented=False, presentation_hint=""):
             return False   # 409 / 网络失败
 
         with patch.object(relay, "_mcp", SimpleNamespace(
@@ -342,7 +342,7 @@ class RepeatedTriggerTests(_Base):
         entry = PendingEntry(msg=msg("u3", 104, "又来一句"), is_direct=False, original_msg_id=104)
         registry.add_followup(KEY, entry)
 
-        async def steer(*, tgt, run_id, text, presented=False):
+        async def steer(*, tgt, run_id, text, presented=False, presentation_hint=""):
             raise asyncio.CancelledError()
 
         with patch.object(relay, "_mcp", SimpleNamespace(
@@ -364,7 +364,7 @@ class NativeRestoreOrderTests(_Base):
         started = asyncio.Event()
         release = asyncio.Event()
 
-        async def steer(*, tgt, run_id, text, presented=False):
+        async def steer(*, tgt, run_id, text, presented=False, presentation_hint=""):
             sent.append(text)
             if delay_first and len(sent) == 1:
                 started.set()
@@ -791,7 +791,7 @@ class NativeHandoverTests(_Base):
         started, release = asyncio.Event(), asyncio.Event()
         sent: list[str] = []
 
-        async def steer(*, tgt, run_id, text, presented=False):
+        async def steer(*, tgt, run_id, text, presented=False, presentation_hint=""):
             sent.append(text)
             started.set()
             await release.wait()

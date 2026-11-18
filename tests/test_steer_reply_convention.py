@@ -67,7 +67,7 @@ class SteerReplyConventionTests(unittest.TestCase):
         """真实 `_maybe_steer_direct` 入口，返回实际注入模型的文本。"""
         captured: list[str] = []
 
-        async def fake_steer_run(*, tgt, run_id, text, presented=False):
+        async def fake_steer_run(*, tgt, run_id, text, presented=False, presentation_hint=""):
             self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
             captured.append(text)
             return True
@@ -112,7 +112,7 @@ class SteerReplyConventionTests(unittest.TestCase):
 
         captured: list[str] = []
 
-        async def fake_steer_run(*, tgt, run_id, text, presented=False):
+        async def fake_steer_run(*, tgt, run_id, text, presented=False, presentation_hint=""):
             self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
             captured.append(text)
             return True

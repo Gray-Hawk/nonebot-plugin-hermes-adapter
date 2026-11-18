@@ -51,6 +51,7 @@ _MARK = "__steer_presentation_thin__"
 PRESENTATION_FIELD = "presentation"
 PRESENTATION_SCHEMA = "hermes.steer.presentation/1"
 PRESENTATION_FORMAT = "chat_region"
+PRESENTATION_HINT_FIELD = "hint"
 
 # 登记表上限：一次投递就消费，正常同时最多 1-2 批；上限只兜「声明了却没投递」的残留。
 _REGISTRY_LIMIT = 32
@@ -76,39 +77,51 @@ class PresentedBatches:
     只做精确匹配：键是我们自己登记过的整段文本。多批在同一个工具批次后一起投递时，
     上游把各份文本用 ``"\\n"`` 拼接，所以额外认可「由若干登记批按顺序拼接而成」这一种
     形状——组成关系仍是精确字符串相等，不是对外壳文案的猜测。
+
+    每批可选带一个批尾系统提示（NB 在呈递标记里显式声明的那一段）。一次 drain 的多批
+    由一个 user 行投递时，``compose_batches`` 用它把提示收拢到最后、只留一条。
     """
 
     def __init__(self, limit: int = _REGISTRY_LIMIT) -> None:
-        self._texts: "OrderedDict[str, None]" = OrderedDict()
+        self._texts: "OrderedDict[str, str]" = OrderedDict()
         self._limit = max(1, int(limit))
 
     def __len__(self) -> int:
         return len(self._texts)
 
-    def remember(self, text: str) -> None:
+    def remember(self, text: str, hint: str = "") -> None:
         if not text:
             return
         self._texts.pop(text, None)
-        self._texts[text] = None
+        self._texts[text] = hint
         while len(self._texts) > self._limit:
             self._texts.popitem(last=False)
 
     def forget(self, text: str) -> None:
         self._texts.pop(text, None)
 
+    def hint_of(self, text: str) -> str:
+        return self._texts.get(text, "")
+
     def consume(self, text: str) -> bool:
         """命中即移除并返回 True（同一段文本只让一次投递跳过外壳）。"""
+        return self.consume_parts(text) is not None
+
+    def consume_parts(self, text: str) -> list[tuple[str, str]] | None:
+        """命中即移除，返回 (批文本, 批尾提示) 列表（按投递顺序）；未命中 None。"""
         if not isinstance(text, str) or not text:
-            return False
+            return None
         if text in self._texts:
+            hint = self._texts[text]
             self.forget(text)
-            return True
+            return [(text, hint)]
         parts = self._composed_parts(text)
         if parts is None:
-            return False
+            return None
+        entries = [(part, self._texts.get(part, "")) for part in parts]
         for part in parts:
             self.forget(part)
-        return True
+        return entries
 
     def _composed_parts(self, text: str) -> list[str] | None:
         """``text`` 是否恰由若干登记批按顺序以 ``"\\n"`` 拼接而成；是则返回用到的批。"""
@@ -116,6 +129,39 @@ class PresentedBatches:
         if not candidates or len(candidates) > _MAX_COMPOSITION_CANDIDATES:
             return None
         return _compose(text, candidates, depth=_MAX_COMPOSED_PARTS)
+
+
+def compose_batches(parts: list[str], hints: list[str] | None = None) -> str:
+    """多批已区域化 steer → 一条边界清楚的 user 行（单批原样返回）。
+
+    上游一次 drain 把若干批用**单个换行**拼成一段文本，两段区域块因此挤在一起、每批的
+    批尾系统提示还夹在中间。这里只重排，不改任何一批的正文、m:id 或区域框架：
+
+    * 批与批之间空一行，每批仍是自己的 ``<聊天消息区域起始>…<聊天消息区域结束>`` 块；
+    * NB 声明过的批尾系统提示（``hints``）从各批尾部摘掉，整段最后只留一条；
+    * 没声明提示时只做批间空行，不猜文案。
+    """
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    hint_list = list(hints or [])
+    hint = hint_list[-1] if hint_list and hint_list[-1] else ""
+    if hint and not all(h == hint for h in hint_list):
+        hint = ""  # 各批声明不一致：不合并提示，保持每批原样
+    bodies: list[str] = []
+    stripped_every = bool(hint)
+    for part in parts:
+        if hint and part.endswith("\n\n" + hint):
+            part = part[: -(len(hint) + 2)]
+        elif hint:
+            # 有批的尾巴不是声明的那一段（上游归一改写过）：不猜，整体保持原样。
+            stripped_every = False
+        bodies.append(part)
+    if hint and not stripped_every:
+        return "\n\n".join(parts)
+    text = "\n\n".join(bodies)
+    return f"{text}\n\n{hint}" if hint else text
 
 
 def _compose(text: str, candidates: list[str], *, depth: int) -> list[str] | None:
@@ -168,6 +214,17 @@ def declared_text(body: Any, normalize: Callable[[Any], str]) -> str:
         return ""
 
 
+def declared_hint(body: Any) -> str:
+    """呈递标记里声明的批尾系统提示（未声明/形态不对返回空串）。"""
+    if not isinstance(body, dict):
+        return ""
+    marker = body.get(PRESENTATION_FIELD)
+    if not declares_chat_region(marker):
+        return ""
+    hint = marker.get(PRESENTATION_HINT_FIELD)
+    return hint if isinstance(hint, str) else ""
+
+
 def make_handler_wrapper(original: Callable, registry: PresentedBatches) -> Callable:
     """包住 ``api_server_runs._handle_steer_run``：只登记「本批已被声明为区域块」。"""
 
@@ -178,7 +235,7 @@ def make_handler_wrapper(original: Callable, registry: PresentedBatches) -> Call
             body = await _read_json_body(request)
             raw = declared_text(body, lambda value: normalize(value).strip())
             if raw:
-                registry.remember(raw)
+                registry.remember(raw, declared_hint(body))
                 text = raw
         resp = await original(self, request, _api_server=_api_server)
         if text and getattr(resp, "status", 200) != 200:
@@ -191,15 +248,29 @@ def make_handler_wrapper(original: Callable, registry: PresentedBatches) -> Call
 
 
 def make_row_builder(original: Callable, registry: PresentedBatches, display_kind: str) -> Callable:
-    """包住 ``steer_user_row``：登记过的文本原样落行（不套外壳），其余走上游。"""
+    """包住 ``steer_user_row``：登记过的文本原样落行（不套外壳），其余走上游。
+
+    一次 drain 多批时上游把各批用单换行拼成一段送进来：命中组成关系后由
+    ``compose_batches`` 重排——批与批空一行、每批仍是自己的区域块（m:id/身份/顺序
+    原样），批尾系统提示收拢到整段最后只留一条。单批投递逐字节等于登记文本。
+    """
 
     def steer_user_row(steer_text):
-        if registry.consume(steer_text):
+        entries = registry.consume_parts(steer_text)
+        if entries is not None:
+            if len(entries) == 1:
+                rendered = entries[0][0]
+            else:
+                rendered = compose_batches(
+                    [text for text, _hint in entries],
+                    [hint for _text, hint in entries],
+                )
             logger.info(
-                "steer-presentation-thin: delivering an already regionalized steer batch "
-                "verbatim (%d chars)", len(steer_text),
+                "steer-presentation-thin: delivering %d already regionalized steer "
+                "batch(es) verbatim (%d chars)",
+                len(entries), len(rendered),
             )
-            return {"role": "user", "content": steer_text, "display_kind": display_kind}
+            return {"role": "user", "content": rendered, "display_kind": display_kind}
         return original(steer_text)
 
     setattr(steer_user_row, _MARK, PATCH_ID)

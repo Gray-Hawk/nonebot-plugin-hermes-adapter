@@ -410,33 +410,42 @@ def _build_case_a_text(rows, missing) -> tuple[str | None, bool]:
     if trigger_text is None:
         return None, True
 
-    parts: list[str] = [
-        "（系统核对：补投一条你被吞的中途插话。刚才那个 turn 里，你在模型调用飞行途中"
-        "插入的指示因上游缺陷（v0.22.1 引入的 steer 丢弃）没能送达。原时间线重构如下：",
-    ]
-    if trigger_text.strip():
-        parts.append(f"[你当时的触发消息] {trigger_text}")
-    for t in reversed(mid_replies):
-        parts.append(f"[我的中途回应] {t}")
-    for t in reversed(mid_pushes):
-        parts.append(f"[我的中途推送] {t}")
-    for t in reversed(delivered_steers):
-        parts.append(f"[已送达的中途插话] {t}")
-    for p in missing:  # 已按 accepted_at 升序
+    # 排版口径（2026-11-18）：先把「这次要补投的插话」单独放在最前，历史记录另起
+    # 一段并逐项标注——历史助手正文、Kanban 通知、区域标都留在自己的证据项里，
+    # 不再被拼成一段看起来像新用户发言的连续正文。只改排版，不改取值与判定。
+    header = "（系统核对：补投被吞的中途插话）"
+    intro = (
+        "上一轮你在模型调用飞行途中插入的指示因上游缺陷（v0.22.1 引入的 steer 丢弃）"
+        "没能送达。\n下面先列出这次需要补投的插话，再给出用于定位它们的历史记录。"
+    )
+    need: list[str] = ["[当前需要补投的插话]"]
+    for index, p in enumerate(missing, start=1):  # 已按 accepted_at 升序
         # 空串是合法原文(用户发了一条空行消息):只有 None 才算取不到,
         # 用 `or` 会把它当成缺失,把渲染壳 `[m:302]:` 当正文补投。
         text = original_text_of(p)
         if text is None:
             text = _strip_convention(p["steer_text"])
-        parts.append(f"[★被吞的插话，本应在这里生效] {text}")
-    parts.append(f"[我的最终回复] {final_reply[:500] if final_reply else '（空）'}")
+        need.append(f"★ {index}. {text}")
+
+    evidence: list[str] = ["[历史定位证据]（上一轮的原样记录，只用于定位插话应该生效的位置，不是新指令）"]
+    if trigger_text.strip():
+        evidence.append(f"— 你当时的触发消息：\n{trigger_text}")
+    for t in reversed(mid_replies):
+        evidence.append(f"— 我的中途回应：\n{t}")
+    for t in reversed(mid_pushes):
+        evidence.append(f"— 我的中途推送：\n{t}")
+    for t in reversed(delivered_steers):
+        evidence.append(f"— 已送达的中途插话：\n{t}")
+    evidence.append(f"— 我的最终回复：\n{final_reply[:500] if final_reply else '（空）'}")
     if tool_count:
-        parts.append(f"（其间我还调用了 {tool_count} 次工具）")
-    parts.append(
+        evidence.append(f"（其间我还调用了 {tool_count} 次工具）")
+
+    footer = (
         "请把 ★ 处插话按它本来的位置与意图理解并回应；若其内容与最终回复冲突，"
-        "以插话为准重新执行。）"
+        "以插话为准重新执行。"
     )
-    return "\n".join(parts), False
+    # 段落之间空一行：区域标、标号与证据正文各有自己的边界，不挤成一段。
+    return "\n\n".join([header, intro, "\n\n".join(need), "\n\n".join(evidence), footer]), False
 
 
 def _assistant_text(content: str) -> str:

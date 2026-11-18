@@ -1040,3 +1040,67 @@ class ResumeConsistencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             tracker.get_component(run_id="r1", component_id="primary:0")["state"], "sent"
         )
+
+
+class InterimClosedEnvelopeAtEofTests(unittest.TestCase):
+    """interim 之后第二份信封刚好闭合在 EOF：不能和后续 delta 拼成第三份正文。
+
+    复现（reviewer_gpt t_b547911c 评论 #311，候选 922e45a）：delta 与 interim 都是
+    ``§\\n甲\\n§\\n§\\n乙\\n§``（帧尾无换行），紧接着 delta/output 是 ``§\\n丙\\n§\\n``。
+    修前平台出口看到 ``[甲, 乙, "乙\\n§§\\n丙", 丙]``——interim 已确认的末份信封只消费了
+    正文没消费闭合行，残片 ``§\\n乙\\n§`` 留在碎片里，下一帧的 ``§\\n丙\\n§`` 接上去就把
+    两份信封粘成一份新正文。修后严格是 ``[甲, 乙, 丙]``，每份一次。
+    """
+
+    def _drain(self, frames: list[dict]) -> list[str]:
+        parser = RunsEventParser()
+        bodies = [d["body"] for d in feed_all(parser, frames)]
+        bodies.extend(d["body"] for d in parser.terminal_decisions())
+        return bodies
+
+    def test_second_envelope_closed_at_eof_does_not_fuse(self) -> None:
+        two = batch(({}, "甲"), ({}, "乙"))
+        for interim in (two, two.rstrip("\n")):
+            for tail in ("§\n丙\n§\n", "§\n丙\n§"):
+                with self.subTest(interim=interim, tail=tail):
+                    bodies = self._drain([
+                        {"event": "message.delta", "delta": two, "seq": 0},
+                        {"event": "message.interim", "text": interim, "seq": 1},
+                        {"event": "message.delta", "delta": tail, "seq": 2},
+                        {"event": "run.completed", "output": tail, "seq": 3},
+                    ])
+                    self.assertEqual(bodies, ["甲", "乙", "丙"])
+
+    def test_fragment_is_the_closed_envelope_only(self) -> None:
+        """碎片恰好是 interim 已确认的末份完整信封（含闭合行）→ 整个消费掉。"""
+        self.assertEqual(
+            runs_text.pending_after_interim(
+                "§\n甲\n§\n§\n乙\n§", "§\n乙\n§"
+            ),
+            "",
+        )
+        # 帧尾带回车的同一形态（归一后同一条判据）。
+        self.assertEqual(
+            runs_text.pending_after_interim(
+                "§\n甲\n§\n§\n乙\n§", "§\n乙\n§\r\n"
+            ),
+            "",
+        )
+
+    def test_open_next_envelope_is_kept(self) -> None:
+        """interim 已确认末份信封、碎片还带着下一份的开口 → 只保留真正未消费的开头。"""
+        self.assertEqual(
+            runs_text.pending_after_interim(
+                "§\n甲\n§\n§\n乙\n§", "§\n乙\n§\n§\n丙"
+            ),
+            "§\n丙",
+        )
+
+    def test_unrelated_fragment_stays_verbatim(self) -> None:
+        """interim 覆盖不到的碎片照旧原样留着（封段时按缺开头拒绝，不猜、不粘）。"""
+        self.assertEqual(
+            runs_text.pending_after_interim(
+                "§\n甲\n§\n§\n乙\n§", "§\n丁\n§"
+            ),
+            "§\n丁\n§",
+        )

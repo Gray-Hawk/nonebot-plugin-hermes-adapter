@@ -1802,6 +1802,7 @@ class HermesClient:
 
     async def steer_run(
         self, *, tgt: HermesTarget, run_id: str, text: str, presented: bool = False,
+        presentation_hint: str = "",
     ) -> bool:
         """POST /v1/runs/{id}/steer 注入文本(阶段2b)。返回是否被接受。
 
@@ -1812,13 +1813,15 @@ class HermesClient:
 
         presented=True:文本已是 NB 的聊天区区域块,请求体带结构化呈递标记
         (core/steer_presentation),网关薄插件据此跳过上游 `[OUT-OF-BAND …]` 外壳。
+        presentation_hint 非空时随标记声明「批尾系统提示」那一段:一次 drain 里多批
+        被上游拼成一段时,薄插件把各批的提示收拢到整段最后只留一条。
         插件未装/不识别该标记时,多出来的字段被上游丢弃、文本照旧被外壳包住——
         回退安全,不丢内容。默认 False = 上游原样包装(其它调用方不受影响)。
         """
         headers = self.get_headers(api_key=tgt.api_key)
         body: dict[str, Any] = {"input": text}
         if presented:
-            body["presentation"] = steer_presentation.presentation_marker()
+            body["presentation"] = steer_presentation.presentation_marker(presentation_hint)
         try:
             client = _get_http_client()
             resp = await client.post(

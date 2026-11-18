@@ -128,7 +128,7 @@ def render_decision_protocol(*, runs: bool, group_rules: str | None = None) -> s
         if private else "你处于群活跃态。每条新消息都需要决定是否要插话。\n\n"
     )
     scope = (
-        "私聊只有对方一个人，不必 @ 任何人，正文里不要写 [CQ:at,...] 标记。\n"
+        "私聊只有对方一个人，不必 @ 任何人，正文里不要写 @QQ号 标记。\n"
         "私聊里的控制只用到 reply_to；退窗与任务锚只在群活跃态生效。\n"
         if private else group_rules
     )

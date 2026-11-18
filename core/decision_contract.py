@@ -16,9 +16,9 @@ prompt_builder 的 _DECISION_PROTOCOL_BLOCK(中文主协议块)、同文件近�
   - render_field_name_list(): 近因 reminder 的 slash 字段单。
 
 另收口信封里「消息地址」的解析:parse_reply_to() 只接受 `m:<正整数>`(本会话
-消息库自增号),裸数字 / QQ message_id / 跨格式一律按没给处理。reply_text 正文
-内联 @ 的标记语法(`[CQ:at,qq=<数字>]`,仅此一种 CQ 码)由出站解析方
-`core/outbound.py` 的 `_INLINE_AT_MARKER_RE` 承担,契约模块不重复定义正则。
+消息库自增号),裸数字 / QQ message_id / 跨格式一律按没给处理。正文内联 @ 的
+写法是 `@QQ号`（只认 ASCII 数字），由出站解析方 `core/outbound.py` 的
+`_AT_MENTION_RE` 承担,契约模块不重复定义正则。
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ DECISION_FIELDS: tuple[DecisionFieldSpec, ...] = (
         name='reply_to',
         required=False,
         en_note='string, optional',
-        en_desc='quote one message of this conversation by its ref `m:<id>` — the number in the chat-message header line, e.g. "m:123". Only that exact form is accepted: bare numbers, QQ message ids and any other shape are ignored, refs outside this conversation are rejected. Omit when not quoting. In groups, a resolved Reply automatically mentions the quoted sender immediately after it; do not manually repeat that person at the start. Private replies never auto-mention. Additional people or other positions use [CQ:at,qq=<qq id>] inside reply_text',
+        en_desc='quote one message of this conversation by its ref `m:<id>` — the number in the chat-message header line, e.g. "m:123". Only that exact form is accepted: bare numbers, QQ message ids and any other shape are ignored, refs outside this conversation are rejected. Omit when not quoting. In groups, a resolved Reply automatically mentions the quoted sender immediately after it; do not manually repeat that person at the start. Private replies never auto-mention. Additional people or other positions use @<qq id> (ASCII digits) inside reply_text',
         cn_note='string',
         cn_desc='引用本会话里的一条消息：值写成 `m:<id>`（如 "m:123"），即<聊天消息区域>里每条消息头一行的 m: 号。只认这一种写法：裸数字、QQ 消息 id、别的形态\n    一律当没给，不属于本会话的号会被拒；不确定号就不要引用。\n    群聊成功解析 Reply 会自动 @ 被引用者，私聊不自动 @；\n    额外的人或其它位置用 reply_text 正文内联 @',
         cn_desc_short='引用某条消息时填它行首的 m 号，如 "m:123"',

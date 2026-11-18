@@ -28,11 +28,18 @@ from typing import Any
 PRESENTATION_SCHEMA = "hermes.steer.presentation/1"
 # 呈递形态：与普通消息共用的聊天消息区域块（prompt_builder.render_chat_region）。
 PRESENTATION_FORMAT = "chat_region"
+# 批尾系统提示字段：本批文本末尾挂着的那一段（发送原语追加的约定行）。
+# 一次 drain 里多批被上游用单换行拼成一段时，薄插件据此把各批的系统提示收拢到
+# 整段最后、只留一条——不按文案形状猜，只认 NB 显式声明过的那一段。
+PRESENTATION_HINT_FIELD = "hint"
 
 
-def presentation_marker() -> dict[str, str]:
-    """`/steer` 请求体里要带的结构化呈递标记。"""
-    return {"schema": PRESENTATION_SCHEMA, "format": PRESENTATION_FORMAT}
+def presentation_marker(hint: str = "") -> dict[str, str]:
+    """`/steer` 请求体里要带的结构化呈递标记（hint 非空时一并声明批尾系统提示）。"""
+    marker = {"schema": PRESENTATION_SCHEMA, "format": PRESENTATION_FORMAT}
+    if hint:
+        marker[PRESENTATION_HINT_FIELD] = hint
+    return marker
 
 
 def declares_chat_region(marker: Any) -> bool:
