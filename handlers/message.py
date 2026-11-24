@@ -472,7 +472,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         quote_sticker_urls=list(replied_sticker_urls),
         forward_image_urls=list(_forward_image_urls or []),
         delivery_generation=delivery_generation,
-        event_msg_id=getattr(event, "message_id", None),
+        event_msg_id=event_platform_id,
         at_user_ids=at_user_ids,
     )
     debounce_sec = chat_cfg.reply_debounce_sec
@@ -514,7 +514,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
                 is_direct=is_direct,
                 now_ms=now,
                 origin=MessageOrigin.human(),
-                event_msg_id=getattr(event, "message_id", None),
+                event_msg_id=event_platform_id,
                 image_urls=image_urls,
                 sticker_urls=sticker_urls,
                 rows=[fragment],

@@ -19,6 +19,7 @@ from .. import mcp as _mcp
 from ..config import hermes_control_plane_enabled, plugin_config
 from ..core.hermes_client import hermes_client
 from ..core.log_throttle import throttled_info
+from ..core import platform_compat
 from ..core.approvals import pending_count as approvals_pending_count
 from ..core.approvals import peek_oldest as approvals_peek_oldest
 from ..core.approvals import acknowledge as approvals_acknowledge
@@ -102,8 +103,11 @@ async def handle_clear(bot: Bot, event: Event, matcher: Matcher):
     cutoff_msg_id = None
     if not target.private:
         # perception 已先入库；领取命令自身的真实 db id 作瞬态截断水位。
-        event_message_id = getattr(event, "message_id", None)
-        if isinstance(event_message_id, int):
+        # 取号统一走平台差异层(OneBot=message_id int,QQ 官方=event.id str)。
+        event_message_id = platform_compat.platform_message_id(
+            event, adapter_name=adapter_name
+        )
+        if event_message_id is not None:
             cutoff_msg_id = _claim_event_db_id(adapter_name, event_message_id)
         if cutoff_msg_id is None:
             logger.warning(f"[HERMES] /clear 未取到命令 db id，本轮不设置前文截断 (adapter={adapter_name})")

@@ -55,7 +55,13 @@ class _Event:
 class PlatformMessageIdTests(unittest.TestCase):
     def test_onebot_shape_uses_message_id(self):
         ev = _Event(message_id=12345)
-        self.assertEqual(platform_compat.platform_message_id(ev), "12345")
+        # 原始类型必须保住:int 一路进 set_msg_emoji_like(message_id=…) 等平台调用。
+        self.assertEqual(platform_compat.platform_message_id(ev), 12345)
+        self.assertIsInstance(platform_compat.platform_message_id(ev), int)
+
+    def test_onebot_string_message_id_stays_str(self):
+        ev = _Event(message_id=" 12345 ")
+        self.assertEqual(platform_compat.platform_message_id(ev), " 12345 ")
 
     def test_official_qq_shape_falls_back_to_event_id(self):
         ev = _Event(id="EVT_QQ_1")

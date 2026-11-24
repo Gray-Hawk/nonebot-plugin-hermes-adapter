@@ -28,6 +28,7 @@ from ..core.approvals import admin_user_ids
 from ..core.bg_tasks import spawn_bg_task
 from ..core.group_profile import build_group_profile_block
 from ..core import identity
+from ..core import platform_compat
 from ..config import resolve_custom_dir
 from ..core.companion_runtime import (
     deliver_companion_run_output,
@@ -431,7 +432,9 @@ async def _dispatch_chat(
             sticker_urls=sticker_urls,
             is_private=target.private,
             now_ms=now_ms,
-            event_msg_id=getattr(event, "message_id", None),
+            event_msg_id=platform_compat.platform_message_id(
+                event, adapter_name=adapter_name
+            ),
             origin=MessageOrigin.human(),
             rows=fragments,
         )
@@ -452,7 +455,7 @@ async def _dispatch_chat(
         is_direct=is_direct,
         addressed_to_bot=addressed_to_bot,
         now_ms=now_ms,
-        event_msg_id=getattr(event, "message_id", None),
+        event_msg_id=platform_compat.platform_message_id(event, adapter_name=adapter_name),
         origin=MessageOrigin.human(),
         # keyword-soft 窗口外命中:跑无窗口临时 turn(不开窗);窗口内则正常跑,
         # 两种都推 N1 条上下文(不用续发轮裁剪)。

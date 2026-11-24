@@ -150,7 +150,10 @@ async def handle_perception(bot: Bot, event: Event):
     # 平台真实 message_id:与 m:id 同一行落库(身份映射),供主线回执/取文件回平台侧。
     # 无 ID 的 event(合成/本地构造)保持 None——NULL 是明确事实,不猜。
     # 取号统一走平台差异层:OneBot=event.message_id,QQ 官方=event.id。
-    qq_message_id = event_msg_id
+    # 落库仍是字符串(与 m:id 同一行的既有列形态);取不到号保持 NULL。
+    qq_message_id = (
+        str(event_msg_id).strip() if event_msg_id not in (None, "") else None
+    ) or None
     for entry in file_entries:
         entry["qq_message_id"] = qq_message_id
 

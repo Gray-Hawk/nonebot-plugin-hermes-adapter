@@ -90,27 +90,32 @@ def _is_official_qq_event(event) -> bool:
     return type(event).__module__.startswith(_OFFICIAL_QQ_EVENT_MODULE_PREFIX)
 
 
-def platform_message_id(event, *, adapter_name: str | None = None) -> str | None:
-    """平台侧主消息 id(字符串形态),取不到即 None。
+def platform_message_id(event, *, adapter_name: str | None = None):
+    """平台侧主消息 id(**原始类型**,取不到即 None)。
 
-    OneBot v11 / v12 走 ``event.message_id``;QQ 官方事件没有该字段,主 id 是
-    ``event.id``。回落到 ``.id`` **只**对官方 QQ 事件或显式传入官方 adapter 名
-    生效——其它平台没有 ``message_id`` 时过去就是 None,不能因为多了个 ``.id``
-    就悄悄换口径(那会把不相干的字段写进消息身份映射)。
+    OneBot v11 / v12 走 ``event.message_id``(通常是 int);QQ 官方事件没有该字段,
+    主 id 是 ``event.id``(str)。刻意不统一成 str:OneBot 侧这个值会一路进
+    `set_msg_emoji_like(message_id=…)` 等平台调用,改类型就是改既有行为。
+    需要字符串键(去重、日志、DB 落库)的调用方自己 ``str()``。
+
+    回落到 ``.id`` **只**对官方 QQ 事件或显式传入官方 adapter 名生效——其它平台
+    没有 ``message_id`` 时过去就是 None,不能因为多了个 ``.id`` 就悄悄换口径。
     """
     if event is None:
         return None
     value = getattr(event, "message_id", None)
     if value not in (None, ""):
-        text = str(value).strip()
-        if text:
-            return text
+        if isinstance(value, str) and not value.strip():
+            value = None
+        if value is not None:
+            return value
     if is_official_qq(adapter_name) or _is_official_qq_event(event):
         value = getattr(event, "id", None)
         if value not in (None, ""):
-            text = str(value).strip()
-            if text:
-                return text
+            if isinstance(value, str):
+                text = value.strip()
+                return text or None
+            return value
     return None
 
 
