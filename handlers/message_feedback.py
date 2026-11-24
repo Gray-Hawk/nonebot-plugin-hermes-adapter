@@ -8,6 +8,7 @@ import time
 from nonebot import logger
 from nonebot.adapters import Bot
 
+from ..core import platform_compat
 from ..core import task_notes
 from ..core.approvals import add_pending as approvals_add_pending
 from ..core.approvals import notify_admins as approvals_notify_admins
@@ -329,6 +330,12 @@ async def _emoji_like_quiet(bot: Bot, msg_id, emoji_id: int) -> bool:
     观察用它区分能力边界。
     """
     try:
+        if not platform_compat.capabilities(platform_compat.adapter_name_of(bot)).emoji_reaction:
+            # 官方 QQ 没有 set_msg_emoji_like:能力不足即不调平台,不假装贴上。
+            logger.debug(
+                f"[HERMES] emoji 回执跳过(当前平台不支持) adapter={platform_compat.adapter_name_of(bot)}"
+            )
+            return False
         data = await bot.call_api("set_msg_emoji_like", message_id=msg_id, emoji_id=emoji_id)
     except Exception as e:
         logger.debug(f"[HERMES] emoji 回执失败 (msg_id={msg_id} emoji_id={emoji_id}): {e}")

@@ -21,6 +21,7 @@ from nonebot import logger
 from pydantic import BaseModel, Field
 
 from ...core.routing import CallerScope
+from ...core import platform_compat
 from ...core.storage.file_downloader import FileDownloadError
 from ..auth import scope_refusal
 
@@ -162,6 +163,11 @@ async def browse_group_files_impl(
     refusal = scope_refusal(inp.adapter, inp.group_id, scope)
     if refusal is not None:
         return BrowseGroupFilesResult(ok=False, error=refusal)
+    if not platform_compat.capabilities(inp.adapter).group_files:
+        return BrowseGroupFilesResult(
+            ok=False,
+            error=f"group file library is unsupported on adapter {inp.adapter!r}",
+        )
 
     try:
         sysinfo = await bot.call_api(
@@ -216,6 +222,11 @@ async def download_group_file_impl(
     refusal = scope_refusal(inp.adapter, inp.group_id, scope)
     if refusal is not None:
         return DownloadGroupFileResult(ok=False, error=refusal)
+    if not platform_compat.capabilities(inp.adapter).group_files:
+        return DownloadGroupFileResult(
+            ok=False,
+            error=f"group file library is unsupported on adapter {inp.adapter!r}",
+        )
 
     try:
         resp = await bot.call_api(

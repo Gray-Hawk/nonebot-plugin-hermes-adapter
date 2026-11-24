@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from ...core.decision_contract import parse_reply_to
 from ...core.message_buffer import MessageBuffer
 from ...core.routing import CallerScope
+from ...core import platform_compat
 from ..auth import PushContextError, validate_push_context
 
 ErrorKind = Literal["local_rejected", "platform_rejected", "unconfirmed"]
@@ -76,6 +77,15 @@ async def recall_message_impl(
     message_buffer: MessageBuffer,
 ) -> RecallMessageResult:
     """校验权限、聊天归属和真实发送者后，执行一次平台撤回。"""
+
+    if not platform_compat.capabilities(inp.adapter).recall:
+        # 官方 QQ 没有撤回接口:先于任何平台/回执查询拒绝,不伪造成功。
+        return _failure(
+            inp,
+            "local_rejected",
+            f"message recall is unsupported on adapter {inp.adapter!r}; "
+            "only OneBot v11 exposes delete_msg",
+        )
 
     try:
         validate_push_context(

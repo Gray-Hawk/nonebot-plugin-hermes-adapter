@@ -12,6 +12,7 @@ from nonebot.adapters import Bot, Event
 
 from .. import mcp as _mcp
 from ..core.group_profile import sync_buddy_to_group
+from ..core import platform_compat
 from ..core.message_buffer import BufferedMessage
 from ..core.message_origin import MessageOrigin
 from ..core.misc_config import load_misc_config
@@ -101,6 +102,20 @@ async def handle_perception(bot: Bot, event: Event):
     if user_id == str(bot.self_id):
         return
 
+    # QQ 官方:机器人自己(或同群其它机器人)的消息不进人类缓冲,防 AI 互聊燃料。
+    # 只会对官方事件生效,OneBot 的 sender 没有 bot 语义,旧行为不变。
+    if platform_compat.is_bot_authored(event, adapter_name=adapter_name):
+        return
+
+    # 官方平台会把同一条消息重复投递(全量事件与 @ 事件同 id):perception 侧只认
+    # 第一次,避免同一行入库两次。
+    event_msg_id = platform_compat.platform_message_id(event, adapter_name=adapter_name)
+    if not platform_compat.claim_inbound("perception", adapter_name, event_msg_id):
+        logger.debug(
+            f"[HERMES perception] 重复投递已忽略 adapter={adapter_name} id={event_msg_id}"
+        )
+        return
+
     try:
         uni_msg = alconna.UniMessage.generate_without_reply(event=event, bot=bot)
     except Exception:
@@ -134,8 +149,8 @@ async def handle_perception(bot: Bot, event: Event):
     file_entries = _extract_file_entries(uni_msg)
     # 平台真实 message_id:与 m:id 同一行落库(身份映射),供主线回执/取文件回平台侧。
     # 无 ID 的 event(合成/本地构造)保持 None——NULL 是明确事实,不猜。
-    event_msg_id = getattr(event, "message_id", None)
-    qq_message_id = str(event_msg_id).strip() if event_msg_id not in (None, "") else None
+    # 取号统一走平台差异层:OneBot=event.message_id,QQ 官方=event.id。
+    qq_message_id = event_msg_id
     for entry in file_entries:
         entry["qq_message_id"] = qq_message_id
 
@@ -220,8 +235,8 @@ async def handle_perception(bot: Bot, event: Event):
             suffix = " ".join(suffix_parts)
             buffered.content = f"{buffered.content} {suffix}".strip() if buffered.content else suffix
             _mcp.message_buffer.update_content(buffered.id, buffered.content)
-    # B 方案:入库即挂号,主 handler 凭同一 event 的 message_id 领真实 db id
-    _register_event_db_id(adapter_name, getattr(event, "message_id", None), buffered.id)
+    # B 方案:入库即挂号,主 handler 凭同一 event 的平台消息号领真实 db id
+    _register_event_db_id(adapter_name, event_msg_id, buffered.id)
 
     # 本部署补丁:发言者已有画像但不在群友行时，自动补进群友行
     if group_id:

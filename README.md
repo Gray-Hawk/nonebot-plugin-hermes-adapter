@@ -68,6 +68,51 @@ NoneBot 插件，将 NoneBot2 桥接到 Hermes Agent 的 API Server
 - `[sys=…]` 合成消息不贴人类身份，也没有 m:id / @ 强提醒。
 - 未给 `self_id`/`adapter` 的低层调用保持旧字节形态（离线工具与旧测试兼容）。
 
+## QQ 官方 Bot 通道（实验样板）
+
+除 OneBot v11/NapCat 外，插件可以额外接一路 **QQ 官方 Bot**（`nonebot-adapter-qq`，事件类
+`C2CMessageCreateEvent` / `GroupAtMessageCreateEvent` / `GroupMessageCreateEvent`）。
+这是**新增、可回退**的通道：不替换 NapCat，不改上游 Hermes，也不修改任何既有平台行为。
+
+接线（实例侧，不进插件代码）：
+
+1. `pip install nonebot-plugin-hermes-adapter[qq]`（或单独装 `nonebot-adapter-qq>=1.7.0`）；
+2. 实例 `run.py` 里 `driver.register_adapter(QQAdapter)`；
+3. 提供 `qq_bots`（AppID/Secret/intents），仓库内 `chat_config` 等配置不新增配额状态机。
+
+平台差异集中在 `core/platform_compat.py`（业务代码不写 `if adapter == "qq"`）：
+
+- **取号**：官方事件的主消息 id 是 `event.id`（没有 `message_id`），引用号在
+  `QQReplyMessage.msg_idx`，正文在 `.content`。入库、触发 fragment、steer、引用对账
+  走同一个 `platform_message_id()` / `reply_content()`。
+- **重复投递**：同一 `event.id` 被投递两次时只起一轮（perception 与主 handler 各自
+  `claim_inbound(scope, …)`，有界 TTL 300s / 4096 条）。
+- **身份**：用户/群是 OpenID，与 Bot 的 AppID 没有数值关系；全量群消息里 @bot 由
+  `mentions.is_you` 给出（适配器把该 mention 的 `user_id` 改写成 `bot.self_info.id`），
+  所以「@ 我」只看 At 段 + `is_tome()`；`author.bot=true` 的机器人消息直接丢弃。
+
+首版支持：C2C 私聊、群 @、开启「获取群内全部消息」后的非 @ 群消息；文字、基础图片、
+§ 多段正文；会话/活跃窗/排队/交付台账全部复用现有链路。
+
+**明确 unsupported / 降级**（能力表 `platform_compat.capabilities()` 为准，工具遇不支持
+适配器时明确拒绝，不伪造成功）：
+
+| 能力 | 官方 QQ 口径 |
+| --- | --- |
+| 戳一戳（`poke_user`） | unsupported → `local_rejected` |
+| 撤回（`recall_message`） | unsupported → `local_rejected` |
+| 群文件库（`group_files`） | unsupported → `ok=false` |
+| 表情回执（429 忙信号） | 不调平台，直接跳过 |
+| 合并转发（长文） | 不转发，走既有截断 |
+| 本地表情库 / 本地文件直传 | unsupported（本地表情原样拒绝） |
+| 审批私聊通知 | 跳过并记日志（原有 onebotv11 门控） |
+| 正文受控标记 `@QQ号` | 不转义，原样当文本（官方 @ 目标是 openid） |
+| 对任意历史消息显式引用 | 只保留「被动回复触发消息」语义（`msg_id`/`msg_seq` 由适配器带），不伪造引用段 |
+
+官方主动消息额度（群 20 条/分、1000 条/天；单聊 20 条/分/用户、1000 条/天；被动回复
+60 分钟 4/5 次）不在插件里建状态机：平台拒绝时按既有交付台账记失败/unknown，并在日志里
+带出平台 `code`/`message`。
+
 ## 网关侧插件
 
 Runs 车道的手动压缩控制端点由 Hermes gateway 用户插件提供（不改 Hermes 上游核心），

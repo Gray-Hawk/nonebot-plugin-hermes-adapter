@@ -18,6 +18,7 @@ from ..config import plugin_config
 from ..core.chat_config import load_chat_config
 from ..core.media_config import MediaConfig, load_media_config
 from ..core.file_config import load_file_config
+from ..core import platform_compat
 from ..core.message_buffer import BufferedMessage, media_kind_word
 
 from .message_ingress import (
@@ -818,7 +819,14 @@ async def _extract_replied_media(event: Event, bot: Bot, *, adapter_name: str) -
         return out
     # 发送者归属独立提取(见 helper docstring):归属提取失败只丢标签,不拖垮引用本体。
     out.sender_label = _extract_replied_sender_label(event)
-    out.msg_id = getattr(event.reply, "message_id", None)
+    # 引用号同源:OneBot=message_id,QQ 官方引用模型=msg_idx。
+    out.msg_id = platform_compat.reply_message_id(event.reply)
+    # 平台模型型引用(QQ 官方 QQReplyMessage:正文 .content、媒体 .attachments)
+    # 没有 `.message`,UniMessage.generate 走不了;按模型字段直接取正文与图片。
+    platform_reply = platform_compat.reply_content(event.reply)
+    if platform_reply is not None:
+        out.text, out.image_urls = platform_reply
+        return out
     try:
         replied_message = await alconna.UniMessage.generate(message=event.reply.message, bot=bot)
         out.text = replied_message.extract_plain_text().strip()

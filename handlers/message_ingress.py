@@ -225,6 +225,27 @@ def _extract_replied_sender_label(event: Event) -> str:
         reply = getattr(event, "reply", None)
         sender = getattr(reply, "sender", None)
         if sender is None:
+            # 平台模型型引用(QQ 官方 QQReplyMessage)没有 sender,归属在 author 上:
+            # member_openid/user_openid + username。
+            author = getattr(reply, "author", None)
+            if author is not None:
+                user_id = _label_safe(
+                    "".join(
+                        ch for ch in str(
+                            getattr(author, "member_openid", "")
+                            or getattr(author, "user_openid", "")
+                            or getattr(author, "id", "")
+                            or ""
+                        ) if ch.isprintable()
+                    ).strip()
+                )
+                nickname = _sanitize_nickname(getattr(author, "username", None))
+                if nickname:
+                    nickname = _label_safe(nickname)
+                if nickname and user_id:
+                    return f"{nickname}({user_id})"
+                if nickname or user_id:
+                    return nickname or user_id
             # v12 等 adapter 的 reply 不带 sender——记一笔
             # 可观测,不再静默吞;下游照旧回退无归属格式,行为不退化。
             logger.info("[HERMES] 引用消息无 sender 字段(adapter 缺归属信息),回退无归属格式")

@@ -30,6 +30,9 @@ dependencies = [
 [project.optional-dependencies]
 # 离线配置迁移脚本（包内 scripts/migrate_config_v6.py）读旧 .env 时才需要。
 migrate = ["python-dotenv>=1.0"]
+# QQ 官方 Bot 通道（实验样板，灰度到肥鱼实例；主实例仍走 OneBot/NapCat）。
+# 装上且实例 side 注册了 nonebot-adapter-qq 的 Adapter 才会生效。
+qq = ["nonebot-adapter-qq>=1.7.0"]
 
 [project.urls]
 Homepage = "https://github.com/Gray-Hawk/nonebot-plugin-hermes-adapter"

@@ -17,6 +17,7 @@ from nonebot.rule import Rule
 
 from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..config import plugin_config
+from ..core import platform_compat
 from ..core import user_lists
 from ..core.chat_config import load_chat_config
 from ..core.inflight import make_inflight_key
@@ -245,6 +246,19 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     if user_id == str(bot.self_id):
         matcher.skip()
 
+    # QQ 官方:机器人自己的消息(以及同群其它机器人)不算人类输入。
+    if platform_compat.is_bot_authored(event, adapter_name=adapter_name):
+        matcher.skip()
+
+    # 官方平台同一条消息可能投递两次(全量事件与 @ 事件同 id)。perception 与
+    # 主 handler 各用独立 scope:同一事件的这两条路径都要走一次,重复投递才被挡。
+    event_platform_id = platform_compat.platform_message_id(event, adapter_name=adapter_name)
+    if not platform_compat.claim_inbound("main", adapter_name, event_platform_id):
+        logger.debug(
+            f"[HERMES skip] duplicate_delivery adapter={adapter_name} id={event_platform_id}"
+        )
+        matcher.skip()
+
     if not check_isolation(event, target):
         logger.debug(
             f"[HERMES skip] isolation_denied adapter={get_adapter_name(target)} "
@@ -286,7 +300,7 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
     # B-0: 非文本段占位拼到 msg_text 末尾。注意这里**不重复**对 replied_message 做
     # collect: 引用消息已通过引用前缀((引用:...) 形态)进来,
     # 引用里的 voice/video 用户感知较低,且会让占位重复堆叠。
-    event_db_id = _peek_event_db_id(adapter_name, getattr(event, "message_id", None))
+    event_db_id = _peek_event_db_id(adapter_name, event_platform_id)
     own_file_entries = _extract_file_entries(uni_msg)
     nontext_placeholders = _collect_nontext_placeholders(
         uni_msg, file_entries=own_file_entries, file_message_id=event_db_id

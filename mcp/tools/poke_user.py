@@ -27,6 +27,7 @@ from nonebot.adapters.onebot.v11.exception import ActionFailed, NetworkError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ...core.routing import CallerScope
+from ...core import platform_compat
 from ..auth import PushContextError, validate_push_context
 
 ErrorKind = Literal["local_rejected", "platform_rejected", "unconfirmed"]
@@ -112,6 +113,13 @@ async def poke_user_impl(
     target_qq = inp.user_id.strip()
     if not target_qq.isdigit():
         return _failure("local_rejected", "user_id must be an ASCII QQ number")
+    if not platform_compat.capabilities(inp.adapter).poke:
+        # 官方 QQ 没有 poke 能力:明确拒绝,不调平台、不伪造成功。
+        return _failure(
+            "local_rejected",
+            f"poke is unsupported on adapter {inp.adapter!r}; "
+            "only OneBot v11 exposes send_poke",
+        )
     try:
         validate_push_context(
             adapter=inp.adapter,

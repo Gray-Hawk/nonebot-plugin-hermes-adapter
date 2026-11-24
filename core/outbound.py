@@ -25,6 +25,7 @@ from .chat_config import load_chat_config
 from .log_throttle import throttled_info
 from .media_config import load_media_config
 from .misc_config import load_misc_config
+from . import platform_compat
 from .sticker_library import (
     StickerLibrary,
     StickerLibraryError,
@@ -226,13 +227,19 @@ class _InlineAt:
     qq: str
 
 
-def _parse_inline_markers(text: str) -> list[str | _InlineAt]:
+def _parse_inline_markers(text: str, *, allow_markup: bool = True) -> list[str | _InlineAt]:
     """把 reply_text 切成 文本 / 内联 @ 的有序片段。
 
     只认 ``@QQ号``：ASCII 数字、首位非 0、5～12 位，且右邻不再接数字（更长的数字串
     不会被切成半截）。其余 ``@…`` 文本（昵称、``@all``、``@全体成员``、邮箱样式）
     原样留在文本片段里。相邻标记之间不产生空文本片段；空串返回空列表。
+
+    ``allow_markup=False``(QQ 官方)时不做任何切分:官方 @ 的目标是 openid,
+    数字 QQ 号在上游没有可映射对象,字面发出去比伪造一个无效 mention 诚实。
     """
+
+    if not allow_markup:
+        return [text] if text else []
 
     tokens: list[str | _InlineAt] = []
     pos = 0
@@ -555,6 +562,13 @@ def _extract_msg_id(item: object) -> str | None:
         text = str(value).strip()
         if text:
             return text
+    # 平台模型型回执(QQ 官方 PostC2CMessagesReturn / PostGroupMessagesReturn):
+    # 消息 id 在 `.id`。有该属性就以它为准——`id=None` 表示「发了但拿不到号」,
+    # 必须如实回 None,不能 str(模型) 造一串 repr 冒充 id。
+    if hasattr(item, "id"):
+        value = getattr(item, "id", None)
+        text = str(value).strip() if value is not None else ""
+        return text or None
     text = str(item).strip()
     return text or None
 
@@ -596,6 +610,13 @@ async def _send_unimsg(
         receipt = await msg.send(target=target, bot=bot)
     except Exception as exc:
         _delivery_mark_unknown(delivery, exc, token)
+        # 官方 QQ 的「失败原因」= HTTP code + 平台 message(额度/被动回复窗口/
+        # msg_seq 冲突都从这里看出来)。记录事实,不另造配额状态机,也不改重试语义。
+        if platform_compat.is_official_qq(platform_compat.adapter_name_of(bot)):
+            logger.warning(
+                f"[OUTBOUND] QQ 官方发送失败 target={target} "
+                f"{platform_compat.describe_send_error(exc)}"
+            )
         raise
     msg_ids = _receipt_msg_ids(receipt)
     if delivery is not None:
@@ -719,7 +740,9 @@ async def send_text_with_media(
     original_len = len(text)
     max_len = load_misc_config().max_length
 
-    tokens = _parse_inline_markers(text)
+    tokens = _parse_inline_markers(
+        text, allow_markup=platform_compat.capabilities(adapter_name).at_markup
+    )
     _warn_residual_cq(tokens)
     reply_id = _normalize_reply_id(reply_qq_message_id, target=target)
     reply_at = ""
