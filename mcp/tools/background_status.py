@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from ...core.routing import CallerScope
 from ...core.running_tasks import collect_running
+from ...core.session import session_manager
 from ..auth import scope_refusal
 
 # 运行态未知时的统一口径；模型不得把空 running 列表当作「没有任务」。
@@ -89,50 +90,29 @@ class GetBackgroundTasksResult(BaseModel):
     note: str = ""
 
 
-def _session_prefixes(adapter: str, is_private: bool, target_id: str) -> list[str]:
-    """会话在真实登记里的 origin_session_id 前缀（含 `-g<代际>` 变体）。
+def _session_identity(adapter: str, is_private: bool, target_id: str):
+    """调用方会话 → 会话身份 ``(平台族, scope, target)``（唯一归属判定）。
 
-    session key 按真实后端命名：前缀取自 ``session_manager.session_key_prefixes()``
-    （当前后端在前）。Hermes 后端只有 `hermes-`；换成别的后端前缀时还要认升级前
-    登记的 `hermes-*`，否则老事件会被当成别人的。
-
-    QQTPC 协议另外要认两种会话形态：归一后的业务会话域（``hermes-qqtpc+…``，新派生
-    key）与迁移前按真实 transport 登记的 key（``hermes-onebotv11+…``/
-    ``hermes-milky+…``）。迁移后旧登记仍在信箱与看板里，QQTPC 域要覆盖**全部**已登记
-    transport 形态（不只是当前这个），否则一条 OneBot 时代登记的旧 key 在当前
-    Milky 调用下就查不到；未归一的 adapter（QQ 官方等）只有一种。
+    归属只看 parse_session_key 解析出的 scope+target 与平台族：canonical
+    ``hermes-qqtpc+…``、旧 ``hermes-onebotv11+…`` / ``hermes-milky+…``、以及
+    将来任何未登记 transport 的旧键都属于同一会话——不需要维护 transport 清单。
+    其它后端前缀由 ``session_key_prefixes()`` 决定（不在集合里就解析不出来）。
     """
-    from ...core.session import (
-        QQTPC_TRANSPORTS,
-        SESSION_DOMAIN_QQTPC,
-        session_domain,
-        session_manager,
+    from ...core.background_report_runtime import conversation_identity
+
+    return conversation_identity(
+        adapter,
+        is_private,
+        target_id if is_private else None,
+        None if is_private else target_id,
     )
 
-    kind = "private" if is_private else "group"
-    names = [session_domain(adapter)]
-    if names[0] != adapter:
-        names.append(adapter)
-    if SESSION_DOMAIN_QQTPC in names:
-        for transport in QQTPC_TRANSPORTS:
-            if transport not in names:
-                names.append(transport)
-    prefixes: list[str] = []
-    for prefix in session_manager.session_key_prefixes():
-        for name in names:
-            item = f"{prefix}-{name}+{kind}+{target_id}"
-            if item not in prefixes:
-                prefixes.append(item)
-    return prefixes
 
+def _belongs(origin_session_id: str, identity, prefixes: Sequence[str]) -> bool:
+    """会话键是否属于该身份（兄弟 scope / 官方 QQ / 其它后端前缀都不会命中）。"""
+    from ...core.background_report_runtime import identity_matches
 
-def _belongs(origin_session_id: str, prefixes: str | Sequence[str]) -> bool:
-    if isinstance(prefixes, str):
-        prefixes = (prefixes,)
-    return any(
-        origin_session_id == prefix or origin_session_id.startswith(prefix + "-g")
-        for prefix in prefixes
-    )
+    return identity_matches(origin_session_id, identity, prefixes=prefixes)
 
 
 def _summary(event: dict) -> str:
@@ -144,12 +124,22 @@ def _summary(event: dict) -> str:
     return first if len(first) <= 120 else first[:120] + "…"
 
 
-def _collect_running(running_sources, *, prefixes: list[str], limit: int):
-    """按会话前缀聚合运行源（换过后端前缀时可能有两个真实前缀）。
+def _collect_running(running_sources, *, identity=None, prefixes=None, limit: int):
+    """按会话身份聚合运行源（跨全部后端前缀 / transport 形态）。
 
-    单前缀时行为与 ``collect_running`` 完全一致；多前缀时逐前缀查、按
-    ``(source, task_id)`` 去重，读失败来源名也去重——不让一次换名前缀把旧登记算成别人的。
+    给了 ``identity`` 时来源自己做身份归属（SQL 只按 ``+scope+target`` 粗筛），
+    一次调用即可覆盖 canonical 与历史 transport key；无 identity 时保持旧的
+    逐前缀查询语义（兼容直接调用方）。
     """
+    prefixes = list(prefixes or [])
+    if identity is not None:
+        return collect_running(
+            running_sources,
+            session_prefix=prefixes[0] if prefixes else "",
+            limit=limit,
+            identity=identity,
+            prefixes=tuple(prefixes),
+        )
     if len(prefixes) <= 1:
         return collect_running(
             running_sources, session_prefix=prefixes[0] if prefixes else "", limit=limit,
@@ -202,12 +192,14 @@ def get_background_tasks_impl(
     elif scope is None:
         return _fail("unresolved caller — the bridge could not identify this endpoint")
 
-    prefixes = _session_prefixes(inp.adapter, is_private, target_id)
+    identity = _session_identity(inp.adapter, is_private, target_id)
+    prefixes = session_manager.session_key_prefixes()
 
     # 运行中：真实运行源只读聚合；读不到就是「未知」，不是「没有」。
-    # 换过后端前缀时还要认升级前的 hermes- 登记，按前缀各查一次再合并。
+    # 归属按会话身份（同平台族 + scope + target）：canonical 与旧 transport key
+    # 都是同一会话，来源侧跨前缀查询。
     running_items, running_sources_ok, running_errors = _collect_running(
-        running_sources, prefixes=prefixes, limit=limit,
+        running_sources, identity=identity, prefixes=prefixes, limit=limit,
     )
     running = [
         BackgroundRunningItem(
@@ -235,7 +227,7 @@ def get_background_tasks_impl(
         else:
             for event in events:
                 origin = str(event.get("origin_session_id") or "")
-                if not _belongs(origin, prefixes):
+                if not _belongs(origin, identity, prefixes):
                     continue
                 reports.append(
                     BackgroundReportItem(

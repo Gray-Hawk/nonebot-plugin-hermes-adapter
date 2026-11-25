@@ -202,42 +202,47 @@ class BackgroundPrefixMatchTests(_Case):
         )
         self.assertIsNone(resolve_background_route(f"agent-{INTERNAL_ID}", ()))
 
-    def test_prefix_candidates_follow_backend(self) -> None:
-        from nonebot_plugin_hermes_adapter.core.session import QQTPC_TRANSPORTS
-        from nonebot_plugin_hermes_adapter.mcp.tools.background_status import (
-            _belongs,
-            _session_prefixes,
+    def test_identity_covers_all_transports_within_backend_prefix(self) -> None:
+        from nonebot_plugin_hermes_adapter.core.background_report_runtime import (
+            conversation_identity,
+            identity_matches,
         )
+        from nonebot_plugin_hermes_adapter.core.session import session_manager
 
-        # QQTPC 域要覆盖**全部**既有 transport 形态（迁移前按旧协议登记的 key 仍在
-        # 信箱/看板里）：顺序 = 会话域、当前 adapter、其余已登记 transport。
-        names = ["qqtpc", ADAPTER, *(t for t in QQTPC_TRANSPORTS if t != ADAPTER)]
-
+        # 归属按会话身份（平台族 + scope + target），不枚举 transport：
+        # canonical 域、全部已登记 transport、以及将来未登记的新驱动名都命中。
+        identity = conversation_identity(ADAPTER, True, USER, None)
         self.set_interface("runs")
-        prefixes = _session_prefixes(ADAPTER, True, USER)
-        self.assertEqual(
-            prefixes,
-            [f"hermes-{name}+private+{USER}" for name in names],
-            "新派生 key 用 qqtpc 会话域；归一前登记的旧 transport key（全部形态）仍要认",
-        )
-        self.assertTrue(_belongs(f"hermes-{INTERNAL_ID}-g4", [f"hermes-{INTERNAL_ID}"]))
+        prefixes = session_manager.session_key_prefixes()
+        for name in ("qqtpc", ADAPTER, "milky", "icqq", "somefuture"):
+            with self.subTest(name=name):
+                self.assertTrue(
+                    identity_matches(f"hermes-{name}+private+{USER}-g4", identity, prefixes=prefixes)
+                )
         self.assertFalse(
-            _belongs(f"{OTHER_PREFIX}-{INTERNAL_ID}", [f"hermes-{INTERNAL_ID}"])
+            identity_matches(f"{OTHER_PREFIX}-{INTERNAL_ID}", identity, prefixes=prefixes),
+            "其它后端前缀不在本会话前缀集合内",
+        )
+        self.assertFalse(
+            identity_matches(f"hermes-qq+private+{USER}", identity, prefixes=prefixes),
+            "官方 QQ 属另一平台族",
+        )
+        self.assertFalse(
+            identity_matches(f"hermes-{ADAPTER}+private+99999", identity, prefixes=prefixes),
+            "兄弟 target 不得命中",
         )
 
+        # 换后端前缀：当前前缀与升级前 hermes- 登记都要认；agent- 永远不认。
         self.use_prefix("otherbackend", OTHER_PREFIX)
-        prefixes = _session_prefixes(ADAPTER, True, USER)
-        self.assertEqual(
-            prefixes,
-            [
-                f"{prefix}-{name}+private+{USER}"
-                for prefix in (OTHER_PREFIX, "hermes")
-                for name in names
-            ],
+        prefixes = session_manager.session_key_prefixes()
+        self.assertTrue(
+            identity_matches(f"{OTHER_PREFIX}-{INTERNAL_ID}-g4", identity, prefixes=prefixes)
         )
-        self.assertTrue(_belongs(f"{OTHER_PREFIX}-{INTERNAL_ID}-g4", prefixes))
-        self.assertTrue(_belongs(f"hermes-{LEGACY_INTERNAL_ID}-g2", prefixes), "升级前遗留登记")
-        self.assertFalse(_belongs(f"agent-{INTERNAL_ID}", prefixes))
+        self.assertTrue(
+            identity_matches(f"hermes-{LEGACY_INTERNAL_ID}-g2", identity, prefixes=prefixes),
+            "升级前遗留登记",
+        )
+        self.assertFalse(identity_matches(f"agent-{INTERNAL_ID}", identity, prefixes=prefixes))
 
     def test_collect_running_dedupes_multiple_prefixes(self) -> None:
         from nonebot_plugin_hermes_adapter.mcp.tools.background_status import _collect_running

@@ -226,6 +226,12 @@ class KanbanReportSource:
     def _warn_duplicate_path_once(conn: sqlite3.Connection, task_id: str, session_id: str) -> None:
         """同一目标仍挂着 api_server 唤醒订阅时提示一次：那一路只会自投无回执。
 
+        按**会话身份**（业务平台族 + scope + target）比较，不做 session_id 字符串
+        等值：卡片 session_id 已是 canonical ``hermes-qqtpc+…`` 时，迁移前登记的
+        ``hermes-onebotv11+…`` / ``hermes-milky+…`` 订阅仍是同一目标，必须照常
+        告警。兄弟群 target 不同、官方 QQ 属另一平台族、其它后端前缀不在本会话
+        前缀集合内——都不会命中。
+
         不改上游订阅（不改生产库），只给运维一个可检索的信号；交接用
         ``scripts/kanban_notify_handover.py`` 按公开 CLI 显式注销。
         """
@@ -238,14 +244,26 @@ class KanbanReportSource:
             ).fetchall()
         except sqlite3.Error:
             return
+        from .background_report_runtime import report_identity
+        from .session import session_manager
+
+        prefixes = session_manager.session_key_prefixes()
+        identity = report_identity(session_id, prefixes=prefixes)
         for row in rows:
-            if str(row["platform"] or "").lower() == "api_server" and str(row["chat_id"]) == session_id:
-                _DUPLICATE_WARNED.add((task_id, session_id))
-                logger.warning(
-                    "[background-report] %s 仍挂 api_server 通知订阅,同一事件会有两路:"
-                    "通知器自投(无 NB run/delivery)与本信箱唤醒;交接后应注销前者", task_id,
-                )
-                return
+            if str(row["platform"] or "").lower() != "api_server":
+                continue
+            chat_id = str(row["chat_id"] or "")
+            same_identity = bool(chat_id) and identity is not None and (
+                report_identity(chat_id, prefixes=prefixes) == identity
+            )
+            if chat_id != session_id and not same_identity:
+                continue
+            _DUPLICATE_WARNED.add((task_id, session_id))
+            logger.warning(
+                "[background-report] %s 仍挂 api_server 通知订阅,同一事件会有两路:"
+                "通知器自投(无 NB run/delivery)与本信箱唤醒;交接后应注销前者", task_id,
+            )
+            return
 
     @staticmethod
     def _tasks(conn: sqlite3.Connection, task_ids: set[str]) -> dict[str, dict]:

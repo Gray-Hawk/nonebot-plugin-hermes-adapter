@@ -9,7 +9,12 @@ import httpx
 
 from .background_report_consumer import BackgroundReportConsumer
 from .background_report_outbox import SOURCE_KANBAN
-from .session import is_session_domain, session_domain
+from .session import (
+    SESSION_DOMAIN_QQTPC,
+    is_session_domain,
+    normalize_domain_tag,
+    session_domain,
+)
 
 # 唤醒来源标签（内部身份，不伪装真人）：进 MessageOrigin.synthetic 的 label。
 _SOURCE_LABELS = {
@@ -48,6 +53,96 @@ def parse_session_key(
         "user_id": target if is_private else None,
         "group_id": None if is_private else target,
     }
+
+
+def platform_family(adapter_tag: str | None) -> str:
+    """会话键里的 adapter/域标签 → **平台族**（身份归属的唯一平台维度）。
+
+    当前部署只有 QQ 侧两条链路：QQTPC（OneBot / Milky / 未来任何 transport
+    名的统一会话域）与官方 QQ。transport 名不是身份——同一群的
+    ``onebotv11`` / ``milky`` / ``qqtpc`` / 将来未登记的新驱动都归
+    ``qqtpc`` 一族，所以查询/清场不需要维护 transport 清单。
+
+    接入其它平台（tg 等）时在这里登记各自族名；在此之前任何非官方 QQ 的
+    adapter 标签都按 QQTPC 处理。
+    """
+    from . import platform_compat
+
+    tag = normalize_domain_tag(adapter_tag)
+    if platform_compat.is_official_qq(tag):
+        return platform_compat.OFFICIAL_QQ_ADAPTER
+    return SESSION_DOMAIN_QQTPC
+
+
+def conversation_identity(
+    adapter: str | None, is_private: bool, user_id, group_id
+) -> tuple[str, str, str] | None:
+    """调用方会话 → ``(平台族, scope, target)``；缺目标标识返回 None。"""
+    target = str(user_id or "") if is_private else str(group_id or "")
+    if not target:
+        return None
+    return (platform_family(adapter), "private" if is_private else "group", target)
+
+
+def report_identity(
+    origin_session_id: str, *, prefixes: Iterable[str] = ("hermes",)
+) -> tuple[str, str, str] | None:
+    """已登记/持久化的 session key → ``(平台族, scope, target)``。
+
+    只吃 ``parse_session_key`` 认得的会话键语法；前缀集合决定「哪些后端
+    命名空间算本会话」，因此其它后端前缀（如 ``astrbot-…``）天然隔离。
+    """
+    parsed = parse_session_key(origin_session_id, prefixes=prefixes)
+    if parsed is None:
+        return None
+    return (
+        platform_family(parsed["adapter"]),
+        "private" if parsed["is_private"] else "group",
+        str(parsed["user_id"] if parsed["is_private"] else parsed["group_id"]),
+    )
+
+
+def identity_matches(
+    origin_session_id: str,
+    identity: tuple[str, str, str] | None,
+    *,
+    prefixes: Iterable[str] = ("hermes",),
+) -> bool:
+    """``origin_session_id`` 是否属于该会话身份（同一平台族+scope+target）。"""
+    if identity is None:
+        return False
+    return report_identity(origin_session_id, prefixes=prefixes) == identity
+
+
+def cancel_reports_for_conversation(
+    outbox,
+    *,
+    adapter: str | None,
+    is_private: bool,
+    user_id,
+    group_id,
+    current_session_key: str,
+    now: float,
+) -> list[str]:
+    """``/clear`` 清场：取消同一会话**全部** key 变体的待汇报事件。
+
+    先按既有语义取消当前 key（并登记上游 drop），再把同身份下 canonical /
+    旧 transport / 未来 transport 的待汇报事件一并取消——否则消费器会把
+    旧 key 的汇报重新唤醒来。返回被取消的事件号。
+    """
+    from .session import session_manager
+
+    cancelled = outbox.cancel_session(current_session_key, now=now)
+    identity = conversation_identity(adapter, is_private, user_id, group_id)
+    if identity is None:
+        return cancelled
+    prefixes = session_manager.session_key_prefixes()
+    cancelled.extend(
+        outbox.cancel_session_identity(
+            identity=identity, prefixes=prefixes, now=now,
+        )
+    )
+    return cancelled
 
 
 def resolve_background_route(

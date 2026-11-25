@@ -58,6 +58,11 @@ from ..core.reply_recovery import (
     recover_run_overwritten_replies,
 )
 from ..core.routing import resolve_target
+from ..core.session import (
+    _adapter_is_live,
+    resolve_transport_for_row,
+    session_domain,
+)
 from ..core.run_delivery_monitor import (
     reconcile_pending_deliveries,
     reconcile_run,
@@ -111,6 +116,23 @@ def _scope_of(adapter: str, is_private: bool, user_id: Any, group_id: Any):
     return (adapter, scope, scope_id) if scope_id else None
 
 
+def _row_matches_connection(row_adapter: str, connection_adapter: str) -> bool:
+    """台账行是否该由本次连接恢复。
+
+    * 同驱动：原样恢复（旧行为）；
+    * 同业务会话域（QQTPC）且历史驱动**当前没有在线连接**：用本次连接恢复——
+      协议切换后旧 adapter 的台账不能永久滞留；
+    * 跨域（官方 QQ 等）或多驱动同时在线：不碰，交给该驱动自己的连接钩子。
+    """
+    if row_adapter == connection_adapter:
+        return True
+    if not row_adapter or not connection_adapter:
+        return False
+    if session_domain(row_adapter) != session_domain(connection_adapter):
+        return False
+    return not _adapter_is_live(row_adapter)
+
+
 def restore_bot_routes(bot, *, now_ms: int | None = None) -> int:
     """Bot 连接后按既有交付台账补回内存送达路由,不伪造入站消息。
 
@@ -135,12 +157,12 @@ def restore_bot_routes(bot, *, now_ms: int | None = None) -> int:
         return 0
     keys: dict[tuple[str, str, str], None] = {}
     for row in tracker.list_running():
-        if row.adapter == adapter_name:
-            key = _scope_of(row.adapter, row.is_private, row.user_id, row.group_id)
+        if _row_matches_connection(row.adapter, adapter_name):
+            key = _scope_of(adapter_name, row.is_private, row.user_id, row.group_id)
             if key is not None:
                 keys[key] = None
     for delivery in tracker.list_ready_deliveries():
-        if (delivery.get("adapter") or "") != adapter_name:
+        if not _row_matches_connection(delivery.get("adapter") or "", adapter_name):
             continue
         key = _scope_of(
             adapter_name,
@@ -193,7 +215,7 @@ def recover_bot_deliveries(bot) -> None:
         return
     adapter_name = _bot_adapter_name(bot)
     for row in tracker.list_running():
-        if row.adapter != adapter_name:
+        if not _row_matches_connection(row.adapter, adapter_name):
             continue
         spawn_bg_task(
             _resume_row(row),
@@ -431,12 +453,23 @@ async def _resume_row_impl(row: TrackedRun) -> None:
     scope_id = row.user_id if row.is_private else (row.group_id or "")
 
     # 送达窗口:等 registry entry(bot 路由)出现 + scope 空闲(防新旧回复乱序)
+    # 发送驱动按运行时事实解析:历史 adapter 仍是当前事实时原样用;QQTPC 域内
+    # 已下线则用当前在线驱动(协议切换后补投)。跨域/歧义保持历史值。
+    send_adapter = resolve_transport_for_row(
+        row.adapter, is_private=row.is_private, user_id=row.user_id,
+        group_id=row.group_id,
+    )
     entry = None
     for _ in range(_RESUME_RETRY_MAX):
         registry = _mcp.bot_registry
         inflight = _mcp.inflight
         if registry is not None and inflight is not None:
-            entry = registry.get(row.adapter, scope, scope_id)
+            entry = registry.get(send_adapter, scope, scope_id)
+            if entry is None and send_adapter != row.adapter:
+                # 当前驱动暂无路由时退回历史驱动的既有路由(旧行为兜底)。
+                entry = registry.get(row.adapter, scope, scope_id)
+                if entry is not None:
+                    send_adapter = row.adapter
             if entry is not None and not inflight.is_inflight(_inflight_key(row)):
                 break
             entry = None
@@ -557,7 +590,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
         session_id=row.session_key,
         bot=bot,
         target=entry.target,
-        adapter_name=row.adapter,
+        adapter_name=send_adapter,
         user_id=row.user_id,
         group_id=row.group_id,
         is_private=row.is_private,
@@ -686,7 +719,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
         reply_to = plan_unit.get("reply_to") or ""
         resolved_reply = resolve_reply(
             _mcp.message_buffer,
-            adapter=row.adapter,
+            adapter=send_adapter,
             group_id=None if row.is_private else row.group_id,
             owner_user_id=row.user_id if row.is_private else None,
             reply_to=reply_to,
@@ -697,10 +730,10 @@ async def _resume_row_impl(row: TrackedRun) -> None:
             bot=bot, target=entry.target, text=cleaned, media_urls=media_urls,
             reply_qq_message_id=resolved_reply.qq_message_id if resolved_reply else None,
             reply_at_user_id=resolved_reply.reply_at_user_id if resolved_reply else None,
-            adapter_name=row.adapter, delivery=ctx,
+            adapter_name=send_adapter, delivery=ctx,
         )
         await send_local_files(
-            bot=bot, target=entry.target, file_paths=file_paths, adapter_name=row.adapter,
+            bot=bot, target=entry.target, file_paths=file_paths, adapter_name=send_adapter,
             component_prefix=f"{index}:", delivery=ctx,
         )
         if sent and _mcp.message_buffer is not None:
@@ -712,7 +745,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
             _mcp.message_buffer.append(
                 BufferedMessage(
                     ts=_now_ms(),
-                    adapter=row.adapter,
+                    adapter=send_adapter,
                     group_id=None if row.is_private else row.group_id,
                     user_id=row.bot_self_id,
                     nickname=await get_bot_nickname(bot),
@@ -725,9 +758,9 @@ async def _resume_row_impl(row: TrackedRun) -> None:
                 )
             )
         if sent and not row.is_private and row.group_id and _mcp.active_sessions is not None:
-            if _mcp.active_sessions.get_if_trigger_alive(row.adapter, row.group_id, _now_ms()) is not None:
+            if _mcp.active_sessions.get_if_trigger_alive(send_adapter, row.group_id, _now_ms()) is not None:
                 _mcp.active_sessions.mark_bot_replied(
-                    row.adapter, row.group_id, now_ms=_now_ms(),
+                    send_adapter, row.group_id, now_ms=_now_ms(),
                     media_count=len(media_urls) + len(file_paths) + send_result_sticker_count(sent),
                     text=cleaned,
                 )

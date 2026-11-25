@@ -71,7 +71,16 @@ def _connect_ro(db_path: str | Path) -> sqlite3.Connection:
 class RunningSource(Protocol):
     name: str
 
-    def running(self, *, session_prefix: str, limit: int) -> list[dict[str, Any]]: ...
+    def running(
+        self, *, session_prefix: str, limit: int, identity=None, prefixes=()
+    ) -> list[dict[str, Any]]: ...
+
+
+def _identity_matches(origin_session_id: str, identity, prefixes) -> bool:
+    """会话键是否属于该身份（复用 parse_session_key 语法；延迟导入避免环）。"""
+    from .background_report_runtime import identity_matches
+
+    return identity_matches(origin_session_id, identity, prefixes=prefixes)
 
 
 class KanbanRunningSource:
@@ -82,18 +91,29 @@ class KanbanRunningSource:
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = str(db_path)
 
-    def running(self, *, session_prefix: str, limit: int = 20) -> list[dict[str, Any]]:
-        if not session_prefix:  # 与 belongs() 同口径:空前缀不归属任何会话
+    def running(
+        self, *, session_prefix: str = "", limit: int = 20, identity=None, prefixes=()
+    ) -> list[dict[str, Any]]:
+        if identity is None and not session_prefix:  # 与 belongs() 同口径:空前缀不归属任何会话
             return []
         conn = _connect_ro(self.db_path)
         try:
-            # 只按真实运行状态筛；会话归属（含 `-g` 变体）下推到 SQL 再限额。
-            # 排序用 rowid（tasks 必有）而不是 started_at：老库/夹具可能没有该列。
-            rows = conn.execute(
-                f"SELECT * FROM tasks WHERE status=? AND {_belongs_clause('session_id')}"
-                " ORDER BY rowid DESC LIMIT ?",
-                (KANBAN_RUNNING_STATUS, *_belongs_params(session_prefix), max(limit, 1)),
-            ).fetchall()
+            # 只按真实运行状态筛；身份归属（同平台族 + scope + target）不能用
+            # transport 清单下推，SQL 只按 `+<scope>+<target>` 粗筛，再在 Python
+            # 侧按 parse_session_key 精判——未知的未来 transport 键同样能查到。
+            if identity is not None:
+                rows = conn.execute(
+                    f"SELECT * FROM tasks WHERE status=? AND instr(session_id, ?) > 0"
+                    " ORDER BY rowid DESC LIMIT ?",
+                    (KANBAN_RUNNING_STATUS, f"+{identity[1]}+{identity[2]}", max(limit, 1)),
+                ).fetchall()
+            else:
+                # 排序用 rowid（tasks 必有）而不是 started_at：老库/夹具可能没有该列。
+                rows = conn.execute(
+                    f"SELECT * FROM tasks WHERE status=? AND {_belongs_clause('session_id')}"
+                    " ORDER BY rowid DESC LIMIT ?",
+                    (KANBAN_RUNNING_STATUS, *_belongs_params(session_prefix), max(limit, 1)),
+                ).fetchall()
         except sqlite3.Error as exc:
             raise RunningSourceError(f"kanban read failed: {exc}") from exc
         finally:
@@ -102,11 +122,16 @@ class KanbanRunningSource:
         for row in rows:
             data = dict(row)
             session_key = str(data.get("session_id") or "")
-            if not belongs(session_key, session_prefix):
+            owned = (
+                _identity_matches(session_key, identity, prefixes)
+                if identity is not None
+                else belongs(session_key, session_prefix)
+            )
+            if not owned:
                 # 理论上不可达（SQL/Python 判定同构）；真出现就留痕，且绝不静默丢行。
                 logger.warning(
                     f"[HERMES running] kanban session mismatch: {session_key!r} "
-                    f"prefix={session_prefix!r}"
+                    f"identity={identity!r} prefix={session_prefix!r}"
                 )
                 continue
             items.append({
@@ -131,19 +156,34 @@ class DelegationRunningSource:
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = str(db_path)
 
-    def running(self, *, session_prefix: str, limit: int = 20) -> list[dict[str, Any]]:
-        if not session_prefix:  # 与 belongs() 同口径:空前缀不归属任何会话
+    def running(
+        self, *, session_prefix: str = "", limit: int = 20, identity=None, prefixes=()
+    ) -> list[dict[str, Any]]:
+        if identity is None and not session_prefix:  # 与 belongs() 同口径:空前缀不归属任何会话
             return []
         conn = _connect_ro(self.db_path)
         try:
-            # 会话归属（含 `-g` 变体）与已派发未终态一起下推到 SQL 再限额。
-            rows = conn.execute(
-                "SELECT delegation_id, origin_session_id, dispatched_at"
-                " FROM bg_completions WHERE state=? AND acked=0"
-                f" AND {_belongs_clause('origin_session_id')}"
-                " ORDER BY created_at DESC LIMIT ?",
-                (DELEGATION_RUNNING_STATE, *_belongs_params(session_prefix), max(limit, 1)),
-            ).fetchall()
+            # 会话归属与已派发未终态一起下推：identity 模式按 `+<scope>+<target>`
+            # 粗筛（不限 transport 名），再在 Python 侧用 parse_session_key 精判。
+            if identity is not None:
+                rows = conn.execute(
+                    "SELECT delegation_id, origin_session_id, dispatched_at"
+                    " FROM bg_completions WHERE state=? AND acked=0"
+                    " AND instr(origin_session_id, ?) > 0"
+                    " ORDER BY created_at DESC LIMIT ?",
+                    (
+                        DELEGATION_RUNNING_STATE, f"+{identity[1]}+{identity[2]}",
+                        max(limit, 1),
+                    ),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT delegation_id, origin_session_id, dispatched_at"
+                    " FROM bg_completions WHERE state=? AND acked=0"
+                    f" AND {_belongs_clause('origin_session_id')}"
+                    " ORDER BY created_at DESC LIMIT ?",
+                    (DELEGATION_RUNNING_STATE, *_belongs_params(session_prefix), max(limit, 1)),
+                ).fetchall()
         except sqlite3.Error as exc:
             raise RunningSourceError(f"delegation registry read failed: {exc}") from exc
         finally:
@@ -152,11 +192,16 @@ class DelegationRunningSource:
         for row in rows:
             data = dict(row)
             session_key = str(data.get("origin_session_id") or "")
-            if not belongs(session_key, session_prefix):
+            owned = (
+                _identity_matches(session_key, identity, prefixes)
+                if identity is not None
+                else belongs(session_key, session_prefix)
+            )
+            if not owned:
                 # 理论上不可达（SQL/Python 判定同构）；真出现就留痕，且绝不静默丢行。
                 logger.warning(
                     f"[HERMES running] delegation session mismatch: {session_key!r} "
-                    f"prefix={session_prefix!r}"
+                    f"identity={identity!r} prefix={session_prefix!r}"
                 )
                 continue
             items.append({
@@ -178,10 +223,14 @@ def collect_running(
     *,
     session_prefix: str,
     limit: int = 20,
+    identity=None,
+    prefixes: tuple[str, ...] = (),
 ) -> tuple[list[dict[str, Any]], list[str], list[str]]:
     """聚合多个真实运行源：返回 (运行中任务, 读到的来源名, 读失败的来源描述)。
 
     单个来源失败只记该来源不可用，不影响其他来源；同一 task_id 以先到者为准。
+    给了 ``identity`` 时按会话身份归属（平台族 + scope + target），来源自己
+    负责跨 transport 匹配；``session_prefix`` 仍传给来源做兼容/调试。
     """
     items: list[dict[str, Any]] = []
     ok_sources: list[str] = []
@@ -189,8 +238,9 @@ def collect_running(
     seen: set[tuple[str, str]] = set()
     for source in sources or ():
         name = str(getattr(source, "name", type(source).__name__))
+        extra = {"identity": identity, "prefixes": tuple(prefixes)} if identity is not None else {}
         try:
-            found = source.running(session_prefix=session_prefix, limit=limit)
+            found = source.running(session_prefix=session_prefix, limit=limit, **extra)
         except RunningSourceError as exc:
             errors.append(f"{name}: {exc}")
             continue

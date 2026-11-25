@@ -757,3 +757,30 @@ class SessionManager:
 
 # 全局会话管理器
 session_manager = SessionManager()
+
+
+def resolve_transport_for_row(
+    adapter_name: str, *, is_private: bool, user_id, group_id
+) -> str:
+    """台账/交付行的**发送** adapter（QQTPC 域内跨协议恢复的唯一判定点）。
+
+    真实 adapter 不落库：台账里的 ``adapter`` 只是「当时」的驱动。恢复投递时：
+
+    * 历史驱动仍是当前事实（有在线连接/可信路由）→ 原样用它；
+    * 同业务会话域内历史驱动已下线、当前只有另一个驱动在线 → 用当前驱动
+      （协议切换后补投的唯一正确出口）；
+    * 跨域（官方 QQ 等，``session_domain`` 不同）或多驱动歧义 → 保持历史值，
+      宁可不投也不混协议。
+
+    本函数只读运行时事实，不写库、不新增持久字段。
+    """
+    resolved = session_manager.resolve_adapter_for_domain(
+        session_domain(adapter_name), is_private, user_id, group_id
+    )
+    if (
+        resolved
+        and resolved != adapter_name
+        and session_domain(resolved) == session_domain(adapter_name)
+    ):
+        return resolved
+    return adapter_name

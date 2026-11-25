@@ -666,27 +666,39 @@ class BackgroundRoutingTests(_Base):
         )
         self.assertEqual(route["adapter_name"], "onebotv11")
 
-    def test_session_prefixes_cover_domain_and_legacy_transport(self) -> None:
-        from nonebot_plugin_hermes_adapter.mcp.tools.background_status import _session_prefixes
+    def test_identity_covers_domain_and_legacy_transport(self) -> None:
+        from nonebot_plugin_hermes_adapter.core.session import session_manager
+        from nonebot_plugin_hermes_adapter.mcp.tools.background_status import (
+            _belongs,
+            _session_identity,
+        )
 
-        prefixes = _session_prefixes("onebotv11", True, USER)
-        self.assertIn(f"hermes-{PRIVATE_ID}", prefixes, "新派生 key（hermes-qqtpc…）")
-        self.assertIn(f"hermes-onebotv11+private+{USER}", prefixes, "归一前登记的旧 key")
-        self.assertEqual(_session_prefixes("qq", True, "openid-1"), ["hermes-qq+private+openid-1"])
+        identity = _session_identity("onebotv11", True, USER)
+        prefixes = session_manager.session_key_prefixes()
+        self.assertTrue(_belongs(f"hermes-{PRIVATE_ID}", identity, prefixes), "新派生 key（hermes-qqtpc…）")
+        self.assertTrue(_belongs(f"hermes-onebotv11+private+{USER}", identity, prefixes), "归一前登记的旧 key")
+        self.assertFalse(
+            _belongs("hermes-qq+private+openid-1", identity, prefixes),
+            "官方 QQ 属另一平台族，不得混入 QQTPC 会话",
+        )
+        self.assertEqual(_session_identity("qq", True, "openid-1")[0], "qq")
 
-    def test_qqtpc_prefixes_cover_every_legacy_transport(self) -> None:
+    def test_qqtpc_identity_covers_every_legacy_transport(self) -> None:
         """当前 Milky 调用也要认 OneBot 时代登记的旧 key（旧登记仍在信箱/看板里）。"""
         from nonebot_plugin_hermes_adapter.core.routing import CallerScope
+        from nonebot_plugin_hermes_adapter.core.session import session_manager
         from nonebot_plugin_hermes_adapter.mcp.tools.background_status import (
             GetBackgroundTasksInput,
-            _session_prefixes,
+            _belongs,
+            _session_identity,
             get_background_tasks_impl,
         )
 
-        prefixes = _session_prefixes("milky", True, USER)
-        for name in ("qqtpc", "milky", "onebotv11", "onebotv12", "icqq"):
+        identity = _session_identity("milky", True, USER)
+        prefixes = session_manager.session_key_prefixes()
+        for name in ("qqtpc", "milky", "onebotv11", "onebotv12", "icqq", "somefuture"):
             with self.subTest(name=name):
-                self.assertIn(f"hermes-{name}+private+{USER}", prefixes)
+                self.assertTrue(_belongs(f"hermes-{name}+private+{USER}", identity, prefixes))
 
         class _Outbox:
             def active_events(self):

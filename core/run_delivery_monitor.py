@@ -203,6 +203,35 @@ def _ensure_plan_from_output(tracker, delivery: dict) -> None:
         logger.warning(f"run={delivery['run_id']} 终态计划落库失败,保留待对账: {exc}")
 
 
+def _delivery_send_adapter(delivery: dict) -> str:
+    """交付行的**发送** adapter（同 QQTPC 域内旧驱动已下线时用当前在线驱动）。
+
+    台账里的 ``adapter`` 是历史值：协议切换后旧驱动没有连接，按它查注册表只会
+    永远 ``bot_not_ready``。这里复用 ``session.resolve_transport_for_row`` 的
+    运行时判定（跨域/多驱动歧义保持历史值），并在当前驱动暂无路由时退回历史
+    值（让原 ``bot_not_ready`` 等待语义保留，不制造新的假成功）。
+    """
+    from .session import resolve_transport_for_row
+
+    adapter = delivery.get("adapter") or ""
+    if not adapter:
+        return ""
+    resolved = resolve_transport_for_row(
+        adapter,
+        is_private=bool(delivery.get("is_private")),
+        user_id=delivery.get("user_id"),
+        group_id=delivery.get("group_id"),
+    )
+    if resolved == adapter:
+        return adapter
+    registry = _runtime().bot_registry
+    scope = "private" if delivery["is_private"] else "group"
+    scope_id = delivery["user_id"] if delivery["is_private"] else (delivery["group_id"] or "")
+    if registry is not None and registry.get(resolved, scope, scope_id) is None:
+        return adapter
+    return resolved
+
+
 def _resolve_entry(delivery: dict):
     """经既有 bot_registry 解析 target 与 bot;未就绪返回 (None, None)。"""
     registry = _runtime().bot_registry
@@ -210,7 +239,10 @@ def _resolve_entry(delivery: dict):
         return None, None
     scope = "private" if delivery["is_private"] else "group"
     scope_id = delivery["user_id"] if delivery["is_private"] else (delivery["group_id"] or "")
-    entry = registry.get(delivery["adapter"], scope, scope_id)
+    adapter = _delivery_send_adapter(delivery)
+    entry = registry.get(adapter, scope, scope_id)
+    if entry is None and adapter != (delivery.get("adapter") or ""):
+        entry = registry.get(delivery["adapter"], scope, scope_id)
     if entry is None:
         return None, None
     try:
@@ -287,7 +319,7 @@ async def _repair_batch_components(
                 await (_send_text or _ob.send_text_with_media)(
                     bot=bot, target=entry.target, text=unit.get("cleaned_text", ""),
                     media_urls=unit.get("media_urls", []),
-                    adapter_name=delivery["adapter"], delivery=ctx,
+                    adapter_name=_delivery_send_adapter(delivery), delivery=ctx,
                 )
             except DeliveryClaimBusy:
                 stats["busy"] = stats.get("busy", 0) + 1
@@ -313,7 +345,7 @@ async def _repair_batch_components(
             # 传整份文件列表:已 sent 的组件在 send_local_files 内部按台账跳过。
             await (_send_files or _ob.send_local_files)(
                 bot=bot, target=entry.target, file_paths=file_paths,
-                adapter_name=delivery["adapter"], delivery=fctx,
+                adapter_name=_delivery_send_adapter(delivery), delivery=fctx,
                 component_prefix=f"{index}:",
             )
         except DeliveryClaimBusy:
@@ -362,7 +394,7 @@ async def _repair_components(
                     media_urls=plan.get("media_urls", []),
                     reply_qq_message_id=plan.get("reply_qq_message_id"),
                     reply_at_user_id=plan.get("reply_at_user_id"),
-                    adapter_name=delivery["adapter"], delivery=ctx,
+                    adapter_name=_delivery_send_adapter(delivery), delivery=ctx,
                 )
             except DeliveryClaimBusy:
                 stats["busy"] = stats.get("busy", 0) + 1
@@ -393,7 +425,7 @@ async def _repair_components(
         try:
             await (_send_files or _ob.send_local_files)(
                 bot=bot, target=entry.target, file_paths=paths,
-                adapter_name=delivery["adapter"], delivery=ctx,
+                adapter_name=_delivery_send_adapter(delivery), delivery=ctx,
             )
         except DeliveryClaimBusy:
             stats["busy"] = stats.get("busy", 0) + 1
@@ -437,7 +469,7 @@ async def _repair_batch_history(tracker, delivery: dict, stats: dict, units: lis
         buffer.append(
             BufferedMessage(
                 ts=int(time.time() * 1000),
-                adapter=delivery["adapter"],
+                adapter=_delivery_send_adapter(delivery),
                 group_id=None if delivery["is_private"] else delivery["group_id"],
                 user_id=entry.bot_self_id if entry is not None else "",
                 nickname=nickname,
@@ -488,7 +520,7 @@ async def _repair_history(tracker, delivery: dict, stats: dict) -> None:
         buffer.append(
             BufferedMessage(
                 ts=int(time.time() * 1000),
-                adapter=delivery["adapter"],
+                adapter=_delivery_send_adapter(delivery),
                 group_id=None if delivery["is_private"] else delivery["group_id"],
                 user_id=entry.bot_self_id if entry is not None else "",
                 nickname=nickname,

@@ -21,6 +21,10 @@
 冲突（同一目标已有行／两种协议指向同一目标）时整批零写入并退出码 2——**dry-run
 也一样**（dry-run 只报冲突不改库）；先 dry-run 确认，再用 ``--exclude``/``--override``
 显式指定运维认可的目标后重跑。脚本可重放：已归一的库第二次运行计数为 0。
+
+**本脚本只改 session_keys**：``user_lists``（admin/master/allow）、
+``runs_delivery.repair_scopes`` 与 ``chat_config`` 仍按真实 adapter 生效；运行结束会
+在 stderr 打印这些面的核对清单，启动期另有一次覆盖检查 WARN。
 """
 
 from __future__ import annotations
@@ -40,6 +44,23 @@ from nonebot_plugin_hermes_adapter.core.storage.session_key_store import (  # no
     SessionDomainMigrationConflict,
     SessionKeyStore,
 )
+
+# QQ-09：归一后**不会**自动跟着变的配置面。只做运维清单与 WARN，不改语义。
+_CONFIG_COVERAGE_CHECKLIST = """
+[WARN] session_keys 已归一到 qqtpc 业务会话域，但下列配置仍按**真实 adapter** 生效。
+       切协议前请逐项确认覆盖（本脚本不会修改它们）：
+  1) user_lists.yaml
+     - admin_users / master_users：敏感命令与审批通知按 {adapter}:{user_id} 判定；
+       只配一个 transport 时，切到另一个协议后这些命令会按非管理员静默 skip。
+     - allow_users / allow_groups：私聊/群 allowlist 同理；缺口会让唤醒被拒并无限重试。
+  2) runs_delivery.yaml
+     - repair_scopes：形如 {adapter}:{group|private}:{id}；只配旧 adapter 时，
+       切换后 effective_mode 落回全局 observe，自动补发静默关闭。
+  3) chat_config.yaml
+     - greet_on_join / 其它按 adapter 分流的开关：Milky 入群事件当前未接线，
+       greet_on_join=true 时 Milky 群不会迎新（QQ-10，另行处理）。
+启动时会由 core/qqtpc_config_coverage.py 对 1/2 做一次覆盖检查并打 WARN。
+""".strip()
 
 
 def _excludes(items: list[str]) -> tuple[str, ...]:
@@ -140,6 +161,9 @@ def main(argv: list[str] | None = None) -> int:
         f"ignored_overrides={list(report.overrides_ignored)} "
         f"integrity_ok={report.integrity_ok}"
     )
+    # QQ-09：本脚本只归一 session_keys；权限/交付配置仍按真实 adapter 配。
+    # 这里只打印「归一后必须人工核对」的清单，不改任何配置、不改判定语义。
+    print(_CONFIG_COVERAGE_CHECKLIST, file=sys.stderr)
     return 0 if report.integrity_ok else 3
 
 

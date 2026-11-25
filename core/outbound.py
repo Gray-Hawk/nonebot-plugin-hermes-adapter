@@ -461,6 +461,43 @@ def _pack_forward_nodes(
     ]
 
 
+def _settle_unsupported_files(
+    delivery: DeliveryContext | None,
+    file_paths: Sequence[str],
+    *,
+    component_prefix: str,
+) -> None:
+    """平台没有本地上传能力时,把每个 file 组件按 ``not_required`` 结案。
+
+    只写「本平台不会发送」这个事实:不伪造成功,也不留 pending 让对账器无限重试。
+    白名单判定都还没跑(平台根本不发),所以失败原因不可能是「文件不存在」。
+    """
+
+    if delivery is None:
+        return
+    for idx in range(len(file_paths)):
+        ctx = delivery.for_component(f"file:{component_prefix}{idx}")
+        try:
+            # 已结算的组件不得被"平台不支持"覆盖(not_required 写路径不带令牌围栏)。
+            getter = getattr(ctx.tracker, "get_component", None)
+            existing = (
+                getter(run_id=ctx.run_id, component_id=ctx.component_id)
+                if callable(getter) else None
+            )
+            if isinstance(existing, dict) and existing.get("state") in (
+                "sent", "cancelled", "not_required",
+            ):
+                continue
+            ctx.tracker.mark_component_not_required(
+                run_id=ctx.run_id, component_id=ctx.component_id
+            )
+        except Exception as exc:  # noqa: BLE001 - 台账写失败不得拖垮出站收尾
+            logger.warning(
+                f"[OUTBOUND] 文件组件免发结案失败 run={ctx.run_id} "
+                f"component={ctx.component_id}: {exc}"
+            )
+
+
 # 本部署补丁: 本地文件上传(群文件/私聊文件)。
 async def send_local_files(
     *,
@@ -471,11 +508,14 @@ async def send_local_files(
     delivery: DeliveryContext | None = None,
     component_prefix: str = "",
 ) -> int:
-    """把白名单内的本地文件经 upload_group_file / upload_private_file 上传,返回成功数。
+    """把白名单内的本地文件经协议原生上传 API 发出,返回成功数。
 
-    只在 onebotv11 启用(其余 adapter 没有对应 API);白名单判定逐文件进行,
-    被拒/上传失败的单个文件不影响其余, 日志各记一条。文件与文本消息分开发:
-    OneBot 的文件上传是独立 API, 不混在消息段里。
+    OneBot v11 走 ``upload_group_file``/``upload_private_file``(``file``+``name``),
+    Milky 走同名 Bot 方法(``path``+``file_name``);能不上传由能力位
+    ``file_upload`` 裁决(官方 QQ 恒 False),不支持时每个 file 组件按
+    ``not_required`` 明确结案——绝不 ``return 0`` 留永久 pending。
+    白名单判定逐文件进行,被拒/上传失败的单个文件不影响其余, 日志各记一条。
+    文件与文本消息分开发: 文件上传是独立 API, 不混在消息段里。
 
     携带 delivery(alive/108)时按原列表位置派生 file:<index> 组件:白名单拒绝
     是平台调用前的本地失败记 failed;已 sent 的文件跳过上传但计入成功数;
@@ -485,11 +525,18 @@ async def send_local_files(
     """
     if not file_paths:
         return 0
-    if adapter_name != "onebotv11":
-        logger.warning(f"[OUTBOUND] 本地文件上传仅支持 onebotv11, 跳过 {len(file_paths)} 个文件 (adapter={adapter_name})")
+    if not platform_compat.capabilities(adapter_name).file_upload:
+        _settle_unsupported_files(
+            delivery, file_paths, component_prefix=component_prefix
+        )
+        logger.warning(
+            f"[OUTBOUND] 适配器 {adapter_name} 不支持本地上传,{len(file_paths)} 个文件"
+            "按 not_required 结案(正文占位仍保留)"
+        )
         return 0
     from .media_whitelist import validate_local_file
 
+    milky = qqtpc_api.protocol(adapter_name) == qqtpc_api.MILKY
     max_bytes = load_media_config().local_file_max_mb * 1024 * 1024
     sent = 0
     for idx, raw in enumerate(file_paths):
@@ -521,7 +568,16 @@ async def send_local_files(
             )
             break
         try:
-            if target.private:
+            if milky:
+                if target.private:
+                    await bot.upload_private_file(
+                        user_id=int(target.id), path=str(path), file_name=path.name
+                    )
+                else:
+                    await bot.upload_group_file(
+                        group_id=int(target.id), path=str(path), file_name=path.name
+                    )
+            elif target.private:
                 await bot.call_api("upload_private_file", user_id=int(target.id), file=str(path), name=path.name)
             else:
                 await bot.call_api("upload_group_file", group_id=int(target.id), file=str(path), name=path.name)
@@ -723,13 +779,16 @@ async def send_text_with_media(
                 f"value={str(reply_at_user_id)[:80]!r}"
             )
 
-    # B-1.2: 群聊 + OneBot v11 + 超长 → 合并转发 (而非截断)
+    # B-1.2: 群聊 + 支持 Forward 导出的 QQTPC 驱动 + 超长 → 合并转发 (而非截断)
     # 私聊永远走截断 (send_private_forward_msg 实现端覆盖差);
-    # 非 onebotv11 同样保持截断。
+    # onebotv12 / 未知 adapter 同样保持截断（与改名前逐字一致）。
+    forward_capable = platform_compat.capabilities(adapter_name).forward_expand and (
+        qqtpc_api.protocol(adapter_name) in (qqtpc_api.ONEBOT, qqtpc_api.MILKY)
+    )
     if (
         text
         and not target.private
-        and adapter_name == "onebotv11"
+        and forward_capable
         and load_chat_config().long_reply_forward
         and original_len > max_len
     ):

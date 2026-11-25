@@ -9,6 +9,7 @@ from nonebot import logger
 from nonebot.adapters import Bot
 
 from ..core import platform_compat
+from ..core import qqtpc_api
 from ..core import task_notes
 from ..core.approvals import add_pending as approvals_add_pending
 from ..core.approvals import notify_admins as approvals_notify_admins
@@ -319,23 +320,47 @@ def _make_approval_notify(
     return _notify
 
 
-async def _emoji_like_quiet(bot: Bot, msg_id, emoji_id: int) -> bool:
+async def _emoji_like_quiet(
+    bot: Bot, msg_id, emoji_id: int, *, group_id: str | None = None
+) -> bool:
     """贴 emoji 回执,调用失败只记 debug(阶段2d:429 丢单「丢了就贴」用)。
 
-    QQ NT 协议下 set_msg_emoji_like 仅群聊可用——调用方自己保证群聊场景。
+    * OneBot v11: ``set_msg_emoji_like``(仅群聊可用,调用方自己保证群聊场景);
+    * Milky: ``send_group_message_reaction``(``message_seq`` = P0-1 落库的十进制
+      外部 ID,``reaction_type="face"``);私聊没有 reaction 语义,本地拒绝。
 
     返回 True 只在平台确认贴上时；``call_api`` 外层 status/retcode=0 不等于成功：
     NapCat 私聊会回外层 0 而 ``data.result=65011`` / errMsg 非空，必须按内部
     结果判定（内部拒绝记 warning）。调用方（429 丢单）可忽略返回值；段内重复
     观察用它区分能力边界。
     """
-    try:
-        if not platform_compat.capabilities(platform_compat.adapter_name_of(bot)).emoji_reaction:
-            # 官方 QQ 没有 set_msg_emoji_like:能力不足即不调平台,不假装贴上。
+    adapter_name = platform_compat.adapter_name_of(bot)
+    if not platform_compat.capabilities(adapter_name).emoji_reaction:
+        # 官方 QQ 没有贴表情回执:能力不足即不调平台,不假装贴上。
+        logger.debug(
+            f"[HERMES] emoji 回执跳过(当前平台不支持) adapter={adapter_name}"
+        )
+        return False
+    if qqtpc_api.protocol(adapter_name) == qqtpc_api.MILKY:
+        if group_id is None:
             logger.debug(
-                f"[HERMES] emoji 回执跳过(当前平台不支持) adapter={platform_compat.adapter_name_of(bot)}"
+                f"[HERMES] emoji 回执跳过(Milky 仅群消息支持 reaction) msg_id={msg_id}"
             )
             return False
+        try:
+            await bot.send_group_message_reaction(
+                group_id=int(group_id),
+                message_seq=int(msg_id),
+                reaction=str(emoji_id),
+                reaction_type="face",
+            )
+        except Exception as e:
+            logger.debug(
+                f"[HERMES] emoji reaction 失败 (msg_id={msg_id} emoji_id={emoji_id}): {e}"
+            )
+            return False
+        return True
+    try:
         data = await bot.call_api("set_msg_emoji_like", message_id=msg_id, emoji_id=emoji_id)
     except Exception as e:
         logger.debug(f"[HERMES] emoji 回执失败 (msg_id={msg_id} emoji_id={emoji_id}): {e}")

@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from ...core.routing import CallerScope
 from ...core import platform_compat
+from ...core import qqtpc_api
 from ...core.storage.file_downloader import FileDownloadError
 from ..auth import scope_refusal
 
@@ -97,7 +98,12 @@ def _get(raw, key):
 
 
 def _build_file_view(raw) -> GroupFileView | None:
-    """透传文件元数据;缺 file_id 的条目视为不可寻址,跳过。"""
+    """透传文件元数据;缺 file_id 的条目视为不可寻址,跳过。
+
+    OneBot 用 ``upload_time/dead_time/download_times/uploader``;Milky 的
+    ``FileInfo`` 对应字段是 ``uploaded_time/expire_time/downloaded_times/uploader_id``
+    —— 同一语义的两个名字在这里归一,不新增平行视图。
+    """
     file_id = _get(raw, "file_id")
     if file_id is None:
         return None
@@ -106,32 +112,57 @@ def _build_file_view(raw) -> GroupFileView | None:
     if file_size is None:
         # 个别实现用 size 而非 file_size,做一层别名兜底。
         file_size = _get(raw, "size")
+    upload_time = _get(raw, "upload_time")
+    if upload_time is None:
+        upload_time = _get(raw, "uploaded_time")
+    dead_time = _get(raw, "dead_time")
+    if dead_time is None:
+        dead_time = _get(raw, "expire_time")
+    download_times = _get(raw, "download_times")
+    if download_times is None:
+        download_times = _get(raw, "downloaded_times")
+    uploader = _get(raw, "uploader")
+    if uploader is None:
+        uploader = _get(raw, "uploader_id")
     return GroupFileView(
         file_id=str(file_id),
         file_name=str(file_name) if file_name is not None else "",
         file_size=file_size,
         busid=_get(raw, "busid"),
-        upload_time=_get(raw, "upload_time"),
-        dead_time=_get(raw, "dead_time"),
+        upload_time=upload_time,
+        dead_time=dead_time,
         modify_time=_get(raw, "modify_time"),
-        download_times=_get(raw, "download_times"),
-        uploader=_get(raw, "uploader"),
+        download_times=download_times,
+        uploader=uploader,
         uploader_name=_get(raw, "uploader_name"),
     )
 
 
 def _build_folder_view(raw) -> GroupFolderView | None:
-    """透传目录元数据;缺 folder_id 的条目无法导航,跳过。"""
+    """透传目录元数据;缺 folder_id 的条目无法导航,跳过。
+
+    Milky ``FolderInfo`` 的 ``file_count/created_time/creator_id`` 与 OneBot 的
+    ``total_file_count/create_time/creator`` 同义,统一在这里映射。
+    """
     folder_id = _get(raw, "folder_id")
     if folder_id is None:
         return None
     folder_name = _get(raw, "folder_name")
+    total_file_count = _get(raw, "total_file_count")
+    if total_file_count is None:
+        total_file_count = _get(raw, "file_count")
+    create_time = _get(raw, "create_time")
+    if create_time is None:
+        create_time = _get(raw, "created_time")
+    creator = _get(raw, "creator")
+    if creator is None:
+        creator = _get(raw, "creator_id")
     return GroupFolderView(
         folder_id=str(folder_id),
         folder_name=str(folder_name) if folder_name is not None else "",
-        total_file_count=_get(raw, "total_file_count"),
-        create_time=_get(raw, "create_time"),
-        creator=_get(raw, "creator"),
+        total_file_count=total_file_count,
+        create_time=create_time,
+        creator=creator,
         creator_name=_get(raw, "creator_name"),
     )
 
@@ -169,6 +200,24 @@ async def browse_group_files_impl(
             error=f"group file library is unsupported on adapter {inp.adapter!r}",
         )
 
+    milky = qqtpc_api.protocol(inp.adapter) == qqtpc_api.MILKY
+    if milky:
+        # Milky 只有一页列表 API:没有「群文件系统信息」(容量/上限),这些字段
+        # 诚实留空;parent_folder_id=None 即根目录。
+        try:
+            listing = await bot.get_group_files(
+                group_id=int(inp.group_id), parent_folder_id=inp.folder_id
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[MCP group_files] get_group_files 失败 group={inp.group_id} "
+                f"folder={inp.folder_id}: {exc}"
+            )
+            return BrowseGroupFilesResult(ok=False, error="读取群文件列表失败(见 bot 日志)")
+        raw_folders = _get(listing, "folders") or []
+        raw_files = _get(listing, "files") or []
+        return _browse_result(raw_folders, raw_files, inp)
+
     try:
         sysinfo = await bot.call_api(
             "get_group_file_system_info", group_id=int(inp.group_id)
@@ -195,16 +244,26 @@ async def browse_group_files_impl(
 
     raw_folders = listing.get("folders", []) if isinstance(listing, dict) else []
     raw_files = listing.get("files", []) if isinstance(listing, dict) else []
+    return _browse_result(raw_folders, raw_files, inp, sysinfo=sysinfo)
+
+
+def _browse_result(raw_folders, raw_files, inp, *, sysinfo=None) -> BrowseGroupFilesResult:
+    """把一次列表响应渲染成分页结果(OneBot/Milky 共用;缺 sysinfo 即容量未知)。"""
+    def _sys(key):
+        if sysinfo is None:
+            return None
+        return sysinfo.get(key) if isinstance(sysinfo, dict) else getattr(sysinfo, key, None)
+
     folders = [v for v in (_build_folder_view(raw) for raw in raw_folders) if v is not None]
     files = [v for v in (_build_file_view(raw) for raw in raw_files) if v is not None]
 
     total, page_folders, page_files = _paginate(folders, files, inp.offset, inp.limit)
     return BrowseGroupFilesResult(
         ok=True,
-        file_count=sysinfo.get("file_count") if isinstance(sysinfo, dict) else getattr(sysinfo, "file_count", None),
-        limit_count=sysinfo.get("limit_count") if isinstance(sysinfo, dict) else getattr(sysinfo, "limit_count", None),
-        used_space=sysinfo.get("used_space") if isinstance(sysinfo, dict) else getattr(sysinfo, "used_space", None),
-        total_space=sysinfo.get("total_space") if isinstance(sysinfo, dict) else getattr(sysinfo, "total_space", None),
+        file_count=_sys("file_count"),
+        limit_count=_sys("limit_count"),
+        used_space=_sys("used_space"),
+        total_space=_sys("total_space"),
         total=total,
         folders=page_folders,
         files=page_files,
@@ -228,17 +287,27 @@ async def download_group_file_impl(
             error=f"group file library is unsupported on adapter {inp.adapter!r}",
         )
 
+    milky = qqtpc_api.protocol(inp.adapter) == qqtpc_api.MILKY
     try:
-        resp = await bot.call_api(
-            "get_group_file_url", group_id=int(inp.group_id), file_id=inp.file_id
-        )
+        if milky:
+            # Milky 的 Bot 方法已把回执里的 download_url 解出来,直接是 str。
+            resolved = await bot.get_group_file_download_url(
+                group_id=int(inp.group_id), file_id=inp.file_id
+            )
+        else:
+            resolved = await bot.call_api(
+                "get_group_file_url", group_id=int(inp.group_id), file_id=inp.file_id
+            )
     except Exception as exc:
         logger.warning(
-            f"[MCP group_files] get_group_file_url 失败 group={inp.group_id} file={inp.file_id}: {exc}"
+            f"[MCP group_files] 获取下载链接失败 group={inp.group_id} file={inp.file_id}: {exc}"
         )
         return DownloadGroupFileResult(ok=False, error="获取下载链接失败(见 bot 日志)")
 
-    url = resp.get("url") if isinstance(resp, dict) else getattr(resp, "url", None)
+    if milky:
+        url = resolved if isinstance(resolved, str) else _get(resolved, "download_url")
+    else:
+        url = resolved.get("url") if isinstance(resolved, dict) else getattr(resolved, "url", None)
     if not url:
         logger.warning(
             f"[MCP group_files] 未取得下载链接 group={inp.group_id} file={inp.file_id}"

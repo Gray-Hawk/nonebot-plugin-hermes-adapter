@@ -124,7 +124,20 @@ async def handle_clear(bot: Bot, event: Event, matcher: Matcher):
     )
     if _mcp.background_report_outbox is not None:
         # 仅人工 /clear 终止旧会话汇报；T1 自动换代不经过这里，仍会续投。
-        _mcp.background_report_outbox.cancel_session(old_session_key, now=time.time())
+        # 同一 QQTPC 会话的历史 transport key（onebotv11 / milky / canonical /
+        # 将来未登记驱动）都是同一身份，必须一起清——只清当前 key 会让旧 key
+        # 的汇报在清场后重新唤醒。
+        from ..core.background_report_runtime import cancel_reports_for_conversation
+
+        cancel_reports_for_conversation(
+            _mcp.background_report_outbox,
+            adapter=adapter_name,
+            is_private=target.private,
+            user_id=user_id,
+            group_id=group_id,
+            current_session_key=old_session_key,
+            now=time.time(),
+        )
 
     reply = alconna.UniMessage("✅ 会话已重置，开始新的对话。")
     if not target.private:

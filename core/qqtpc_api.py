@@ -262,6 +262,26 @@ async def resolve_display_name(
     return _profile_text(info)
 
 
+# --------------------------------------------------------------- 审批私聊通知
+#
+# 审批通知是插件唯一「不走 BotRegistry、直接按管理员 id 私聊」的出站。协议差异
+# 只在发送原语上：OneBot 是 ``send_private_msg``，Milky 是
+# ``send_private_message``（适配器自己的方法表，拒绝/网络不明抛适配器异常）。
+# 未知 adapter 沿用 OneBot 形态（与迁移前逐字一致）——能不能发由能力位裁决，
+# 这里不做第二次协议白名单。
+
+
+async def send_private_text(
+    bot, *, adapter_name: str | None, user_id: str | int, text: str
+) -> None:
+    """给单个用户发一条私聊纯文本；失败以适配器异常向上抛，由调用方分类。"""
+
+    if protocol(adapter_name) == MILKY:
+        await bot.send_private_message(user_id=int(user_id), message=text)
+        return
+    await bot.call_api("send_private_msg", user_id=int(user_id), message=text)
+
+
 # --------------------------------------------------------------- P0-4 戳一戳
 
 

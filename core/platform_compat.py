@@ -32,6 +32,9 @@ from ..adapter_norm import normalize_adapter_name
 OFFICIAL_QQ_ADAPTER = "qq"
 """归一化后的官方 Bot adapter 名(adapter-qq 的 ``get_name()`` 是 ``"QQ"``)。"""
 
+MILKY_ADAPTER = "milky"
+"""QQTPC 的 Milky 驱动:原生 API 覆盖 nudge/recall/群文件/表情回执/文件上传/转发。"""
+
 _OFFICIAL_QQ_EVENT_MODULE_PREFIX = "nonebot.adapters.qq"
 
 
@@ -68,6 +71,15 @@ OFFICIAL_QQ = Capabilities(
     at_markup=False,
 )
 
+MILKY = Capabilities(
+    # 现场安装的 nonebot-adapter-milky 1.3.0 具备:send_*_nudge、recall_*_message、
+    # get_group_files/get_group_file_download_url、send_group_message_reaction、
+    # upload_*_file、Forward 导出与私聊发送。唯一缺口是本地表情库 id(OneBot
+    # sub_type=1 语义),没有对应映射 → 诚实关闭。
+    sticker_library=False,
+)
+"""Milky:除本地表情库外均为原生实现,不再沿用 OneBot 的「全开」默认。"""
+
 
 def is_official_qq(adapter_name: str | None) -> bool:
     """是否 QQ 官方 Bot(接受原始 adapter 名 ``"QQ"`` 或已归一化的 ``"qq"``)。"""
@@ -75,7 +87,12 @@ def is_official_qq(adapter_name: str | None) -> bool:
 
 
 def capabilities(adapter_name: str | None) -> Capabilities:
-    return OFFICIAL_QQ if is_official_qq(adapter_name) else LEGACY
+    tag = normalize_adapter_name(adapter_name or "")
+    if tag == OFFICIAL_QQ_ADAPTER:
+        return OFFICIAL_QQ
+    if tag == MILKY_ADAPTER:
+        return MILKY
+    return LEGACY
 
 
 def adapter_name_of(source) -> str:

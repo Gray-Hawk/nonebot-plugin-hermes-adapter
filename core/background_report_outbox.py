@@ -322,6 +322,52 @@ class BackgroundReportOutbox:
             self._conn.commit()
             return event_ids
 
+    def cancel_session_identity(
+        self, *, identity, prefixes, now: float
+    ) -> list[str]:
+        """按**会话身份**取消全部 key 变体的待汇报事件，返回需终止上游认领的事件号。
+
+        ``identity`` = ``(平台族, scope, target)``（见
+        ``background_report_runtime.conversation_identity``）。canonical key 与
+        迁移前按 transport 登记的旧 key 属于同一会话，必须一起清；否则消费器
+        会把旧 key 的汇报重新唤醒来（反向漏投）。只读匹配用同一份
+        ``parse_session_key`` 语法，兄弟 scope 与其它平台域不会命中。
+        """
+        from .background_report_runtime import report_identity
+
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            rows = self._conn.execute(
+                "SELECT event_id, origin_session_id FROM background_report_events"
+                " WHERE report_state IN ('pending', 'retry_wait', 'reporting')"
+                " ORDER BY created_at, event_id"
+            ).fetchall()
+            event_ids: list[str] = []
+            matched_sessions: list[str] = []
+            for row in rows:
+                origin = str(row["origin_session_id"] or "")
+                if report_identity(origin, prefixes=prefixes) != identity:
+                    continue
+                event_ids.append(str(row["event_id"]))
+                if origin and origin not in matched_sessions:
+                    matched_sessions.append(origin)
+            if event_ids:
+                placeholders = ",".join("?" for _ in event_ids)
+                self._conn.execute(
+                    "UPDATE background_report_events SET report_state='cancelled',"
+                    " lease_expires_at=NULL, last_error='session_cleared', updated_at=?"
+                    f" WHERE event_id IN ({placeholders})",
+                    (now, *event_ids),
+                )
+            for origin in matched_sessions:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO background_report_cancelled_sessions"
+                    "(origin_session_id,created_at) VALUES (?,?)",
+                    (origin, now),
+                )
+            self._conn.commit()
+            return event_ids
+
     def pending_session_cancels(self) -> list[str]:
         with self._lock:
             rows = self._conn.execute(

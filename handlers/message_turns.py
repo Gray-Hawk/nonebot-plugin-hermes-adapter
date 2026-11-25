@@ -2071,7 +2071,9 @@ async def _run_reactive_turn(
                 logger.info(
                     f"[HERMES reactive] 429 满额丢单,贴表情 (group={group_id} msg={trigger_msg_id})"
                 )
-                await _emoji_like_quiet(bot, trigger_msg_id, chat_cfg.rate_limit_emoji_id)
+                await _emoji_like_quiet(
+                    bot, trigger_msg_id, chat_cfg.rate_limit_emoji_id, group_id=group_id
+                )
                 return result
             fallback_text = misc_cfg.transport_error_fallback_text
             logger.warning(

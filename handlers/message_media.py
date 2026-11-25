@@ -19,6 +19,7 @@ from ..core.chat_config import load_chat_config
 from ..core.media_config import MediaConfig, load_media_config
 from ..core.file_config import load_file_config
 from ..core import platform_compat
+from ..core import qqtpc_api
 from ..core.message_buffer import BufferedMessage, media_kind_word
 
 from .message_ingress import (
@@ -558,6 +559,89 @@ _forward_full_cache: dict[
 ] = {}
 
 
+_FORWARD_UNSUPPORTED_TAG = '<forwarded_messages count="?" status="unsupported"/>'
+_FORWARD_FETCH_FAILED_TAG = '<forwarded_messages count="?" status="fetch_failed"/>'
+
+
+def _milky_forward_segment(seg: object) -> dict | None:
+    """Milky 入站段 → OneBot ``get_forward_msg`` 段形态（只做字段映射，不猜内容）。
+
+    * ``mention`` → 文本 ``@<user_id>``：节点摘要渲染器只认文本/媒体段（OneBot 的
+      ``at`` 段本来也不渲染），转成文本才能让「转发里 @ 了谁」可见且可寻址；
+    * image/video：入站字段是 ``temp_url``，映射成 ``url`` 才能复用转发图发号；
+    * file：入站是 ``file_name``，映射成 ``name`` 供统一的 ``[文件:…]`` 渲染。
+    其它类型原样透传（``text``/``face``/``record``/``forward`` 已同形）。
+    """
+
+    if not isinstance(seg, dict):
+        return None
+    seg_type = str(seg.get("type") or "")
+    data = seg.get("data")
+    data = dict(data) if isinstance(data, dict) else {}
+    if seg_type == "mention":
+        user_id = data.get("user_id")
+        if user_id in (None, ""):
+            return None
+        return {"type": "text", "data": {"text": f"@{user_id}"}}
+    if seg_type in ("image", "video") and not data.get("url") and data.get("temp_url"):
+        data["url"] = data["temp_url"]
+    if seg_type == "file" and not data.get("name"):
+        data["name"] = data.get("file_name")
+    return {"type": seg_type, "data": data}
+
+
+def _milky_node_to_onebot(node: object) -> dict:
+    """``IncomingForwardedMessage``（或同形 dict）→ 节点 dict。"""
+
+    if isinstance(node, dict):
+        segments = node.get("segments") or node.get("content") or []
+        sender = node.get("sender_name") or node.get("name")
+    else:
+        segments = getattr(node, "segments", None) or []
+        sender = getattr(node, "sender_name", None)
+    content = [
+        mapped for mapped in (_milky_forward_segment(seg) for seg in segments) if mapped
+    ]
+    return {"sender": {"nickname": str(sender or "Unknown")}, "content": content}
+
+
+def _custom_node_to_onebot(node: object) -> dict:
+    """alconna ``CustomNode``（Milky 无 forward_id 时的节点树）→ 节点 dict。"""
+
+    content = getattr(node, "content", None)
+    segments: list[dict] = []
+    if isinstance(content, str):
+        segments.append({"type": "text", "data": {"text": content}})
+    else:
+        for seg in content or []:
+            if isinstance(seg, alconna.Text):
+                if seg.text:
+                    segments.append({"type": "text", "data": {"text": seg.text}})
+            elif isinstance(seg, alconna.At):
+                segments.append({"type": "text", "data": {"text": f"@{seg.target}"}})
+            elif isinstance(seg, alconna.Image):
+                url = getattr(seg, "url", None)
+                segments.append(
+                    {"type": "image", "data": {"url": str(url) if url else ""}}
+                )
+            elif isinstance(seg, alconna.Emoji):
+                segments.append({"type": "face", "data": {"name": seg.name}})
+    return {
+        "sender": {"nickname": str(getattr(node, "name", None) or "Unknown")},
+        "content": segments,
+    }
+
+
+async def _milky_forward_nodes(bot: Bot, ref) -> list[dict]:
+    """取 Milky 转发节点：优先 ``get_forwarded_messages``，否则复用 alconna 节点树。"""
+
+    forward_id = getattr(ref, "id", None)
+    if forward_id:
+        messages = await bot.get_forwarded_messages(forward_id=str(forward_id))
+        return [_milky_node_to_onebot(node) for node in messages or []]
+    return [_custom_node_to_onebot(node) for node in (getattr(ref, "children", None) or [])]
+
+
 async def _extract_forward_full(
     uni_msg: alconna.UniMessage,
     bot: Bot,
@@ -571,9 +655,11 @@ async def _extract_forward_full(
 ) -> tuple[str | None, list[str], list[dict]]:
     """提取合并转发消息,返回 (块文本, 转发图 URL 列表, 转发视频引用行)。
 
-    块文本形如 <forwarded_messages count="N">...</forwarded_messages>;仅支持
-    onebotv11/onebotv12(其他适配器返回 (None, [], []));get_forward_msg 失败时返回
-    自闭合 fetch_failed 标签,不抛出。
+    块文本形如 <forwarded_messages count="N">...</forwarded_messages>；OneBot
+    v11/v12 走 ``get_forward_msg``，Milky 走 ``get_forwarded_messages``（无
+    forward_id 时直接复用 alconna ``Reference.children`` 节点树）。**协议未支持
+    时返回 ``status="unsupported"`` 自闭合占位**——绝不返回 None，否则整条纯转发
+    消息会被空内容闸门吞掉；取内容失败返回 ``status="fetch_failed"``，不抛出。
 
     number_base: 给定时启用转发图发号——把每个节点内 image 段原位渲染成
     `[转发图#x]`(x = number_base + 本条消息转发图的连续编号),并把注册到的转发图
@@ -594,49 +680,63 @@ async def _extract_forward_full(
     None = 不限)。按节点/段序先到先得,用尽后其余视频段保留普通 `[视频]` 且不产生
     指向未入库项的 ref。块内标签始终按原 video 段位置一一对应。
     """
-    # TODO(B-1.3): onebotv12 uses the same `get_forward_msg` API name based on OneBot
-    # spec convergence, but this has not been verified against a live v12 deployment.
-    # If the v12 API name differs, the call below will raise and we'll return the
-    # fetch_failed self-closing tag — degraded but non-crashing. Verify with a real
-    # v12 adapter and either confirm or branch the call.
-    if adapter_name not in {"onebotv11", "onebotv12"}:
-        return None, [], []
+    # OneBot v11/v12 走 ``get_forward_msg``；Milky 走 ``get_forwarded_messages`` 或
+    # alconna 已带的节点树。其它平台**必须给占位**：过去返回 None 会让整条纯转发
+    # 消息在空内容闸门被吞（不回复、不入库、模型看不到任何内容）。
+    protocol = qqtpc_api.protocol(adapter_name)
+    if protocol not in (qqtpc_api.ONEBOT, qqtpc_api.MILKY) and adapter_name not in {
+        "onebotv11", "onebotv12",
+    }:
+        return _FORWARD_UNSUPPORTED_TAG, [], []
 
     refs = uni_msg[alconna.Reference]
+    ref = None
     ref_id: str | None = None
-    for ref in refs:
-        if ref.id:
-            ref_id = ref.id
+    for candidate in refs:
+        if candidate.id:
+            ref = candidate
+            ref_id = candidate.id
             break
-    if ref_id is None:
+    if protocol == qqtpc_api.MILKY:
+        if ref is None:
+            # Milky builder 对无 forward_id 的转发直接构造节点树（Reference.children）。
+            ref = next((c for c in refs if getattr(c, "children", None)), None)
+        if ref is None:
+            return _FORWARD_FETCH_FAILED_TAG, [], []
+    elif ref_id is None:
         return None, [], []
 
     # 短 TTL 缓存命中即返(见 _forward_full_cache 注释)。命中时返回新列表副本,
     # 不与缓存共享可变对象。渲染参数(m:id/编号起点)进键:主路径与 perception 的
     # 同一 ref 渲染形态不同,不能互相命中。
-    cache_key = (
-        str(getattr(bot, "self_id", "") or id(bot)), ref_id, number_base, cap,
-        file_message_id, file_idx_base, file_slots,
-    )
+    # 无 ref_id(纯节点树)没有稳定的跨调用身份,不走缓存。
+    cache_key = None
     now_mono = time.monotonic()
-    cached = _forward_full_cache.get(cache_key)
-    if cached is not None and cached[3] > now_mono:
-        return cached[0], list(cached[1]), [dict(e) for e in cached[2]]
+    if ref_id is not None:
+        cache_key = (
+            str(getattr(bot, "self_id", "") or id(bot)), ref_id, number_base, cap,
+            file_message_id, file_idx_base, file_slots,
+        )
+        cached = _forward_full_cache.get(cache_key)
+        if cached is not None and cached[3] > now_mono:
+            return cached[0], list(cached[1]), [dict(e) for e in cached[2]]
 
     try:
-        resp = await bot.call_api("get_forward_msg", id=ref_id)
+        if protocol == qqtpc_api.MILKY:
+            nodes = await _milky_forward_nodes(bot, ref)
+        else:
+            resp = await bot.call_api("get_forward_msg", id=ref_id)
+            nodes = []
+            if isinstance(resp, dict):
+                nodes = resp.get("messages") or []
+            elif isinstance(resp, list):
+                nodes = resp
     except Exception as exc:
         logger.warning(
-            f"[HERMES forward] get_forward_msg failed adapter={adapter_name} "
+            f"[HERMES forward] 取合并转发失败 adapter={adapter_name} "
             f"ref_id={ref_id}: {type(exc).__name__}: {exc}"
         )
-        return '<forwarded_messages count="?" status="fetch_failed"/>', [], []
-
-    nodes: list = []
-    if isinstance(resp, dict):
-        nodes = resp.get("messages") or []
-    elif isinstance(resp, list):
-        nodes = resp
+        return _FORWARD_FETCH_FAILED_TAG, [], []
 
     total_nodes = len(nodes)
 
@@ -723,14 +823,17 @@ async def _extract_forward_full(
     content = "\n".join(lines)
     block = f'<forwarded_messages count="{total_nodes}">\n{content}\n</forwarded_messages>'
     # 成功结果入缓存(失败/空块路径不落缓存,下一层照常重试)。
-    _forward_full_cache[cache_key] = (
-        block, tuple(registered), tuple(dict(e) for e in registered_videos),
-        now_mono + _FORWARD_FULL_TTL_S,
-    )
-    if len(_forward_full_cache) > 256:
-        expired = [k for k, (_b, _u, _v, exp) in _forward_full_cache.items() if exp <= now_mono]
-        for k in expired:
-            _forward_full_cache.pop(k, None)
+    if cache_key is not None:
+        _forward_full_cache[cache_key] = (
+            block, tuple(registered), tuple(dict(e) for e in registered_videos),
+            now_mono + _FORWARD_FULL_TTL_S,
+        )
+        if len(_forward_full_cache) > 256:
+            expired = [
+                k for k, (_b, _u, _v, exp) in _forward_full_cache.items() if exp <= now_mono
+            ]
+            for k in expired:
+                _forward_full_cache.pop(k, None)
     return block, registered, registered_videos
 
 
