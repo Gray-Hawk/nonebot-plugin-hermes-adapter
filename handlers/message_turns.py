@@ -1145,7 +1145,7 @@ async def _run_passive_turn(
         render_rows[-1] = replace(
             render_rows[-1], content=f"{render_rows[-1].content} {absent_note}".strip(),
         )
-    user_content = build_passive_user_content(
+    user_content_renderer = build_passive_user_content(
         recent_messages=recent,
         rows=render_rows,
         current_image_urls=_label_groups(label_index, inlined),
@@ -1169,6 +1169,8 @@ async def _run_passive_turn(
         self_id=str(bot.self_id),
         adapter=adapter_name,
     )
+    # 条目 145：可见 content 与回合通知上下文分开取（runs 文本轮才有非空 context）。
+    user_content = user_content_renderer.content
 
     # 纯文本正文协议：正文（含工具前的进度）走 Runs 决策通道，
     # 不再有独立旁白通道——interim echo 整路停用，避免同文发两遍。
@@ -1205,6 +1207,8 @@ async def _run_passive_turn(
         structured_tool_name="submit_decision" if use_private_decision else None,
         system_prompt=system_prompt,
         user_content_override=user_content,
+        context_notices=user_content_renderer.context_notices,
+        closing_reminder=user_content_renderer.closing_reminder,
         target=hermes_target,
         decision_callback=(
             _live_deliver if _live_enabled else None
@@ -1793,7 +1797,7 @@ async def _run_reactive_turn(
         render_rows[-1] = replace(
             render_rows[-1], content=f"{render_rows[-1].content} [图片]".strip(),
         )
-    user_content = build_reactive_user_content(
+    user_content_renderer = build_reactive_user_content(
         addressed_to_bot=addressed_to_bot,
         recent_messages=recent,
         rows=render_rows,
@@ -1819,6 +1823,8 @@ async def _run_reactive_turn(
         self_id=str(bot.self_id),
         adapter=adapter_name,
     )
+    # 条目 145：可见 content 与回合通知上下文分开取（runs 文本轮才有非空 context）。
+    user_content = user_content_renderer.content
 
     # 出站 prompt 体量:模型在 explicit @ 下静默时,第一件要排除的就是「上下文被
     # 某条历史撑爆」。只记尺寸不记内容(历史可能几十万字符,也含用户隐私)。
@@ -1896,6 +1902,8 @@ async def _run_reactive_turn(
         structured_tool_name="submit_decision",
         system_prompt=system_prompt,
         user_content_override=user_content,
+        context_notices=user_content_renderer.context_notices,
+        closing_reminder=user_content_renderer.closing_reminder,
         target=hermes_target,
         decision_callback=(
             _live_deliver if plugin_config.hermes_api_interface == "runs" else None

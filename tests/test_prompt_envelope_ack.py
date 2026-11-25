@@ -90,7 +90,7 @@ class PlainTextPromptTests(unittest.TestCase):
         with patch.object(plugin_config, 'hermes_api_interface', 'runs'):
             prompts['reactive_reminder'] = pb.build_reactive_user_content(
                 addressed_to_bot=True, recent_messages=[], rows=[row], current_image_urls=[],
-            )
+            ).content
         for path in ('group_reactive', 'private_passive'):
             prompt = prompts[path]
             self.assertIn('轮中进度直接输出正文', prompt)

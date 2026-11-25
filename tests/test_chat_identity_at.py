@@ -231,12 +231,12 @@ class ChatIdentityAtTests(unittest.TestCase):
         private = pb.build_passive_user_content(
             recent_messages=[], rows=[row], current_image_urls=[],
             is_private=True, self_id=SELF_ID, adapter=ADAPTER,
-        )
+        ).content
         self.assertIn("[m:7]:\n你好", private)
         group = pb.build_reactive_user_content(
             addressed_to_bot=False, recent_messages=[], rows=[row], current_image_urls=[],
             self_id=SELF_ID, adapter=ADAPTER,
-        )
+        ).content
         self.assertIn("[m:7] [管理员] [id=20002 user=管理号]:\n你好", group)
 
     def test_system_row_goes_to_notice_region_not_chat(self) -> None:
@@ -248,7 +248,7 @@ class ChatIdentityAtTests(unittest.TestCase):
         built = pb.build_passive_user_content(
             recent_messages=[], rows=[row], current_image_urls=[],
             is_private=False, self_id=SELF_ID, adapter=ADAPTER,
-        )
+        ).content
         self.assertIn("<系统通知区域起始>", built)
         self.assertNotIn("<聊天消息区域起始>", built, "没有聊天时聊天区整段省略")
         with self.assertRaises(ValueError):

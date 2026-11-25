@@ -88,11 +88,11 @@ def _render(mode: str, enabled: bool) -> dict[str, str]:
                 recent_messages=[], rows=[_row_obj()], current_image_urls=[],
                 pinned_anchors=[_anchor()], now_ms=NOW, self_id="999",
                 adapter="onebotv11",
-            ),
+            ).content,
             "private_user": pb.build_passive_user_content(
                 recent_messages=[], rows=[_row_obj()], current_image_urls=[],
                 is_private=True, self_id="999", adapter="onebotv11",
-            ),
+            ).content,
         }
     return out
 
@@ -238,7 +238,7 @@ class TaskAnchorRestoreTests(unittest.TestCase):
         off_prompt = pb.build_reactive_user_content(
             addressed_to_bot=True, recent_messages=[], rows=[_row_obj()], current_image_urls=[],
             pinned_anchors=[self.record], now_ms=NOW, self_id="999", adapter="onebotv11",
-        )
+        ).content
         self.assertNotIn("<pinned_tasks>", off_prompt)
         # 状态仍在（读取路径本身不删数据）。
         self.assertEqual(self.manager.pinned_commissioners("onebotv11", "g1"), {"u1"})
@@ -250,7 +250,7 @@ class TaskAnchorRestoreTests(unittest.TestCase):
         on_prompt = pb.build_reactive_user_content(
             addressed_to_bot=True, recent_messages=[], rows=[_row_obj()], current_image_urls=[],
             pinned_anchors=anchors, now_ms=NOW, self_id="999", adapter="onebotv11",
-        )
+        ).content
         self.assertIn("<pinned_tasks>", on_prompt)
         self.assertIn("原始委托", on_prompt)
 
@@ -416,9 +416,13 @@ class TaskAnchorHandlerTests(e2._ReactiveHarness):
         original = mt._run_reactive_turn
 
         def capture(**kwargs):
-            out = real_build(**kwargs)
-            captured.append(out)
-            return out
+            rendered = real_build(**kwargs)
+            # 条目 145：runs 文本轮的通知区拆进了 context_notices（模型仍能看到），
+            # 这里按「模型实际可见」拼回去断言，不改变本用例的语义。
+            captured.append(rendered.content + (
+                f"\n\n{rendered.context_notices}" if rendered.context_notices else ""
+            ))
+            return rendered
 
         async def actual(**kwargs):
             kwargs["ephemeral"] = False

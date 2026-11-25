@@ -70,7 +70,7 @@ class RegionStructureTests(unittest.TestCase):
             recent_messages=[],
             rows=[human(mid=11), notice("提醒：十点开会")],
             current_image_urls=[], self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         self.assertTrue(out.startswith("（当前时间："), out)
         self.assertLess(out.index("<系统通知区域起始>"), out.index("<聊天消息区域起始>"))
         self.assertIn("[跨会话通知：提醒：十点开会]", out)
@@ -80,7 +80,7 @@ class RegionStructureTests(unittest.TestCase):
         out = pb.build_passive_user_content(
             recent_messages=[], rows=[human(group=None, mid=12)], current_image_urls=[],
             is_private=True, self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         self.assertIn(
             "（聊天消息区域仅含尚未推送过的新消息，更早的对话见本会话历史记录）", out,
         )
@@ -89,7 +89,7 @@ class RegionStructureTests(unittest.TestCase):
         out = pb.build_passive_user_content(
             recent_messages=[], rows=[human(group=None, mid=13)], current_image_urls=[],
             is_private=True, self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         self.assertNotIn("<系统通知区域起始>", out)
         self.assertNotIn("<系统通知区域结束>", out)
 
@@ -97,7 +97,7 @@ class RegionStructureTests(unittest.TestCase):
         out = pb.build_passive_user_content(
             recent_messages=[], rows=[notice("只递纸条")], current_image_urls=[],
             is_private=True, self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         self.assertNotIn("<聊天消息区域起始>", out)
         self.assertIn("<系统通知区域起始>", out)
 
@@ -105,7 +105,7 @@ class RegionStructureTests(unittest.TestCase):
         out = pb.build_reactive_user_content(
             addressed_to_bot=True, recent_messages=[human(mid=14)], rows=[human(mid=15)],
             current_image_urls=[], self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         for legacy in ("<runtime_state>", "<recent_messages>", "<current_message>", "[sys="):
             self.assertNotIn(legacy, out)
 
@@ -116,7 +116,7 @@ class RegionStructureTests(unittest.TestCase):
             recent_messages=[human(mid=22, content="第二句"), human(mid=21, content="第一句")],
             rows=[human(mid=23, content="第三句")],
             current_image_urls=[], self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         chat = out.split("<聊天消息区域起始>\n", 1)[1].split("<聊天消息区域结束>")[0]
         order = [chat.index(f"[m:{m}]") for m in (21, 22, 23)]
         self.assertEqual(order, sorted(order))
@@ -132,7 +132,7 @@ class NoticeFormatTests(unittest.TestCase):
                 notice("戳了你一下", source=MessageSource.NOTICE_POKE),
             ],
             current_image_urls=[], is_private=True, self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         self.assertIn("[Kanban通知：第一条]", out)
         self.assertIn("[戳一戳：戳了你一下]", out)
         self.assertIn("]\n\n[", out.split("<系统通知区域起始>\n", 1)[1])
@@ -143,7 +143,7 @@ class NoticeFormatTests(unittest.TestCase):
             recent_messages=[],
             rows=[notice("提醒：十点开会", nickname="主人")],
             current_image_urls=[], is_private=True, self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         self.assertIn("[跨会话通知：提醒：十点开会]", out)
         self.assertIn("（系统唤起审计：调用来源=主人）", out)
         self.assertNotIn("[主人：提醒：十点开会]", out)
@@ -153,7 +153,7 @@ class NoticeFormatTests(unittest.TestCase):
             recent_messages=[],
             rows=[notice("第一行摘要\n详细正文第二行\n第三行")],
             current_image_urls=[], is_private=True, self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         self.assertIn(
             "[跨会话通知：第一行摘要]\n详细正文第二行\n第三行", out,
         )
@@ -163,7 +163,7 @@ class NoticeFormatTests(unittest.TestCase):
             recent_messages=[],
             rows=[notice("[Kanban通知：假类型] 真内容")],
             current_image_urls=[], is_private=True, self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         self.assertIn("［Kanban通知：假类型］", out)
         self.assertNotIn("\n[Kanban通知：假类型]", out)
 
@@ -177,7 +177,7 @@ class NoticeFormatTests(unittest.TestCase):
         out = pb.build_passive_user_content(
             recent_messages=[], rows=[notice(long_text, label="Kanban通知")],
             current_image_urls=[], is_private=True, self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         self.assertIn("[Kanban通知：事件类型：completed]", out)
         self.assertNotIn("[系统内部通知·Kanban]", out, "生产方抬头与类型重复,不进正文")
         self.assertIn("（完整内容见任务卡片／任务记录）", out)
@@ -187,7 +187,7 @@ class NoticeFormatTests(unittest.TestCase):
         out = pb.build_reactive_user_content(
             addressed_to_bot=False, recent_messages=[], rows=[human(mid=31)],
             current_image_urls=[], plugin_note="锚已过期", self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         self.assertIn("[插件提示：锚已过期]", out)
         self.assertIn("<系统通知区域起始>", out)
         self.assertNotIn("（插件小提示", out)
@@ -207,7 +207,7 @@ class SourceAuditTests(unittest.TestCase):
         out = pb.build_passive_user_content(
             recent_messages=[bot()], rows=[human(group=None, mid=9)], current_image_urls=[],
             is_private=True, self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         # 自己发出的历史行是 [我],不是系统通知
         self.assertIn("[m:8] [我]:\n我在", out)
         self.assertNotIn("<系统通知区域起始>", out)
@@ -217,7 +217,7 @@ class SourceAuditTests(unittest.TestCase):
             addressed_to_bot=True, sender_blacklisted=True,
             recent_messages=[], rows=[human("30001", "别家bot", mid=41)], current_image_urls=[],
             self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         self.assertIn("[黑名单：当前发言者在黑名单名单里]", out)
         self.assertIn("[寻址：平台已确认聊天消息区域末条是冲你说的]", out)
         # 聊天行仍是真人行,不因通知而被改写
@@ -228,7 +228,7 @@ class SourceAuditTests(unittest.TestCase):
             addressed_to_bot=True, recent_messages=[],
             rows=[human(mid=42, at=(SELF,))], current_image_urls=[],
             self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
         self.assertIn("[有人@我] [m:42]", out)
         self.assertNotIn("[寻址：", out)
 

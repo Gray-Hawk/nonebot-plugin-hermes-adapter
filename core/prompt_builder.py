@@ -1301,6 +1301,27 @@ def render_steer_rows(
     return SteerPresentation(rows=items, text=render_steer_batch(items))
 
 
+@dataclass
+class RenderedTurnContent:
+    """一轮的 user content 产出：可见正文 + runs 文本轮的独立通知上下文。
+
+    - ``content``：真正发给 Hermes 的可见 user content（纯文本 str 或媒体 parts 列表）。
+      runs 纯文本回合里它**不含**顶层系统通知区。
+    - ``context_notices``：runs 纯文本回合拆出的完整通知区（``<系统通知区域起始>`` …
+      ``<系统通知区域结束>``），由 ``hermes_context.notices`` 带给插件，再由官方
+      ``pre_llm_call`` 注入 api_content 尾部；其余回合为空串。
+    - ``closing_reminder``：reactive 的近因 reminder 逐字副本，作为
+      ``hermes_context.closing_reminder``，保证通知不会把协议提醒挤离模型所见最后一段；
+      passive 与无通知回合为空串。
+
+    拆出的两个字段只走 ``hermes_context`` 这条出口（条目 145），不回流进可见正文。
+    """
+
+    content: UserContent
+    context_notices: str = ""
+    closing_reminder: str = ""
+
+
 def build_reactive_user_content(
     *,
     addressed_to_bot: bool,
@@ -1315,7 +1336,7 @@ def build_reactive_user_content(
     name_resolver: "Callable[[str], str | None] | None" = None,
     self_id: str | None = None,
     adapter: str | None = None,
-) -> UserContent:
+) -> RenderedTurnContent:
     """reactive user content:当前时间 + 可选 <pinned_tasks> + 可选系统通知区 + 可选聊天区。
 
     结构只有三层(不是每轮都出现):
@@ -1333,6 +1354,12 @@ def build_reactive_user_content(
     总开关开启时渲染(关闭时整块不出现),位置在时间与通知区之间。
     current_image_urls / current_sticker_urls: 内联帧组,每项为 (寻址三元组, 帧列表)
     或裸帧列表;三元组 (kind, mid, idx) 用于给 parts 打全称标签 [图 m:ID#idx]。
+
+    runs 纯文本回合(条目 145 §7.1):通知区从可见 content 拆到
+    ``context_notices``,由 Hermes 插件经 ``pre_llm_call`` 注入 api_content 尾部;
+    正文 reminder 仍留在可见 content,并原样复制进 ``closing_reminder``。
+    非 runs 或带媒体 parts 的回合完整保留旧版内联呈递(两个 context 字段为空)——
+    那是明确未覆盖路径,不是插件缺席降级。
     """
     ctx = _identity_context(self_id, adapter)
     notice_rows = [r for r in rows if r.origin.author_kind is AuthorKind.SYSTEM]
@@ -1396,18 +1423,28 @@ def build_reactive_user_content(
     # message_origin 的旧签名参数:triggered_by 已由聊天区末条作者行表达,
     # current_origin 不再参与任何文案(保留形参会变成第二套来源叙事,故一并删除)。
 
+    # 顶层通知区只在 runs 纯文本回合拆出去;媒体 parts 回合保持旧内联呈递。
+    split = mode == "runs" and not current_image_urls and not current_sticker_urls
     blocks = [
         f"（当前时间：{_current_time_str()}）",
         pinned_block,
-        notice_block,
+        "" if split else notice_block,
         chat_block,
     ]
     text_block = "\n\n".join(b for b in blocks if b) + reminder
+    context_notices = notice_block if split else ""
+    closing_reminder = reminder if context_notices else ""
 
     if not current_image_urls and not current_sticker_urls:
-        return text_block
+        return RenderedTurnContent(
+            content=text_block,
+            context_notices=context_notices,
+            closing_reminder=closing_reminder,
+        )
 
-    return _assemble_media_parts(text_block, current_image_urls, list(current_sticker_urls or []))
+    return RenderedTurnContent(content=_assemble_media_parts(
+        text_block, current_image_urls, list(current_sticker_urls or []),
+    ))
 
 
 def build_passive_user_content(
@@ -1421,11 +1458,14 @@ def build_passive_user_content(
     name_resolver: "Callable[[str], str | None] | None" = None,
     self_id: str | None = None,
     adapter: str | None = None,
-) -> UserContent:
+) -> RenderedTurnContent:
     """passive user content:当前时间 + 可选系统通知区 + 可选聊天区(图片走多模态 parts)。
 
     与 reactive 同一套区域文法,差别只有 is_private(私聊省略固定对方的身份与
-    speaker)和没有本轮寻址/黑名单事实(私聊不存在归属歧义)。
+    speaker)和没有本轮寻址/黑名单事实(私聊不存在归属歧义),也没有近因 reminder。
+
+    runs 纯文本回合同样把通知区拆到 ``context_notices``(passive 不带
+    ``closing_reminder``);非 runs 或带媒体 parts 保留旧内联呈递。
     """
     notice_rows = [r for r in rows if r.origin.author_kind is AuthorKind.SYSTEM]
     chat_rows = [r for r in rows if r.origin.author_kind is not AuthorKind.SYSTEM]
@@ -1439,17 +1479,24 @@ def build_passive_user_content(
     )
     if current_sticker_urls:
         chat_block += _STICKER_MOOD_NOTE
+    notice_block = _render_notice_region(notices)
+    split = _json_lines_mode() == "runs" and not current_image_urls and not current_sticker_urls
     blocks = [
         f"（当前时间：{_current_time_str()}）",
-        _render_notice_region(notices),
+        "" if split else notice_block,
         chat_block,
     ]
     text_block = "\n\n".join(b for b in blocks if b)
 
     if not current_image_urls and not current_sticker_urls:
-        return text_block
+        return RenderedTurnContent(
+            content=text_block,
+            context_notices=notice_block if split else "",
+        )
 
-    return _assemble_media_parts(text_block, current_image_urls, list(current_sticker_urls or []))
+    return RenderedTurnContent(content=_assemble_media_parts(
+        text_block, current_image_urls, list(current_sticker_urls or []),
+    ))
 
 
 def _normalize_media_group(item: Any) -> tuple[tuple[str, int, int] | None, list[str]]:

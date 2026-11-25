@@ -142,7 +142,7 @@ class InlineImageCapTests(unittest.IsolatedAsyncioTestCase):
             current_image_urls=image_urls or [],
             current_sticker_urls=sticker_urls or [],
             self_id=SELF, adapter=ADAPTER,
-        )
+        ).content
 
     async def test_twelve_inline_images_keep_the_last_ten(self) -> None:
         mids = [71420 + i for i in range(12)]

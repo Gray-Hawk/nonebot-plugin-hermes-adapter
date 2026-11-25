@@ -65,7 +65,7 @@ class NormalSingleMessageLayoutTests(unittest.TestCase):
             out = pb.build_reactive_user_content(
                 addressed_to_bot=False, recent_messages=[], rows=[human(mid=11)],
                 current_image_urls=[], self_id=SELF, adapter=ADAPTER,
-            )
+            ).content
         chat_part = out.split("\n\n请直接输出", 1)[0]
         self.assertEqual(chat_part, "\n\n".join([
             FIXED_TIME,
@@ -80,7 +80,7 @@ class NormalSingleMessageLayoutTests(unittest.TestCase):
             out = pb.build_passive_user_content(
                 recent_messages=[], rows=[human(group=None, mid=12, content="在吗")],
                 current_image_urls=[], is_private=True, self_id=SELF, adapter=ADAPTER,
-            )
+            ).content
         self.assertEqual(out, "\n\n".join([
             FIXED_TIME,
             OPEN,
@@ -96,7 +96,7 @@ class NormalSingleMessageLayoutTests(unittest.TestCase):
                 rows=[human(group=None, mid=21, content="第一句"),
                       human(group=None, mid=22, content="第二句")],
                 current_image_urls=[], is_private=True, self_id=SELF, adapter=ADAPTER,
-            )
+            ).content
         self.assertEqual(out, "\n\n".join([
             FIXED_TIME, OPEN, NOTE,
             "[m:21]:\n第一句\n\n[m:22]:\n第二句",

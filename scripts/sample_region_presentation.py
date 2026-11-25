@@ -61,7 +61,7 @@ print(pb.build_reactive_user_content(
     current_image_urls=[],
     plugin_note="任务锚已过期，请确认是否松锚",
     self_id=SELF, adapter=ADAPTER,
-))
+).content)
 print()
 
 print("=" * 70)
@@ -76,7 +76,7 @@ wake = BufferedMessage(
 print(pb.build_reactive_user_content(
     addressed_to_bot=False, recent_messages=[], rows=[wake],
     current_image_urls=[], self_id=SELF, adapter=ADAPTER,
-))
+).content)
 print()
 
 print("=" * 70)
@@ -89,7 +89,7 @@ print(pb.build_passive_user_content(
     ],
     rows=[human("10001", "主人", mid=6011, group=None, text="在吗\n第二行")],
     current_image_urls=[], is_private=True, self_id=SELF, adapter=ADAPTER,
-))
+).content)
 print()
 
 print("=" * 70)
@@ -103,7 +103,7 @@ note = BufferedMessage(
 print(pb.build_passive_user_content(
     recent_messages=[], rows=[note], current_image_urls=[],
     is_private=True, self_id=SELF, adapter=ADAPTER,
-))
+).content)
 print()
 
 print("=" * 70)
@@ -113,7 +113,7 @@ print(pb.build_reactive_user_content(
     addressed_to_bot=True, sender_blacklisted=True,
     recent_messages=[], rows=[human("10003", "路人", mid=7011, text="在吗")],
     current_image_urls=[], self_id=SELF, adapter=ADAPTER,
-))
+).content)
 
 print()
 print("=" * 70)

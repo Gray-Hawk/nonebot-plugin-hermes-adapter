@@ -35,6 +35,12 @@ from .media_patterns import _MD_IMAGE_PATTERN, _MEDIA_TAG_PATTERN
 from .media_whitelist import inline_local_media_images
 from .message_context import render_message_context_head
 from .prompt_dump import maybe_dump_request
+from .turn_context import (
+    TURN_CONTEXT_FIELD,
+    TURN_CONTEXT_HEADER,
+    TURN_CONTEXT_REGISTERED,
+    build_context_payload,
+)
 from .routing import HermesTarget, default_target
 from .run_tracker import StaleGenerationError, make_scope_key
 from .bg_tasks import spawn_bg_task
@@ -1303,6 +1309,8 @@ class HermesClient:
         delivery_generation: int | None = None,
         source_event_id: str | None = None,
         on_suppressed: "SuppressedCallback | None" = None,
+        context_notices: str = "",
+        closing_reminder: str = "",
     ) -> ChatResult:
         """调用 Hermes,返回 ChatResult。
 
@@ -1319,6 +1327,10 @@ class HermesClient:
           单上游下恒为默认接入点(handler 经 routing.resolve_target() 解析后传入)。
         - on_suppressed: 可选正文被吞观察口 (reason, text, source)，仅 runs 通道
           生效（completions 无段内去重，不会调用）；默认 None，不影响正文发送。
+        - context_notices / closing_reminder: runs 文本轮的回合通知上下文（条目 145）。
+          由 ``prompt_builder`` 的 ``RenderedTurnContent`` 直接带下来，只在纯文本 runs
+          回合且确有通知时进入请求体的 ``hermes_context``；completions／astrbot／
+          媒体 parts 回合一律不带，行为与旧版逐字一致。
         - mode 字段当前为路由元数据,chat() 内部不分支判断;Task 15 handler 据此决定
           如何呈现结果(reactive 走 structured 流,passive 走 raw_text)。
         """
@@ -1374,13 +1386,11 @@ class HermesClient:
         # 聊天呈递才是呈递改造要看的东西。三通道各按自己的外层字段组装视图。
         _dump_iface = plugin_config.hermes_api_interface
         _dump_note: str | None = None
+        _dump_request: dict[str, Any] | None = None
         if _dump_iface == "runs":
-            _dump_request: dict[str, Any] = {
-                "model": "hermes-agent",
-                "session_id": session_key,
-                "instructions": system_prompt,
-                "input": [{"role": "user", "content": content}],
-            }
+            # runs 的留痕点搬到 _chat_via_runs:那里才有真正的 POST body(含 hermes_context),
+            # 留痕与提交意图必须保存同一份实际请求体,不能各拼一个视图。
+            _dump_request = None
         elif _dump_iface == "astrbot":
             # AstrBot 后端把图片另走附件上传;这里留本地侧请求视图,
             # user content 逐字节保留(图片按 data: URL 占位)。
@@ -1392,15 +1402,16 @@ class HermesClient:
             _dump_note = "astrbot 后端:图片另经附件上传,本转储为本地侧请求视图"
         else:
             _dump_request = payload
-        maybe_dump_request(
-            adapter_name=adapter_name,
-            is_private=is_private,
-            user_id=user_id,
-            group_id=group_id,
-            interface=_dump_iface,
-            request=_dump_request,
-            note=_dump_note,
-        )
+        if _dump_request is not None:
+            maybe_dump_request(
+                adapter_name=adapter_name,
+                is_private=is_private,
+                user_id=user_id,
+                group_id=group_id,
+                interface=_dump_iface,
+                request=_dump_request,
+                note=_dump_note,
+            )
 
         headers = self.get_headers(session_key, api_key=tgt.api_key)
         runs_pending_steer = ""
@@ -1518,6 +1529,8 @@ class HermesClient:
                     streamed_sink=runs_streamed,
                     idempotency_key=turn_idem_key,
                     on_suppressed=on_suppressed,
+                    context_notices=context_notices,
+                    closing_reminder=closing_reminder,
                     scope=dict(
                         adapter=adapter_name, is_private=is_private, user_id=user_id,
                         group_id=group_id, bot_self_id=bot_self_id or "",
@@ -1980,6 +1993,8 @@ class HermesClient:
         decision_callback: "DecisionCallback | None" = None,
         streamed_sink: list[dict[str, Any]] | None = None,
         on_suppressed: "SuppressedCallback | None" = None,
+        context_notices: str = "",
+        closing_reminder: str = "",
     ) -> tuple[str, str | None, "ChatResult | None", str, str]:
         """runs 通道(本部署补丁:阶段1)。返回 (raw_text, rotated, failure, pending_steer, run_id)。
 
@@ -2006,6 +2021,24 @@ class HermesClient:
             "session_id": session_key,
             "model": "hermes-agent",
         }
+        # 条目 145：回合通知上下文只挂在纯文本回合上（媒体 parts 回合 compose 侧
+        # 也拿不到字符串 sidecar，不在这里造第二条注入链）。
+        context_payload = (
+            build_context_payload(context_notices, closing_reminder)
+            if isinstance(content, str) else None
+        )
+        if context_payload is not None:
+            body[TURN_CONTEXT_FIELD] = context_payload
+        # 留痕与提交意图保存同一份实际请求体（含 hermes_context）:dump 放在 body 成形之后。
+        maybe_dump_request(
+            adapter_name=scope["adapter"],
+            is_private=scope["is_private"],
+            user_id=scope["user_id"],
+            group_id=scope["group_id"],
+            interface="runs",
+            request=body,
+            note=None,
+        )
         submit_headers = dict(headers)
         submit_headers["Idempotency-Key"] = idempotency_key
         parser = RunsEventParser()
@@ -2063,6 +2096,16 @@ class HermesClient:
                 logger.warning(f"[HERMES] runs 提交重放认领 (run_id={run_id})")
             if not run_id:
                 raise StreamHttpError(202, f"missing run_id: {resp.text[:200]}")
+            # 条目 145 §4:发了 hermes_context 却没看到插件受理标记时,只留一条脱敏
+            # WARNING 并继续基本通信——不重发、不回写旧格式、不把通知塞回正文。
+            if context_payload is not None:
+                accept_state = str(resp.headers.get(TURN_CONTEXT_HEADER) or "").strip()
+                if accept_state != TURN_CONTEXT_REGISTERED:
+                    logger.warning(
+                        f"[HERMES] 回合通知上下文未被受理 session={session_key} "
+                        f"run_id={run_id} idempotency={idempotency_key} "
+                        f"status={accept_state or 'missing'}；本轮仅以干净用户正文继续"
+                    )
             reply_queue = _RunsReplyQueue(decision_callback, run_id, streamed_sink)
             # 阶段2a:登记在跑 run(nb 重启后 run_resume 按此行 reattach 续跑)。
             # bot_self_id 缺失(旧调用点未传)时不登记——resume 找不到 bot 投不出去,

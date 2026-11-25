@@ -104,7 +104,7 @@ group_cur = pb.build_reactive_user_content(
     addressed_to_bot=True, recent_messages=[bot(SELF, "Hermes", mid=200, text="好的")],
     rows=rows, current_image_urls=[],
     self_id=SELF, adapter=ADAPTER,
-)
+).content
 print(group_cur)
 check("主人行带 [主人] 且 @ 强提醒在 m:id 前",
       "[有人@我] [m:201] [主人] [id=10001 user=主人]:" in group_cur)
@@ -130,7 +130,7 @@ print("\n== 3. 私聊 passive（private 真实入口） ==")
 private_cur = pb.build_passive_user_content(
     recent_messages=[], rows=[human("10001", "主人", group=None, mid=401, text="在吗")],
     current_image_urls=[], is_private=True, self_id=SELF, adapter=ADAPTER,
-)
+).content
 print(private_cur)
 check("私聊单人保留身份、不重复 speaker", "[m:401]:\n在吗" in private_cur)
 

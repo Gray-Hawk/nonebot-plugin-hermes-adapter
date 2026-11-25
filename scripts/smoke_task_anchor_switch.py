@@ -111,11 +111,11 @@ def render(mode: str, enabled: bool) -> dict[str, str]:
                 addressed_to_bot=True, recent_messages=[], rows=[row()], current_image_urls=[],
                 pinned_anchors=[anchor()], now_ms=NOW, self_id="2968545011",
                 adapter=ADAPTER,
-            ),
+            ).content,
             "private_user": pb.build_passive_user_content(
                 recent_messages=[], rows=[row()], current_image_urls=[],
                 is_private=True, self_id="2968545011", adapter=ADAPTER,
-            ),
+            ).content,
         }
     finally:
         object.__setattr__(plugin_config, "hermes_api_interface", previous)
@@ -253,7 +253,7 @@ check("钉入存量锚", manager.pin_anchor(
 hidden = pb.build_reactive_user_content(
     addressed_to_bot=True, recent_messages=[], rows=[row()], current_image_urls=[],
     pinned_anchors=[record], now_ms=NOW, self_id="2968545011", adapter=ADAPTER,
-)
+).content
 check("关闭时提示词不渲染 pinned 块", "<pinned_tasks>" not in hidden)
 check("关闭时 manager 仍保留委托人", manager.pinned_commissioners(ADAPTER, GROUP) == {USER})
 commit(True)
@@ -262,7 +262,7 @@ check("重开后读回同一锚", [a.text for a in restored] == ["存量委托�
 shown = pb.build_reactive_user_content(
     addressed_to_bot=True, recent_messages=[], rows=[row()], current_image_urls=[],
     pinned_anchors=restored, now_ms=NOW, self_id="2968545011", adapter=ADAPTER,
-)
+).content
 check("重开后提示词重新渲染 pinned 块", "<pinned_tasks>" in shown and "存量委托任务" in shown)
 print("恢复后的 pinned 块：")
 start = shown.find("<pinned_tasks>")
