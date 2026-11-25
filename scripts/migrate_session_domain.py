@@ -18,9 +18,9 @@
         --exclude 'milky+group+253384307' \
         --override 'onebotv11+group+253384307=<合并后的 session_key>'
 
-冲突（同一目标已有行／两种协议指向同一目标）时整批零写入并退出码 2；先 dry-run
-确认，再用 ``--exclude``/``--override`` 显式指定运维认可的目标后重跑。脚本可重放：
-已归一的库第二次运行计数为 0。
+冲突（同一目标已有行／两种协议指向同一目标）时整批零写入并退出码 2——**dry-run
+也一样**（dry-run 只报冲突不改库）；先 dry-run 确认，再用 ``--exclude``/``--override``
+显式指定运维认可的目标后重跑。脚本可重放：已归一的库第二次运行计数为 0。
 """
 
 from __future__ import annotations
@@ -82,7 +82,11 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
         metavar="INTERNAL_ID",
-        help="显式排除的旧 internal_id（可多次/逗号分隔）；不收录、不删除",
+        help=(
+            "显式排除的旧 internal_id（可多次/逗号分隔）；不收录、不删除。"
+            "注意：排除行若没有同 scope 的 canonical 行，归一后该库会被 "
+            "bind_store 判为未归一而失败关闭（宁可拒绝启动也不新建 key 接断历史）"
+        ),
     )
     parser.add_argument(
         "--override",
@@ -117,6 +121,17 @@ def main(argv: list[str] | None = None) -> int:
         store.close()
 
     mode = "dry-run" if report.dry_run else "applied"
+    if report.conflicts:
+        # dry-run 也会带回冲突（此时 store 不抛异常）：冲突的计划不可执行，
+        # 必须和真跑一样失败关闭，不能让 --dry-run 显示成成功。
+        detail = ", ".join(f"{old} -> {new}" for old, new in report.conflicts)
+        print(f"CONFLICT (zero writes): {detail}", file=sys.stderr)
+        print(
+            f"{mode}: conflicts={len(report.conflicts)} —— 冲突未解决前不可执行；"
+            "确认来源后用 --exclude/--override 显式指定运维认可的目标",
+            file=sys.stderr,
+        )
+        return 2
     print(
         f"{mode}: session_keys={report.session_keys_migrated} "
         f"idle_paused={report.idle_paused_migrated} "

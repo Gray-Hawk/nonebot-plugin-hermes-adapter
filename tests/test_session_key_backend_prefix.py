@@ -203,16 +203,22 @@ class BackgroundPrefixMatchTests(_Case):
         self.assertIsNone(resolve_background_route(f"agent-{INTERNAL_ID}", ()))
 
     def test_prefix_candidates_follow_backend(self) -> None:
+        from nonebot_plugin_hermes_adapter.core.session import QQTPC_TRANSPORTS
         from nonebot_plugin_hermes_adapter.mcp.tools.background_status import (
             _belongs,
             _session_prefixes,
         )
 
+        # QQTPC 域要覆盖**全部**既有 transport 形态（迁移前按旧协议登记的 key 仍在
+        # 信箱/看板里）：顺序 = 会话域、当前 adapter、其余已登记 transport。
+        names = ["qqtpc", ADAPTER, *(t for t in QQTPC_TRANSPORTS if t != ADAPTER)]
+
         self.set_interface("runs")
+        prefixes = _session_prefixes(ADAPTER, True, USER)
         self.assertEqual(
-            _session_prefixes(ADAPTER, True, USER),
-            [f"hermes-{INTERNAL_ID}", f"hermes-{LEGACY_INTERNAL_ID}"],
-            "新派生 key 用 qqtpc 会话域；归一前登记的旧 transport key 仍要认",
+            prefixes,
+            [f"hermes-{name}+private+{USER}" for name in names],
+            "新派生 key 用 qqtpc 会话域；归一前登记的旧 transport key（全部形态）仍要认",
         )
         self.assertTrue(_belongs(f"hermes-{INTERNAL_ID}-g4", [f"hermes-{INTERNAL_ID}"]))
         self.assertFalse(
@@ -224,10 +230,9 @@ class BackgroundPrefixMatchTests(_Case):
         self.assertEqual(
             prefixes,
             [
-                f"{OTHER_PREFIX}-{INTERNAL_ID}",
-                f"{OTHER_PREFIX}-{LEGACY_INTERNAL_ID}",
-                f"hermes-{INTERNAL_ID}",
-                f"hermes-{LEGACY_INTERNAL_ID}",
+                f"{prefix}-{name}+private+{USER}"
+                for prefix in (OTHER_PREFIX, "hermes")
+                for name in names
             ],
         )
         self.assertTrue(_belongs(f"{OTHER_PREFIX}-{INTERNAL_ID}-g4", prefixes))

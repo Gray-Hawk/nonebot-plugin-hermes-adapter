@@ -97,19 +97,30 @@ def _session_prefixes(adapter: str, is_private: bool, target_id: str) -> list[st
     登记的 `hermes-*`，否则老事件会被当成别人的。
 
     QQTPC 协议另外要认两种会话形态：归一后的业务会话域（``hermes-qqtpc+…``，新派生
-    key）与迁移前登记的真实 transport（``hermes-onebotv11+…``）。旧登记不能当成
-    别人的，因此两种都列；未归一的 adapter（QQ 官方等）只有一种。
+    key）与迁移前按真实 transport 登记的 key（``hermes-onebotv11+…``/
+    ``hermes-milky+…``）。迁移后旧登记仍在信箱与看板里，QQTPC 域要覆盖**全部**已登记
+    transport 形态（不只是当前这个），否则一条 OneBot 时代登记的旧 key 在当前
+    Milky 调用下就查不到；未归一的 adapter（QQ 官方等）只有一种。
     """
-    from ...core.session import session_domain, session_manager
+    from ...core.session import (
+        QQTPC_TRANSPORTS,
+        SESSION_DOMAIN_QQTPC,
+        session_domain,
+        session_manager,
+    )
 
     kind = "private" if is_private else "group"
-    domains = [session_domain(adapter)]
-    if domains[0] != adapter:
-        domains.append(adapter)
+    names = [session_domain(adapter)]
+    if names[0] != adapter:
+        names.append(adapter)
+    if SESSION_DOMAIN_QQTPC in names:
+        for transport in QQTPC_TRANSPORTS:
+            if transport not in names:
+                names.append(transport)
     prefixes: list[str] = []
     for prefix in session_manager.session_key_prefixes():
-        for domain in domains:
-            item = f"{prefix}-{domain}+{kind}+{target_id}"
+        for name in names:
+            item = f"{prefix}-{name}+{kind}+{target_id}"
             if item not in prefixes:
                 prefixes.append(item)
     return prefixes

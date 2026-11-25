@@ -153,6 +153,25 @@ class CanonicalInternalIdTests(_Base):
         self.assertEqual(session_domain("OneBot V11"), SESSION_DOMAIN_QQTPC)
         self.assertFalse(is_session_domain("onebotv11"), "真实 adapter 不是会话域")
 
+    def test_onebot_v12_is_part_of_qqtpc(self) -> None:
+        """OneBot v12 只是 QQTPC 的另一个可替换驱动，与 v11/Milky 同一会话。"""
+        self.assertEqual(session_domain("OneBot V12"), SESSION_DOMAIN_QQTPC)
+        self.assertEqual(session_domain("onebotv12"), SESSION_DOMAIN_QQTPC)
+        manager = SessionManager()
+        key = manager.get_session_key("onebotv11", False, "u1", GROUP)
+        self.assertEqual(manager.get_session_key("onebotv12", False, "u1", GROUP), key)
+        self.assertEqual(manager.get_session_key("milky", False, "u1", GROUP), key)
+        # generation 跨驱动共享：v12 上 /clear，v11/Milky 立刻看到同一代际。
+        manager.clear_session("onebotv12", False, "u1", GROUP)
+        self.assertEqual(manager.get_delivery_generation("onebotv11", False, "u1", GROUP), 1)
+        self.assertEqual(manager.get_delivery_generation("milky", False, "u1", GROUP), 1)
+        self.assertEqual(manager.get_session_key("milky", False, "u1", GROUP), f"{key}-g1")
+        # 私聊同样归一（不加 + 的形态一致）。
+        self.assertEqual(
+            manager.get_session_key("onebotv12", True, USER, None),
+            manager.get_session_key("milky", True, USER, None),
+        )
+
 
 class CrossTransportSwitchTests(_Base):
     """同一 QQTPC 映射 OneBot→Milky→OneBot：key/generation 不变且不改库。"""
@@ -217,11 +236,14 @@ class RestartRuntimeResolutionTests(_Base):
             # 路由/连接都没就绪：不猜协议，条目按等待语义缺席。
             self.assertEqual(manager.known_sessions(), [])
             self.assertEqual(manager.idle_expired(0, now=1e12), [])
-            # 真实事件到达：登记真实 adapter，此后即可参与 T1/投递轮询。
+        # 真实事件到达：它只能来自已连上的真实驱动（事件本身不落库，驱动在线才是
+        # 当前事实），此后即可参与 T1/投递轮询。
+        with patch.object(session_mod, "_live_transports", lambda domain: ["milky"]):
             self.assertEqual(manager.get_session_key("milky", False, "u1", GROUP), f"hermes-{GROUP_ID}")
             rows = manager.known_sessions()
+            expired = manager.idle_expired(0, now=1e12)
         self.assertEqual([row[1] for row in rows], ["milky"])
-        self.assertEqual([c[0] for _, c in manager.idle_expired(0, now=1e12)], ["milky"])
+        self.assertEqual([c[0] for _, c in expired], ["milky"])
 
     def test_live_bot_of_single_driver_is_used_when_no_route(self) -> None:
         self.store.put(GROUP_ID, f"hermes-{GROUP_ID}", 0, now=1.0)
@@ -389,8 +411,10 @@ class MigrationTests(_Base):
             manager.get_session_key("milky", False, "u1", GROUP), f"hermes-onebotv11+group+{GROUP}",
             "归一后 key 续用（且不重命名现有 Hermes session id）",
         )
-        # 真实 Milky 事件到达后，运行时解析立刻切到当前驱动，库仍不动。
-        self.assertEqual([row[1] for row in manager.known_sessions()], ["milky"])
+        # 真实 Milky 事件到达（事件只能来自已连上的驱动）后，运行时解析立刻切到当前
+        # 驱动，库仍不动。
+        with patch.object(session_mod, "_live_transports", lambda domain: ["milky"]):
+            self.assertEqual([row[1] for row in manager.known_sessions()], ["milky"])
         self.assertEqual(manager.set_idle_paused("milky", False, "u1", GROUP, False), GROUP_ID)
         self.assertEqual(self.store.load_idle_paused(), set())
 
@@ -557,6 +581,27 @@ class MigrationTests(_Base):
         self.assertEqual(report.session_keys_migrated, 1)
         self.assertEqual(self._dump(), before, "dry_run 不写库")
 
+    def test_cli_dry_run_reports_conflict_and_fails_closed(self) -> None:
+        """dry-run 也要冲突失败关闭：不可执行的计划不能显示成成功。"""
+        import contextlib
+        import io
+
+        from scripts.migrate_session_domain import main as migrate_main
+
+        self.store.put("onebotv11+group+10002", "key-a", 1, now=1.0)
+        self.store.put("milky+group+10002", "key-b", 2, now=2.0)
+        before = self._dump()
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = migrate_main(["--db", str(self.db_path), "--dry-run"])
+
+        self.assertEqual(code, 2, "dry-run 遇冲突必须退出 2（与真跑一致）")
+        self.assertIn("CONFLICT", stderr.getvalue())
+        self.assertIn("qqtpc+group+10002", stderr.getvalue())
+        self.assertEqual(self._dump(), before, "dry-run 冲突零写入")
+        self.assertTrue(self.integrity_ok())
+
     def test_unknown_platform_rows_are_left_alone(self) -> None:
         self.store.put("telegram+group+42", "hermes-telegram+group+42", 0, now=1.0)
         self.store.migrate_session_domain(SESSION_DOMAIN_TRANSPORTS)
@@ -611,6 +656,154 @@ class BackgroundRoutingTests(_Base):
         self.assertIn(f"hermes-{PRIVATE_ID}", prefixes, "新派生 key（hermes-qqtpc…）")
         self.assertIn(f"hermes-onebotv11+private+{USER}", prefixes, "归一前登记的旧 key")
         self.assertEqual(_session_prefixes("qq", True, "openid-1"), ["hermes-qq+private+openid-1"])
+
+    def test_qqtpc_prefixes_cover_every_legacy_transport(self) -> None:
+        """当前 Milky 调用也要认 OneBot 时代登记的旧 key（旧登记仍在信箱/看板里）。"""
+        from nonebot_plugin_hermes_adapter.core.routing import CallerScope
+        from nonebot_plugin_hermes_adapter.mcp.tools.background_status import (
+            GetBackgroundTasksInput,
+            _session_prefixes,
+            get_background_tasks_impl,
+        )
+
+        prefixes = _session_prefixes("milky", True, USER)
+        for name in ("qqtpc", "milky", "onebotv11", "onebotv12", "icqq"):
+            with self.subTest(name=name):
+                self.assertIn(f"hermes-{name}+private+{USER}", prefixes)
+
+        class _Outbox:
+            def active_events(self):
+                return [
+                    {
+                        "event_id": "legacy-onebot",
+                        "source": "subagent",
+                        "task_state": "completed",
+                        "report_state": "pending",
+                        "origin_session_id": f"hermes-onebotv11+private+{USER}-g2",
+                    },
+                    {
+                        "event_id": "other-person",
+                        "source": "subagent",
+                        "task_state": "completed",
+                        "report_state": "pending",
+                        "origin_session_id": "hermes-onebotv11+private+99999",
+                    },
+                ]
+
+        result = get_background_tasks_impl(
+            GetBackgroundTasksInput(adapter="milky", user_id=USER),
+            outbox=_Outbox(),
+            scope=CallerScope.dev(),
+            running_sources=[],
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            [item.event_id for item in result.reports], ["legacy-onebot"],
+            "旧 OneBot 登记在当前 Milky 调用下仍属于本会话；别人不混进来",
+        )
+
+
+class StaleDriverSwitchTests(_Base):
+    """同进程切换驱动：已下线驱动的运行时记忆不得压过当前连接／路由。
+
+    真实故障：milky 真实事件登记过组件 → milky 下线，onebotv11 连上并按交付台账
+    恢复（synthetic）路由 → 本 scope 还没收到新的真实入站消息前，``known_sessions``
+    / ``idle_expired`` / 后台唤醒仍拿已下线的 milky：唤醒走 ``wake_rejected`` 反复
+    重试，T1 把交付栅栏落到 ``milky:group:…`` 而不是当前 onebotv11 的 scope。
+    """
+
+    def test_stale_memory_yields_to_current_route(self) -> None:
+        key = f"hermes-{GROUP_ID}"
+        self.store.put(GROUP_ID, key, 0, now=1.0)
+        with patch.object(session_mod, "_live_transports", lambda domain: ["onebotv11"]):
+            manager = self.new_manager()
+            # 真实 milky 事件先到：运行时登记 milky 组件。
+            self.assertEqual(manager.get_session_key("milky", False, "u1", GROUP), key)
+            manager.mark_activity("milky", False, "u1", GROUP)
+            before = self._dump()
+            # milky 下线；onebotv11 在线并按交付台账恢复 synthetic 路由。
+            self.route("onebotv11", synthetic=True)
+            rows = manager.known_sessions()
+            expired = manager.idle_expired(0, now=1e12)
+            resolved = manager.resolve_adapter_for_domain(
+                SESSION_DOMAIN_QQTPC, False, "", GROUP
+            )
+        self.assertEqual([row[1] for row in rows], ["onebotv11"], "旧驱动已下线，改用当前路由")
+        self.assertEqual([comp[0] for _, comp in expired], ["onebotv11"])
+        self.assertEqual(resolved, "onebotv11")
+        self.assertEqual(self._dump(), before, "解析真实 adapter 不改会话库")
+
+    def test_stale_memory_without_current_fact_is_skipped(self) -> None:
+        key = f"hermes-{GROUP_ID}"
+        self.store.put(GROUP_ID, key, 0, now=1.0)
+        with patch.object(session_mod, "_live_transports", lambda domain: []):
+            manager = self.new_manager()
+            self.assertEqual(manager.get_session_key("milky", False, "u1", GROUP), key)
+            manager.mark_activity("milky", False, "u1", GROUP)
+            before = self._dump()
+            rows = manager.known_sessions()
+            expired = manager.idle_expired(0, now=1e12)
+            resolved = manager.resolve_adapter_for_domain(
+                SESSION_DOMAIN_QQTPC, False, "", GROUP
+            )
+        self.assertEqual(rows, [], "旧驱动已下线且无路由：按等待语义跳过，不回落旧协议")
+        self.assertEqual(expired, [])
+        self.assertIsNone(resolved)
+        self.assertEqual(self._dump(), before)
+
+    def test_memory_kept_while_driver_is_current(self) -> None:
+        with patch.object(session_mod, "_live_transports", lambda domain: ["milky"]):
+            manager = self.new_manager()
+            manager.get_session_key("milky", False, "u1", GROUP)
+            self.assertEqual([row[1] for row in manager.known_sessions()], ["milky"])
+            self.assertEqual(
+                manager.resolve_adapter_for_domain(SESSION_DOMAIN_QQTPC, False, "", GROUP),
+                "milky",
+            )
+        # 真正切换：新驱动在线真实事件到达，记忆随事件更新。
+        with patch.object(session_mod, "_live_transports", lambda domain: ["onebotv11"]):
+            manager.get_session_key("onebotv11", False, "u1", GROUP)
+            self.assertEqual([row[1] for row in manager.known_sessions()], ["onebotv11"])
+            self.assertEqual(
+                manager.resolve_adapter_for_domain(SESSION_DOMAIN_QQTPC, False, "", GROUP),
+                "onebotv11",
+            )
+
+    def test_memory_accepted_when_registry_has_current_route(self) -> None:
+        with patch.object(session_mod, "_live_transports", lambda domain: []):
+            manager = self.new_manager()
+            manager.get_session_key("milky", False, "u1", GROUP)
+            self.route("milky")  # BotRegistry 现存路由本身就是当前事实
+            self.assertEqual(
+                manager.resolve_adapter_for_domain(SESSION_DOMAIN_QQTPC, False, "", GROUP),
+                "milky",
+            )
+            self.assertEqual([row[1] for row in manager.known_sessions()], ["milky"])
+
+    def test_t1_fence_follows_current_route_not_stale_memory(self) -> None:
+        class _Tracker:
+            def __init__(self) -> None:
+                self.scopes: list[str] = []
+
+            def fence_scope_generation(self, scope_key: str, fence_generation: int):
+                self.scopes.append(scope_key)
+                return {"deliveries": 0, "submissions": 0}
+
+        self.store.put(GROUP_ID, f"hermes-{GROUP_ID}", 0, now=1.0)
+        with patch.object(session_mod, "_live_transports", lambda domain: ["onebotv11"]):
+            manager = self.new_manager()
+            manager.get_session_key("milky", False, "u1", GROUP)
+            self.route("onebotv11", synthetic=True)
+            tracker = _Tracker()
+            manager.bind_run_tracker(tracker)
+            manager.clear_internal(GROUP_ID)
+        self.assertEqual(tracker.scopes, [f"onebotv11:group:{GROUP}"])
+
+    def test_official_qq_memory_is_not_gated_by_domain_resolution(self) -> None:
+        with patch.object(session_mod, "_live_transports", lambda domain: []):
+            manager = SessionManager()  # 纯内存，未绑库
+            manager.get_session_key("qq", False, "openid-1")
+            self.assertEqual([row[1] for row in manager.known_sessions()], ["qq"])
 
 
 if __name__ == "__main__":

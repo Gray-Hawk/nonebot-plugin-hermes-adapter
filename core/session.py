@@ -20,7 +20,7 @@ from .storage.session_key_store import (
 # 会话身份归一到 ``qqtpc``；真实 adapter 只是运行时路由事实（当前 Bot 连接／
 # 事件／BotRegistry），**不落库**，切换协议因此零人工迁移。
 SESSION_DOMAIN_QQTPC = "qqtpc"
-QQTPC_TRANSPORTS: tuple[str, ...] = ("onebotv11", "milky", "icqq")
+QQTPC_TRANSPORTS: tuple[str, ...] = ("onebotv11", "onebotv12", "milky", "icqq")
 # transport -> 业务会话域。未登记 adapter（QQ 官方 ``qq``、tg 等）不归一，
 # internal_id 原样带自己的 adapter 名，行为与改名前逐字一致。
 SESSION_DOMAIN_TRANSPORTS: dict[str, str] = {t: SESSION_DOMAIN_QQTPC for t in QQTPC_TRANSPORTS}
@@ -109,6 +109,14 @@ def _live_transports(domain: str) -> list[str]:
         if session_domain(name) == domain and name not in found:
             found.append(name)
     return found
+
+
+def _adapter_is_live(adapter_name: str) -> bool:
+    """某个真实 adapter 现在是否还有在线 Bot 连接(当前事实,非历史协议名)。"""
+    name = normalize_domain_tag(adapter_name)
+    if not name or is_session_domain(name):
+        return False
+    return name in _live_transports(session_domain(name))
 
 
 class SessionManager:
@@ -286,6 +294,34 @@ class SessionManager:
             return None
         return f"{domain}+{tail}"
 
+    def _component_is_current(
+        self, comp: tuple[str, bool, str, str | None]
+    ) -> bool:
+        """运行时记忆的组件是否仍是**当前**事实。
+
+        ``_components`` 只证明「当时」走过哪个驱动。协议切换后旧驱动可能已经
+        下线：只有它现在仍有在线 Bot 连接、或 ``BotRegistry`` 里该 scope 仍有
+        它的路由时，记忆才可以优先。否则返回 False，交给
+        ``resolve_adapter_for_domain`` 按当前连接／路由重新解析（解析不出来就是
+        None，按等待／跳过处理），绝不回落到旧协议名。
+        """
+        adapter, is_private, user_id, group_id = comp
+        if is_session_domain(adapter):
+            return False
+        scope = "private" if is_private else "group"
+        scope_id = str(user_id or "") if is_private else str(group_id or "")
+        if not scope_id:
+            return False
+        name = normalize_domain_tag(adapter)
+        registry = _runtime_bot_registry()
+        if registry is not None:
+            for reg_adapter, reg_scope, reg_id in registry.known():
+                if reg_scope != scope or str(reg_id) != scope_id:
+                    continue
+                if normalize_domain_tag(reg_adapter) == name:
+                    return True
+        return _adapter_is_live(adapter)
+
     def resolve_adapter_for_domain(
         self,
         domain: str,
@@ -299,7 +335,8 @@ class SessionManager:
 
         1. 本进程事件登记过的组件(``_components``):最近一次真实入站/出站
            已经证明该会话走哪个 adapter;协议切换时由 ``get_session_key`` 直接
-           覆盖,不需要迁移。
+           覆盖,不需要迁移。**但记忆只证明「当时」——该 adapter 现在已下线且
+           本 scope 没有它的现存路由时,记忆不是当前事实,继续走第 2/3 步。**
         2. ``BotRegistry`` 中该 (scope, scope_id) 的现存路由:真实感知 entry
            与 bot 连接恢复的 synthetic entry 都算;同一 scope 同时有两个不同
            adapter 路由时视为歧义,返回 None 交给等待/跳过。
@@ -316,7 +353,8 @@ class SessionManager:
         scope_id = str(user_id or "") if is_private else str(group_id or "")
         if not scope_id:
             return None
-        # 1) 本进程真实事件登记(同一 internal_id 只会有一个当前 adapter)
+        # 1) 本进程真实事件登记(同一 internal_id 只会有一个当前 adapter)。
+        # 已下线的旧驱动不算当前事实:否则切换后后台唤醒走死驱动、T1 栅栏落错 scope。
         for comp in self._components.values():
             adapter, c_private, c_user, c_group = comp
             if bool(c_private) != bool(is_private):
@@ -324,6 +362,8 @@ class SessionManager:
             if (str(c_user or "") if is_private else str(c_group or "")) != scope_id:
                 continue
             if is_session_domain(adapter) or session_domain(adapter) != tag:
+                continue
+            if not self._component_is_current(comp):
                 continue
             return adapter
         # 2) BotRegistry 现存路由(真实感知优先于 synthetic,但同域多驱动算歧义)
@@ -357,14 +397,20 @@ class SessionManager:
     def _components_for(self, internal_id: str) -> tuple[str, bool, str, str | None] | None:
         """T1 / known_sessions / 交付代际用的组件(adapter 位置必为真实 adapter)。
 
-        运行时登记的组件优先;重启后从 internal_id 反解,业务域名再按当前连接
+        运行时登记的组件优先——但只在该驱动仍是当前事实时(在线连接或现存路由);
+        已下线的旧驱动记忆不算,走反解 + 当前连接/路由解析。业务域名再按当前连接
         解析真实 adapter。解析不出来返回 None——宁可不参与 T1/投递轮询,也不
         拿 ``qqtpc`` 去查路由或调平台 API。
         """
         comp = self._components.get(internal_id)
-        if comp is not None:
-            return comp
         parsed = self._parse_internal_id(internal_id)
+        if comp is not None:
+            # 非业务域的 internal_id 自带真实 adapter 名,记忆就是事实。
+            if parsed is None or not is_session_domain(parsed[0]):
+                return comp
+            # 业务域:记忆只在旧驱动仍是当前事实时才可优先。
+            if self._component_is_current(comp):
+                return comp
         if parsed is None:
             return None
         domain_or_adapter = parsed[0]
@@ -634,7 +680,11 @@ class SessionManager:
 
     def mark_activity_group(self, adapter_name: str, group_id: str) -> None:
         """群级活动标记(push_message 用):群 session 固定共享,internal_id 即
-        会话域+group+group_id 唯一形态(QQTPC 协议体现为 qqtpc+group+…)。"""
+        会话域+group+group_id 唯一形态(QQTPC 协议体现为 qqtpc+group+…)。
+
+        只在已有活动基准时刷新,不主动建立基线:只有 push、从没 chat 过的会话
+        不参与 T1 空闲清理(比建立基线更保守,不会被 T1 清掉)。
+        """
         internal_id = self._get_internal_id(adapter_name, False, "", group_id)
         if internal_id in self._last_activity:
             self._last_activity[internal_id] = time.time()
