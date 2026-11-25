@@ -5,6 +5,12 @@ priority=1 dispatch: 适配器特定 notice 事件 → 合成伪消息 → 复�
 **CLAUDE.md 规则例外**: 本文件是仅有的允许 import 适配器特定类型的位置。
 - 仅在 dispatch 函数内部 try-import (惰性)
 - 失败 (ImportError) 即 no-op,不影响其他平台
+
+当前支持两种 QQ 协议：
+
+* OneBot v11：``PokeNotifyEvent``（戳一戳）与 ``GroupIncreaseNoticeEvent``（入群）
+* Milky：``FriendNudgeEvent`` / ``GroupNudgeEvent``（戳一戳）——同样合成既有的
+  ``[poke] … 戳了你一下`` 语义，复用「谁戳谁」的既有处理，不另造回复流程。
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ import nonebot_plugin_alconna as alconna
 from nonebot import logger, on_notice
 from nonebot.adapters import Bot, Event
 
+from ..core import qqbot_api
 from ..core.chat_config import load_chat_config
 from ..core.message_origin import MessageSource
 from ..utils import check_isolation, get_adapter_name
@@ -29,19 +36,22 @@ def _now_ms() -> int:
 
 @notice_handler.handle()
 async def dispatch(bot: Bot, event: Event):
-    """OneBot v11 notice 事件分发入口。
+    """notice 事件分发入口。
 
     早期 return:
-      - adapter != OneBot V11
-      - ImportError (onebot adapter 未装)
+      - adapter 既不是 Milky 也不是 OneBot V11
+      - ImportError (对应 adapter 未装)
 
     戳一戳固定开启(语义等同 @ 的隐式激活),入群迎新仍受 greet_on_join 门控。
     """
-    greet_on_join = load_chat_config().greet_on_join
-
     adapter_name = get_adapter_name(bot)
-    if adapter_name != "onebotv11":
+    if adapter_name == qqbot_api.MILKY:
+        await _dispatch_milky(bot, event)
         return
+    if adapter_name != qqbot_api.ONEBOT:
+        return
+
+    greet_on_join = load_chat_config().greet_on_join
 
     try:
         from nonebot.adapters.onebot.v11 import (
@@ -53,32 +63,78 @@ async def dispatch(bot: Bot, event: Event):
         return
 
     if isinstance(event, PokeNotifyEvent):
-        await _handle_poke(bot, event)
+        # 只处理「别人戳 bot」：target 不是 bot 本体的静默丢弃。
+        if str(event.target_id) != str(bot.self_id):
+            return
+        await _handle_poke(
+            bot,
+            event,
+            adapter_name=qqbot_api.ONEBOT,
+            user_id=str(event.user_id),
+            group_id=str(event.group_id) if event.group_id else None,
+        )
     elif isinstance(event, GroupIncreaseNoticeEvent) and greet_on_join:
         await _handle_member_join(bot, event)
 
 
-async def _handle_poke(bot: Bot, event) -> None:
-    """戳一戳: 仅戳 bot 自己时触发,合成 `[poke] 戳了你一下`。"""
-    # OneBot v11 的 target_id/self_id/user_id 都是 int,统一字符串后比较
-    if str(event.target_id) != str(bot.self_id):
+async def _dispatch_milky(bot: Bot, event: Event) -> None:
+    """Milky notice 分发：只接戳一戳（入群事件语义与 OneBot 不同,本轮不扩）。
+
+    Milky 的 nudge 语义（``nonebot/adapters/milky/event.py``）：
+
+    * ``FriendNudgeEvent``：``is_self_receive`` = 好友戳了 bot；``is_self_send`` =
+      bot 自己戳好友（自己动作的回显），后者不得当成「有人戳 bot」。
+    * ``GroupNudgeEvent``：``sender_id`` 戳 ``receiver_id``；只有
+      ``receiver_id == bot.self_id`` 且 ``sender_id != bot.self_id`` 才算戳 bot。
+    """
+    try:
+        from nonebot.adapters.milky.event import FriendNudgeEvent, GroupNudgeEvent
+    except ImportError:
+        logger.debug("[HERMES notice] Milky adapter not installed; skip")
         return
-    if str(event.user_id) == str(bot.self_id):
+
+    if isinstance(event, FriendNudgeEvent):
+        if not event.data.is_self_receive or event.data.is_self_send:
+            return
+        await _handle_poke(
+            bot,
+            event,
+            adapter_name=qqbot_api.MILKY,
+            user_id=str(event.data.user_id),
+            group_id=None,
+        )
+    elif isinstance(event, GroupNudgeEvent):
+        if str(event.data.receiver_id) != str(bot.self_id):
+            return
+        await _handle_poke(
+            bot,
+            event,
+            adapter_name=qqbot_api.MILKY,
+            user_id=str(event.data.sender_id),
+            group_id=str(event.data.group_id),
+        )
+
+
+async def _handle_poke(
+    bot: Bot, event: Event, *, adapter_name: str, user_id: str, group_id: str | None
+) -> None:
+    """戳一戳: 仅戳 bot 自己时触发,合成 `[poke] 戳了你一下`。"""
+    # 两种协议的 id 都是 int,统一字符串后比较
+    if str(user_id) == str(bot.self_id):
         return  # bot 戳自己(罕见),跳过
 
-    user_id = str(event.user_id)
-    group_id = str(event.group_id) if event.group_id else None
-
-    target = _build_target(adapter_name="onebotv11", user_id=user_id, group_id=group_id)
+    target = _build_target(adapter_name=adapter_name, user_id=user_id, group_id=group_id)
     if not check_isolation(event, target):
         return
 
-    nickname = await _resolve_nickname(bot, user_id=user_id, group_id=group_id)
+    nickname = await _resolve_nickname(
+        bot, adapter_name=adapter_name, user_id=user_id, group_id=group_id
+    )
 
     await route_synthesized_input(
         bot=bot,
         target=target,
-        adapter_name="onebotv11",
+        adapter_name=adapter_name,
         user_id=user_id,
         group_id=group_id,
         nickname=nickname,
@@ -99,16 +155,18 @@ async def _handle_member_join(bot: Bot, event) -> None:
     user_id = str(event.user_id)
     group_id = str(event.group_id)
 
-    target = _build_target(adapter_name="onebotv11", user_id=user_id, group_id=group_id)
+    target = _build_target(adapter_name=qqbot_api.ONEBOT, user_id=user_id, group_id=group_id)
     if not check_isolation(event, target):
         return
 
-    nickname = await _resolve_nickname(bot, user_id=user_id, group_id=group_id)
+    nickname = await _resolve_nickname(
+        bot, adapter_name=qqbot_api.ONEBOT, user_id=user_id, group_id=group_id
+    )
 
     await route_synthesized_input(
         bot=bot,
         target=target,
-        adapter_name="onebotv11",
+        adapter_name=qqbot_api.ONEBOT,
         user_id=user_id,
         group_id=group_id,
         nickname=nickname,
@@ -121,33 +179,30 @@ async def _handle_member_join(bot: Bot, event) -> None:
 
 
 # 昵称解析短 TTL 缓存(本部署补丁):戳一戳/入群事件此前每次都实时打 API
-# (no_cache=True),刷屏/入群潮时调用放大。TTL 内同一 (群, 用户) 复用结果;
+# (no_cache=True),刷屏/入群潮时调用放大。TTL 内同一 (adapter, 群, 用户) 复用结果;
 # 失败回退不落缓存,下次事件自然重试。
 _NICKNAME_TTL_S = 300.0
 _NICKNAME_CACHE_MAX = 512
-_nickname_cache: dict[tuple[str, str], tuple[str, float]] = {}
+_nickname_cache: dict[tuple[str, str, str], tuple[str, float]] = {}
 
 
-async def _resolve_nickname(bot: Bot, *, user_id: str, group_id):
-    """OneBot v11 API 拿昵称,失败 fallback 用 user_id 字符串。"""
-    key = (str(group_id) if group_id else "", user_id)
+async def _resolve_nickname(
+    bot: Bot, *, adapter_name: str, user_id: str, group_id: str | None
+):
+    """按协议取群名片/昵称(见 ``core/qqbot_api.resolve_display_name``),失败回退 user_id。"""
+    key = (adapter_name, str(group_id) if group_id else "", user_id)
     now = time.monotonic()
     cached = _nickname_cache.get(key)
     if cached is not None and cached[1] > now:
         return cached[0]
     try:
-        if group_id:
-            info = await bot.call_api(
-                "get_group_member_info",
-                group_id=int(group_id),
-                user_id=int(user_id),
-            )
-            nickname = info.get("card") or info.get("nickname") or user_id
-        else:
-            info = await bot.call_api("get_stranger_info", user_id=int(user_id))
-            nickname = info.get("nickname") or user_id
+        nickname = await qqbot_api.resolve_display_name(
+            bot, adapter_name=adapter_name, user_id=user_id, group_id=group_id
+        )
     except Exception as e:
         logger.debug(f"[HERMES notice] nickname resolve failed for {user_id}: {e}")
+        return user_id
+    if not nickname:
         return user_id
     if len(_nickname_cache) >= _NICKNAME_CACHE_MAX:
         for k in [k for k, (_n, exp) in _nickname_cache.items() if exp <= now]:
@@ -159,7 +214,7 @@ async def _resolve_nickname(bot: Bot, *, user_id: str, group_id):
     return nickname
 
 
-def _build_target(*, adapter_name: str, user_id: str, group_id):
+def _build_target(*, adapter_name: str, user_id: str, group_id: str | None):
     """构造 alconna.Target——notice handler 不在 alconna 消息上下文里,要自己造。"""
     if group_id:
         return alconna.Target(id=group_id, private=False, adapter=adapter_name)

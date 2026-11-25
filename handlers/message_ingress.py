@@ -13,7 +13,7 @@ from nonebot import logger
 from nonebot.adapters import Event
 
 from ..config import plugin_config
-from ..core import user_lists
+from ..core import qqbot_api, user_lists
 from ..core.chat_config import load_chat_config
 
 
@@ -43,36 +43,21 @@ def _is_bot_at(uni_msg: alconna.UniMessage, bot_self_id: str) -> bool:
 
 
 def _has_at_bot_in_original(event: Event, bot_self_id: str) -> bool:
-    """检查 event.original_message 里是否有 @bot 段。
+    """检查 event.original_message 里是否有 @bot 段（两种协议的段形状都认）。
 
-    OneBot v11 adapter 在分发事件前调 `_check_at_me`,把消息**开头/结尾**的 @bot 段
-    从 event.message 中删除并置 to_me=True。下游 alconna 从 event.message 解析
-    UniMessage 时已看不到那个 @bot,导致:
+    OneBot v11 与 Milky adapter 都在分发事件前把消息**开头/结尾**的 @bot 段从
+    event.message 中删除并置 to_me=True。下游 alconna 从 event.message 解析
+    UniMessage 时已看不到那个 @bot，导致:
       - `_is_bot_at(uni_msg, ...)` 返回 False
       - 「@bot @other 怎么看」被当成只 @ 他人,is_mentioned 错误地为 False
-      - chat 不触发
+      - 纯 @bot（无正文）正文变空串，被空消息闸门吞掉
 
-    event.original_message 是 v11 在 _check_at_me 跑之前深拷贝的,@bot 还在那里。
-    本函数兜底翻原始消息,告诉上游「用户确实 @ 了我」。
-
-    非 OneBot adapter 一般无此剥离行为、不一定保留 original_message;`getattr` +
-    try/except 让其他 adapter 安全返回 False(不退化原行为)。
+    event.original_message 是适配器剥段之前深拷贝的,@bot 还在那里。段形状差异
+    （OneBot 的 type=at/data.qq 与 Milky 的 type=mention/data.user_id）收口在
+    core/qqbot_api；本函数只保留历史入口名，供 message.py / message_media.py 调用。
     """
-    original = getattr(event, "original_message", None)
-    if not original:
-        return False
-    try:
-        for seg in original:
-            if getattr(seg, "type", None) != "at":
-                continue
-            data = getattr(seg, "data", None)
-            if not isinstance(data, dict):
-                continue
-            if str(data.get("qq", "")) == str(bot_self_id):
-                return True
-    except Exception:
-        pass
-    return False
+
+    return qqbot_api.has_at_bot_in_original(event, bot_self_id)
 
 
 def _msg_at_only_other_users(uni_msg: alconna.UniMessage, bot_self_id: str) -> bool:
@@ -158,12 +143,19 @@ def _extract_sender_nickname(event: Event, adapter_name: str) -> str | None:
     保持 cross-adapter,不 import adapter-specific 类型,全靠 getattr 链——
     各 adapter event 形状不一致,Python 重命名/缺失字段都吞掉。
 
-    覆盖的形状:
-    - OneBot v11/v12: event.sender.card(群名片) → event.sender.nickname
-    - QQ Official / Kook 等 .author: event.author.{global_name,nickname,username,name}
-    - Discord: event.member.nick(server 名片) → 同上 author 链兜底
-    - Telegram: event.from_.first_name + last_name → username
+    两种 QQ 协议的差异收口在 ``core/qqbot_api.sender_display_name``:
+    - OneBot v11/v12 在 ``event.sender``（``card`` → ``nickname``）
+    - Milky 在 ``event.data.sender``（群成员 ``Member.card`` → ``nickname``；好友只有 ``nickname``）
+
+    其余形状（QQ Official / Discord / Telegram 等）继续走下面的 getattr 链兜底,
+    不退化原有行为。
     """
+    platform_name = qqbot_api.sender_display_name(event)
+    if platform_name is not None:
+        n = _sanitize_nickname(platform_name)
+        if n:
+            return n
+
     sender = getattr(event, "sender", None)
     if sender is not None:
         n = _sanitize_nickname(getattr(sender, "card", None)) or _sanitize_nickname(getattr(sender, "nickname", None))

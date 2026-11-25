@@ -26,6 +26,7 @@ from .log_throttle import throttled_info
 from .media_config import load_media_config
 from .misc_config import load_misc_config
 from . import platform_compat
+from . import qqbot_api
 from .sticker_library import (
     StickerLibrary,
     StickerLibraryError,
@@ -538,53 +539,19 @@ async def send_local_files(
 
 
 def _extract_msg_id(item: object) -> str | None:
-    """从回执条目里抠出真正的消息 id。
+    """从回执条目里抠出真正的消息 id（协议差异见 ``core/qqbot_api``）。
 
-    OneBot v11 的 `Receipt.msg_ids` 装的是 call_api 的**原始返回 dict**
-    (`{"message_id": 12345, "message_id_v2": ...}`),不是裸 id——直接 str() 会得到
-    一串字典字面量,拿去做消息留痕/引用全是废号。这里按平台常见键取 id,裸标量
-    (其它 adapter 的形态)原样透传。
+    OneBot 的 ``{"message_id": …}`` 与 Milky 的 ``MessageResponse.message_seq`` 都在
+    兼容层归一成干净的十进制字符串，这里只做转发，避免两处实现漂移。
     """
 
-    if item is None:
-        return None
-    if isinstance(item, dict):
-        for key in ("message_id", "msg_id", "messageId", "id"):
-            value = item.get(key)
-            if value is None:
-                continue
-            text = str(value).strip()
-            if text:
-                return text
-        return None
-    value = getattr(item, "message_id", None)
-    if value is not None:
-        text = str(value).strip()
-        if text:
-            return text
-    # 平台模型型回执(QQ 官方 PostC2CMessagesReturn / PostGroupMessagesReturn):
-    # 消息 id 在 `.id`。有该属性就以它为准——`id=None` 表示「发了但拿不到号」,
-    # 必须如实回 None,不能 str(模型) 造一串 repr 冒充 id。
-    if hasattr(item, "id"):
-        value = getattr(item, "id", None)
-        text = str(value).strip() if value is not None else ""
-        return text or None
-    text = str(item).strip()
-    return text or None
+    return qqbot_api.extract_message_id(item)
 
 
 def _receipt_msg_ids(receipt: object) -> list[str]:
     """把 alconna Receipt.msg_ids 归一化成 list[str](真 id、剔除空值)。"""
 
-    raw = getattr(receipt, "msg_ids", None)
-    if not isinstance(raw, (list, tuple)):
-        return []
-    ids: list[str] = []
-    for item in raw:
-        msg_id = _extract_msg_id(item)
-        if msg_id:
-            ids.append(msg_id)
-    return ids
+    return qqbot_api.receipt_msg_ids(receipt)
 
 
 async def _send_unimsg(

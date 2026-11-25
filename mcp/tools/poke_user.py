@@ -1,10 +1,12 @@
 """poke_user: 独立的戳一戳动作（正文里不写任何 poke 标记）。
 
 戳一戳**只能独立使用**：它不是消息段，也不混在正文里。模型显式调用本工具，
-插件直接调 OneBot v11 的 ``send_poke`` 公开 API：
+插件经 ``core/qqbot_api.send_poke`` 调平台公开 API：
 
-* 群聊 ``send_poke(group_id, user_id)``（NapCat 群聊拒绝原生 poke 消息段）；
-* 私聊 ``send_poke(user_id)``。
+* OneBot v11：群聊 ``send_poke(group_id, user_id)``（NapCat 群聊拒绝原生 poke 消息段）；
+  私聊 ``send_poke(user_id)``；
+* Milky：私聊 ``send_friend_nudge(user_id, is_self=False)``、
+  群聊 ``send_group_nudge(group_id, user_id)``。
 
 目标判定、范围校验与群/私参数约定与 ``push_message`` 共用同一套
 （``validate_push_context`` + ``BotRegistry`` / ``_resolve_wake_route``）：
@@ -12,9 +14,9 @@
 私聊主动下行白名单里；调用方身份认不出就拒。自戳一律拒绝。
 
 结果如实反映平台回执：平台异常/拒绝记 ``platform_rejected``，网络结果不明记
-``unconfirmed``（不自动重试）。OneBot 适配器拒绝时把线形回执原样放进
-``ActionFailed.info``，其中的数值 ``retcode`` 照实带回；成功时适配器只返回
-``data``（``send_poke`` 为 ``null``），所以成功结果不带 ``retcode``，也不伪造 ``0``。
+``unconfirmed``（不自动重试）。适配器拒绝时把线形回执原样放进 ``ActionFailed.info``，
+其中的数值 ``retcode`` 照实带回；成功时两个协议都只返回无载荷回执，所以成功结果
+不带 ``retcode``，也不伪造 ``0``。
 """
 
 from __future__ import annotations
@@ -23,9 +25,9 @@ import time
 from typing import Literal
 
 from nonebot import get_bot, logger
-from nonebot.adapters.onebot.v11.exception import ActionFailed, NetworkError
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ...core import qqbot_api
 from ...core.routing import CallerScope
 from ...core import platform_compat
 from ..auth import PushContextError, validate_push_context
@@ -65,16 +67,6 @@ class PokeUserResult(BaseModel):
 
 def _failure(kind: ErrorKind, error: str, *, retcode: int | None = None) -> PokeUserResult:
     return PokeUserResult(ok=False, error=error, error_kind=kind, retcode=retcode)
-
-
-def _rejected_retcode(exc: ActionFailed) -> int | None:
-    """适配器以 ``ActionFailed(**回执)`` 保留线形拒绝回执，数值码就在 ``info`` 里。"""
-    info = getattr(exc, "info", None)
-    if isinstance(info, dict):
-        raw = info.get("retcode")
-        if isinstance(raw, int) and not isinstance(raw, bool):
-            return raw
-    return None
 
 
 def _resolve_target(inp: PokeUserInput, *, bot_registry):
@@ -145,14 +137,16 @@ async def poke_user_impl(
         return _failure("local_rejected", "refusing to poke the bot itself")
 
     try:
-        if inp.group_id is not None:
-            await bot.call_api(
-                "send_poke", group_id=int(inp.group_id.strip()), user_id=int(target_qq)
-            )
-        else:
-            await bot.call_api("send_poke", user_id=int(target_qq))
-    except ActionFailed as exc:
-        retcode = _rejected_retcode(exc)
+        await qqbot_api.send_poke(
+            bot,
+            adapter_name=inp.adapter,
+            group_id=inp.group_id.strip() if inp.group_id is not None else None,
+            user_id=target_qq,
+        )
+    except qqbot_api.UnsupportedOperation as exc:
+        return _failure("local_rejected", str(exc))
+    except qqbot_api.REJECTION_ERRORS as exc:
+        retcode = qqbot_api.rejected_retcode(exc)
         logger.warning(
             f"[MCP poke_user] 平台拒绝 adapter={inp.adapter} target={target_qq} "
             f"error={type(exc).__name__} retcode={retcode}"
@@ -162,7 +156,7 @@ async def poke_user_impl(
             "the platform refused this poke; permission or target state may apply",
             retcode=retcode,
         )
-    except (NetworkError, TimeoutError) as exc:
+    except qqbot_api.NETWORK_ERRORS as exc:
         logger.warning(
             f"[MCP poke_user] 结果不明 adapter={inp.adapter} target={target_qq} "
             f"error={type(exc).__name__}"

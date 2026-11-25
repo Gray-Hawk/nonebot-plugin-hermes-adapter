@@ -2,6 +2,10 @@
 
 模型只提供逻辑 ``m:id`` 与当前聊天；平台消息号由既有身份映射在内部解析。
 不做内容搜索、缺省最新或跨聊天补猜，也不在结果未知时自动重试。
+
+协议差异收口在 ``core/qqbot_api.recall_message``：OneBot 走 ``delete_msg``，
+Milky 走 ``recall_group_message`` / ``recall_private_message``（``message_seq``
+就是 P0-1 落库的同一个十进制外部 ID）。
 """
 
 from __future__ import annotations
@@ -10,9 +14,9 @@ import time
 from typing import Literal
 
 from nonebot import get_bot, logger
-from nonebot.adapters.onebot.v11.exception import ActionFailed, NetworkError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from ...core import qqbot_api
 from ...core.decision_contract import parse_reply_to
 from ...core.message_buffer import MessageBuffer
 from ...core.routing import CallerScope
@@ -150,12 +154,18 @@ async def recall_message_impl(
         platform_message_id = int(qq_message_id)
     except (TypeError, ValueError):
         return _failure(inp, "local_rejected", "stored platform receipt is invalid; recall refused")
-    if not hasattr(bot, "delete_msg"):
-        return _failure(inp, "local_rejected", "current bot does not support OneBot message recall")
 
     try:
-        await bot.delete_msg(message_id=platform_message_id)
-    except ActionFailed as exc:
+        await qqbot_api.recall_message(
+            bot,
+            adapter_name=inp.adapter,
+            group_id=inp.group_id,
+            user_id=inp.user_id,
+            message_id=platform_message_id,
+        )
+    except qqbot_api.UnsupportedOperation as exc:
+        return _failure(inp, "local_rejected", str(exc))
+    except qqbot_api.REJECTION_ERRORS as exc:
         logger.warning(
             "recall_message platform rejection: logical_id={} adapter={} error={}",
             logical_id,
@@ -167,7 +177,7 @@ async def recall_message_impl(
             "platform_rejected",
             "platform refused the recall; time limit, permission, or message state may apply",
         )
-    except (NetworkError, TimeoutError) as exc:
+    except qqbot_api.NETWORK_ERRORS as exc:
         logger.warning(
             "recall_message result unconfirmed: logical_id={} adapter={} error={}",
             logical_id,
