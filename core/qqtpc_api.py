@@ -1,4 +1,4 @@
-"""薄 QQ 协议兼容层：OneBot v11 与 Milky 的差异只在这里收敛。
+"""QQ Third-Party Client（QQTPC）薄兼容层：OneBot v11 与 Milky 的差异只在这里收敛。
 
 本次只收敛五项业务真正需要的能力（不重造机器人框架）：
 

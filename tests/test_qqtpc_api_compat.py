@@ -1,4 +1,4 @@
-"""薄 QQ 协议兼容层（``core/qqbot_api``）的结构级测试。
+"""QQ Third-Party Client（QQTPC）薄兼容层（``core/qqtpc_api``）的结构级测试。
 
 每个方法至少覆盖 OneBot v11 与 Milky 两侧，且两侧都用**真实**适配器对象：
 OneBot 用真 ``Bot.call_api`` → 只记录帧的 WebSocket；Milky 用真 ``Bot`` → 只回放
@@ -11,13 +11,13 @@ import asyncio
 import unittest
 from types import SimpleNamespace
 
-from tests import _qqbot_fixtures as fx
+from tests import _qqtpc_fixtures as fx
 from tests import _bootstrap  # noqa: F401
 
 from nonebot.adapters.milky.bot import _check_at_me
 from nonebot.adapters.milky.model.api import MessageResponse
 
-from nonebot_plugin_hermes_adapter.core import qqbot_api
+from nonebot_plugin_hermes_adapter.core import qqtpc_api
 
 GROUP = fx.GROUP
 
@@ -34,27 +34,27 @@ class ReceiptIdTests(unittest.TestCase):
     def test_milky_message_response_gives_decimal_message_seq(self) -> None:
         response = MessageResponse(message_seq=23097, time=1795538642)
         self.assertEqual(str(response), "message_seq=23097 time=1795538642")  # 基线脏形态
-        self.assertEqual(qqbot_api.extract_message_id(response), "23097")
+        self.assertEqual(qqtpc_api.extract_message_id(response), "23097")
 
     def test_milky_dict_payload_gives_message_seq(self) -> None:
         self.assertEqual(
-            qqbot_api.extract_message_id({"message_seq": 23097, "time": 1795538642}),
+            qqtpc_api.extract_message_id({"message_seq": 23097, "time": 1795538642}),
             "23097",
         )
 
     def test_onebot_dict_payload_gives_message_id(self) -> None:
         self.assertEqual(
-            qqbot_api.extract_message_id(
+            qqtpc_api.extract_message_id(
                 {"message_id": 7180000001, "message_id_v2": "x"}
             ),
             "7180000001",
         )
 
     def test_scalars_pass_through_and_empty_values_are_none(self) -> None:
-        self.assertEqual(qqbot_api.extract_message_id(12345), "12345")
-        self.assertEqual(qqbot_api.extract_message_id(" 67890 "), "67890")
-        self.assertIsNone(qqbot_api.extract_message_id(None))
-        self.assertIsNone(qqbot_api.extract_message_id({}))
+        self.assertEqual(qqtpc_api.extract_message_id(12345), "12345")
+        self.assertEqual(qqtpc_api.extract_message_id(" 67890 "), "67890")
+        self.assertIsNone(qqtpc_api.extract_message_id(None))
+        self.assertIsNone(qqtpc_api.extract_message_id({}))
 
     def test_receipt_ids_normalizes_both_protocols(self) -> None:
         receipt = SimpleNamespace(
@@ -66,7 +66,7 @@ class ReceiptIdTests(unittest.TestCase):
             ]
         )
         self.assertEqual(
-            qqbot_api.receipt_msg_ids(receipt), ["7180000001", "23097"]
+            qqtpc_api.receipt_msg_ids(receipt), ["7180000001", "23097"]
         )
 
 
@@ -75,25 +75,25 @@ class MentionTests(unittest.TestCase):
 
     def test_milky_mention_shape_is_detected(self) -> None:
         event = fx.milky_group_message(segments=[fx.mention(int(fx.MILKY_SELF))])
-        self.assertTrue(qqbot_api.has_at_bot_in_original(event, fx.MILKY_SELF))
-        self.assertFalse(qqbot_api.has_at_bot_in_original(event, "10002"))
+        self.assertTrue(qqtpc_api.has_at_bot_in_original(event, fx.MILKY_SELF))
+        self.assertFalse(qqtpc_api.has_at_bot_in_original(event, "10002"))
 
     def test_milky_mention_survives_adapter_strip(self) -> None:
         event = fx.milky_group_message(segments=[fx.mention(int(fx.MILKY_SELF))])
         _check_at_me(_milky_bot(), event)
         self.assertEqual(event.get_plaintext().strip(), "")  # 正文已被剥空
-        self.assertTrue(qqbot_api.has_at_bot_in_original(event, fx.MILKY_SELF))
+        self.assertTrue(qqtpc_api.has_at_bot_in_original(event, fx.MILKY_SELF))
 
     def test_onebot_at_shape_is_detected(self) -> None:
         event = fx.milky_group_message(segments=[fx.text("x")])
         # OneBot v11 的段形状：type=at / data.qq（这里只验解析口径）
         seg = SimpleNamespace(type="at", data={"qq": fx.ONEBOT_SELF})
-        self.assertEqual(qqbot_api.at_target_of(seg), fx.ONEBOT_SELF)
-        self.assertIsNone(qqbot_api.at_target_of(SimpleNamespace(type="face", data={})))
+        self.assertEqual(qqtpc_api.at_target_of(seg), fx.ONEBOT_SELF)
+        self.assertIsNone(qqtpc_api.at_target_of(SimpleNamespace(type="face", data={})))
 
     def test_events_without_original_message_are_safe(self) -> None:
         self.assertFalse(
-            qqbot_api.has_at_bot_in_original(SimpleNamespace(), fx.MILKY_SELF)
+            qqtpc_api.has_at_bot_in_original(SimpleNamespace(), fx.MILKY_SELF)
         )
 
 
@@ -112,25 +112,25 @@ class SenderInfoTests(unittest.TestCase):
 
     def test_milky_group_member_prefers_card_then_nickname(self) -> None:
         event = fx.milky_group_message(segments=[fx.text("hi")], card="群名片", nickname="昵称")
-        self.assertEqual(qqbot_api.sender_display_name(event), "群名片")
+        self.assertEqual(qqtpc_api.sender_display_name(event), "群名片")
         blank = fx.milky_group_message(segments=[fx.text("hi")], card="", nickname="昵称")
-        self.assertEqual(qqbot_api.sender_display_name(blank), "昵称")
+        self.assertEqual(qqtpc_api.sender_display_name(blank), "昵称")
 
     def test_milky_private_reads_nickname(self) -> None:
         event = fx.milky_friend_message(segments=[fx.text("hi")], nickname="好友昵称")
-        self.assertEqual(qqbot_api.sender_display_name(event), "好友昵称")
+        self.assertEqual(qqtpc_api.sender_display_name(event), "好友昵称")
 
     def test_milky_blank_profile_returns_none(self) -> None:
         event = fx.milky_group_message(segments=[fx.text("hi")], card="  ", nickname="")
-        self.assertIsNone(qqbot_api.sender_display_name(event))
+        self.assertIsNone(qqtpc_api.sender_display_name(event))
 
     def test_onebot_sender_card_then_nickname(self) -> None:
         event = SimpleNamespace(sender=SimpleNamespace(card="名片", nickname="昵称"))
-        self.assertEqual(qqbot_api.sender_display_name(event), "名片")
+        self.assertEqual(qqtpc_api.sender_display_name(event), "名片")
         event = SimpleNamespace(sender=SimpleNamespace(card=None, nickname="昵称"))
-        self.assertEqual(qqbot_api.sender_display_name(event), "昵称")
+        self.assertEqual(qqtpc_api.sender_display_name(event), "昵称")
         self.assertIsNone(
-            qqbot_api.sender_display_name(SimpleNamespace(sender=None, data=None))
+            qqtpc_api.sender_display_name(SimpleNamespace(sender=None, data=None))
         )
 
 
@@ -140,10 +140,10 @@ class PokeTests(unittest.TestCase):
     def test_onebot_group_and_private_use_send_poke(self) -> None:
         bot, socket = fx.onebot_bot({"status": "ok", "retcode": 0, "data": None})
         asyncio.run(
-            qqbot_api.send_poke(bot, adapter_name="onebotv11", group_id=GROUP, user_id="10001")
+            qqtpc_api.send_poke(bot, adapter_name="onebotv11", group_id=GROUP, user_id="10001")
         )
         asyncio.run(
-            qqbot_api.send_poke(bot, adapter_name="onebotv11", group_id=None, user_id="10001")
+            qqtpc_api.send_poke(bot, adapter_name="onebotv11", group_id=None, user_id="10001")
         )
         self.assertEqual([f["action"] for f in socket.frames], ["send_poke", "send_poke"])
         self.assertEqual(
@@ -154,7 +154,7 @@ class PokeTests(unittest.TestCase):
     def test_milky_group_uses_group_nudge(self) -> None:
         harness = fx.MilkyHarness()
         asyncio.run(
-            qqbot_api.send_poke(
+            qqtpc_api.send_poke(
                 harness.bot, adapter_name="milky", group_id=GROUP, user_id="10001"
             )
         )
@@ -166,7 +166,7 @@ class PokeTests(unittest.TestCase):
     def test_milky_private_uses_friend_nudge_with_is_self_false(self) -> None:
         harness = fx.MilkyHarness()
         asyncio.run(
-            qqbot_api.send_poke(
+            qqtpc_api.send_poke(
                 harness.bot, adapter_name="milky", group_id=None, user_id="10001"
             )
         )
@@ -182,7 +182,7 @@ class RecallTests(unittest.TestCase):
     def test_milky_group_recall_uses_group_id_and_message_seq(self) -> None:
         harness = fx.MilkyHarness()
         asyncio.run(
-            qqbot_api.recall_message(
+            qqtpc_api.recall_message(
                 harness.bot,
                 adapter_name="milky",
                 group_id=GROUP,
@@ -198,7 +198,7 @@ class RecallTests(unittest.TestCase):
     def test_milky_private_recall_uses_user_id_and_message_seq(self) -> None:
         harness = fx.MilkyHarness()
         asyncio.run(
-            qqbot_api.recall_message(
+            qqtpc_api.recall_message(
                 harness.bot,
                 adapter_name="milky",
                 group_id=None,
@@ -214,7 +214,7 @@ class RecallTests(unittest.TestCase):
     def test_onebot_recall_uses_delete_msg(self) -> None:
         bot, socket = fx.onebot_bot({"status": "ok", "retcode": 0, "data": None})
         asyncio.run(
-            qqbot_api.recall_message(
+            qqtpc_api.recall_message(
                 bot,
                 adapter_name="onebotv11",
                 group_id=GROUP,
@@ -226,9 +226,9 @@ class RecallTests(unittest.TestCase):
         self.assertEqual(socket.frames[0]["params"], {"message_id": 7180000001})
 
     def test_missing_recall_api_is_an_explicit_unsupported_error(self) -> None:
-        with self.assertRaises(qqbot_api.UnsupportedOperation):
+        with self.assertRaises(qqtpc_api.UnsupportedOperation):
             asyncio.run(
-                qqbot_api.recall_message(
+                qqtpc_api.recall_message(
                     _FailingBot(),
                     adapter_name="onebotv11",
                     group_id=GROUP,
@@ -258,7 +258,7 @@ class NicknameResolveTests(unittest.TestCase):
             }
         }
         name = asyncio.run(
-            qqbot_api.resolve_display_name(
+            qqtpc_api.resolve_display_name(
                 harness.bot, adapter_name="milky", user_id="10001", group_id=GROUP
             )
         )
@@ -281,7 +281,7 @@ class NicknameResolveTests(unittest.TestCase):
             }
         }
         name = asyncio.run(
-            qqbot_api.resolve_display_name(
+            qqtpc_api.resolve_display_name(
                 harness.bot, adapter_name="milky", user_id="10001"
             )
         )
@@ -299,7 +299,7 @@ class NicknameResolveTests(unittest.TestCase):
             }
         )
         name = asyncio.run(
-            qqbot_api.resolve_display_name(
+            qqtpc_api.resolve_display_name(
                 bot, adapter_name="onebotv11", user_id="10001", group_id=GROUP
             )
         )
@@ -312,9 +312,9 @@ class NicknameResolveTests(unittest.TestCase):
 
 class ProtocolTagTests(unittest.TestCase):
     def test_protocol_tag_is_normalized_like_the_router(self) -> None:
-        self.assertEqual(qqbot_api.protocol("Milky"), qqbot_api.MILKY)
-        self.assertEqual(qqbot_api.protocol("onebot.v11"), qqbot_api.ONEBOT)
-        self.assertEqual(qqbot_api.protocol("  "), "")
+        self.assertEqual(qqtpc_api.protocol("Milky"), qqtpc_api.MILKY)
+        self.assertEqual(qqtpc_api.protocol("onebot.v11"), qqtpc_api.ONEBOT)
+        self.assertEqual(qqtpc_api.protocol("  "), "")
 
 
 if __name__ == "__main__":

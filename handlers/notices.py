@@ -21,7 +21,7 @@ import nonebot_plugin_alconna as alconna
 from nonebot import logger, on_notice
 from nonebot.adapters import Bot, Event
 
-from ..core import qqbot_api
+from ..core import qqtpc_api
 from ..core.chat_config import load_chat_config
 from ..core.message_origin import MessageSource
 from ..utils import check_isolation, get_adapter_name
@@ -45,10 +45,10 @@ async def dispatch(bot: Bot, event: Event):
     戳一戳固定开启(语义等同 @ 的隐式激活),入群迎新仍受 greet_on_join 门控。
     """
     adapter_name = get_adapter_name(bot)
-    if adapter_name == qqbot_api.MILKY:
+    if adapter_name == qqtpc_api.MILKY:
         await _dispatch_milky(bot, event)
         return
-    if adapter_name != qqbot_api.ONEBOT:
+    if adapter_name != qqtpc_api.ONEBOT:
         return
 
     greet_on_join = load_chat_config().greet_on_join
@@ -69,7 +69,7 @@ async def dispatch(bot: Bot, event: Event):
         await _handle_poke(
             bot,
             event,
-            adapter_name=qqbot_api.ONEBOT,
+            adapter_name=qqtpc_api.ONEBOT,
             user_id=str(event.user_id),
             group_id=str(event.group_id) if event.group_id else None,
         )
@@ -99,7 +99,7 @@ async def _dispatch_milky(bot: Bot, event: Event) -> None:
         await _handle_poke(
             bot,
             event,
-            adapter_name=qqbot_api.MILKY,
+            adapter_name=qqtpc_api.MILKY,
             user_id=str(event.data.user_id),
             group_id=None,
         )
@@ -109,7 +109,7 @@ async def _dispatch_milky(bot: Bot, event: Event) -> None:
         await _handle_poke(
             bot,
             event,
-            adapter_name=qqbot_api.MILKY,
+            adapter_name=qqtpc_api.MILKY,
             user_id=str(event.data.sender_id),
             group_id=str(event.data.group_id),
         )
@@ -155,18 +155,18 @@ async def _handle_member_join(bot: Bot, event) -> None:
     user_id = str(event.user_id)
     group_id = str(event.group_id)
 
-    target = _build_target(adapter_name=qqbot_api.ONEBOT, user_id=user_id, group_id=group_id)
+    target = _build_target(adapter_name=qqtpc_api.ONEBOT, user_id=user_id, group_id=group_id)
     if not check_isolation(event, target):
         return
 
     nickname = await _resolve_nickname(
-        bot, adapter_name=qqbot_api.ONEBOT, user_id=user_id, group_id=group_id
+        bot, adapter_name=qqtpc_api.ONEBOT, user_id=user_id, group_id=group_id
     )
 
     await route_synthesized_input(
         bot=bot,
         target=target,
-        adapter_name=qqbot_api.ONEBOT,
+        adapter_name=qqtpc_api.ONEBOT,
         user_id=user_id,
         group_id=group_id,
         nickname=nickname,
@@ -189,14 +189,14 @@ _nickname_cache: dict[tuple[str, str, str], tuple[str, float]] = {}
 async def _resolve_nickname(
     bot: Bot, *, adapter_name: str, user_id: str, group_id: str | None
 ):
-    """按协议取群名片/昵称(见 ``core/qqbot_api.resolve_display_name``),失败回退 user_id。"""
+    """按协议取群名片/昵称(见 ``core/qqtpc_api.resolve_display_name``),失败回退 user_id。"""
     key = (adapter_name, str(group_id) if group_id else "", user_id)
     now = time.monotonic()
     cached = _nickname_cache.get(key)
     if cached is not None and cached[1] > now:
         return cached[0]
     try:
-        nickname = await qqbot_api.resolve_display_name(
+        nickname = await qqtpc_api.resolve_display_name(
             bot, adapter_name=adapter_name, user_id=user_id, group_id=group_id
         )
     except Exception as e:

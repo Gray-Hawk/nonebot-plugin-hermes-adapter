@@ -95,14 +95,24 @@ def _session_prefixes(adapter: str, is_private: bool, target_id: str) -> list[st
     session key 按真实后端命名：前缀取自 ``session_manager.session_key_prefixes()``
     （当前后端在前）。Hermes 后端只有 `hermes-`；换成别的后端前缀时还要认升级前
     登记的 `hermes-*`，否则老事件会被当成别人的。
+
+    QQTPC 协议另外要认两种会话形态：归一后的业务会话域（``hermes-qqtpc+…``，新派生
+    key）与迁移前登记的真实 transport（``hermes-onebotv11+…``）。旧登记不能当成
+    别人的，因此两种都列；未归一的 adapter（QQ 官方等）只有一种。
     """
-    from ...core.session import session_manager
+    from ...core.session import session_domain, session_manager
 
     kind = "private" if is_private else "group"
-    return [
-        f"{prefix}-{adapter}+{kind}+{target_id}"
-        for prefix in session_manager.session_key_prefixes()
-    ]
+    domains = [session_domain(adapter)]
+    if domains[0] != adapter:
+        domains.append(adapter)
+    prefixes: list[str] = []
+    for prefix in session_manager.session_key_prefixes():
+        for domain in domains:
+            item = f"{prefix}-{domain}+{kind}+{target_id}"
+            if item not in prefixes:
+                prefixes.append(item)
+    return prefixes
 
 
 def _belongs(origin_session_id: str, prefixes: str | Sequence[str]) -> bool:

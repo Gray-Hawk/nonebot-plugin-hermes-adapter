@@ -26,7 +26,7 @@ from .log_throttle import throttled_info
 from .media_config import load_media_config
 from .misc_config import load_misc_config
 from . import platform_compat
-from . import qqbot_api
+from . import qqtpc_api
 from .sticker_library import (
     StickerLibrary,
     StickerLibraryError,
@@ -539,19 +539,19 @@ async def send_local_files(
 
 
 def _extract_msg_id(item: object) -> str | None:
-    """从回执条目里抠出真正的消息 id（协议差异见 ``core/qqbot_api``）。
+    """从回执条目里抠出真正的消息 id（协议差异见 ``core/qqtpc_api``）。
 
-    OneBot 的 ``{"message_id": …}`` 与 Milky 的 ``MessageResponse.message_seq`` 都在
-    兼容层归一成干净的十进制字符串，这里只做转发，避免两处实现漂移。
+    OneBot 的 ``{"message_id": …}`` 与 Milky 的 ``MessageResponse.message_seq``
+    归一成十进制字符串，QQ 官方的非数值 ``id`` 原样保留；这里只做转发。
     """
 
-    return qqbot_api.extract_message_id(item)
+    return qqtpc_api.extract_message_id(item)
 
 
 def _receipt_msg_ids(receipt: object) -> list[str]:
     """把 alconna Receipt.msg_ids 归一化成 list[str](真 id、剔除空值)。"""
 
-    return qqbot_api.receipt_msg_ids(receipt)
+    return qqtpc_api.receipt_msg_ids(receipt)
 
 
 async def _send_unimsg(

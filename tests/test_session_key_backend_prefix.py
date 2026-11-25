@@ -29,7 +29,9 @@ from nonebot_plugin_hermes_adapter.core.storage.session_key_store import (  # no
 
 ADAPTER = "onebotv11"
 USER = "10001"
-INTERNAL_ID = f"{ADAPTER}+private+{USER}"
+# QQTPC 业务会话域：OneBot v11 / Milky / icqq 共用同一个 canonical internal_id。
+INTERNAL_ID = f"qqtpc+private+{USER}"
+LEGACY_INTERNAL_ID = f"{ADAPTER}+private+{USER}"
 # 假后端前缀：只在本测试里登记，主线真实配置里不存在。
 OTHER_PREFIX = "otherbackend"
 
@@ -207,7 +209,11 @@ class BackgroundPrefixMatchTests(_Case):
         )
 
         self.set_interface("runs")
-        self.assertEqual(_session_prefixes(ADAPTER, True, USER), [f"hermes-{INTERNAL_ID}"])
+        self.assertEqual(
+            _session_prefixes(ADAPTER, True, USER),
+            [f"hermes-{INTERNAL_ID}", f"hermes-{LEGACY_INTERNAL_ID}"],
+            "新派生 key 用 qqtpc 会话域；归一前登记的旧 transport key 仍要认",
+        )
         self.assertTrue(_belongs(f"hermes-{INTERNAL_ID}-g4", [f"hermes-{INTERNAL_ID}"]))
         self.assertFalse(
             _belongs(f"{OTHER_PREFIX}-{INTERNAL_ID}", [f"hermes-{INTERNAL_ID}"])
@@ -215,9 +221,17 @@ class BackgroundPrefixMatchTests(_Case):
 
         self.use_prefix("otherbackend", OTHER_PREFIX)
         prefixes = _session_prefixes(ADAPTER, True, USER)
-        self.assertEqual(prefixes, [f"{OTHER_PREFIX}-{INTERNAL_ID}", f"hermes-{INTERNAL_ID}"])
+        self.assertEqual(
+            prefixes,
+            [
+                f"{OTHER_PREFIX}-{INTERNAL_ID}",
+                f"{OTHER_PREFIX}-{LEGACY_INTERNAL_ID}",
+                f"hermes-{INTERNAL_ID}",
+                f"hermes-{LEGACY_INTERNAL_ID}",
+            ],
+        )
         self.assertTrue(_belongs(f"{OTHER_PREFIX}-{INTERNAL_ID}-g4", prefixes))
-        self.assertTrue(_belongs(f"hermes-{INTERNAL_ID}-g2", prefixes), "升级前遗留登记")
+        self.assertTrue(_belongs(f"hermes-{LEGACY_INTERNAL_ID}-g2", prefixes), "升级前遗留登记")
         self.assertFalse(_belongs(f"agent-{INTERNAL_ID}", prefixes))
 
     def test_collect_running_dedupes_multiple_prefixes(self) -> None:
@@ -293,9 +307,13 @@ class BackgroundPrefixMatchTests(_Case):
         from nonebot_plugin_hermes_adapter.core.kanban_report_source import _routable
 
         self.set_interface("runs")
+        # 语法闸：canonical qqtpc 键与归一前 transport 键都算可登记，真实 adapter
+        # 由消费器在唤醒时按当前连接解析；等待不等于丢弃。
         self.assertTrue(_routable(f"hermes-{INTERNAL_ID}"))
+        self.assertTrue(_routable(f"hermes-{LEGACY_INTERNAL_ID}-g2"))
         self.assertFalse(_routable(f"{OTHER_PREFIX}-{INTERNAL_ID}"))
         self.assertFalse(_routable(""))
+        self.assertFalse(_routable("hermes-not-a-session"))
 
         self.use_prefix("otherbackend", OTHER_PREFIX)
         self.assertTrue(_routable(f"{OTHER_PREFIX}-{INTERNAL_ID}"))

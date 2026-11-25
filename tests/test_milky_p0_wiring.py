@@ -19,7 +19,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from tests import _qqbot_fixtures as fx
+from tests import _qqtpc_fixtures as fx
 from tests import _bootstrap  # noqa: F401
 
 import nonebot_plugin_alconna as alconna

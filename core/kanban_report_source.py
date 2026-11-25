@@ -108,14 +108,19 @@ def _event_body(*, kind: str, task: dict, payload: dict) -> str:
 
 
 def _routable(session_id: str) -> bool:
-    """会话键能否还原成 NB 路由（与信箱 route 解析同一份语法）。"""
-    from .background_report_runtime import resolve_background_route
+    """会话键能否还原成 NB 路由（与信箱 route 解析同一份语法）。
+
+    这里只做**语法闸**：真实 adapter 尚未就绪（重启后连接/路由还没恢复）时
+    事件仍要登记，由消费器的 ``route_unavailable`` 等待重试——不能在这一步
+    把事件永久丢掉；也不能拿业务域 ``qqtpc`` 当 adapter 去唤醒。
+    """
+    from .background_report_runtime import parse_session_key
     from .session import session_manager
 
     if not session_id:
         return False
-    return resolve_background_route(
-        session_id, (), prefixes=session_manager.session_key_prefixes()
+    return parse_session_key(
+        session_id, prefixes=session_manager.session_key_prefixes()
     ) is not None
 
 

@@ -3,7 +3,7 @@
 模型只提供逻辑 ``m:id`` 与当前聊天；平台消息号由既有身份映射在内部解析。
 不做内容搜索、缺省最新或跨聊天补猜，也不在结果未知时自动重试。
 
-协议差异收口在 ``core/qqbot_api.recall_message``：OneBot 走 ``delete_msg``，
+协议差异收口在 ``core/qqtpc_api.recall_message``：OneBot 走 ``delete_msg``，
 Milky 走 ``recall_group_message`` / ``recall_private_message``（``message_seq``
 就是 P0-1 落库的同一个十进制外部 ID）。
 """
@@ -16,7 +16,7 @@ from typing import Literal
 from nonebot import get_bot, logger
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ...core import qqbot_api
+from ...core import qqtpc_api
 from ...core.decision_contract import parse_reply_to
 from ...core.message_buffer import MessageBuffer
 from ...core.routing import CallerScope
@@ -156,16 +156,16 @@ async def recall_message_impl(
         return _failure(inp, "local_rejected", "stored platform receipt is invalid; recall refused")
 
     try:
-        await qqbot_api.recall_message(
+        await qqtpc_api.recall_message(
             bot,
             adapter_name=inp.adapter,
             group_id=inp.group_id,
             user_id=inp.user_id,
             message_id=platform_message_id,
         )
-    except qqbot_api.UnsupportedOperation as exc:
+    except qqtpc_api.UnsupportedOperation as exc:
         return _failure(inp, "local_rejected", str(exc))
-    except qqbot_api.REJECTION_ERRORS as exc:
+    except qqtpc_api.REJECTION_ERRORS as exc:
         logger.warning(
             "recall_message platform rejection: logical_id={} adapter={} error={}",
             logical_id,
@@ -177,7 +177,7 @@ async def recall_message_impl(
             "platform_rejected",
             "platform refused the recall; time limit, permission, or message state may apply",
         )
-    except qqbot_api.NETWORK_ERRORS as exc:
+    except qqtpc_api.NETWORK_ERRORS as exc:
         logger.warning(
             "recall_message result unconfirmed: logical_id={} adapter={} error={}",
             logical_id,

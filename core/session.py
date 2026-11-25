@@ -10,7 +10,41 @@ import time
 
 from nonebot import logger
 
-from .storage.session_key_store import SessionKeyStore
+from .storage.session_key_store import (
+    SessionDomainMigrationConflict,
+    SessionKeyStore,
+)
+
+# 业务会话域：QQTPC＝QQ Third-Party Client。OneBot v11/v12、Milky、icqq 都是
+# QQ 用户侧同一整体在不同驱动下的形态，用户在协议间切换不应产生新会话。
+# 会话身份归一到 ``qqtpc``；真实 adapter 只是运行时路由事实（当前 Bot 连接／
+# 事件／BotRegistry），**不落库**，切换协议因此零人工迁移。
+SESSION_DOMAIN_QQTPC = "qqtpc"
+QQTPC_TRANSPORTS: tuple[str, ...] = ("onebotv11", "milky", "icqq")
+# transport -> 业务会话域。未登记 adapter（QQ 官方 ``qq``、tg 等）不归一，
+# internal_id 原样带自己的 adapter 名，行为与改名前逐字一致。
+SESSION_DOMAIN_TRANSPORTS: dict[str, str] = {t: SESSION_DOMAIN_QQTPC for t in QQTPC_TRANSPORTS}
+_SESSION_DOMAINS: frozenset[str] = frozenset(SESSION_DOMAIN_TRANSPORTS.values())
+
+
+def session_domain(adapter_name: str | None) -> str:
+    """adapter 名 → 业务会话域；未登记的 adapter 就是它自己。"""
+    from ..adapter_norm import normalize_adapter_name
+
+    tag = normalize_adapter_name(adapter_name or "")
+    return SESSION_DOMAIN_TRANSPORTS.get(tag, tag)
+
+
+def is_session_domain(name: str | None) -> bool:
+    """``name`` 是否业务会话域（而非可路由的真实 adapter）。"""
+    return normalize_domain_tag(name) in _SESSION_DOMAINS
+
+
+def normalize_domain_tag(name: str | None) -> str:
+    from ..adapter_norm import normalize_adapter_name
+
+    return normalize_adapter_name(name or "")
+
 
 # session key 前缀按**真实后端**命名(不再把 Hermes 名字硬绑在 key 上):
 # - 上游 session id 不可本地强改,已缓存的 key 必须原样续用,否则断上游历史;
@@ -41,6 +75,40 @@ def resolve_session_key_prefix() -> str:
     except Exception:  # pragma: no cover - 配置导入失败时保持旧行为
         interface = ""
     return session_key_prefix_for_interface(interface)
+
+
+def _runtime_bot_registry():
+    """取当前 BotRegistry(未装配/离线工具返回 None),避免 core → mcp 硬依赖。"""
+    try:
+        from .. import mcp as _mcp
+
+        return getattr(_mcp, "bot_registry", None)
+    except Exception:  # pragma: no cover - 插件未装配时的离线工具/单测
+        return None
+
+
+def _live_transports(domain: str) -> list[str]:
+    """当前在线 bot 里属于该业务会话域的真实 adapter(去重)。
+
+    只用于「该域唯一驱动」时的兜底解析;多个同时在线返回多个,调用方按歧义
+    处理。nonebot 未初始化时返回空表。
+    """
+    try:
+        import nonebot
+
+        bots = nonebot.get_bots()
+    except Exception:  # pragma: no cover - 未初始化 driver 的离线工具/单测
+        return []
+    found: list[str] = []
+    for bot in bots.values():
+        get_name = getattr(getattr(bot, "adapter", None), "get_name", None)
+        raw = str(get_name() or "") if callable(get_name) else ""
+        name = normalize_domain_tag(raw)
+        if not name or is_session_domain(name):
+            continue
+        if session_domain(name) == domain and name not in found:
+            found.append(name)
+    return found
 
 
 class SessionManager:
@@ -102,10 +170,45 @@ class SessionManager:
         基准,重启后沉默满 T1 即被自动清掉。不设 generation 门槛——T1 上线后
         generation 本来就快速上涨,gen=0 条件会迅速失效成摆设;反复清理的代价
         仅为本地计数器 +1(不上游、无消息、无 LLM 调用),可接受。
+
+        会话库只做一次 ``{transport}+… → qqtpc+…`` 的 canonical 归一（由
+        ``scripts/migrate_session_domain.py`` 在启动前显式执行）；真实 adapter
+        不落库——重启后由 ``resolve_adapter_for_domain`` 从当前 Bot 连接／事件／
+        BotRegistry 路由恢复。恢复不了的真实适配器动作按现有等待／跳过语义处理，
+        不猜旧协议，也不把业务域当 adapter 去调平台 API。
         """
         self._store = store
         self._key_prefix = resolve_session_key_prefix()
-        for internal_id, (session_key, generation) in store.load_all().items():
+        # 会话库只做一次 ``{transport}+… → qqtpc+…`` 的 canonical 归一，且必须在
+        # 启动前由运维显式执行(scripts/migrate_session_domain.py)。这里不自动改库:
+        # 主实例的「milky测试」小会话会被显式排除，自动重跑只会反复撞冲突。
+        # 未归一的旧库 fail closed：宁可拒绝启动，也不在 qqtpc+… 下新建 key 把
+        # 主会话历史接断。返回失败关闭时异常里的 (旧 id → 目标 id) 就是迁移清单。
+        rows = store.load_all()
+        canonical_ids = set(rows)
+        pending: list[tuple[str, str]] = []
+        for internal_id in rows:
+            target = self._legacy_domain_target(internal_id)
+            if target is not None and target not in canonical_ids:
+                pending.append((internal_id, target))
+        paused_ids = store.load_idle_paused()
+        for internal_id in paused_ids:
+            target = self._legacy_domain_target(internal_id)
+            if target is not None and target not in canonical_ids and target not in paused_ids:
+                pending.append((internal_id, target))
+        if pending:
+            logger.error(
+                "[SESSION] 会话库仍有未归一的旧协议 internal_id,已零写入并停止启动: "
+                f"{pending} —— 先 dry-run 再执行 "
+                "`python3 scripts/migrate_session_domain.py --db <session_keys.db> "
+                "[--exclude <测试小会话旧 id>]`,然后重启。"
+            )
+            raise SessionDomainMigrationConflict(pending)
+        for internal_id, (session_key, generation) in rows.items():
+            # 已归一目标已存在时，旧 transport 行是显式排除后留下的历史小会话；
+            # 不参与本次运行（不删除、不改写），也绝不拿它覆盖 canonical 映射。
+            if self._legacy_domain_target(internal_id) is not None:
+                continue
             self._cache[internal_id] = session_key
             self._generation[internal_id] = generation
         # 一次性改本地 key:后端前缀与旧 hermes- 不同时,把缓存的派生 key
@@ -113,21 +216,35 @@ class SessionManager:
         # 无引用历史(不迁移、不别名),下一轮按真实行为新建上游会话。
         # Hermes 后端前缀不变,这里绝不动任何 key。
         self._rename_derived_keys(LEGACY_KEY_PREFIX, self._key_prefix)
-        # /delay 暂停集合装回(原内存态重启即失效)。
-        self._idle_paused.update(store.load_idle_paused())
+        # /delay 暂停集合装回(原内存态重启即失效);被排除的旧行同样不参与。
+        self._idle_paused.update(
+            internal_id
+            for internal_id in paused_ids
+            if self._legacy_domain_target(internal_id) is None
+        )
         now = time.time()
         seeded = 0
+        unresolved = 0
         for internal_id in self._cache:
             comp = self._parse_internal_id(internal_id)
             if comp is None:
                 continue
-            self._components[internal_id] = comp
+            # 活动基准对所有可解析的已知会话都播种(与改名前一致);业务域会话的
+            # 真实 adapter 此刻尚未就绪,只登记组件不猜测——等 current 连接/路由
+            # 恢复后由 _components_for 在 T1 / known_sessions 调用时解析。
             self._last_activity[internal_id] = now
             seeded += 1
+            if is_session_domain(comp[0]):
+                unresolved += 1
+                continue
+            self._components[internal_id] = comp
         if self._cache:
             logger.debug(f"[SESSION] 载入 {len(self._cache)} 条持久化 session key 映射")
         if seeded:
-            logger.info(f"[SESSION] T1 全量播种: {seeded} 个已知会话以开机时刻为活动基准")
+            logger.info(
+                f"[SESSION] T1 全量播种: {seeded} 个已知会话以开机时刻为活动基准"
+                + (f"(其中 {unresolved} 个等待当前连接恢复真实 adapter)" if unresolved else "")
+            )
 
     @staticmethod
     def _parse_internal_id(internal_id: str) -> tuple[str, bool, str, str | None] | None:
@@ -138,6 +255,10 @@ class SessionManager:
           群:   adapter+group+group_id(群 session 固定共享)
         依赖「adapter/user_id/group_id 不含 +」的既有约定。解析失败返回 None,
         该会话不参与 T1(比解错强)。
+
+        第一段对 QQTPC 协议是**业务会话域**(``qqtpc``),不是可路由 adapter:
+        真实 adapter 由 ``_components_for`` → ``resolve_adapter_for_domain``
+        在调用时从 current 连接/事件/路由解析,解析不出来就不参与。
         """
         parts = internal_id.split("+")
         if len(parts) < 3:
@@ -150,6 +271,111 @@ class SessionManager:
             user_id = parts[3] if len(parts) > 3 else ""
             return (adapter, False, user_id, group_id)
         return None
+
+    @staticmethod
+    def _legacy_domain_target(internal_id: str) -> str | None:
+        """旧 ``{transport}+…`` internal_id → 归一目标;非旧协议行返回 None。"""
+        head, sep, tail = internal_id.partition("+")
+        if not sep or not tail:
+            return None
+        head = normalize_domain_tag(head)
+        if is_session_domain(head):
+            return None
+        domain = SESSION_DOMAIN_TRANSPORTS.get(head)
+        if not domain:
+            return None
+        return f"{domain}+{tail}"
+
+    def resolve_adapter_for_domain(
+        self,
+        domain: str,
+        is_private: bool,
+        user_id: str | None,
+        group_id: str | None = None,
+    ) -> str | None:
+        """业务会话域 → 当前真实 adapter;没有可信运行时事实时返回 None。
+
+        解析顺序(全部是「当前」事实,不读任何持久协议名):
+
+        1. 本进程事件登记过的组件(``_components``):最近一次真实入站/出站
+           已经证明该会话走哪个 adapter;协议切换时由 ``get_session_key`` 直接
+           覆盖,不需要迁移。
+        2. ``BotRegistry`` 中该 (scope, scope_id) 的现存路由:真实感知 entry
+           与 bot 连接恢复的 synthetic entry 都算;同一 scope 同时有两个不同
+           adapter 路由时视为歧义,返回 None 交给等待/跳过。
+        3. 当前在线 bot:该会话域只有一个 adapter 在线时,它就是唯一真实驱动;
+           多个同时在线则歧义,返回 None。
+
+        业务域名本身永远不被当成 adapter 返回——拿 ``qqtpc`` 去调平台 API 是
+        本方法要防的故障。
+        """
+        tag = normalize_domain_tag(domain)
+        if not tag:
+            return None
+        scope = "private" if is_private else "group"
+        scope_id = str(user_id or "") if is_private else str(group_id or "")
+        if not scope_id:
+            return None
+        # 1) 本进程真实事件登记(同一 internal_id 只会有一个当前 adapter)
+        for comp in self._components.values():
+            adapter, c_private, c_user, c_group = comp
+            if bool(c_private) != bool(is_private):
+                continue
+            if (str(c_user or "") if is_private else str(c_group or "")) != scope_id:
+                continue
+            if is_session_domain(adapter) or session_domain(adapter) != tag:
+                continue
+            return adapter
+        # 2) BotRegistry 现存路由(真实感知优先于 synthetic,但同域多驱动算歧义)
+        registry = _runtime_bot_registry()
+        if registry is not None:
+            real_matches: list[str] = []
+            synthetic_matches: list[str] = []
+            for adapter, reg_scope, reg_id in registry.known():
+                if reg_scope != scope or str(reg_id) != scope_id:
+                    continue
+                if is_session_domain(adapter) or session_domain(adapter) != tag:
+                    continue
+                entry = registry.get(adapter, reg_scope, reg_id)
+                target = synthetic_matches if getattr(entry, "synthetic", False) else real_matches
+                if adapter not in target:
+                    target.append(adapter)
+            picked = real_matches or synthetic_matches
+            if len(picked) == 1:
+                return picked[0]
+            if len(picked) > 1:
+                logger.debug(
+                    f"[SESSION] 会话域 {tag} 在 {scope}:{scope_id} 有多个在线路由 "
+                    f"{picked},不猜当前协议,按等待处理"
+                )
+        # 3) 当前在线 bot(仅该域唯一驱动时)
+        live = _live_transports(tag)
+        if len(live) == 1:
+            return live[0]
+        return None
+
+    def _components_for(self, internal_id: str) -> tuple[str, bool, str, str | None] | None:
+        """T1 / known_sessions / 交付代际用的组件(adapter 位置必为真实 adapter)。
+
+        运行时登记的组件优先;重启后从 internal_id 反解,业务域名再按当前连接
+        解析真实 adapter。解析不出来返回 None——宁可不参与 T1/投递轮询,也不
+        拿 ``qqtpc`` 去查路由或调平台 API。
+        """
+        comp = self._components.get(internal_id)
+        if comp is not None:
+            return comp
+        parsed = self._parse_internal_id(internal_id)
+        if parsed is None:
+            return None
+        domain_or_adapter = parsed[0]
+        if is_session_domain(domain_or_adapter):
+            resolved = self.resolve_adapter_for_domain(
+                domain_or_adapter, parsed[1], parsed[2], parsed[3]
+            )
+            if not resolved:
+                return None
+            return (resolved, parsed[1], parsed[2], parsed[3])
+        return parsed
 
     def _persist(self, internal_id: str) -> None:
         if self._store is None:
@@ -239,13 +465,19 @@ class SessionManager:
     ) -> str:
         """生成统一的内部会话 ID(群 session 固定共享,不按配置切换)。
 
+        QQTPC 驱动的协议(OneBot v11 / Milky / icqq)统一归到业务会话域
+        ``qqtpc``:同一 QQ 群/人跨协议就是同一会话,session_key/generation 自然
+        续用。真实 adapter 不进 internal_id——它在运行时解析,不落库。
+        QQ 官方与其它平台不归一,internal_id 仍带自己的 adapter 名。
+
         注:adapter_name / user_id / group_id 假定不含 '+';真实 adapter 名经
         get_adapter_name() 规整后均为 [a-z0-9],平台 user_id 多为数字串。
         """
+        domain = session_domain(adapter_name)
         if is_private:
-            return f"{adapter_name}+private+{user_id}"
+            return f"{domain}+private+{user_id}"
         # 群 session 固定共享(旧 per-user 分支已删):不再按人细分。
-        return f"{adapter_name}+group+{group_id or 'unknown'}"
+        return f"{domain}+group+{group_id or 'unknown'}"
 
     def get_delivery_generation(
         self, adapter_name: str, is_private: bool, user_id: str, group_id: str | None = None
@@ -372,14 +604,16 @@ class SessionManager:
     # --- T1 空闲自动重置(本部署新增) ---
 
     def known_sessions(self) -> list[tuple[str, str, bool, str, str | None, str]]:
-        """全量已知会话快照(本部署补丁:投递轮询用)。
+        """全量已知会话快照(本部署补丁:投递轮询用;语义同 iter_sessions)。
 
         返回 (internal_id, adapter_name, is_private, user_id, group_id, session_key)。
-        只出组件齐全的条目(组件缺失意味着反解失败,轮询无法定位目标群/人)。
+        adapter 位置永远是**真实 adapter**:业务域会话由当前连接/路由解析,解析
+        不出来(重启后 bot 还没连上/路由还没恢复)就不出条目,交给调用方按现有
+        等待/跳过语义处理——绝不把 ``qqtpc`` 当 adapter 交出去。
         """
         out: list[tuple[str, str, bool, str, str | None, str]] = []
         for internal_id, session_key in self._cache.items():
-            comp = self._components.get(internal_id)
+            comp = self._components_for(internal_id)
             if comp is None:
                 continue
             adapter, is_private, user_id, group_id = comp
@@ -400,12 +634,10 @@ class SessionManager:
 
     def mark_activity_group(self, adapter_name: str, group_id: str) -> None:
         """群级活动标记(push_message 用):群 session 固定共享,internal_id 即
-        adapter+group+group_id 唯一形态。"""
-        prefix = f"{adapter_name}+group+{group_id}"
-        now = time.time()
-        for internal_id in self._components:
-            if internal_id == prefix:
-                self._last_activity[internal_id] = now
+        会话域+group+group_id 唯一形态(QQTPC 协议体现为 qqtpc+group+…)。"""
+        internal_id = self._get_internal_id(adapter_name, False, "", group_id)
+        if internal_id in self._last_activity:
+            self._last_activity[internal_id] = time.time()
 
     def set_idle_paused(
         self,
@@ -433,7 +665,10 @@ class SessionManager:
         """返回超过 idle_sec 未活动且未 /delay 暂停的 (internal_id, components) 列表。
 
         只挑有活动记录的会话:插件重启后 _last_activity 是空的,没有这个限制就会
-        把「重启前一直在聊、重启后还没人说话」的会话立刻清掉。"""
+        把「重启前一直在聊、重启后还没人说话」的会话立刻清掉。
+
+        components 是**真实 adapter**;业务域会话的真实 adapter 尚未随连接/路由
+        恢复时不出条目,下一拍再试(等待语义,不猜旧协议)。"""
         now = now if now is not None else time.time()
         out: list[tuple[str, tuple[str, bool, str, str | None]]] = []
         for internal_id, last in self._last_activity.items():
@@ -441,7 +676,7 @@ class SessionManager:
                 continue
             if now - last <= idle_sec:
                 continue
-            comp = self._components.get(internal_id)
+            comp = self._components_for(internal_id)
             if comp is not None:
                 out.append((internal_id, comp))
         return out
@@ -460,7 +695,9 @@ class SessionManager:
         self._generation[internal_id] = gen
         self._cache[internal_id] = self._render_key(internal_id, gen)
         self._persist(internal_id)
-        comp = self._parse_internal_id(internal_id)
+        # 组件必须是真实 adapter:业务域会话按当前连接/路由解析,解析不出来就
+        # 不落交付栅栏(不能拿 qqtpc 去 fence,台账 scope 永远匹配不上)。
+        comp = self._components_for(internal_id)
         if comp is not None:
             self._fence_delivery_generation(*comp)
         self._last_activity[internal_id] = time.time()

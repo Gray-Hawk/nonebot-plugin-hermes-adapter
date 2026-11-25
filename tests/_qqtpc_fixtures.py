@@ -1,4 +1,4 @@
-"""QQBotAPI 结构级测试夹具：真 OneBot v11 / Milky 适配器类，只替换线形 I/O。
+"""QQTPC 结构级测试夹具：真 OneBot v11 / Milky 适配器类，只替换线形 I/O。
 
 约定（与 ``tests/test_poke_tool.py`` 同一口径）：
 - ``Bot`` / ``Adapter`` / 事件模型全部用**真实**类型，字段与 API 签名由适配器自己校验；
