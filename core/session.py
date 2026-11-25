@@ -300,10 +300,14 @@ class SessionManager:
         """运行时记忆的组件是否仍是**当前**事实。
 
         ``_components`` 只证明「当时」走过哪个驱动。协议切换后旧驱动可能已经
-        下线：只有它现在仍有在线 Bot 连接、或 ``BotRegistry`` 里该 scope 仍有
-        它的路由时，记忆才可以优先。否则返回 False，交给
-        ``resolve_adapter_for_domain`` 按当前连接／路由重新解析（解析不出来就是
-        None，按等待／跳过处理），绝不回落到旧协议名。
+        下线：只有它现在仍有在线 Bot 连接时，记忆才可以优先。否则返回 False，
+        交给 ``resolve_adapter_for_domain`` 按当前连接／路由重新解析（解析不出来
+        就是 None，按等待／跳过处理），绝不回落到旧协议名。
+
+        **存活前提是在线连接，不是路由**：``BotRegistry`` 没有断线清理钩子，
+        旧驱动的真实路由在断线后会残留；拿残留路由当「当前事实」会让后台唤醒
+        走已死驱动、T1 栅栏落错 scope（与「旧驱动记忆压过当前事实」同一类故障，
+        只是换成路由形态）。路由只在第 2 步用于**在线**驱动之间消歧。
         """
         adapter, is_private, user_id, group_id = comp
         if is_session_domain(adapter):
@@ -312,14 +316,6 @@ class SessionManager:
         scope_id = str(user_id or "") if is_private else str(group_id or "")
         if not scope_id:
             return False
-        name = normalize_domain_tag(adapter)
-        registry = _runtime_bot_registry()
-        if registry is not None:
-            for reg_adapter, reg_scope, reg_id in registry.known():
-                if reg_scope != scope or str(reg_id) != scope_id:
-                    continue
-                if normalize_domain_tag(reg_adapter) == name:
-                    return True
         return _adapter_is_live(adapter)
 
     def resolve_adapter_for_domain(
@@ -335,10 +331,11 @@ class SessionManager:
 
         1. 本进程事件登记过的组件(``_components``):最近一次真实入站/出站
            已经证明该会话走哪个 adapter;协议切换时由 ``get_session_key`` 直接
-           覆盖,不需要迁移。**但记忆只证明「当时」——该 adapter 现在已下线且
-           本 scope 没有它的现存路由时,记忆不是当前事实,继续走第 2/3 步。**
+           覆盖,不需要迁移。**但记忆只证明「当时」——该 adapter 现在已下线时,
+           记忆不是当前事实,继续走第 2/3 步。**
         2. ``BotRegistry`` 中该 (scope, scope_id) 的现存路由:真实感知 entry
-           与 bot 连接恢复的 synthetic entry 都算;同一 scope 同时有两个不同
+           与 bot 连接恢复的 synthetic entry 都算,**但只在该 adapter 现在仍有
+           在线连接时才算**(断线后真实路由会残留);同一 scope 同时有两个不同
            adapter 路由时视为歧义,返回 None 交给等待/跳过。
         3. 当前在线 bot:该会话域只有一个 adapter 在线时,它就是唯一真实驱动;
            多个同时在线则歧义,返回 None。
@@ -375,6 +372,10 @@ class SessionManager:
                 if reg_scope != scope or str(reg_id) != scope_id:
                     continue
                 if is_session_domain(adapter) or session_domain(adapter) != tag:
+                    continue
+                if not _adapter_is_live(adapter):
+                    # BotRegistry 断线后不清路由：只有该驱动现在还有在线连接，
+                    # 残留的真实/synthetic 路由才是当前事实。
                     continue
                 entry = registry.get(adapter, reg_scope, reg_id)
                 target = synthetic_matches if getattr(entry, "synthetic", False) else real_matches

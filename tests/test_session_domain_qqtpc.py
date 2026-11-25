@@ -81,6 +81,15 @@ class _Base(unittest.TestCase):
         manager.bind_store(self.store)
         return manager
 
+    def live(self, *transports: str):
+        """把「哪些真实 adapter 现在还有在线 Bot 连接」固定成本用例前提。
+
+        ``BotRegistry`` 断线后不会清理路由，所以路由存在不等于驱动还活着；需要
+        真实 adapter 的用例必须显式声明当前在线驱动（生产里等价于
+        ``nonebot.get_bots()`` 里有该 adapter 的 Bot）。
+        """
+        return patch.object(session_mod, "_live_transports", lambda domain: list(transports))
+
     def _dump(self) -> tuple:
         """整库快照（两张业务表的全部列），用于「不改库」比对。"""
         conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
@@ -218,16 +227,17 @@ class RestartRuntimeResolutionTests(_Base):
     def test_restart_with_live_route_restores_real_adapter(self) -> None:
         self.store.put(GROUP_ID, f"hermes-{GROUP_ID}", 2, now=1.0)
         self.route("milky")
-        manager = self.new_manager()
+        with self.live("milky"):
+            manager = self.new_manager()
 
-        rows = manager.known_sessions()
-        self.assertEqual(len(rows), 1, "iter_sessions 必须看得见重启前的会话")
-        self.assertEqual(rows[0][1], "milky", "adapter 是当前真实连接，不是 qqtpc")
-        self.assertEqual(rows[0][5], f"hermes-{GROUP_ID}", "session key 原样续用")
+            rows = manager.known_sessions()
+            self.assertEqual(len(rows), 1, "iter_sessions 必须看得见重启前的会话")
+            self.assertEqual(rows[0][1], "milky", "adapter 是当前真实连接，不是 qqtpc")
+            self.assertEqual(rows[0][5], f"hermes-{GROUP_ID}", "session key 原样续用")
 
-        expired = manager.idle_expired(0, now=1e12)
-        self.assertEqual(len(expired), 1)
-        self.assertEqual(expired[0][1][0], "milky")
+            expired = manager.idle_expired(0, now=1e12)
+            self.assertEqual(len(expired), 1)
+            self.assertEqual(expired[0][1][0], "milky")
 
     def test_restart_without_route_waits_then_resolves_on_real_event(self) -> None:
         self.store.put(GROUP_ID, f"hermes-{GROUP_ID}", 0, now=1.0)
@@ -263,26 +273,30 @@ class RestartRuntimeResolutionTests(_Base):
         self.store.put(GROUP_ID, f"hermes-{GROUP_ID}", 0, now=1.0)
         self.route("onebotv11")
         self.route("milky")
-        manager = self.new_manager()
-        self.assertEqual(manager.known_sessions(), [])
+        with self.live("onebotv11", "milky"):
+            manager = self.new_manager()
+            self.assertEqual(manager.known_sessions(), [])
 
     def test_real_route_wins_over_synthetic(self) -> None:
         self.store.put(GROUP_ID, f"hermes-{GROUP_ID}", 0, now=1.0)
         self.route("onebotv11", synthetic=True)
         self.route("milky")
-        manager = self.new_manager()
-        self.assertEqual([row[1] for row in manager.known_sessions()], ["milky"])
+        with self.live("onebotv11", "milky"):
+            manager = self.new_manager()
+            self.assertEqual([row[1] for row in manager.known_sessions()], ["milky"])
 
     def test_restart_waits_for_route_recovery_then_uses_real_adapter(self) -> None:
         """重启后路由未就绪先跳过；bot 连接恢复路由后同一进程内立即可用，且不改库。"""
         key = f"hermes-{GROUP_ID}"
         self.store.put(GROUP_ID, key, 0, now=1.0)
-        with patch.object(session_mod, "_live_transports", lambda domain: []):
+        with self.live():
             manager = self.new_manager()
             self.assertEqual(manager.known_sessions(), [])
             self.assertEqual(manager.idle_expired(0, now=1e12), [])
-            # 等价于 bot 连接钩子 restore_bot_routes() 写入的 synthetic 路由。
-            self.route("onebotv11", synthetic=True)
+        # 等价于 bot 连接钩子 restore_bot_routes() 写入的 synthetic 路由；连接恢复
+        # 意味着该 adapter 现在在线，路由才是当前事实。
+        self.route("onebotv11", synthetic=True)
+        with self.live("onebotv11"):
             rows = manager.known_sessions()
             expired = manager.idle_expired(0, now=1e12)
         self.assertEqual([row[1] for row in rows], ["onebotv11"])
@@ -322,12 +336,13 @@ class NoDomainLeakTests(_Base):
 
         self.store.put(GROUP_ID, f"hermes-{GROUP_ID}", 0, now=1.0)
         self.route("milky")
-        manager = self.new_manager()
-        tracker = _Tracker()
-        manager.bind_run_tracker(tracker)
+        with self.live("milky"):
+            manager = self.new_manager()
+            tracker = _Tracker()
+            manager.bind_run_tracker(tracker)
 
-        manager.clear_internal(GROUP_ID)
-        self.assertEqual(tracker.scopes, [f"milky:group:{GROUP}"])
+            manager.clear_internal(GROUP_ID)
+            self.assertEqual(tracker.scopes, [f"milky:group:{GROUP}"])
         self.assertEqual(manager.get_session_key("milky", False, "u1", GROUP), f"hermes-{GROUP_ID}-g1")
 
     def test_unresolved_transport_skips_fence_instead_of_using_domain(self) -> None:
@@ -404,16 +419,17 @@ class MigrationTests(_Base):
         # 一次性归一是运维显式动作；启动只消费已归一结果。
         self.store.migrate_session_domain(SESSION_DOMAIN_TRANSPORTS)
         self.route("onebotv11")
-        manager = self.new_manager()
+        with self.live("onebotv11"):
+            manager = self.new_manager()
 
-        self.assertEqual([row[1] for row in manager.known_sessions()], ["onebotv11"])
-        self.assertEqual(
-            manager.get_session_key("milky", False, "u1", GROUP), f"hermes-onebotv11+group+{GROUP}",
-            "归一后 key 续用（且不重命名现有 Hermes session id）",
-        )
+            self.assertEqual([row[1] for row in manager.known_sessions()], ["onebotv11"])
+            self.assertEqual(
+                manager.get_session_key("milky", False, "u1", GROUP), f"hermes-onebotv11+group+{GROUP}",
+                "归一后 key 续用（且不重命名现有 Hermes session id）",
+            )
         # 真实 Milky 事件到达（事件只能来自已连上的驱动）后，运行时解析立刻切到当前
         # 驱动，库仍不动。
-        with patch.object(session_mod, "_live_transports", lambda domain: ["milky"]):
+        with self.live("milky"):
             self.assertEqual([row[1] for row in manager.known_sessions()], ["milky"])
         self.assertEqual(manager.set_idle_paused("milky", False, "u1", GROUP, False), GROUP_ID)
         self.assertEqual(self.store.load_idle_paused(), set())
@@ -510,7 +526,8 @@ class MigrationTests(_Base):
         manager = self.new_manager()
         self.assertEqual(manager.get_session_key("milky", True, USER, None), main_key)
         self.assertEqual(manager.get_delivery_generation("milky", True, USER, None), 404)
-        self.assertEqual([row[1] for row in manager.known_sessions()], ["milky"])
+        with self.live("milky"):
+            self.assertEqual([row[1] for row in manager.known_sessions()], ["milky"])
 
     def test_custom_merged_target_for_group(self) -> None:
         """群 253384307 定制案例：先在上游合并转录，再把 canonical 指向合并目标；
@@ -769,11 +786,60 @@ class StaleDriverSwitchTests(_Base):
                 "onebotv11",
             )
 
-    def test_memory_accepted_when_registry_has_current_route(self) -> None:
-        with patch.object(session_mod, "_live_transports", lambda domain: []):
+    def test_stale_real_route_does_not_outrank_live_driver(self) -> None:
+        """断线残留的真实路由不得压过当前在线的新驱动（运维第 3 轮反例）。
+
+        生产事实：``BotRegistry`` 没有 on_bot_disconnect 清理，milky 断线后它的
+        real 路由仍在表里。此时 onebotv11 已连上并按交付台账恢复 synthetic 路由，
+        本 scope 又还没收到 onebotv11 的真实入站消息——旧 milky 记忆 + 残留 real
+        路由都不构成当前事实，必须选在线的 onebotv11。
+        """
+        self.store.put(GROUP_ID, f"hermes-{GROUP_ID}", 0, now=1.0)
+        with self.live("milky"):
+            manager = self.new_manager()
+            self.assertEqual(manager.get_session_key("milky", False, "u1", GROUP), f"hermes-{GROUP_ID}")
+            manager.mark_activity("milky", False, "u1", GROUP)
+        # 断线前留下的 milky 真实路由（无清理钩子）+ onebotv11 连接恢复的 synthetic 路由
+        self.route("milky", synthetic=False)
+        self.route("onebotv11", synthetic=True)
+        with self.live("onebotv11"):
+            resolved = manager.resolve_adapter_for_domain(SESSION_DOMAIN_QQTPC, False, "", GROUP)
+            rows = manager.known_sessions()
+            expired = manager.idle_expired(0, now=1e12)
+            tracker_scope: list[str] = []
+
+            class _Tracker:
+                def fence_scope_generation(self, scope_key: str, fence_generation: int):
+                    tracker_scope.append(scope_key)
+                    return {"deliveries": 0, "submissions": 0}
+
+            manager.bind_run_tracker(_Tracker())
+            manager.clear_internal(GROUP_ID)
+        self.assertEqual(resolved, "onebotv11", "离线驱动的残留 real 路由不是当前事实")
+        self.assertEqual([row[1] for row in rows], ["onebotv11"])
+        self.assertEqual([comp[0] for _, comp in expired], ["onebotv11"])
+        self.assertEqual(tracker_scope, [f"onebotv11:group:{GROUP}"], "T1 栅栏跟当前在线驱动")
+        self.assertEqual(
+            [row[0] for row in self._dump()[0]], [GROUP_ID],
+            "解析真实 adapter 不改 internal_id、不新增行",
+        )
+
+    def test_route_without_live_connection_is_not_current_fact(self) -> None:
+        """只有路由、没有任何在线 Bot：不是当前事实，按等待跳过（不猜旧协议）。"""
+        with self.live():
             manager = self.new_manager()
             manager.get_session_key("milky", False, "u1", GROUP)
-            self.route("milky")  # BotRegistry 现存路由本身就是当前事实
+            self.route("milky", synthetic=False)  # 断线前留下的真实路由
+            self.assertIsNone(
+                manager.resolve_adapter_for_domain(SESSION_DOMAIN_QQTPC, False, "", GROUP)
+            )
+            self.assertEqual(manager.known_sessions(), [], "无在线驱动：等待，不猜")
+
+    def test_memory_accepted_when_driver_is_live_with_route(self) -> None:
+        with self.live("milky"):
+            manager = self.new_manager()
+            manager.get_session_key("milky", False, "u1", GROUP)
+            self.route("milky")  # 在线驱动的现存路由同样是当前事实
             self.assertEqual(
                 manager.resolve_adapter_for_domain(SESSION_DOMAIN_QQTPC, False, "", GROUP),
                 "milky",
