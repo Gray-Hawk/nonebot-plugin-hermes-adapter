@@ -1309,12 +1309,13 @@ class RenderedTurnContent:
       runs 纯文本回合里它**不含**顶层系统通知区。
     - ``context_notices``：runs 纯文本回合拆出的完整通知区（``<系统通知区域起始>`` …
       ``<系统通知区域结束>``），由 ``hermes_context.notices`` 带给插件，再由官方
-      ``pre_llm_call`` 注入 api_content 尾部；其余回合为空串。
+      ``ContextEngine.select_context`` 在请求副本尾部注入（按自然回合提醒 N 次，
+      条目 146）；其余回合为空串。
     - ``closing_reminder``：reactive 的近因 reminder 逐字副本，作为
       ``hermes_context.closing_reminder``，保证通知不会把协议提醒挤离模型所见最后一段；
       passive 与无通知回合为空串。
 
-    拆出的两个字段只走 ``hermes_context`` 这条出口（条目 145），不回流进可见正文。
+    拆出的两个字段只走 ``hermes_context`` 这条出口（条目 145／146），不回流进可见正文。
     """
 
     content: UserContent
@@ -1356,8 +1357,9 @@ def build_reactive_user_content(
     或裸帧列表;三元组 (kind, mid, idx) 用于给 parts 打全称标签 [图 m:ID#idx]。
 
     runs 纯文本回合(条目 145 §7.1):通知区从可见 content 拆到
-    ``context_notices``,由 Hermes 插件经 ``pre_llm_call`` 注入 api_content 尾部;
-    正文 reminder 仍留在可见 content,并原样复制进 ``closing_reminder``。
+    ``context_notices``,由 Hermes 插件经官方 ``ContextEngine.select_context`` 在请求
+    副本尾部注入(条目 146 起;按自然回合提醒 N 次);正文 reminder 仍留在可见 content,
+    并原样复制进 ``closing_reminder``。
     非 runs 或带媒体 parts 的回合完整保留旧版内联呈递(两个 context 字段为空)——
     那是明确未覆盖路径,不是插件缺席降级。
     """

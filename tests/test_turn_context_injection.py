@@ -491,5 +491,32 @@ class PromptNoticeOrderNoteTests(unittest.TestCase):
         self.assertNotIn("hermes_context", group)
 
 
+class PromptReminderCountNoteTests(unittest.TestCase):
+    """条目 146 固定规范：（a／b）解释只进固定 system prompt，且只出现一次。"""
+
+    NOTE = "补充材料前的（a／b）表示第 a 次提醒、共 b 次；按原材料处理，已完成的重复提醒可忽略。"
+
+    def test_runs_protocol_states_the_note_exactly_once(self) -> None:
+        with _Interface(self, "runs"):
+            blocks = (pb._reactive_protocol_block(), pb._private_protocol_block())
+        for block in blocks:
+            self.assertEqual(block.count(self.NOTE), 1)
+            self.assertEqual(block.count("（a／b）"), 1)
+
+    def test_completions_protocol_is_untouched(self) -> None:
+        with _Interface(self, "completions"):
+            block = pb._reactive_protocol_block()
+        self.assertNotIn(self.NOTE, block)
+        self.assertNotIn("（a／b）", block)
+
+    def test_notices_payload_is_not_rewritten_by_the_note(self) -> None:
+        notice = notice_row()
+        with _Interface(self, "runs"):
+            out = build_reactive([human(), notice])
+        self.assertNotIn("（a／b）", out.context_notices)
+        self.assertNotIn("次提醒", out.context_notices)
+        self.assertNotIn("（a／b）", out.content)
+
+
 if __name__ == "__main__":
     unittest.main()
