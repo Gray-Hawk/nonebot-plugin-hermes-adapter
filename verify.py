@@ -55,6 +55,23 @@ def check_cache() -> None:
     check("交付树无 pyc／pytest 缓存", not offenders, "; ".join(offenders[:5]))
 
 
+def check_upload_gate() -> None:
+    """上传硬门：白名单、署名、交付物与提交说明。
+
+    与上传入口 `scripts/dev_sync.sh` 共用同一份 `scripts/check_upload_gate.py`，
+    不另造一套发布校验：本地验收不过，就不该传到远端。
+    """
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    proc = subprocess.run(
+        [sys.executable, "-B", "scripts/check_upload_gate.py", "--commits", "HEAD", "--tree", "HEAD"],
+        cwd=ROOT, capture_output=True, text=True, env=env,
+    )
+    tail = (proc.stdout + proc.stderr).strip().splitlines()
+    ok = proc.returncode == 0
+    check("上传硬门（白名单／署名／交付物／提交说明）", ok,
+          "" if ok else " / ".join(tail[:4]))
+
+
 def check_tests() -> None:
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     proc = subprocess.run(
@@ -478,6 +495,7 @@ def main() -> int:
     hr = git("log", "--oneline", "-1").stdout.strip()
     print(f"HEAD={hr}")
     check_cache()
+    check_upload_gate()
     check_tests()
     check_no_deleted_modules()
     check_single_text_parser()
