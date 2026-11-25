@@ -6,7 +6,7 @@
 覆盖：
   - 顺序对账（启动对账 → scope 对账）只发 1 次；
   - 同进程重叠的 `reconcile_pending_deliveries` ＋ `reconcile_scope` 只发 1 次
-    （修复前为 2 次，见 ACCEPTANCE/probes/probe_reconcile_overlap.py）；
+    （修复前为 2 次）；
   - attempt_count 与平台回执按一次尝试记；
   - 不同 run 的对账互不阻塞；
   - 崩溃进程留下的租约按原语义由租约过期后的下一次对账接管。

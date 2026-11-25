@@ -1,6 +1,6 @@
-"""证据工具安全回归（R3）：现网取证探针不得打开可写台账。
+"""只读取证工具安全回归：现网取证探针不得打开可写台账。
 
-``compare_ack_predicate.py`` 原来在生产 ``active_runs.db`` 上构造普通
+``scripts/probes/compare_ack_predicate.py`` 原来在生产 ``active_runs.db`` 上构造普通
 ``RunTracker``；该构造器会开可写连接、跑 DDL/PRAGMA，并把 ``steer_ledger``
 里 ``sending``／``reconciling`` 的行提交回 ``pending``。在现网台账上用它是写
 生产库，不是只读取证。
@@ -35,7 +35,7 @@ from tests import _bootstrap  # noqa: E402,F401
 
 from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker  # noqa: E402
 
-PROBE = ROOT / "EVIDENCE" / "notifications" / "probes" / "compare_ack_predicate.py"
+PROBE = ROOT / "scripts" / "probes" / "compare_ack_predicate.py"
 SCOPE = "onebotv11:private:1581124503"
 SESSION = "hermes-onebotv11+private+158****4503-g404"
 RUN = "run_probe_ro"
