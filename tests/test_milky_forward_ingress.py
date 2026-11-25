@@ -117,6 +117,18 @@ class MilkyForwardIngressTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(block)
         self.assertIn("阿光: 你好", block)
 
+    async def test_plain_message_has_no_forward_failure_placeholder(self) -> None:
+        harness = MilkyHarness()
+
+        block, images, videos = await media._extract_forward_full(
+            _uni(alconna.Text("普通文本")), harness.bot, adapter_name="milky",
+        )
+
+        self.assertIsNone(block)
+        self.assertEqual(images, [])
+        self.assertEqual(videos, [])
+        self.assertEqual(harness.actions(), [])
+
     async def test_fetch_failure_yields_explicit_placeholder(self) -> None:
         harness = MilkyHarness()
         harness.failures["get_forwarded_messages"] = {

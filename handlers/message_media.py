@@ -698,6 +698,8 @@ async def _extract_forward_full(
             ref_id = candidate.id
             break
     if protocol == qqtpc_api.MILKY:
+        if not refs:
+            return None, [], []
         if ref is None:
             # Milky builder 对无 forward_id 的转发直接构造节点树（Reference.children）。
             ref = next((c for c in refs if getattr(c, "children", None)), None)
