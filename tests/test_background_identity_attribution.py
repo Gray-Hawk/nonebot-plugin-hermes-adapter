@@ -24,6 +24,7 @@ from nonebot_plugin_hermes_adapter.core.background_report_outbox import (  # noq
 )
 from nonebot_plugin_hermes_adapter.core.routing import CallerScope  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.running_tasks import (  # noqa: E402
+    DelegationRunningSource,
     KanbanRunningSource,
 )
 from nonebot_plugin_hermes_adapter.mcp.tools.background_status import (  # noqa: E402
@@ -107,6 +108,33 @@ class BackgroundIdentityAttributionTests(unittest.TestCase):
             ["canonical", "future", "milky", "onebot"],
         )
         self.assertEqual(result.running_sources, ["kanban"])
+
+    def test_running_limit_applies_after_identity_filtering(self) -> None:
+        result = self._query(outbox=self.outbox, limit=1)
+
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual([item.task_id for item in result.running], ["future"])
+
+    def test_delegation_limit_applies_after_identity_filtering(self) -> None:
+        path = self.dir / "delegation.db"
+        con = sqlite3.connect(path)
+        con.execute(
+            "CREATE TABLE bg_completions (delegation_id TEXT, origin_session_id TEXT,"
+            " state TEXT, acked INTEGER, dispatched_at REAL, created_at REAL)"
+        )
+        for index, (name, origin) in enumerate(self.origins.items()):
+            con.execute(
+                "INSERT INTO bg_completions VALUES (?, ?, 'registered', 0, ?, ?)",
+                (name, origin, float(index), float(index)),
+            )
+        con.commit()
+        con.close()
+
+        items = DelegationRunningSource(path).running(
+            identity=("qqtpc", "group", GROUP), prefixes=("hermes",), limit=1
+        )
+
+        self.assertEqual([item["task_id"] for item in items], ["future"])
 
     def test_official_qq_caller_is_isolated(self) -> None:
         result = get_background_tasks_impl(

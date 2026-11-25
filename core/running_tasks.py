@@ -59,6 +59,16 @@ def _belongs_params(prefix: str) -> tuple[str, int, str]:
     return prefix, len(prefix) + 2, prefix + "-g"
 
 
+def _identity_clause(column: str) -> str:
+    """按 ``+scope+target`` 的完整边界粗筛，排除同前缀兄弟群。"""
+    return f"({column} GLOB ? OR {column} GLOB ?)"
+
+
+def _identity_params(identity) -> tuple[str, str]:
+    base = f"*+{identity[1]}+{identity[2]}"
+    return base, base + "-g[0-9]*"
+
+
 def _connect_ro(db_path: str | Path) -> sqlite3.Connection:
     path = str(db_path)
     if not Path(path).is_file():
@@ -98,14 +108,12 @@ class KanbanRunningSource:
             return []
         conn = _connect_ro(self.db_path)
         try:
-            # 只按真实运行状态筛；身份归属（同平台族 + scope + target）不能用
-            # transport 清单下推，SQL 只按 `+<scope>+<target>` 粗筛，再在 Python
-            # 侧按 parse_session_key 精判——未知的未来 transport 键同样能查到。
+            # 身份精判前不用 LIMIT：其他后端或平台族的同号记录不能挤占本会话名额。
             if identity is not None:
                 rows = conn.execute(
-                    f"SELECT * FROM tasks WHERE status=? AND instr(session_id, ?) > 0"
-                    " ORDER BY rowid DESC LIMIT ?",
-                    (KANBAN_RUNNING_STATUS, f"+{identity[1]}+{identity[2]}", max(limit, 1)),
+                    f"SELECT * FROM tasks WHERE status=? AND {_identity_clause('session_id')}"
+                    " ORDER BY rowid DESC",
+                    (KANBAN_RUNNING_STATUS, *_identity_params(identity)),
                 ).fetchall()
             else:
                 # 排序用 rowid（tasks 必有）而不是 started_at：老库/夹具可能没有该列。
@@ -163,18 +171,14 @@ class DelegationRunningSource:
             return []
         conn = _connect_ro(self.db_path)
         try:
-            # 会话归属与已派发未终态一起下推：identity 模式按 `+<scope>+<target>`
-            # 粗筛（不限 transport 名），再在 Python 侧用 parse_session_key 精判。
+            # 与 Kanban 同一口径：先按边界粗筛，Python 精判后再限条数。
             if identity is not None:
                 rows = conn.execute(
                     "SELECT delegation_id, origin_session_id, dispatched_at"
                     " FROM bg_completions WHERE state=? AND acked=0"
-                    " AND instr(origin_session_id, ?) > 0"
-                    " ORDER BY created_at DESC LIMIT ?",
-                    (
-                        DELEGATION_RUNNING_STATE, f"+{identity[1]}+{identity[2]}",
-                        max(limit, 1),
-                    ),
+                    f" AND {_identity_clause('origin_session_id')}"
+                    " ORDER BY created_at DESC",
+                    (DELEGATION_RUNNING_STATE, *_identity_params(identity)),
                 ).fetchall()
             else:
                 rows = conn.execute(

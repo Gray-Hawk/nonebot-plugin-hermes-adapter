@@ -133,6 +133,20 @@ class CrossTransportRecoveryTests(RestartRouteHarness):
         appended = [call.args[0] for call in self.message_buffer.append.call_args_list]
         self.assertTrue(all(item.adapter == "milky" for item in appended))
 
+    async def test_current_driver_inflight_blocks_cross_transport_resume(self) -> None:
+        self._bind_with_adapter(run_id="run-current-inflight", adapter="onebotv11")
+        inflight = run_resume._mcp.inflight
+        inflight.is_inflight.side_effect = lambda key: key[0] == "milky"
+
+        with patch.object(session_mod, "_live_transports", lambda domain: ["milky"]), patch.object(
+            run_resume, "_RESUME_RETRY_MAX", 1
+        ), patch.object(run_resume, "_RESUME_RETRY_SEC", 0):
+            run_resume.recover_bot_deliveries(self._milky_bot())
+            await self._wait_until(lambda: False, timeout=0.2)
+
+        self.assertEqual(self.sent_texts, [], "当前 Milky 仍在跑时必须等待，不能插入旧回复")
+        self.assertIsNotNone(self.tracker.get_by_run_id("run-current-inflight"))
+
     async def test_official_qq_row_is_not_resumed_by_qqtpc_bot(self) -> None:
         self._land_ready_with_adapter(run_id="run-qq", adapter="qq")
 

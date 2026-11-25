@@ -98,8 +98,8 @@ _resume_inflight: set[str] = set()
 _ZOMBIE_TTL_SEC = 24 * 3600
 
 
-def _inflight_key(row: TrackedRun) -> tuple[str, str]:
-    return make_inflight_key(row.adapter, row.is_private, row.user_id, row.group_id)
+def _inflight_key(row: TrackedRun, adapter: str | None = None) -> tuple[str, str]:
+    return make_inflight_key(adapter or row.adapter, row.is_private, row.user_id, row.group_id)
 
 
 def _bot_adapter_name(bot: Any) -> str:
@@ -470,7 +470,7 @@ async def _resume_row_impl(row: TrackedRun) -> None:
                 entry = registry.get(row.adapter, scope, scope_id)
                 if entry is not None:
                     send_adapter = row.adapter
-            if entry is not None and not inflight.is_inflight(_inflight_key(row)):
+            if entry is not None and not inflight.is_inflight(_inflight_key(row, send_adapter)):
                 break
             entry = None
         await asyncio.sleep(_RESUME_RETRY_SEC)
