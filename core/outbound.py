@@ -779,11 +779,11 @@ async def send_text_with_media(
                 f"value={str(reply_at_user_id)[:80]!r}"
             )
 
-    # B-1.2: 群聊 + 支持 Forward 导出的 QQTPC 驱动 + 超长 → 合并转发 (而非截断)
-    # 私聊永远走截断 (send_private_forward_msg 实现端覆盖差);
-    # onebotv12 / 未知 adapter 同样保持截断（与改名前逐字一致）。
+    # B-1.2: 群聊 + OneBot Forward 导出 + 超长 → 合并转发 (而非截断)。
+    # Milky 自定义节点没有原消息引用，真实 QQ 会判成非法合并转发；这里只保留
+    # OneBot 既有路径，Milky 与私聊、未知 adapter 一样走文本截断。
     forward_capable = platform_compat.capabilities(adapter_name).forward_expand and (
-        qqtpc_api.protocol(adapter_name) in (qqtpc_api.ONEBOT, qqtpc_api.MILKY)
+        qqtpc_api.protocol(adapter_name) == qqtpc_api.ONEBOT
     )
     if (
         text
