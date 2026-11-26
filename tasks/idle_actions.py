@@ -3,7 +3,7 @@
 一拍 60 秒扫一遍**具备闲置动作资格**的会话;每个会话各自计时,每拍每会话最多
 执行一个动作,固定优先级 ``clear > compress > keepalive``。
 
-- ``clear``:旧 T1 的静默重置,保持 ``session_idle_reset_sec`` 与
+- ``clear``:会话定时清理(原 T1 的静默重置),保持 ``session_idle_reset_sec`` 与
   ``SessionManager.clear_internal()`` 行为;
 - ``compress``:复用 ``HermesClient.compress_session()`` 与网关
   ``session-compress`` 插件,轮换后采纳新 session id;
@@ -166,12 +166,15 @@ class IdleActionScanner:
         last_activity: float,
         cfg: ChatConfig,
         now: float,
+        comp: tuple[str, bool, str, str | None],
     ) -> str | None:
         """这一拍该会话唯一的动作(固定优先级),没有到点返回 None。
 
         资格(``idle_armed``)已经在 ``idle_snapshot`` 里过滤过:clear／compress
         成功或上游轮换关掉资格后,三个动作全部跳过,直到下一次真实活动。
+        ``comp`` 只给 clear 的豁免名单判定用,压缩与保活完全不看名单。
         """
+        _adapter, is_private, user_id, group_id = comp  # 名单与适配器无关
         for action in ACTIONS:
             if now < self._fail_until.get((internal_id, action), 0.0):
                 continue  # 冷却期内不重试同一动作
@@ -179,7 +182,12 @@ class IdleActionScanner:
                 # /delay 只暂停 clear；compress/keepalive 在暂停期间继续。
                 if self._sm.is_idle_paused(internal_id):
                     continue
-                # 旧 T1 语义:严格超过阈值才清。
+                # 豁免会话只跳过定时清理本身,不写暂停、不动活动计时。
+                if cfg.idle_reset_exempt(
+                    is_private=is_private, user_id=user_id, group_id=group_id
+                ):
+                    continue
+                # 严格超过阈值才清。
                 if cfg.session_idle_reset_sec > 0 and now - last_activity > cfg.session_idle_reset_sec:
                     return action
             elif action == ACTION_COMPRESS:
@@ -228,7 +236,7 @@ class IdleActionScanner:
         cfg = self._config_loader()
         done: list[IdleActionRecord] = []
         for internal_id, comp, session_key, last_activity in self._sm.idle_snapshot():
-            action = self.due_action(internal_id, last_activity, cfg, now)
+            action = self.due_action(internal_id, last_activity, cfg, now, comp)
             if action is None:
                 continue
             blocked = self._blocked_reason(comp)
@@ -247,12 +255,12 @@ class IdleActionScanner:
 
     async def _run(self, action: str, record: IdleActionRecord, now: float) -> bool:
         if action == ACTION_CLEAR:
-            # 旧 T1 语义:静默清会话(等价 /clear 的 session 效果,但不发提示)。
+            # 静默清会话(等价 /clear 的 session 效果,但不发提示)。
             # ``clear_internal`` 自己把计时归零并关闭资格:本拍之后不再每拍重复清。
             self._sm.clear_internal(record.internal_id, now=now)
             throttled_info(
-                f"gate.t1_clear:{record.internal_id}",
-                f"[HERMES T1] 闲置重置已清会话 {record.internal_id}",
+                f"gate.idle_clear:{record.internal_id}",
+                f"[HERMES 定时清理] 闲置重置已清会话 {record.internal_id}",
             )
             return True
         if action == ACTION_COMPRESS:

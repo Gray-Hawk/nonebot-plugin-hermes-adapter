@@ -54,35 +54,30 @@ class _Client:
         return self.resp
 
 
-class PreviewArgTests(unittest.TestCase):
-    """``/compress`` 余文 → (--preview 开关, focus)。"""
+class CompressArgTests(unittest.TestCase):
+    """``/compress`` 只接受无参数或精确子命令 ``preview``。"""
 
     @staticmethod
     def _msg(tail: str) -> str:
         head = f"/{commands.CMD_PREFIX} compress" if commands.CMD_PREFIX else "/compress"
         return f"{head} {tail}".strip()
 
-    def test_bare_flag(self):
-        self.assertEqual(commands.split_compress_args(self._msg("--preview")), (True, ""))
+    def test_only_two_valid_forms(self):
+        self.assertIs(commands.split_compress_args(self._msg("")), False)
+        self.assertIs(commands.split_compress_args(self._msg("preview")), True)
 
-    def test_flag_before_focus(self):
-        self.assertEqual(
-            commands.split_compress_args(self._msg("--preview 保留配方")), (True, "保留配方"))
-
-    def test_flag_after_focus(self):
-        self.assertEqual(
-            commands.split_compress_args(self._msg("保留配方 --preview")), (True, "保留配方"))
-
-    def test_flag_keeps_boundary_args_for_the_gateway_parser(self):
-        self.assertEqual(commands.split_compress_args(self._msg("here 3 --preview")), (True, "here 3"))
-
-    def test_no_flag_keeps_focus_verbatim(self):
-        self.assertEqual(commands.split_compress_args(self._msg("保留配方")), (False, "保留配方"))
-        self.assertEqual(commands.split_compress_args(self._msg("")), (False, ""))
-
-    def test_flag_must_be_a_whole_token(self):
-        self.assertEqual(
-            commands.split_compress_args(self._msg("--previewx 配方")), (False, "--previewx 配方"))
+    def test_every_other_argument_is_invalid(self):
+        for tail in (
+            "保留配方",
+            "preview 保留配方",
+            "保留配方 preview",
+            "previewx",
+            "--preview",
+            "—preview",
+            "--previewx 配方",
+        ):
+            with self.subTest(tail=tail):
+                self.assertIsNone(commands.split_compress_args(self._msg(tail)))
 
 
 class CompressClientTests(unittest.IsolatedAsyncioTestCase):
@@ -183,49 +178,37 @@ class CompressClientTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ReceiptTests(unittest.TestCase):
-    def test_in_place_receipt(self):
+    def test_compressed_receipt_is_single_line_with_reduction_ratio(self):
         lines = compress_receipt_lines(
             {"ok": True, "status": "compressed", "before_messages": 14, "after_messages": 9,
-             "in_place": True, "rotated": False, "message": "headline"},
-            previous_key="k1")
-        self.assertIn("14 → 9", lines[0])
-        self.assertIn("in-place", "\n".join(lines))
+             "in_place": True, "rotated": False, "message": "headline"})
+        self.assertEqual(lines, ["🗜️ 会话压缩完成，减少约 36％（14 → 9 条消息）"])
 
-    def test_rotation_receipt_reports_adoption(self):
+    def test_rotated_receipt_also_hides_session_identifiers(self):
         lines = compress_receipt_lines(
             {"ok": True, "status": "compressed", "rotated": True, "in_place": False,
-             "session_id": "k2", "message": ""},
-            previous_key="k1", adopted=True)
+             "session_id": "secret-child-id", "message": "secret raw receipt"})
+        self.assertEqual(lines, ["🗜️ 会话压缩完成"])
         text = "\n".join(lines)
-        self.assertIn("k1 → k2", text)
-        self.assertIn("已采纳", text)
-
-    def test_rotation_receipt_warns_when_not_adopted(self):
-        lines = compress_receipt_lines(
-            {"ok": True, "status": "compressed", "rotated": True, "in_place": False,
-             "session_id": "k2", "message": ""},
-            previous_key="k1", adopted=False)
-        self.assertIn("未能写入插件映射", "\n".join(lines))
+        for banned in ("secret-child-id", "secret raw receipt", "session", "已采纳", "轮换"):
+            self.assertNotIn(banned, text)
 
     def test_aborted_receipt_says_nothing_changed(self):
         lines = compress_receipt_lines(
             {"ok": True, "status": "aborted", "before_messages": 20, "after_messages": 20,
-             "in_place": False, "rotated": False, "message": "refused"},
-            previous_key="k1")
+             "in_place": False, "rotated": False, "message": "refused"})
         self.assertIn("未压缩", lines[0])
         self.assertIn("20", lines[0])
 
     def test_busy_receipt_is_explicit(self):
         lines = compress_receipt_lines(
-            {"ok": False, "code": 409, "status": "session_busy", "error": "busy"},
-            previous_key="k1")
+            {"ok": False, "code": 409, "status": "session_busy", "error": "busy"})
         self.assertIn("正忙", lines[0])
         self.assertIn("不会并发压缩", lines[1])
 
     def test_missing_session_receipt(self):
         lines = compress_receipt_lines(
-            {"ok": False, "code": 404, "status": "session_not_found", "error": "nope"},
-            previous_key="k1")
+            {"ok": False, "code": 404, "status": "session_not_found", "error": "nope"})
         self.assertIn("没有这个会话", lines[0])
 
     def test_preview_receipt_shows_usage_over_limit(self):
@@ -235,8 +218,7 @@ class ReceiptTests(unittest.TestCase):
              "preview": {"context_tokens": 61362, "context_messages": 311,
                          "context_limit": 1048576, "context_model": "k3.1-pro",
                          "context_source": "config", "history_tokens": 78904,
-                         "history_messages": 1290}},
-            previous_key="k1")
+                         "history_messages": 1290}})
         self.assertEqual(lines[0], "🗜️ 上下文预览（只读，未压缩）")
         # 卡面示例形态:当前占用 / 上限(百分比),消息数;数字半角、中文标点全角
         self.assertEqual(
@@ -253,8 +235,7 @@ class ReceiptTests(unittest.TestCase):
             {"ok": True, "status": "preview", "focus_topic": "",
              "preview": {"context_tokens": 1863, "context_messages": 12, "context_limit": 0,
                          "context_model": "mystery", "context_source": "default",
-                         "history_tokens": 1863, "history_messages": 12}},
-            previous_key="k1")
+                         "history_tokens": 1863, "history_messages": 12}})
         self.assertEqual(lines[1], "当前上下文约 1,863 tokens（上限未知），12 条消息")
         self.assertNotIn("/", lines[1])          # 不编造上限
         self.assertEqual(len(lines), 2)          # 无全量历史差异、无 focus 行
@@ -263,15 +244,13 @@ class ReceiptTests(unittest.TestCase):
         lines = compress_receipt_lines(
             {"ok": True, "status": "preview",
              "preview": {"context_tokens": 1000, "context_messages": 5, "context_limit": 1048576,
-                         "history_tokens": 1000, "history_messages": 5}},
-            previous_key="k1")
+                         "history_tokens": 1000, "history_messages": 5}})
         self.assertIn("（不足1％）", lines[1])
 
     def test_preview_receipt_falls_back_to_gateway_message(self):
         lines = compress_receipt_lines(
             {"ok": True, "status": "preview", "message": "🗜️ Preview — no changes made.",
-             "preview": {}},
-            previous_key="k1")
+             "preview": {}})
         self.assertEqual(lines[0], "🗜️ 压缩预览（只读，未写入）")
         self.assertIn("no changes made", lines[1])
 
@@ -302,12 +281,12 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
         self.session_manager.get_session_key.return_value = "hermes-g1"
         self.session_manager.adopt_session_key.return_value = True
 
-    async def _call(self, result, plaintext: str | None = None):
+    async def _call(self, result, plaintext: str | None = None, *, admin: bool = True):
         patches = [
             patch.object(commands.alconna, "get_target", return_value=self.target),
             patch.object(commands, "check_isolation", return_value=True),
             patch.object(commands, "get_adapter_name", return_value="onebotv11"),
-            patch.object(commands, "_is_admin", return_value=True),
+            patch.object(commands, "_is_admin", return_value=admin),
             patch.object(commands, "hermes_control_plane_enabled", return_value=True),
             patch.object(commands, "resolve_target", return_value=TGT),
             patch.object(commands, "session_manager", self.session_manager),
@@ -320,7 +299,7 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
             self.addCleanup(p.stop)
         prefix = f"/{commands.CMD_PREFIX} compress" if commands.CMD_PREFIX else "/compress"
         event = SimpleNamespace(get_user_id=lambda: "u1",
-                                get_plaintext=lambda: plaintext or f"{prefix} 保留配方")
+                                get_plaintext=lambda: plaintext or prefix)
         await handle_compress(bot=MagicMock(), event=event, matcher=MagicMock())
         return commands.hermes_client.compress_session
 
@@ -329,9 +308,11 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
             "ok": True, "status": "compressed", "rotated": True, "in_place": False,
             "session_id": "child-1", "before_messages": 14, "after_messages": 9, "message": "",
         })
-        self.assertEqual(call.await_args.kwargs["focus_topic"], "保留配方")
+        self.assertEqual(call.await_args.kwargs["focus_topic"], "")
         self.session_manager.adopt_session_key.assert_called_once_with("hermes-g1", "child-1")
-        self.assertTrue(any("已采纳" in text for text in _RecorderMessage.sent))
+        self.assertEqual(_RecorderMessage.sent, ["🗜️ 会话压缩完成，减少约 36％（14 → 9 条消息）"])
+        self.assertNotIn("hermes-g1", _RecorderMessage.sent[0])
+        self.assertNotIn("child-1", _RecorderMessage.sent[0])
 
     async def test_in_place_does_not_adopt(self):
         await self._call({
@@ -353,7 +334,7 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
                          "context_limit": 1048576, "context_model": "k3.1-pro",
                          "context_source": "config", "history_tokens": 61362,
                          "history_messages": 311}},
-            plaintext=f"{prefix} --preview")
+            plaintext=f"{prefix} preview")
         self.assertTrue(call.await_args.kwargs["preview"])
         self.assertEqual(call.await_args.kwargs["focus_topic"], "")
         self.session_manager.adopt_session_key.assert_not_called()
@@ -361,16 +342,58 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("当前上下文约 61,362 / 1,048,576 tokens（约6％），311 条消息", text)
         self.assertNotIn("已压缩", text)
 
-    async def test_preview_command_keeps_focus(self):
+    async def test_preview_with_extra_args_is_invalid(self):
         prefix = f"/{commands.CMD_PREFIX} compress" if commands.CMD_PREFIX else "/compress"
         call = await self._call(
-            {"ok": True, "status": "preview", "rotated": False, "in_place": False,
-             "focus_topic": "保留配方",
-             "preview": {"context_tokens": 10, "context_messages": 1, "context_limit": 0}},
-            plaintext=f"{prefix} 保留配方 --preview")
-        self.assertEqual(call.await_args.kwargs["focus_topic"], "保留配方")
-        self.assertTrue(call.await_args.kwargs["preview"])
-        self.assertIn("🎯 聚焦：保留配方", _RecorderMessage.sent[-1])
+            {"ok": True, "status": "preview"}, plaintext=f"{prefix} preview 保留配方")
+        call.assert_not_awaited()
+        self.assertIn("非法命令", _RecorderMessage.sent[-1])
+
+    async def test_non_admin_preview_is_silent(self):
+        prefix = f"/{commands.CMD_PREFIX} compress" if commands.CMD_PREFIX else "/compress"
+        call = await self._call(
+            {"ok": True, "status": "preview"},
+            plaintext=f"{prefix} preview", admin=False)
+        call.assert_not_awaited()
+        self.assertEqual(_RecorderMessage.sent, [], "非管理员不得暴露命令存在性")
+
+    async def test_legacy_preview_flag_is_rejected_without_gateway_call(self):
+        prefix = f"/{commands.CMD_PREFIX} compress" if commands.CMD_PREFIX else "/compress"
+        for tail in ("--preview", "--preview 保留配方", "保留配方 --preview"):
+            with self.subTest(tail=tail):
+                _RecorderMessage.sent = []
+                call = await self._call(
+                    {"ok": True, "status": "compressed"}, plaintext=f"{prefix} {tail}")
+                call.assert_not_awaited()
+                self.assertEqual(len(_RecorderMessage.sent), 1, "只回一条提示")
+                text = _RecorderMessage.sent[0]
+                self.assertIn("preview", text)
+                self.assertIn("未执行压缩", text)
+                self.assertIn("请改用", text)
+                self.assertNotIn("--preview", text, "提示不再只点名 ASCII 形态")
+
+    async def test_em_dash_preview_flag_is_rejected_without_gateway_call(self):
+        """生产证据 messages.db 64659:``/normi compress —preview``(单个 U+2014)。"""
+        prefix = f"/{commands.CMD_PREFIX} compress" if commands.CMD_PREFIX else "/compress"
+        for tail in ("—preview", "—preview 保留配方", "保留配方 —preview"):
+            with self.subTest(tail=tail):
+                _RecorderMessage.sent = []
+                call = await self._call(
+                    {"ok": True, "status": "compressed"}, plaintext=f"{prefix} {tail}")
+                call.assert_not_awaited()
+                self.assertEqual(len(_RecorderMessage.sent), 1, "只回一条提示")
+                text = _RecorderMessage.sent[0]
+                self.assertIn("preview", text)
+                self.assertIn("未执行压缩", text)
+
+    async def test_previewx_prefix_is_invalid(self):
+        prefix = f"/{commands.CMD_PREFIX} compress" if commands.CMD_PREFIX else "/compress"
+        call = await self._call({
+            "ok": True, "status": "compressed", "rotated": False, "in_place": True,
+            "session_id": "hermes-g1", "before_messages": 14, "after_messages": 9, "message": "",
+        }, plaintext=f"{prefix} --previewx 配方")
+        call.assert_not_awaited()
+        self.assertIn("非法命令", _RecorderMessage.sent[-1])
 
     async def test_normal_compress_is_not_marked_preview(self):
         call = await self._call({
@@ -449,7 +472,7 @@ class ManualCompressIdleEligibilityTests(unittest.IsolatedAsyncioTestCase):
             {"ok": True, "status": "preview", "rotated": False, "in_place": False,
              "session_id": "hermes-g1", "preview": {"context_tokens": 10, "context_messages": 1,
                                                     "context_limit": 0}},
-            plaintext=f"{prefix} --preview",
+            plaintext=f"{prefix} preview",
         )
         self.assertTrue(
             self.session_manager.is_idle_armed(self.internal_id), "预览不压缩,不关资格"

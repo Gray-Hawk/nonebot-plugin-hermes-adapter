@@ -343,7 +343,7 @@ YAML_SPECS: dict[str, list[Any]] = {
             ],
             type_="int",
         ),
-        _Section("公私共用：5 键"),
+        _Section("公私共用：6 键"),
         _Key(
             "ignore_prefix",
             ["."],
@@ -371,6 +371,17 @@ YAML_SPECS: dict[str, list[Any]] = {
                 "clear／compress 成功后资格关闭，等下一次真实 chat／push 才重新开放。",
             ],
             type_="int",
+        ),
+        _Key(
+            "session_idle_reset_exempt",
+            [],
+            [
+                "会话定时清理豁免名单：私聊写 private:<QQ号>，群聊写 group:<群号>；两者精确区分，同号也不通用。空名单 = 不豁免任何人。",
+                "只豁免会话定时清理（clear）：自动压缩与缓存保活完全不受影响，照常到点执行。",
+                "豁免期间 /delay 与 /resume 只回复提示，不写 idle_paused、也不重置活动计时；原有的暂停／未暂停状态保持不变。",
+                "改名单后由管理员手动重载配置替换快照生效，本身不改任何会话状态。",
+            ],
+            type_="list",
         ),
         _Key(
             "session_auto_compress_sec",

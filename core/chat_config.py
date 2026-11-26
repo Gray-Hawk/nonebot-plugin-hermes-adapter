@@ -32,6 +32,7 @@ class ChatConfig:
     history_message_limit: int = 10
     ignore_prefix: set[str] = field(default_factory=lambda: {"."})
     session_idle_reset_sec: int = 0
+    session_idle_reset_exempt: set[str] = field(default_factory=set)
     session_auto_compress_sec: int = 0
     session_cache_keepalive_sec: int = 0
     proactive_interval_sec: int = 0
@@ -42,6 +43,21 @@ class ChatConfig:
     forward_extract_max_nodes: int = 10
     forward_extract_max_chars: int = 800
     greet_on_join: bool = False
+
+    def idle_reset_exempt(
+        self, *, is_private: bool, user_id: str, group_id: str | None
+    ) -> bool:
+        """该会话是否豁免会话定时清理(clear)。
+
+        名单条目不区分适配器,只按会话形态精确匹配 ``private:<user_id>`` /
+        ``group:<group_id>``:私聊与群聊即使号码相同也互不豁免。压缩与保活不读
+        这个判断。扫描器与 ``/delay``、``/resume`` 共用同一个口径。
+        """
+        if is_private:
+            return f"private:{user_id}" in self.session_idle_reset_exempt
+        if not group_id:
+            return False
+        return f"group:{group_id}" in self.session_idle_reset_exempt
 
 
 def parse_chat_config(doc: dict) -> ChatConfig:
@@ -60,6 +76,7 @@ def parse_chat_config(doc: dict) -> ChatConfig:
         history_message_limit=int_field(doc, "history_message_limit", 10, min_v=1),
         ignore_prefix=str_set_field(doc, "ignore_prefix", {"."}),
         session_idle_reset_sec=int_field(doc, "session_idle_reset_sec", 0),
+        session_idle_reset_exempt=str_set_field(doc, "session_idle_reset_exempt", set()),
         session_auto_compress_sec=int_field(doc, "session_auto_compress_sec", 0),
         session_cache_keepalive_sec=int_field(doc, "session_cache_keepalive_sec", 0),
         proactive_interval_sec=int_field(doc, "proactive_interval_sec", 0),

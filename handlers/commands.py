@@ -28,7 +28,7 @@ from ..core.routing import resolve_target
 from ..core.run_tracker import make_scope_key
 from ..core.sticker_library import default_sticker_library
 from ..core.config_reload import reload_runtime_config
-from ..core.chat_config import idle_actions_enabled
+from ..core.chat_config import idle_actions_enabled, load_chat_config
 from ..core.misc_config import load_misc_config, startup_command_prefix
 from ..core.user_lists import load_user_lists
 from ..core.session import session_manager
@@ -63,22 +63,14 @@ def _tail_args(raw: str) -> str:
     return parts[idx].strip() if len(parts) > idx else ""
 
 
-# /compress 的只读预览开关:独立词元精确匹配("--previewx" 之类仍按 focus 处理)。
-_PREVIEW_FLAG = "--preview"
-
-
-def split_compress_args(raw: str) -> tuple[bool, str]:
-    """``/compress`` 余文 → ``(是否 --preview, 剩余 focus)``。
-
-    ``--preview`` 只按整词识别(其余参数原样留作 focus,交给网关共享的参数解析器处理
-    ``here N`` 等形态);这样 ``/normi compress --preview`` 与 ``/normi compress 保留配方 --preview``
-    都成立,而 ``--previewx`` 不会被误判。
-    """
-    focus = _tail_args(raw)
-    tokens = focus.split()
-    if _PREVIEW_FLAG not in tokens:
-        return False, focus
-    return True, " ".join(tok for tok in tokens if tok != _PREVIEW_FLAG).strip()
+def split_compress_args(raw: str) -> bool | None:
+    """严格解析 ``/compress``：无参数为压缩，``preview`` 为只读，其余非法。"""
+    tail = _tail_args(raw)
+    if not tail:
+        return False
+    if tail == "preview":
+        return True
+    return None
 
 
 # --- /clear ---
@@ -146,20 +138,30 @@ async def handle_clear(bot: Bot, event: Event, matcher: Matcher):
     await reply.send(target=target, bot=bot)
 
 
-# --- /delay、/resume(T1 空闲重置超控,本部署新增) ---
+# --- /delay、/resume(会话定时清理超控,本部署新增) ---
 delay_command = on_command(_cmd("delay"), force_whitespace=True, priority=88, block=True)
 resume_command = on_command(_cmd("resume"), force_whitespace=True, priority=88, block=True)
+
+# 豁免会话:两条命令都只提示,不写 idle_paused、不重置 last_activity。
+_IDLE_EXEMPT_REPLY = "🛡️ 本会话已豁免定时清理，原状态保持不变"
+
+
+def _idle_reset_exempt(is_private: bool, user_id: str, group_id: str | None) -> bool:
+    """当前会话是否在定时清理豁免名单里(与扫描器共用 ChatConfig 口径)。"""
+    return load_chat_config().idle_reset_exempt(
+        is_private=is_private, user_id=user_id, group_id=group_id
+    )
 
 
 @delay_command.handle()
 async def handle_delay(bot: Bot, event: Event, matcher: Matcher):
-    """暂停当前会话的 T1 空闲自动重置"""
+    """暂停当前会话的会话定时清理"""
     target = alconna.get_target()
     if not check_isolation(event, target):
         matcher.skip()
 
     if not idle_actions_enabled():
-        await alconna.UniMessage("ℹ️ 空闲自动动作当前未启用。").send(target=target, bot=bot)
+        await alconna.UniMessage("ℹ️ 会话闲置动作当前未启用。").send(target=target, bot=bot)
         return
 
     adapter_name = get_adapter_name(target)
@@ -169,16 +171,20 @@ async def handle_delay(bot: Bot, event: Event, matcher: Matcher):
         logger.warning(f"[HERMES] /delay 取不到 user_id,不执行 (adapter={adapter_name})")
         return
     group_id = None if target.private else target.id
+    if _idle_reset_exempt(target.private, user_id, group_id):
+        logger.info(f"[HERMES] /delay: 会话定时清理已豁免,忽略 ({adapter_name}:{user_id})")
+        await alconna.UniMessage(_IDLE_EXEMPT_REPLY).send(target=target, bot=bot)
+        return
     internal_id = session_manager.set_idle_paused(adapter_name, target.private, user_id, group_id, True)
-    logger.info(f"[HERMES] /delay: 空闲动作计时已暂停 ({internal_id})")
+    logger.info(f"[HERMES] /delay: 会话定时清理计时已暂停 ({internal_id})")
     await alconna.UniMessage(
-        f"⏸️ 已暂停本会话的空闲自动动作，{_display_cmd('resume')} 恢复。"
+        f"⏸️ 已暂停本会话的会话定时清理，{_display_cmd('resume')} 恢复。"
     ).send(target=target, bot=bot)
 
 
 @resume_command.handle()
 async def handle_resume(bot: Bot, event: Event, matcher: Matcher):
-    """恢复当前会话的空闲动作计时,并重置计时"""
+    """恢复当前会话的会话定时清理计时,并重置计时"""
     target = alconna.get_target()
     if not check_isolation(event, target):
         matcher.skip()
@@ -190,9 +196,13 @@ async def handle_resume(bot: Bot, event: Event, matcher: Matcher):
         logger.warning(f"[HERMES] /resume 取不到 user_id,不执行 (adapter={adapter_name})")
         return
     group_id = None if target.private else target.id
+    if _idle_reset_exempt(target.private, user_id, group_id):
+        logger.info(f"[HERMES] /resume: 会话定时清理已豁免,忽略 ({adapter_name}:{user_id})")
+        await alconna.UniMessage(_IDLE_EXEMPT_REPLY).send(target=target, bot=bot)
+        return
     internal_id = session_manager.set_idle_paused(adapter_name, target.private, user_id, group_id, False)
-    logger.info(f"[HERMES] /resume: 空闲动作计时已恢复并重置 ({internal_id})")
-    await alconna.UniMessage("▶️ 已恢复空闲自动动作，计时重新开始。").send(target=target, bot=bot)
+    logger.info(f"[HERMES] /resume: 会话定时清理计时已恢复并重置 ({internal_id})")
+    await alconna.UniMessage("▶️ 已恢复会话定时清理，计时重新开始。").send(target=target, bot=bot)
 
 
 # --- /ping ---
@@ -282,8 +292,8 @@ def build_help_text(
 ) -> str:
     """拼装 /help 正文。与 handler 分开以便离线冒烟。
 
-    默认形态保持旧行为一字不差;自定义只换头尾,中间命令清单仍按功能开关
-    动态生成(T1 才列 /delay /resume,管理员才列 /hermes-status)。
+    默认命令清单按功能开关动态生成（启用任一闲置动作才列 /delay、/resume，
+    管理员才列 /hermes-status）；自定义只换头尾。
     cmd_prefix 非空时每条命令带寻址前缀(如 /normi clear)。
     """
 
@@ -291,23 +301,24 @@ def build_help_text(
         return f"/{cmd_prefix} {cmd}" if cmd_prefix else f"/{cmd}"
 
     lines = [
-        f"{_cl('clear')} - 重置对话",
-        f"{_cl('ping')} - 检查连接状态",
-        f"{_cl('help')} - 显示本帮助",
+        f"{_cl('clear')}：重置对话",
+        f"{_cl('ping')}：检查连接状态",
+        f"{_cl('help')}：显示本帮助",
     ]
     if idle_actions_enabled():
         # 任一闲置动作启用就暴露超控命令,免得用户对着不存在的功能打命令
-        lines.append(f"{_cl('delay')} - 暂停空闲自动动作")
-        lines.append(f"{_cl('resume')} - 恢复空闲自动动作")
+        lines.append(f"{_cl('delay')}：暂停会话定时清理")
+        lines.append(f"{_cl('resume')}：恢复会话定时清理")
     if is_admin:
         # 管理员才看见运行时状态命令,普通用户视角下此命令"不存在"
-        lines.append(f"{_cl('hermes-status')} - 查看插件运行时状态(管理员)")
+        lines.append(f"{_cl('hermes-status')}：查看插件运行时状态（管理员）")
         if hermes_control_plane_enabled():
-            lines.append(f"{_cl('run-status')} - 查看当前会话在跑的 run(管理员)")
-            lines.append(f"{_cl('run-stop')} - 终止当前会话在跑的 run(管理员)")
-            lines.append(f"{_cl('compress')} - 手动压缩当前会话上下文;--preview 只看占用(管理员)")
-            lines.append(f"{_cl('reasoning')} - 查看/切换全局推理档位(管理员)")
-        lines.append(f"{_cl('reload-config')} - 手动重载配置与表情库(管理员)")
+            lines.append(f"{_cl('run-status')}：查看当前会话在跑的 run（管理员）")
+            lines.append(f"{_cl('run-stop')}：终止当前会话在跑的 run（管理员）")
+            lines.append(f"{_cl('compress')}：手动压缩当前会话上下文（管理员）")
+            lines.append(f"{_cl('compress')} preview：只读查看会话上下文占用（管理员）")
+            lines.append(f"{_cl('reasoning')}：查看／切换全局推理档位（管理员）")
+        lines.append(f"{_cl('reload-config')}：手动重载配置与表情库（管理员）")
 
     if header is not None:
         text = header.strip("\n") + "\n\n命令：\n" + "\n".join(lines)
@@ -540,8 +551,8 @@ async def handle_run_stop(bot: Bot, event: Event, matcher: Matcher):
 # 链路:QQ 命令 → 插件按当前会话 session key 调 gateway `POST /api/sessions/{id}/compress`
 # → 网关跑 messaging /compress 的同一实现(临时 agent + 共享 compress_now + 同一轮换持久化)。
 # 同会话正在跑 turn 时网关回 409 session_busy,这里只回执不重试;轮换时采纳新 session id。
-# `--preview` 是同一命令的只读形态:网关不建 agent、不取 lease、不写历史,回结构化占用/上限,
-# 回执显示"当前上下文约 占用 / 上限 tokens(百分比),N 条消息"。
+# `/compress` 与 `/compress preview` 是仅有的两种合法形态；其他余文全部拒绝执行。
+# 预览由网关复用只读报告，不建 agent、不取 lease、不写历史，回结构化占用／上限。
 compress_command = on_command(
     _cmd("compress"), aliases={_cmd("压缩")}, force_whitespace=True, priority=88, block=True
 )
@@ -598,43 +609,25 @@ def _preview_receipt_lines(result: dict) -> list[str]:
     return lines
 
 
-def compress_receipt_lines(
-    result: dict, *, previous_key: str, adopted: bool | None = None
-) -> list[str]:
-    """把压缩结果拼成 QQ 回执(纯函数,便于离线测)。
-
-    ``adopted``: 轮换时插件映射是否成功换到新 id(None = 未发生轮换)。
-    """
+def compress_receipt_lines(result: dict) -> list[str]:
+    """把压缩结果拼成 QQ 回执；成功时只展示结果，不暴露会话标识。"""
     if result.get("ok"):
         status = str(result.get("status") or "compressed")
         if status == "preview":
-            # 只读预览:不显示"已压缩",也不采纳任何轮换。
             return _preview_receipt_lines(result)
         before = int(result.get("before_messages") or 0)
         after = int(result.get("after_messages") or 0)
-        if status == "nothing_to_do":
-            head = "🗜️ 没有可压缩的内容(会话太短或无可摘要中段)"
-        elif status == "aborted":
-            head = f"🗜️ 未压缩(摘要被拒或中止,消息仍是 {before} 条)"
-        else:
-            head = f"🗜️ 会话压缩完成:{before} → {after} 条消息"
-        lines = [head]
         if status == "not_enough":
-            lines = ["🗜️ 会话太短,没有可压缩的内容(至少需要几条消息)"]
-        elif status in {"nothing_to_do", "no_change"}:
-            lines = ["🗜️ 没有可压缩的内容(无可摘要中段,或摘要被拒/中止;消息数未变)"]
-        if result.get("rotated"):
-            lines.append(f"↪️ 会话已轮换:{previous_key} → {result.get('session_id')}")
-            if adopted:
-                lines.append("✅ 插件已采纳新会话 id")
-            elif adopted is False:
-                lines.append("⚠️ 新会话 id 未能写入插件映射(映射已变),下轮可能仍按旧 id 提交")
-        elif result.get("in_place"):
-            lines.append(f"🧷 in-place 压缩,session 不变:{previous_key}")
-        message = str(result.get("message") or "").strip()
-        if message:
-            lines.append(message)
-        return lines
+            return ["🗜️ 会话太短，没有可压缩的内容（至少需要几条消息）"]
+        if status in {"nothing_to_do", "no_change"}:
+            return ["🗜️ 没有可压缩的内容（无可摘要中段，或摘要被拒／中止；消息数未变）"]
+        if status == "aborted":
+            return [f"🗜️ 未压缩（摘要被拒或中止，消息仍是 {before} 条）"]
+        if before <= 0:
+            return ["🗜️ 会话压缩完成"]
+        reduction = max(0.0, (before - after) * 100 / before)
+        share = "不足 1％" if 0 < reduction < 1 else f"约 {reduction:.0f}％"
+        return [f"🗜️ 会话压缩完成，减少{share}（{before} → {after} 条消息）"]
     code = int(result.get("code") or 0)
     status = str(result.get("status") or "")
     if code == 409 and status in {"session_busy", "session_compressing", "session_turn_active"}:
@@ -672,11 +665,18 @@ async def handle_compress(bot: Bot, event: Event, matcher: Matcher):
         raw = event.get_plaintext().strip()
     except Exception:
         pass
-    preview, focus = split_compress_args(raw)  # --preview 只读开关 + 可选焦点主题
+    preview = split_compress_args(raw)
+    if preview is None:
+        # 与 Linux 命令行一致：未知参数是错误，不能落进压缩焦点继续执行。
+        command = _display_cmd("compress")
+        await alconna.UniMessage(
+            f"⚠️ 非法命令参数，本次未执行压缩。请改用：{command} 或 {command} preview"
+        ).send(target=target, bot=bot)
+        return
     result = await hermes_client.compress_session(
         tgt=resolve_target(adapter_name, is_private, group_id),
         session_key=session_key,
-        focus_topic=focus,
+        focus_topic="",
         preview=preview,
     )
     adopted: bool | None = None
@@ -689,7 +689,7 @@ async def handle_compress(bot: Bot, event: Event, matcher: Matcher):
         # 手动压缩成功也算一次 clear／compress 动作:计时归零并关闭闲置动作资格,
         # 免得刚压缩完的会话立刻被自动保活或再压一遍。预览不压缩,不关资格。
         session_manager.disarm_idle(adapter_name, is_private, user_id, group_id)
-    lines = compress_receipt_lines(result, previous_key=session_key, adopted=adopted)
+    lines = compress_receipt_lines(result)
     await alconna.UniMessage("\n".join(lines)).send(target=target, bot=bot)
 
 

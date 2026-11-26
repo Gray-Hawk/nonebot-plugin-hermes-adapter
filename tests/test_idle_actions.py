@@ -14,7 +14,8 @@
 7. 保活请求形态(单空格、时间通知、无 QQ 出站);
 8. 压缩轮换采纳;
 9. 故障隔离;
-10. 旧 T1 回归。
+10. 会话定时清理(clear)回归;
+11. 定时清理豁免名单(配置、扫描器与 /delay、/resume)。
 """
 
 from __future__ import annotations
@@ -960,7 +961,8 @@ class TestCommandGating(_Base):
             asyncio.run(commands.handle_delay(bot=None, event=event, matcher=matcher))
 
         self.assertTrue(replies, "启用任一动作为 /delay 必须给出回执")
-        self.assertIn("空闲自动动作", replies[0])
+        self.assertIn("会话定时清理", replies[0])
+        self.assertNotIn("空闲自动动作", replies[0])
         self.assertIn(f"qq+private+10001", self.manager._idle_paused)
 
     def test_delay_command_refuses_when_nothing_enabled(self):
@@ -990,4 +992,251 @@ class TestCommandGating(_Base):
             asyncio.run(commands.handle_delay(bot=None, event=event, matcher=matcher))
 
         self.assertIn("未启用", replies[0])
+        self.assertNotIn("空闲自动动作", replies[0])
         self.assertEqual(self.manager._idle_paused, set())
+
+
+class TestIdleResetExemptConfig(unittest.TestCase):
+    """session_idle_reset_exempt:字符串集合解析,私聊/群聊精确匹配。"""
+
+    def test_parse_defaults_empty_and_reads_both_scopes(self):
+        from nonebot_plugin_hermes_adapter.core.chat_config import parse_chat_config
+
+        self.assertEqual(ChatConfig().session_idle_reset_exempt, set())
+        self.assertEqual(parse_chat_config({}).session_idle_reset_exempt, set())
+        cfg = parse_chat_config(
+            {"session_idle_reset_exempt": ["private:10001", "group:900100"]}
+        )
+        self.assertEqual(
+            cfg.session_idle_reset_exempt, {"private:10001", "group:900100"}
+        )
+
+    def test_private_and_group_are_matched_exactly(self):
+        cfg = ChatConfig(session_idle_reset_exempt={"private:10001", "group:900100"})
+
+        self.assertTrue(
+            cfg.idle_reset_exempt(is_private=True, user_id="10001", group_id=None)
+        )
+        self.assertTrue(
+            cfg.idle_reset_exempt(is_private=False, user_id="", group_id="900100")
+        )
+        # 同号不同域不得互相豁免。
+        self.assertFalse(
+            cfg.idle_reset_exempt(is_private=False, user_id="", group_id="10001")
+        )
+        self.assertFalse(
+            cfg.idle_reset_exempt(is_private=True, user_id="900100", group_id=None)
+        )
+        self.assertFalse(
+            cfg.idle_reset_exempt(is_private=False, user_id="", group_id=None),
+            "没有群号时不得命中 group:None",
+        )
+
+    def test_bad_value_falls_back_to_empty_set(self):
+        from nonebot_plugin_hermes_adapter.core.chat_config import parse_chat_config
+
+        self.assertEqual(
+            parse_chat_config(
+                {"session_idle_reset_exempt": "private:10001"}
+            ).session_idle_reset_exempt,
+            set(),
+            "标量不是字符串集合,回默认空名单",
+        )
+
+
+class TestIdleResetExemptionScan(_Base):
+    """豁免只作用于 clear;compress 与 keepalive 完全不看名单。"""
+
+    def test_exempt_group_skips_clear_but_compress_still_fires(self):
+        self.config = ChatConfig(
+            session_idle_reset_sec=100,
+            session_auto_compress_sec=500,
+            session_idle_reset_exempt={"group:900100"},
+        )
+        key = self.open_group(GROUP_A, at=0.0)
+
+        self.assertEqual(self.sweep(now=200.0), [], "豁免会话跳过定时清理")
+        self.assertEqual(
+            self.manager.get_session_key(ADAPTER, False, "", GROUP_A),
+            key,
+            "豁免会话会话代际不得变化",
+        )
+        self.assertEqual(
+            [r.action for r in self.sweep(now=600.0)],
+            ["compress"],
+            "压缩到点仍执行,不受豁免影响",
+        )
+
+    def test_exempt_group_keepalive_still_fires(self):
+        self.config = ChatConfig(
+            session_idle_reset_sec=100,
+            session_cache_keepalive_sec=30,
+            session_idle_reset_exempt={"group:900100"},
+        )
+        self.open_group(GROUP_A, at=0.0)
+
+        self.assertEqual(
+            [r.action for r in self.sweep(now=200.0)],
+            ["keepalive"],
+            "保活到点仍执行,豁免只挡 clear",
+        )
+
+    def test_private_exemption_does_not_leak_to_same_numbered_group(self):
+        self.config = ChatConfig(
+            session_idle_reset_sec=100, session_idle_reset_exempt={"private:900100"}
+        )
+        self.manager.get_session_key(ADAPTER, True, "900100", None)
+        self.manager.mark_activity(ADAPTER, True, "900100", None, now=0.0)
+        self.open_group(GROUP_A, at=0.0)  # 同一个号码的群聊
+
+        done = self.sweep(now=200.0)
+
+        self.assertEqual(
+            [(r.internal_id, r.action) for r in done],
+            [(f"qq+group+{GROUP_A}", "clear")],
+            "私聊豁免不得落到同号群聊上",
+        )
+
+
+class TestExemptCommands(_Base):
+    """豁免期间 /delay、/resume 只提示,不改暂停状态与活动计时。"""
+
+    SHIELD = "🛡️ 本会话已豁免定时清理，原状态保持不变"
+
+    def _run(self, handler, *, private: bool, target_id: str, user_id: str) -> list[str]:
+        from nonebot_plugin_hermes_adapter.handlers import commands
+
+        replies: list[str] = []
+
+        class _Message:
+            def __init__(self, text):
+                self.text = text
+
+            async def send(self, **_kwargs):
+                replies.append(str(self.text))
+
+        target = SimpleNamespace(private=private, id=target_id)
+        event = SimpleNamespace(get_user_id=lambda: user_id)
+        matcher = SimpleNamespace(skip=lambda: None)
+        with patch.object(commands.alconna, "get_target", lambda: target), patch.object(
+            commands, "check_isolation", lambda _e, _t: True
+        ), patch.object(commands, "get_adapter_name", lambda _t: ADAPTER), patch.object(
+            commands, "idle_actions_enabled", lambda: True
+        ), patch.object(
+            commands, "load_chat_config", lambda: self.config
+        ), patch.object(
+            commands, "session_manager", self.manager
+        ), patch.object(
+            commands.alconna, "UniMessage", _Message
+        ):
+            asyncio.run(handler(bot=None, event=event, matcher=matcher))
+        return replies
+
+    def test_delay_on_exempt_session_keeps_unpaused_and_activity(self):
+        from nonebot_plugin_hermes_adapter.handlers import commands
+
+        self.config = ChatConfig(
+            session_idle_reset_sec=100, session_idle_reset_exempt={"private:10001"}
+        )
+        self.manager.mark_activity(ADAPTER, True, "10001", None, now=1000.0)
+        internal_id = "qq+private+10001"
+
+        replies = self._run(
+            commands.handle_delay, private=True, target_id="10001", user_id="10001"
+        )
+
+        self.assertEqual(replies, [self.SHIELD], "豁免期间 /delay 只提示")
+        self.assertFalse(self.manager.is_idle_paused(internal_id), "不得写入暂停")
+        self.assertEqual(
+            self.manager._last_activity[internal_id], 1000.0, "不得重置活动计时"
+        )
+
+    def test_resume_on_exempt_session_keeps_paused_and_activity(self):
+        from nonebot_plugin_hermes_adapter.handlers import commands
+
+        self.config = ChatConfig(
+            session_idle_reset_sec=100, session_idle_reset_exempt={"group:900100"}
+        )
+        self.manager.mark_activity(ADAPTER, False, "", GROUP_A, now=1000.0)
+        internal_id = f"qq+group+{GROUP_A}"
+        self.manager.set_idle_paused(ADAPTER, False, "", GROUP_A, True, now=1000.0)
+
+        replies = self._run(
+            commands.handle_resume, private=False, target_id=GROUP_A, user_id="10002"
+        )
+
+        self.assertEqual(replies, [self.SHIELD], "豁免期间 /resume 只提示")
+        self.assertTrue(self.manager.is_idle_paused(internal_id), "不得清除暂停")
+        self.assertEqual(
+            self.manager._last_activity[internal_id], 1000.0, "不得重置活动计时"
+        )
+
+    def test_unpaused_state_survives_after_removal(self):
+        from nonebot_plugin_hermes_adapter.handlers import commands
+
+        self.config = ChatConfig(
+            session_idle_reset_sec=100, session_idle_reset_exempt={"private:10001"}
+        )
+        self.manager.get_session_key(ADAPTER, True, "10001", None)
+        self.manager.mark_activity(ADAPTER, True, "10001", None, now=1000.0)
+        self._run(commands.handle_delay, private=True, target_id="10001", user_id="10001")
+        self.assertFalse(self.manager.is_idle_paused("qq+private+10001"))
+
+        # 通过 reload-config 换快照移出名单,不触碰 idle_paused。
+        self.config = ChatConfig(session_idle_reset_sec=100)
+
+        self.assertEqual(
+            [r.action for r in self.sweep(now=1200.0)],
+            ["clear"],
+            "移出名单后,豁免期间未暂停的会话恢复定时清理",
+        )
+
+    def test_paused_state_survives_after_removal(self):
+        from nonebot_plugin_hermes_adapter.handlers import commands
+
+        self.config = ChatConfig(
+            session_idle_reset_sec=100, session_idle_reset_exempt={"group:900100"}
+        )
+        self.manager.mark_activity(ADAPTER, False, "", GROUP_A, now=1000.0)
+        self.manager.set_idle_paused(ADAPTER, False, "", GROUP_A, True, now=1000.0)
+        self._run(commands.handle_resume, private=False, target_id=GROUP_A, user_id="10002")
+        self.assertTrue(self.manager.is_idle_paused(f"qq+group+{GROUP_A}"))
+
+        self.config = ChatConfig(session_idle_reset_sec=100)
+
+        self.assertEqual(
+            self.sweep(now=1200.0),
+            [],
+            "移出名单后,豁免期间仍暂停的会话保持暂停",
+        )
+
+
+class TestHelpMenuWording(unittest.TestCase):
+    """菜单全角化,且用户可见文字不再出现内部代号。"""
+
+    def test_menu_fullwidth_and_session_cleanup_wording(self):
+        from nonebot_plugin_hermes_adapter.handlers import commands
+
+        with patch.object(commands, "idle_actions_enabled", lambda: True), patch.object(
+            commands, "hermes_control_plane_enabled", lambda: True
+        ):
+            text = commands.build_help_text(True, True)
+
+        self.assertNotIn(" - ", text, "命令与描述之间用全角冒号")
+        self.assertNotIn("T1", text, "用户可见文字不得出现内部代号")
+        self.assertNotIn("空闲自动动作", text)
+        self.assertIn("暂停会话定时清理", text)
+        self.assertIn("恢复会话定时清理", text)
+        self.assertIn("：重置对话", text)
+        self.assertIn("（管理员）", text)
+        self.assertNotIn("(管理员)", text)
+        self.assertIn("/compress：手动压缩当前会话上下文（管理员）", text)
+        self.assertIn("/compress preview：只读查看会话上下文占用（管理员）", text)
+        self.assertIn("查看／切换", text)
+        # 旧半角标点与旧开关均不得出现在菜单里。
+        self.assertNotIn("--preview", text)
+        self.assertNotIn("上下文；--preview", text)
+        # 命令名与斜杠保持半角原样。
+        self.assertIn("/delay", text)
+        self.assertIn("/resume", text)
+        self.assertIn("/reasoning", text)

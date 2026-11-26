@@ -51,7 +51,7 @@ active_session_ttl_sec: 300
 # MCP 工具不走这个键（见 mcp_recent_limit_max）。
 history_message_limit: 10
 
-# ---- 公私共用：5 键 ----
+# ---- 公私共用：6 键 ----
 
 # 以这些前缀开头的消息不触发回复；实际作用于私聊与群聊。
 ignore_prefix: [.]
@@ -67,6 +67,12 @@ reply_debounce_sec: 3.0
 # 每个会话的最后活动时刻与动作资格持久化在 session_keys.db，重启按原样恢复（不回填开机时间）；
 # clear／compress 成功后资格关闭，等下一次真实 chat／push 才重新开放。
 session_idle_reset_sec: 0
+
+# 会话定时清理豁免名单：私聊写 private:<QQ号>，群聊写 group:<群号>；两者精确区分，同号也不通用。空名单 = 不豁免任何人。
+# 只豁免会话定时清理（clear）：自动压缩与缓存保活完全不受影响，照常到点执行。
+# 豁免期间 /delay 与 /resume 只回复提示，不写 idle_paused、也不重置活动计时；原有的暂停／未暂停状态保持不变。
+# 改名单后由管理员手动重载配置替换快照生效，本身不改任何会话状态。
+session_idle_reset_exempt: []
 
 # 闲置动作②：多久无活动后自动压缩会话上下文（复用网关 session-compress，轮换后采纳新 session id），0 = 关闭；
 # 每个空闲期只做一次，成功后旧会话的缓存保活循环随之失效。任意正整数秒生效，不设上下限（实际粒度 60 秒）。
