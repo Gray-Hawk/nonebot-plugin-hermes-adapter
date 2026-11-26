@@ -553,23 +553,30 @@ def _is_restatement(pushed: str, reply: str) -> bool:
     return len(longer) - len(shorter) <= max(4, len(longer) // 10)
 
 async def _chat_and_adopt_rotation(**chat_kwargs) -> ChatResult:
-    """调 chat();上游本轮换过 session(自动压缩触发)就立刻采纳新 id。
+    """调 chat();登记正常活动进展,上游轮换后立刻采纳新 id。
 
-    采纳必须发生在每一次 chat 之后而不只是最后一次:重试那轮同样可能碰上轮换,
-    漏掉就又把会话钉回已关闭的父会话。
+    开始、结束和异常立即冲刷活动状态;工具与有效文字进展通过回调登记,
+    由 SessionManager 全局 10 秒合批。保活直调 hermes_client,不走本入口。
     """
-    result = await hermes_client.chat(**chat_kwargs)
-    if result.effective_session_key:
-        session_manager.adopt_session_key(chat_kwargs["session_key"], result.effective_session_key)
-    # T1 活动基准:无论成败,chat() 走完就算本会话有 LLM 活动。
-    # chat_kwargs 四元组在 passive / reactive 两条路径上都齐全。
-    session_manager.mark_activity(
-        chat_kwargs["adapter_name"],
-        chat_kwargs["is_private"],
-        chat_kwargs["user_id"],
-        chat_kwargs.get("group_id"),
-    )
-    return result
+    def _mark(*, force: bool = True) -> None:
+        session_manager.mark_activity(
+            chat_kwargs["adapter_name"],
+            chat_kwargs["is_private"],
+            chat_kwargs["user_id"],
+            chat_kwargs.get("group_id"),
+            force=force,
+        )
+
+    chat_kwargs["activity_callback"] = lambda: _mark(force=False)
+    _mark()
+    try:
+        result = await hermes_client.chat(**chat_kwargs)
+        if result.effective_session_key:
+            session_manager.adopt_session_key(chat_kwargs["session_key"], result.effective_session_key)
+        return result
+    finally:
+        # 正常完成、失败结果与异常出口都留下最后状态。
+        _mark()
 
 async def _chat_with_persistence_retry(label: str, /, **chat_kwargs) -> ChatResult:
     """调 chat();命中瞬时(locked)持久化失败时用**同一个** session_key 重试一次。

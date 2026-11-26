@@ -97,7 +97,8 @@ class _Base(unittest.TestCase):
             keys = sorted(
                 tuple(row)
                 for row in conn.execute(
-                    "SELECT internal_id, session_key, generation, updated_at FROM session_keys"
+                    "SELECT internal_id, session_key, generation, updated_at,"
+                    " last_activity, idle_armed, keepalive_last FROM session_keys"
                 )
             )
             paused = sorted(
@@ -202,8 +203,17 @@ class CrossTransportSwitchTests(_Base):
                 self.assertEqual(self._dump(), before, "换协议不得改库（无迁移、无新写入）")
         self.assertEqual(
             self.columns("session_keys"),
-            ["internal_id", "session_key", "generation", "updated_at"],
-            "不新增 transport 列：真实 adapter 是运行时事实，不落库",
+            [
+                "internal_id",
+                "session_key",
+                "generation",
+                "updated_at",
+                "last_activity",
+                "idle_armed",
+                "keepalive_last",
+            ],
+            "不新增 transport 列：真实 adapter 是运行时事实，不落库；"
+            "闲置状态列承载每会话最后活动时刻与动作资格",
         )
 
         # 重启后仍续用同一 key/generation。
@@ -226,6 +236,7 @@ class RestartRuntimeResolutionTests(_Base):
 
     def test_restart_with_live_route_restores_real_adapter(self) -> None:
         self.store.put(GROUP_ID, f"hermes-{GROUP_ID}", 2, now=1.0)
+        self.store.set_idle_state(GROUP_ID, 1.0, True)
         self.route("milky")
         with self.live("milky"):
             manager = self.new_manager()
@@ -241,6 +252,7 @@ class RestartRuntimeResolutionTests(_Base):
 
     def test_restart_without_route_waits_then_resolves_on_real_event(self) -> None:
         self.store.put(GROUP_ID, f"hermes-{GROUP_ID}", 0, now=1.0)
+        self.store.set_idle_state(GROUP_ID, 1.0, True)
         with patch.object(session_mod, "_live_transports", lambda domain: []):
             manager = self.new_manager()
             # 路由/连接都没就绪：不猜协议，条目按等待语义缺席。
@@ -289,6 +301,7 @@ class RestartRuntimeResolutionTests(_Base):
         """重启后路由未就绪先跳过；bot 连接恢复路由后同一进程内立即可用，且不改库。"""
         key = f"hermes-{GROUP_ID}"
         self.store.put(GROUP_ID, key, 0, now=1.0)
+        self.store.set_idle_state(GROUP_ID, 1.0, True)
         with self.live():
             manager = self.new_manager()
             self.assertEqual(manager.known_sessions(), [])

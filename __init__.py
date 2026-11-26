@@ -64,7 +64,7 @@ async def _hermes_m1_startup():
         register_background_report,
         register_expire_active_sessions,
         register_proactive_activation,
-        register_session_idle_reset,
+        register_idle_actions,
         register_storage_vacuum,
     )
 
@@ -116,7 +116,7 @@ async def _hermes_m1_startup():
     _driver.on_shutdown(close_companion_runtimes)
     register_expire_active_sessions()
     register_storage_vacuum()
-    register_session_idle_reset()
+    register_idle_actions()
     register_proactive_activation()
     if plugin_config.hermes_api_interface != "astrbot":
         register_background_report()

@@ -7,13 +7,14 @@ tools/tool_choice 被 Hermes 吞掉,改用 system prompt 强约束 + JSON5 容�
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import uuid
 import asyncio
 import time
 from collections import deque
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -775,8 +776,26 @@ class RunsEventParser:
         # 生产默认 None；群聊 reactive 有触发消息 id 时由 chat(on_suppressed=…)
         # 接线，只用来贴一次表情，不改变正文发送。
         self.on_suppressed: Callable[[str, str, str], None] | None = None
+        # 正常 turn 的活动进展观察口;保活与离线 parser 默认 None。
+        self.on_activity: Callable[[], None] | None = None
         # 单位超长等协议失败：置位后本轮不再发送任何单元，由终态链 fail-closed。
         self.text_error = ""
+
+    def _note_activity(self, event: str, payload: dict) -> None:
+        """工具或有效文字进展回调;空白与纯分节符信封按“没说话”处理。"""
+        hook = self.on_activity
+        if hook is None:
+            return
+        meaningful = event in {"tool.started", "tool.completed", "hermes.tool.progress"}
+        if event in {"message.delta", "message.interim", "reasoning.delta"}:
+            text = str(payload.get("delta") or payload.get("text") or "")
+            meaningful = bool(text.replace("§", "").replace("\u200b", "").strip())
+        if not meaningful:
+            return
+        try:
+            hook()
+        except Exception:
+            logger.warning("[HERMES] 活动进展登记异常(不影响主 turn)", exc_info=True)
 
     def _note_suppressed(self, reason: str, text: str, source: str) -> None:
         """正文被去重／丢弃时通知观察口；未接线时零开销。"""
@@ -902,6 +921,7 @@ class RunsEventParser:
             self.last_seq = seq
         if not event:
             event = str(payload.get("event") or "")
+        self._note_activity(event, payload)
         if event == "message.interim":
             # interim 是工具调用前的完整中途消息，也是本段的**段边界**：它给出这一段
             # 到这次 tool 调用为止的权威全文，delta 只是同一段文本的增量切帧。
@@ -1252,6 +1272,59 @@ def _spawn_steer_reconcile_if_pending(tracker, run_id: str) -> None:
         logger.warning("[HERMES steer对账] 终态钩子异常(不影响主 turn)", exc_info=True)
 
 
+class _SessionKeyMutex:
+    """按 session key 的进程内互斥:只给 chat / compress_session 串行用。
+
+    保活、自动压缩与正常 chat 会同时想写同一个上游会话;只在扫描前看 inflight
+    拦不住「保活已开始、新消息又进来」的并发。按 key 串行是这里唯一要保证的事:
+
+    * 条目在最后一个使用者退出时删除——clear/compress 频繁换代不会让锁表无界增长,
+      也不需要定期清理;
+    * 每批并发用一个自己的 ``asyncio.Lock``,不跨事件循环复用绑定在旧循环上的锁;
+    * 等待发生在客户端入口,handler 的 inflight 槽与既有排队链照原样工作,不需要
+      新消息队列,也不改 Bot/_refire。
+    """
+
+    def __init__(self) -> None:
+        self._slots: dict[str, list] = {}
+
+    @asynccontextmanager
+    async def hold(self, key: str):
+        slot = self._slots.get(key)
+        if slot is None:
+            slot = [asyncio.Lock(), 0]
+            self._slots[key] = slot
+        slot[1] += 1
+        try:
+            async with slot[0]:
+                yield
+        finally:
+            slot[1] -= 1
+            if slot[1] <= 0 and self._slots.get(key) is slot:
+                del self._slots[key]
+
+    def active_keys(self) -> int:
+        """当前在用条目数(诊断/测试用;静默期应为 0)。"""
+        return len(self._slots)
+
+
+_session_mutex = _SessionKeyMutex()
+
+
+def _serialized_per_session(method):
+    """把公共方法的整个调用按 ``session_key`` 串行(装饰器,不动函数体缩进)。"""
+
+    @functools.wraps(method)
+    async def wrapper(self, *args, **kwargs):
+        key = kwargs.get("session_key")
+        if not isinstance(key, str) or not key:
+            return await method(self, *args, **kwargs)
+        async with _session_mutex.hold(key):
+            return await method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class HermesClient:
     def __init__(self) -> None:
         # 无实例状态:接入点按群解析,缓存会让路由与配置漂移。
@@ -1286,6 +1359,7 @@ class HermesClient:
             h["Authorization"] = f"Bearer {key}"
         return h
 
+    @_serialized_per_session
     async def chat(
         self,
         *,
@@ -1309,6 +1383,7 @@ class HermesClient:
         delivery_generation: int | None = None,
         source_event_id: str | None = None,
         on_suppressed: "SuppressedCallback | None" = None,
+        activity_callback: Callable[[], None] | None = None,
         context_notices: str = "",
         closing_reminder: str = "",
     ) -> ChatResult:
@@ -1333,6 +1408,9 @@ class HermesClient:
           媒体 parts 回合一律不带，行为与旧版逐字一致。
         - mode 字段当前为路由元数据,chat() 内部不分支判断;Task 15 handler 据此决定
           如何呈现结果(reactive 走 structured 流,passive 走 raw_text)。
+        - **按 session_key 串行**:同一会话的 ``chat()`` 与 ``compress_session()`` 在
+          本方法入口互斥(闲置保活、自动压缩与正常 turn 不会并发写同一会话)。等待发生
+          在这里,handler 的 inflight 槽与既有排队链照原样工作,不另造消息队列。
         """
         tgt = target or default_target()
         url = f"{tgt.base_url}/v1/chat/completions"
@@ -1529,6 +1607,7 @@ class HermesClient:
                     streamed_sink=runs_streamed,
                     idempotency_key=turn_idem_key,
                     on_suppressed=on_suppressed,
+                    activity_callback=activity_callback,
                     context_notices=context_notices,
                     closing_reminder=closing_reminder,
                     scope=dict(
@@ -1851,6 +1930,7 @@ class HermesClient:
             logger.debug(f"[HERMES] steer 请求失败 run_id={run_id}: {exc}")
             return False
 
+    @_serialized_per_session
     async def compress_session(
         self,
         *,
@@ -1884,6 +1964,8 @@ class HermesClient:
           ``in_place=True`` 时与原 id 相同。
         - 409: 同会话正在跑 turn(``session_busy``)或正在压缩(``session_compressing``),
           原样归类给调用方,不重试——忙碌是明确冲突,不是可静默吞掉的失败。
+        - 本方法与本会话的 ``chat()`` 在客户端入口按 session_key 串行(见
+          ``_serialized_per_session``)。
         - 404: 会话在网关侧不存在(未建立/已清理)。
         """
         from urllib.parse import quote
@@ -1993,6 +2075,7 @@ class HermesClient:
         decision_callback: "DecisionCallback | None" = None,
         streamed_sink: list[dict[str, Any]] | None = None,
         on_suppressed: "SuppressedCallback | None" = None,
+        activity_callback: Callable[[], None] | None = None,
         context_notices: str = "",
         closing_reminder: str = "",
     ) -> tuple[str, str | None, "ChatResult | None", str, str]:
@@ -2044,6 +2127,7 @@ class HermesClient:
         parser = RunsEventParser()
         # 正文被吞观察口（群聊触发消息表情回执）；未接线时 parser 内零开销。
         parser.on_suppressed = on_suppressed
+        parser.on_activity = activity_callback
         run_id = ""
         registered = False
         reply_queue = None

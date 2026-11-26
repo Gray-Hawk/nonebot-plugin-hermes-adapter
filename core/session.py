@@ -52,6 +52,8 @@ def normalize_domain_tag(name: str | None) -> str:
 KEY_PREFIX_HERMES = "hermes"
 # 升级前所有后端都用 hermes- 前缀,换前缀时由它识别"旧派生 key"。
 LEGACY_KEY_PREFIX = KEY_PREFIX_HERMES
+# 高频 run 进展的全局写入合并窗口:开始/结束/异常立即冲刷,中间最多每 10 秒一批。
+ACTIVITY_FLUSH_INTERVAL_SEC = 10.0
 # 接口名 -> session key 前缀。主线现有后端(completions / runs / astrbot)都是
 # Hermes 后端本体,沿用 hermes-;接入独立后端(自带上游会话命名)时在这里登记,
 # 未登记一律 hermes-(即旧行为)。
@@ -133,9 +135,22 @@ class SessionManager:
         self._components: dict[str, tuple[str, bool, str, str | None]] = {}
         """internal_id -> (adapter_name, is_private, user_id, group_id),get_session_key 时登记"""
         self._last_activity: dict[str, float] = {}
-        """internal_id -> 最后一次 chat() 完成 / push_message 成功的 epoch 秒"""
+        """internal_id -> 最后一次真实活动(chat 完成 / 允许计时的 push)的 epoch 秒。
+
+        跨重启从 ``session_keys.db`` 原样读回;没有记录(旧库默认值)就不在表里,
+        不播种、不猜开机时刻。"""
+        self._idle_armed: dict[str, bool] = {}
+        """internal_id -> 是否具备闲置动作资格(clear/compress/keepalive)。
+
+        只有真实活动才置 True;clear／compress 成功与上游压缩轮换立即置 False,
+        重启后按库里的值恢复——失活会话不会被重新武装。"""
+        self._keepalive_last: dict[str, float] = {}
+        """internal_id -> 上次成功保活的 epoch 秒,随其他闲置状态一起持久化。"""
+        self._activity_dirty: set[str] = set()
+        """有活动进展、等待下一批全局合并写入的 internal_id。"""
+        self._activity_last_flush = 0.0
         self._idle_paused: set[str] = set()
-        """被 /delay 暂停 T1 计时的 internal_id"""
+        """被 /delay 暂停 clear 的 internal_id；compress/keepalive 不读此集合。"""
         # 增量推送水位:internal_id -> (session_key, 已推最大消息 id)。
         # 内存态即可——nb 重启丢水位的代价只是每群首 turn 全量重推一次,无副作用。
         self._push_watermark: dict[str, tuple[str, int]] = {}
@@ -174,10 +189,10 @@ class SessionManager:
         未绑定时整个管理器退化成纯内存,行为不变——但那样重启会退回派生 key,
         既复活被 /clear 掉的会话,也会把已被上游压缩关闭的父会话重新钉上。
 
-        载入后做 T1 全量播种(定案):所有已知会话以开机时刻为活动
-        基准,重启后沉默满 T1 即被自动清掉。不设 generation 门槛——T1 上线后
-        generation 本来就快速上涨,gen=0 条件会迅速失效成摆设;反复清理的代价
-        仅为本地计数器 +1(不上游、无消息、无 LLM 调用),可接受。
+        每会话的「最后真实活动时刻 + 闲置动作资格」与 key 同库持久化,这里原样
+        读回:armed 会话按真实闲置时长继续计时,disarmed 与旧库默认行保持关闭。
+        **不做全量播种**——把已知会话的活动时间重填成开机时刻,等于重启后给所有
+        沉默会话重新计时(该清的没清),反方向还会让刚压缩过的会话重新保活。
 
         会话库只做一次 ``{transport}+… → qqtpc+…`` 的 canonical 归一（由
         ``scripts/migrate_session_domain.py`` 在启动前显式执行）；真实 adapter
@@ -230,33 +245,42 @@ class SessionManager:
             for internal_id in paused_ids
             if self._legacy_domain_target(internal_id) is None
         )
-        now = time.time()
-        seeded = 0
         unresolved = 0
         for internal_id in self._cache:
             comp = self._parse_internal_id(internal_id)
             if comp is None:
                 continue
-            # 活动基准对所有可解析的已知会话都播种(与改名前一致);业务域会话的
-            # 真实 adapter 此刻尚未就绪,只登记组件不猜测——等 current 连接/路由
-            # 恢复后由 _components_for 在 T1 / known_sessions 调用时解析。
-            self._last_activity[internal_id] = now
-            seeded += 1
+            # 元件登记仍然对所有可解析的已知会话做:重启后业务域会话的真实 adapter
+            # 尚未就绪,只登记组件不猜测——等 current 连接/路由恢复后由
+            # _components_for 在闲置扫描 / known_sessions 调用时解析。
             if is_session_domain(comp[0]):
                 unresolved += 1
                 continue
             self._components[internal_id] = comp
+        # 闲置状态按库里的真实事实恢复(不播种):armed 会话沿用原始活动时刻继续计时,
+        # disarmed／旧库默认行保持关闭,等下一次真实活动再武装。
+        restored = 0
+        for internal_id, (last_activity, armed, keepalive_last) in store.load_idle_states().items():
+            if self._legacy_domain_target(internal_id) is not None:
+                continue
+            if last_activity <= 0:
+                continue
+            self._last_activity[internal_id] = last_activity
+            self._idle_armed[internal_id] = armed
+            self._keepalive_last[internal_id] = keepalive_last
+            restored += 1
         if self._cache:
             logger.debug(f"[SESSION] 载入 {len(self._cache)} 条持久化 session key 映射")
-        if seeded:
+        if restored:
+            armed_count = sum(1 for value in self._idle_armed.values() if value)
             logger.info(
-                f"[SESSION] T1 全量播种: {seeded} 个已知会话以开机时刻为活动基准"
-                + (f"(其中 {unresolved} 个等待当前连接恢复真实 adapter)" if unresolved else "")
+                f"[SESSION] 恢复 {restored} 条闲置状态(其中 {armed_count} 条具备动作资格)"
+                + (f";{unresolved} 个业务域会话等待当前连接恢复真实 adapter" if unresolved else "")
             )
 
     @staticmethod
     def _parse_internal_id(internal_id: str) -> tuple[str, bool, str, str | None] | None:
-        """从 internal_id 反解组件,供 T1 播种/清理反查用。
+        """从 internal_id 反解组件,供闲置动作/清理反查用。
 
         格式由 _get_internal_id 定义:
           私聊: adapter+private+user_id
@@ -575,7 +599,13 @@ class SessionManager:
             self._cache[internal_id] = new_key
             # 新转录是空的,增量推送水位随轮换失效(get 侧也有 key 校验兜底)
             self._push_watermark.pop(internal_id, None)
+            # 轮换后的新会话没有自己的活动记录:先关闭闲置动作资格。真实 chat 里
+            # 发生轮换时,调用方收口的 mark_activity 会随即重新打开;保活/定时
+            # 路径上的轮换则就此失效,旧循环不会挂到新 key 上继续跑。
             self._persist(internal_id)
+            self._set_idle_state(
+                internal_id, self._last_activity.get(internal_id, 0.0), armed=False
+            )
             logger.info(f"[SESSION] 采纳上游轮换: {internal_id} -> {new_key}")
             return True
         logger.debug(f"[SESSION] 上游轮换的 {previous_key} 已不在映射中,忽略")
@@ -601,6 +631,9 @@ class SessionManager:
         if cutoff_msg_id is not None:
             self._push_watermark[internal_id] = (new_key, cutoff_msg_id)
         self._fence_delivery_generation(adapter_name, is_private, user_id, group_id)
+        # 手动 /clear 也是 clear 成功:计时归零 + 关闭闲置动作资格,新会话要等
+        # 下一次真实活动才重新参与 clear／compress／keepalive。
+        self._set_idle_state(internal_id, time.time(), armed=False)
         logger.info(f"[SESSION] 会话已重置: {internal_id} (generation={gen})")
 
     # --- 增量推送水位(仅群聊 reactive 使用) ---
@@ -648,7 +681,231 @@ class SessionManager:
         else:
             self._push_watermark[internal_id] = (key, max(entry[1], msg_id))
 
-    # --- T1 空闲自动重置(本部署新增) ---
+    # --- 闲置动作状态(最后活动 + 资格 + 上次保活,持久化)---
+
+    def _set_idle_state(self, internal_id: str, last_activity: float, armed: bool) -> None:
+        """内存与库一起更新(状态一变就落库,重启原样读回)。
+
+        没有 key 映射的会话不会出现在 ``idle_snapshot`` 里,库里也不建行;
+        写失败只降级为内存态(存储层自己记日志),不影响本轮行为。
+        资格关闭时同时作废旧保活时间,新 key 不继承上一代的循环节奏。
+        """
+        self._activity_dirty.discard(internal_id)
+        if not armed:
+            self._keepalive_last[internal_id] = 0.0
+        keepalive_last = self._keepalive_last.get(internal_id, 0.0)
+        self._last_activity[internal_id] = last_activity
+        self._idle_armed[internal_id] = armed
+        if self._store is not None:
+            self._store.set_idle_state(
+                internal_id, last_activity, armed, keepalive_last=keepalive_last
+            )
+
+    def is_idle_armed(self, internal_id: str) -> bool:
+        """该会话是否具备闲置动作资格(clear/compress/keepalive)。"""
+        return bool(self._idle_armed.get(internal_id, False))
+
+    def is_idle_paused(self, internal_id: str) -> bool:
+        """该会话是否被 /delay 暂停 clear；compress/keepalive 不读此标记。"""
+        return internal_id in self._idle_paused
+
+    def keepalive_last(self, internal_id: str) -> float:
+        """上次成功保活时刻;无记录返回 0。"""
+        return float(self._keepalive_last.get(internal_id, 0.0))
+
+    def mark_keepalive(self, internal_id: str, session_key: str, *, now: float) -> bool:
+        """按当前 key 推进保活时间,拒绝把迟到结果写进换代后的会话。"""
+        if not self.is_idle_armed(internal_id) or self._cache.get(internal_id) != session_key:
+            return False
+        self._keepalive_last[internal_id] = now
+        if self._store is not None:
+            self._store.set_keepalive_last(internal_id, now)
+        return True
+
+    def _flush_activity_states(self) -> None:
+        """把本批活动进展用一个事务写盘;没有待写项时零开销。"""
+        if not self._activity_dirty:
+            return
+        rows = [
+            (
+                internal_id,
+                self._last_activity[internal_id],
+                self.is_idle_armed(internal_id),
+                self.keepalive_last(internal_id),
+            )
+            for internal_id in sorted(self._activity_dirty)
+            if internal_id in self._last_activity
+        ]
+        if self._store is not None:
+            self._store.set_idle_states_batch(rows)
+        self._activity_dirty.clear()
+        self._activity_last_flush = time.monotonic()
+
+    def _record_activity(self, internal_id: str, now: float, *, force: bool) -> None:
+        """内存即时更新,持久化按全局 10 秒窗口合批;关键边界强制冲刷。"""
+        self._last_activity[internal_id] = now
+        self._idle_armed[internal_id] = True
+        self._activity_dirty.add(internal_id)
+        if force or time.monotonic() - self._activity_last_flush >= ACTIVITY_FLUSH_INTERVAL_SEC:
+            self._flush_activity_states()
+
+    def mark_activity(
+        self,
+        adapter_name: str,
+        is_private: bool,
+        user_id: str,
+        group_id: str | None = None,
+        *,
+        now: float | None = None,
+        force: bool = True,
+    ) -> None:
+        """登记一次真实活动并**打开**闲置动作资格。
+
+        调用点:正常 chat 开始、有效进展与收尾。``force=True`` 立即冲刷本批,
+        高频进展传 False,由全局 10 秒窗口合批;``now`` 供离线/测试注入。
+        """
+        internal_id = self._get_internal_id(adapter_name, is_private, user_id, group_id)
+        self._record_activity(
+            internal_id, now if now is not None else time.time(), force=force
+        )
+
+    def mark_activity_group(self, adapter_name: str, group_id: str) -> None:
+        """群级活动标记(push_message 用):群 session 固定共享,internal_id 即
+        会话域+group+group_id 唯一形态(QQTPC 协议体现为 qqtpc+group+…)。
+
+        真实 push 成功算一次允许计时的活动:刷新时间并打开资格。私聊 push 在
+        调用方就提前返回(不进这里),不建立活动基准。
+        """
+        internal_id = self._get_internal_id(adapter_name, False, "", group_id)
+        self._record_activity(internal_id, time.time(), force=True)
+
+    def disarm_idle(
+        self,
+        adapter_name: str,
+        is_private: bool,
+        user_id: str,
+        group_id: str | None = None,
+        *,
+        now: float | None = None,
+    ) -> None:
+        """重置空闲计时并**关闭**闲置动作资格(clear／compress 成功收口用)。
+
+        关闭后 clear / compress / keepalive 三者都不再对这个会话动作,直到下一次
+        真实活动(mark_activity)重新打开——重启后同样按库里的关闭状态恢复。
+        """
+        internal_id = self._get_internal_id(adapter_name, is_private, user_id, group_id)
+        self._set_idle_state(
+            internal_id, now if now is not None else time.time(), armed=False
+        )
+
+    def set_idle_paused(
+        self,
+        adapter_name: str,
+        is_private: bool,
+        user_id: str,
+        group_id: str | None,
+        paused: bool,
+        *,
+        now: float | None = None,
+    ) -> str:
+        """/delay(paused=True)只暂停 clear;/resume(paused=False)恢复并重置计时。
+
+        compress/keepalive 在暂停期间继续执行。``/resume`` 只把计时起点挪到现在,
+        **不**改变资格:被 clear／compress 关掉资格的会话不能靠 /resume 偷偷变成 armed。
+        返回 internal_id 供日志用。持久化到 session_keys.db。
+        """
+        internal_id = self._get_internal_id(adapter_name, is_private, user_id, group_id)
+        if paused:
+            self._idle_paused.add(internal_id)
+        else:
+            self._idle_paused.discard(internal_id)
+            if internal_id in self._last_activity:
+                self._set_idle_state(
+                    internal_id,
+                    now if now is not None else time.time(),
+                    armed=self.is_idle_armed(internal_id),
+                )
+        if self._store is not None:
+            self._store.set_idle_paused(internal_id, paused)
+        return internal_id
+
+    def idle_snapshot(
+        self,
+    ) -> list[tuple[str, tuple[str, bool, str, str | None], str, float]]:
+        """全部**具备资格**且可参与闲置动作的会话快照(每会话一条)。
+
+        返回 ``(internal_id, 真实组件, 当前 session key, 最后活动时刻)``:
+
+        - 只挑 ``idle_armed`` 为真的会话:clear／compress 成功后资格立即关闭,
+          重启后也按库里的关闭状态恢复,因此不会每拍重复清场、也不会替失活
+          会话保活或压缩;
+        - 没有活动记录的会话(旧库默认行)不出现,不做任何播种;
+        - ``/delay`` 暂停中的会话仍保留在快照里，由扫描器只跳过 clear；
+          compress/keepalive 继续按自己的时间基准执行；
+        - 组件必须是**真实 adapter**;业务域会话的真实 adapter 尚未随连接/路由
+          恢复时不出条目,下一拍再试(等待语义,不猜旧协议)。
+
+        计时判定交给调用方(统一闲置扫描器):它要给 clear / compress / keepalive
+        各自的时间基准,不能在这里按单一阈值过滤。
+        """
+        out: list[tuple[str, tuple[str, bool, str, str | None], str, float]] = []
+        for internal_id, last in self._last_activity.items():
+            if not self.is_idle_armed(internal_id):
+                continue
+            comp = self._components_for(internal_id)
+            if comp is None:
+                continue
+            key = self._cache.get(internal_id)
+            if not key:
+                continue
+            out.append((internal_id, comp, key, last))
+        return out
+
+    def idle_expired(
+        self, idle_sec: int, now: float | None = None
+    ) -> list[tuple[str, tuple[str, bool, str, str | None]]]:
+        """返回超过 idle_sec 未活动的 ``(internal_id, components)`` 列表(旧 T1 读法)。
+
+        只看「有活动记录」的会话,不看资格:保留给既有调用方做组件/域解析回归;
+        统一闲置扫描器一律走 ``idle_snapshot``,按资格与各自阈值判定。
+        """
+        now = now if now is not None else time.time()
+        out: list[tuple[str, tuple[str, bool, str, str | None]]] = []
+        for internal_id, last in self._last_activity.items():
+            if internal_id in self._idle_paused or now - last <= idle_sec:
+                continue
+            comp = self._components_for(internal_id)
+            if comp is not None:
+                out.append((internal_id, comp))
+        return out
+
+    def current_session_key(self, internal_id: str) -> str | None:
+        """按 internal_id 取当前 session key(定时动作换代后重新登记状态用)。"""
+        return self._cache.get(internal_id)
+
+    def clear_internal(self, internal_id: str, *, now: float | None = None) -> None:
+        """按 internal_id 直接重置会话(T1 自动清用),不发任何用户可见提示。
+
+        与 clear_session 同逻辑,但 key 渲染直接作用在传入的 internal_id 上,
+        不经组件反解重算——组件反解出来的会话重算可能落到另一个 internal_id,导致
+        原 id 的 generation 递增不持久化。
+        换代后空闲计时归零并关闭资格:新会话要等下一次真实活动才重新参与闲置动作。"""
+        self._cache.pop(internal_id, None)
+        self._push_watermark.pop(internal_id, None)  # 转录清空,增量推送水位归零
+        self._ensure_key_prefix()
+        gen = self._generation.get(internal_id, 0) + 1
+        self._generation[internal_id] = gen
+        self._cache[internal_id] = self._render_key(internal_id, gen)
+        self._persist(internal_id)
+        # 组件必须是真实 adapter:业务域会话按当前连接/路由解析,解析不出来就
+        # 不落交付栅栏(不能拿 qqtpc 去 fence,台账 scope 永远匹配不上)。
+        comp = self._components_for(internal_id)
+        if comp is not None:
+            self._fence_delivery_generation(*comp)
+        self._set_idle_state(
+            internal_id, now if now is not None else time.time(), armed=False
+        )
+        logger.info(f"[SESSION] T1 空闲自动重置: {internal_id} (generation={gen})")
 
     def known_sessions(self) -> list[tuple[str, str, bool, str, str | None, str]]:
         """全量已知会话快照(本部署补丁:投递轮询用;语义同 iter_sessions)。
@@ -666,93 +923,6 @@ class SessionManager:
             adapter, is_private, user_id, group_id = comp
             out.append((internal_id, adapter, is_private, user_id, group_id, session_key))
         return out
-
-    def mark_activity(
-        self,
-        adapter_name: str,
-        is_private: bool,
-        user_id: str,
-        group_id: str | None = None,
-    ) -> None:
-        """T1 活动基准:每次 chat() 完成(无论成败,调用即活动)时由
-        _chat_and_adopt_rotation 收口处调用。"""
-        internal_id = self._get_internal_id(adapter_name, is_private, user_id, group_id)
-        self._last_activity[internal_id] = time.time()
-
-    def mark_activity_group(self, adapter_name: str, group_id: str) -> None:
-        """群级活动标记(push_message 用):群 session 固定共享,internal_id 即
-        会话域+group+group_id 唯一形态(QQTPC 协议体现为 qqtpc+group+…)。
-
-        只在已有活动基准时刷新,不主动建立基线:只有 push、从没 chat 过的会话
-        不参与 T1 空闲清理(比建立基线更保守,不会被 T1 清掉)。
-        """
-        internal_id = self._get_internal_id(adapter_name, False, "", group_id)
-        if internal_id in self._last_activity:
-            self._last_activity[internal_id] = time.time()
-
-    def set_idle_paused(
-        self,
-        adapter_name: str,
-        is_private: bool,
-        user_id: str,
-        group_id: str | None,
-        paused: bool,
-    ) -> str:
-        """/delay(paused=True)暂停 T1;/resume(paused=False)恢复并重置计时。
-        返回 internal_id 供日志用。持久化到 session_keys.db。"""
-        internal_id = self._get_internal_id(adapter_name, is_private, user_id, group_id)
-        if paused:
-            self._idle_paused.add(internal_id)
-        else:
-            self._idle_paused.discard(internal_id)
-            self._last_activity[internal_id] = time.time()
-        if self._store is not None:
-            self._store.set_idle_paused(internal_id, paused)
-        return internal_id
-
-    def idle_expired(
-        self, idle_sec: int, now: float | None = None
-    ) -> list[tuple[str, tuple[str, bool, str, str | None]]]:
-        """返回超过 idle_sec 未活动且未 /delay 暂停的 (internal_id, components) 列表。
-
-        只挑有活动记录的会话:插件重启后 _last_activity 是空的,没有这个限制就会
-        把「重启前一直在聊、重启后还没人说话」的会话立刻清掉。
-
-        components 是**真实 adapter**;业务域会话的真实 adapter 尚未随连接/路由
-        恢复时不出条目,下一拍再试(等待语义,不猜旧协议)。"""
-        now = now if now is not None else time.time()
-        out: list[tuple[str, tuple[str, bool, str, str | None]]] = []
-        for internal_id, last in self._last_activity.items():
-            if internal_id in self._idle_paused:
-                continue
-            if now - last <= idle_sec:
-                continue
-            comp = self._components_for(internal_id)
-            if comp is not None:
-                out.append((internal_id, comp))
-        return out
-
-    def clear_internal(self, internal_id: str) -> None:
-        """按 internal_id 直接重置会话(T1 自动清用),不发任何用户可见提示。
-
-        与 clear_session 同逻辑,但 key 渲染直接作用在传入的 internal_id 上,
-        不经组件反解重算,直接作用在传入的 internal_id 上——播种来的会话组件是反解
-        出来的,重算可能落到另一个 internal_id,导致原 id 的 generation 递增不持久化。
-        重置后活动基准刷新为现在,给新会话一个完整 T1 周期。"""
-        self._cache.pop(internal_id, None)
-        self._push_watermark.pop(internal_id, None)  # 转录清空,增量推送水位归零
-        self._ensure_key_prefix()
-        gen = self._generation.get(internal_id, 0) + 1
-        self._generation[internal_id] = gen
-        self._cache[internal_id] = self._render_key(internal_id, gen)
-        self._persist(internal_id)
-        # 组件必须是真实 adapter:业务域会话按当前连接/路由解析,解析不出来就
-        # 不落交付栅栏(不能拿 qqtpc 去 fence,台账 scope 永远匹配不上)。
-        comp = self._components_for(internal_id)
-        if comp is not None:
-            self._fence_delivery_generation(*comp)
-        self._last_activity[internal_id] = time.time()
-        logger.info(f"[SESSION] T1 空闲自动重置: {internal_id} (generation={gen})")
 
 
 # 全局会话管理器

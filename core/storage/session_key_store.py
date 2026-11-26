@@ -24,14 +24,17 @@ from typing import Mapping
 
 from nonebot import logger
 
-# updated_at 列:只写不读;不改 DB 结构,存量库保持原样。
+# updated_at 只写不读;闲置状态列由 _ensure_idle_state_columns 对存量库可重放补齐。
 _SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS session_keys (
         internal_id  TEXT    PRIMARY KEY,
         session_key  TEXT    NOT NULL,
         generation   INTEGER NOT NULL DEFAULT 0,
-        updated_at   REAL    NOT NULL
+        updated_at   REAL    NOT NULL,
+        last_activity REAL   NOT NULL DEFAULT 0,
+        idle_armed   INTEGER NOT NULL DEFAULT 0,
+        keepalive_last REAL  NOT NULL DEFAULT 0
     )
     """,
     # /delay 暂停状态持久化——原内存态重启即失效,
@@ -42,6 +45,15 @@ _SCHEMA_STATEMENTS = [
     )
     """,
 ]
+
+# 统一闲置动作的最后活动时刻、动作资格与上次保活:与 session key 同库同表。
+# 存量库用 PRAGMA table_info + ALTER TABLE 补列,可重放;旧行取默认值
+# ``last_activity=0 / idle_armed=0 / keepalive_last=0``——部署后不会给失活会话突然动作。
+_IDLE_STATE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("last_activity", "REAL NOT NULL DEFAULT 0"),
+    ("idle_armed", "INTEGER NOT NULL DEFAULT 0"),
+    ("keepalive_last", "REAL NOT NULL DEFAULT 0"),
+)
 
 
 # session key 映射的持久化/装载失败从 WARN 升级为 ERROR 并
@@ -144,7 +156,25 @@ class SessionKeyStore:
         self._conn.row_factory = sqlite3.Row
         for stmt in _SCHEMA_STATEMENTS:
             self._conn.execute(stmt)
+        self._ensure_idle_state_columns()
         self._closed = False
+
+    def _ensure_idle_state_columns(self) -> None:
+        """给存量库补 ``last_activity`` / ``idle_armed``(可重放、可重入)。
+
+        旧行取列默认值(0 / 0),等价「没记录过活动、资格关闭」:部署后不会
+        把历史会话当成刚活动过,也不会替它们开始保活或压缩。
+        """
+        try:
+            existing = {
+                row[1] for row in self._conn.execute("PRAGMA table_info(session_keys)").fetchall()
+            }
+            for name, decl in _IDLE_STATE_COLUMNS:
+                if name in existing:
+                    continue
+                self._conn.execute(f"ALTER TABLE session_keys ADD COLUMN {name} {decl}")
+        except Exception as exc:
+            _log_store_failure("补闲置状态列", exc, ",本次退化为纯内存闲置状态")
 
     def close(self) -> None:
         if self._closed:
@@ -199,6 +229,79 @@ class SessionKeyStore:
         except Exception as exc:
             logger.warning(f"[SESSION] 持久化 delay 暂停失败 ({internal_id}): {exc}")
 
+    # --- 统一闲置动作状态持久化(最后活动 + 资格 + 上次保活)---
+
+    def load_idle_states(self) -> dict[str, tuple[float, bool, float]]:
+        """返回 internal_id → (最后活动时刻, 是否具备资格, 上次保活时刻)。
+
+        读失败返回空表:退化后所有会话按「没有活动记录」处理,不会误保活／误清。
+        """
+        try:
+            rows = self._conn.execute(
+                "SELECT internal_id, last_activity, idle_armed, keepalive_last FROM session_keys"
+            ).fetchall()
+        except Exception as exc:
+            _log_store_failure("读取闲置状态", exc, ",本次按无活动记录处理")
+            return {}
+        return {
+            r["internal_id"]: (
+                float(r["last_activity"] or 0.0),
+                bool(r["idle_armed"]),
+                float(r["keepalive_last"] or 0.0),
+            )
+            for r in rows
+        }
+
+    def set_idle_state(
+        self,
+        internal_id: str,
+        last_activity: float,
+        armed: bool,
+        *,
+        keepalive_last: float = 0.0,
+    ) -> None:
+        """写一条会话的完整闲置状态(状态一变就落库,重启原样读回)。"""
+        self.set_idle_states_batch(
+            [(internal_id, last_activity, armed, keepalive_last)]
+        )
+
+    def set_idle_states_batch(self, rows) -> None:
+        """在一个事务里写多条 ``(internal_id, last_activity, armed, keepalive_last)``。
+
+        正常进展由 SessionManager 全局限频合批；同批同 id 只传最新值。只 UPDATE
+        已存在的 key 行,写失败回滚并降级为内存态,绝不抛。
+        """
+        values = [
+            (float(last_activity), 1 if armed else 0, float(keepalive_last), internal_id)
+            for internal_id, last_activity, armed, keepalive_last in rows
+        ]
+        if not values:
+            return
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._conn.executemany(
+                "UPDATE session_keys SET last_activity=?, idle_armed=?, keepalive_last=? "
+                "WHERE internal_id=?",
+                values,
+            )
+            self._conn.execute("COMMIT")
+        except Exception as exc:
+            try:
+                self._conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            _log_store_failure("批量持久化闲置状态", exc, f" ({len(values)} 行)")
+
+    def set_keepalive_last(self, internal_id: str, value: float) -> None:
+        """只推进上次保活时刻,不改真实活动时间或资格。"""
+        try:
+            self._conn.execute(
+                "UPDATE session_keys SET keepalive_last=? WHERE internal_id=?",
+                (float(value), internal_id),
+            )
+        except Exception as exc:
+            _log_store_failure("持久化保活时间", exc, f" ({internal_id})")
+
     # --- 会话域一次性归一(此后互切不再改库)---
 
     def migrate_session_domain(
@@ -213,8 +316,9 @@ class SessionKeyStore:
 
         语义(一次性、可重放、可先 dry_run):
 
-        * **只改 internal_id**,``session_key`` / ``generation`` / ``updated_at`` 原样
-          保留——那是上游转录的实名,改名等于断历史;
+        * **只改 internal_id**,``session_key`` / ``generation`` / ``updated_at`` /
+          ``last_activity`` / ``idle_armed`` / ``keepalive_last`` 原样保留——那是上游
+          转录的实名与本地闲置状态,改名等于断历史或让刚被清场/压缩的会话突然复活;
         * ``idle_paused`` 跟着迁,别的平台行不动;
         * 归一完成后 OneBot↔Milky 互切**不再动库**:真实 adapter 由运行时连接解析;
         * ``exclude`` 显式排除的旧行(主实例的「milky测试」小会话)不收录、不删除,
@@ -239,9 +343,18 @@ class SessionKeyStore:
                 raise ValueError(f"override session_key for {old} is empty")
         try:
             key_rows = [
-                (r["internal_id"], r["session_key"], int(r["generation"]), float(r["updated_at"]))
+                (
+                    r["internal_id"],
+                    r["session_key"],
+                    int(r["generation"]),
+                    float(r["updated_at"]),
+                    float(r["last_activity"] or 0.0),
+                    bool(r["idle_armed"]),
+                    float(r["keepalive_last"] or 0.0),
+                )
                 for r in self._conn.execute(
-                    "SELECT internal_id, session_key, generation, updated_at FROM session_keys"
+                    "SELECT internal_id, session_key, generation, updated_at,"
+                    " last_activity, idle_armed, keepalive_last FROM session_keys"
                 ).fetchall()
             ]
             paused_ids = [
@@ -282,17 +395,23 @@ class SessionKeyStore:
                 dry_run=True,
             )
 
-        source = {old: (key, generation, updated_at) for old, key, generation, updated_at in key_rows}
+        source = {
+            old: (key, generation, updated_at, last_activity, armed, keepalive_last)
+            for old, key, generation, updated_at, last_activity, armed, keepalive_last in key_rows
+        }
         try:
             self._conn.execute("BEGIN IMMEDIATE")
             for old_id, new_id in key_plan:
-                key, generation, updated_at = source[old_id]
+                key, generation, updated_at, last_activity, armed, keepalive_last = source[old_id]
                 if old_id in override_map:
                     key, generation = override_map[old_id]
                 self._conn.execute(
-                    "INSERT INTO session_keys (internal_id, session_key, generation, updated_at) "
-                    "VALUES (?, ?, ?, ?)",
-                    (new_id, key, generation, updated_at),
+                    "INSERT INTO session_keys (internal_id, session_key, generation, updated_at,"
+                    " last_activity, idle_armed, keepalive_last) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        new_id, key, generation, updated_at, last_activity,
+                        1 if armed else 0, keepalive_last,
+                    ),
                 )
                 self._conn.execute("DELETE FROM session_keys WHERE internal_id=?", (old_id,))
             for old_id, new_id in paused_plan:

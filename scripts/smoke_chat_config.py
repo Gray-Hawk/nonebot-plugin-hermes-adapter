@@ -1,11 +1,11 @@
-"""chat_config 22 键迁移 smoke 测试。
+"""chat_config 24 键迁移 smoke 测试。
 
 跑法（shim 挂 work 副本，中立目录执行）：
     ln -s <work 副本路径> <shim>/nonebot_plugin_hermes_adapter
     cd <中立目录> && PYTHONPATH=<shim> python <work>/scripts/smoke_chat_config.py
 
-覆盖（chat_config 22 键消费端的离线验收）：
-  1. ChatConfig 22 键形态 + 三链历史统一（perception_buffer / keyword_soft_context /
+覆盖（chat_config 24 键消费端的离线验收）：
+  1. ChatConfig 24 键形态 + 三链历史统一（perception_buffer / keyword_soft_context /
      proactive_max_messages 三键撤并，只剩 history_message_limit）。
   2. 改名（reply_delay_for_bot_sec / active_session_timeout_sec）与解析映射。
   3. 手动重载机制：commit 新快照后 load_chat_config() 立即反映（T1/proactive 的
@@ -61,11 +61,11 @@ def src_has_no(relpath: str, token: str) -> bool:
     return token not in (SRC / relpath).read_text(encoding="utf-8")
 
 
-# --- 1. ChatConfig 22 键形态 + 三链历史统一 + 改名 ---
+# --- 1. ChatConfig 24 键形态 + 三链历史统一 + 改名 ---
 from dataclasses import fields as _fields  # noqa: E402
 
 names = {f.name for f in _fields(ChatConfig)}
-check("ChatConfig 共 22 键", len(names) == 22, f"实际 {len(names)} 键")
+check("ChatConfig 共 24 键", len(names) == 24, f"实际 {len(names)} 键")
 check("统一防抖仅一个键", {n for n in names if n.startswith("reply_debounce")} == {"reply_debounce_sec"})
 check("三链统一: history_message_limit 存在", "history_message_limit" in names)
 check("三链统一: perception_buffer 已撤", "perception_buffer" not in names)
@@ -128,10 +128,10 @@ try:
     from nonebot_plugin_apscheduler import scheduler as _sch
 
     from nonebot_plugin_hermes_adapter.tasks.proactive_activation import register_proactive_activation
-    from nonebot_plugin_hermes_adapter.tasks.session_idle_reset import register_session_idle_reset
+    from nonebot_plugin_hermes_adapter.tasks.idle_actions import register_idle_actions
 
     _before = len(_sch.get_jobs())
-    register_session_idle_reset()
+    register_idle_actions()
     register_proactive_activation()
     _after = len(_sch.get_jobs())
     check("T1/proactive 固定 tick 总是注册(0 不早退)", _after >= _before + 2, f"before={_before} after={_after}")
@@ -145,8 +145,8 @@ check("三链: message 无 plugin_config.hermes_keyword_soft_context",
       src_has_no("handlers/message.py", "plugin_config.hermes_keyword_soft_context"))
 check("三链: proactive 无 plugin_config.hermes_proactive_max_messages",
       src_has_no("tasks/proactive_activation.py", "plugin_config.hermes_proactive_max_messages"))
-check("T1: 无 plugin_config.hermes_session_idle_reset_sec",
-      src_has_no("tasks/session_idle_reset.py", "plugin_config.hermes_session_idle_reset_sec"))
+check("闲置动作: 无 plugin_config.hermes_session_idle_reset_sec",
+      src_has_no("tasks/idle_actions.py", "plugin_config.hermes_session_idle_reset_sec"))
 check("proactive: 无 plugin_config.hermes_proactive_interval_sec",
       src_has_no("tasks/proactive_activation.py", "plugin_config.hermes_proactive_interval_sec"))
 check("bot延迟: 无 plugin_config.hermes_reply_delay_users",
@@ -155,8 +155,8 @@ check("bot延迟: 无 plugin_config.hermes_reply_delay_sec",
       src_has_no("handlers/message.py", "plugin_config.hermes_reply_delay_sec"))
 check("三链: proactive tick 现读 load_chat_config",
       "load_chat_config()" in (SRC / "tasks/proactive_activation.py").read_text(encoding="utf-8"))
-check("T1: sweep 现读 load_chat_config",
-      "load_chat_config()" in (SRC / "tasks/session_idle_reset.py").read_text(encoding="utf-8"))
+check("闲置动作: sweep 现读 load_chat_config",
+      "load_chat_config()" in (SRC / "tasks/idle_actions.py").read_text(encoding="utf-8"))
 
 print()
 if FAILS:

@@ -380,5 +380,81 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(call.await_args.kwargs["preview"])
 
 
+class ManualCompressIdleEligibilityTests(unittest.IsolatedAsyncioTestCase):
+    """手动 /compress 成功关闭闲置动作资格;失败与预览不关闭。"""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        from nonebot_plugin_hermes_adapter.core.storage.session_key_store import SessionKeyStore
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.store = SessionKeyStore(Path(self._tmp.name) / "session_keys.db")
+        self.addCleanup(self.store.close)
+        self.session_manager = SessionManager()
+        self.session_manager.bind_store(self.store)
+        # 用未归一平台(qq):internal_id 直接带真实 adapter,断言不必再解析会话域。
+        self.adapter = "qq"
+        self.session_manager.mark_activity(self.adapter, False, "u1", "462540549", now=1000.0)
+        self.internal_id = "qq+group+462540549"
+        _RecorderMessage.sent = []
+        self.target = SimpleNamespace(private=False, id="462540549")
+
+    async def _call(self, result: dict, plaintext: str | None = None) -> None:
+        patches = [
+            patch.object(commands.alconna, "get_target", return_value=self.target),
+            patch.object(commands, "check_isolation", return_value=True),
+            patch.object(commands, "get_adapter_name", return_value=self.adapter),
+            patch.object(commands, "_is_admin", return_value=True),
+            patch.object(commands, "hermes_control_plane_enabled", return_value=True),
+            patch.object(commands, "resolve_target", return_value=TGT),
+            patch.object(commands, "session_manager", self.session_manager),
+            patch.object(commands.alconna, "UniMessage", _RecorderMessage),
+            patch.object(
+                commands.hermes_client, "compress_session", AsyncMock(return_value=result)
+            ),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        prefix = f"/{commands.CMD_PREFIX} compress" if commands.CMD_PREFIX else "/compress"
+        event = SimpleNamespace(
+            get_user_id=lambda: "u1", get_plaintext=lambda: plaintext or prefix
+        )
+        await handle_compress(bot=MagicMock(), event=event, matcher=MagicMock())
+
+    async def test_success_disarms_and_persists(self):
+        self.assertTrue(self.session_manager.is_idle_armed(self.internal_id))
+        await self._call({
+            "ok": True, "status": "compressed", "rotated": False, "in_place": True,
+            "session_id": "hermes-g1", "before_messages": 14, "after_messages": 9, "message": "",
+        })
+        self.assertFalse(
+            self.session_manager.is_idle_armed(self.internal_id), "手动压缩成功必须关闭资格"
+        )
+        restarted = SessionManager()
+        restarted.bind_store(self.store)
+        self.assertFalse(restarted.is_idle_armed(self.internal_id), "关闭状态跨重启保持")
+
+    async def test_busy_failure_keeps_eligibility(self):
+        await self._call({"ok": False, "code": 409, "status": "session_busy", "error": "busy"})
+        self.assertTrue(
+            self.session_manager.is_idle_armed(self.internal_id), "未成功压缩不关闭资格"
+        )
+
+    async def test_preview_does_not_disarm(self):
+        prefix = f"/{commands.CMD_PREFIX} compress" if commands.CMD_PREFIX else "/compress"
+        await self._call(
+            {"ok": True, "status": "preview", "rotated": False, "in_place": False,
+             "session_id": "hermes-g1", "preview": {"context_tokens": 10, "context_messages": 1,
+                                                    "context_limit": 0}},
+            plaintext=f"{prefix} --preview",
+        )
+        self.assertTrue(
+            self.session_manager.is_idle_armed(self.internal_id), "预览不压缩,不关资格"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

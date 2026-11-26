@@ -32,6 +32,8 @@ class ChatConfig:
     history_message_limit: int = 10
     ignore_prefix: set[str] = field(default_factory=lambda: {"."})
     session_idle_reset_sec: int = 0
+    session_auto_compress_sec: int = 0
+    session_cache_keepalive_sec: int = 0
     proactive_interval_sec: int = 0
     proactive_jitter_sec: int = 0
     proactive_window_sec: int = 300
@@ -58,6 +60,8 @@ def parse_chat_config(doc: dict) -> ChatConfig:
         history_message_limit=int_field(doc, "history_message_limit", 10, min_v=1),
         ignore_prefix=str_set_field(doc, "ignore_prefix", {"."}),
         session_idle_reset_sec=int_field(doc, "session_idle_reset_sec", 0),
+        session_auto_compress_sec=int_field(doc, "session_auto_compress_sec", 0),
+        session_cache_keepalive_sec=int_field(doc, "session_cache_keepalive_sec", 0),
         proactive_interval_sec=int_field(doc, "proactive_interval_sec", 0),
         proactive_jitter_sec=int_field(doc, "proactive_jitter_sec", 0),
         proactive_window_sec=int_field(doc, "proactive_window_sec", 300, min_v=1),
@@ -86,3 +90,17 @@ _store = ConfigSnapshotStore(
 def load_chat_config() -> ChatConfig:
     """返回启动或最近一次手动重载后的缓存快照。"""
     return _store.get()
+
+
+def idle_actions_enabled(cfg: ChatConfig | None = None) -> bool:
+    """是否有任一闲置动作启用(clear / compress / keepalive)。
+
+    ``/delay``、``/resume`` 与 ``/help`` 只看这一个判据:任意一个动作启用就
+    应该能暂停/恢复,不再只有旧 T1 才算。
+    """
+    current = cfg if cfg is not None else load_chat_config()
+    return (
+        current.session_idle_reset_sec > 0
+        or current.session_auto_compress_sec > 0
+        or current.session_cache_keepalive_sec > 0
+    )

@@ -28,7 +28,7 @@ from ..core.routing import resolve_target
 from ..core.run_tracker import make_scope_key
 from ..core.sticker_library import default_sticker_library
 from ..core.config_reload import reload_runtime_config
-from ..core.chat_config import load_chat_config
+from ..core.chat_config import idle_actions_enabled
 from ..core.misc_config import load_misc_config, startup_command_prefix
 from ..core.user_lists import load_user_lists
 from ..core.session import session_manager
@@ -158,8 +158,8 @@ async def handle_delay(bot: Bot, event: Event, matcher: Matcher):
     if not check_isolation(event, target):
         matcher.skip()
 
-    if load_chat_config().session_idle_reset_sec <= 0:
-        await alconna.UniMessage("ℹ️ 空闲自动重置(T1)当前未启用。").send(target=target, bot=bot)
+    if not idle_actions_enabled():
+        await alconna.UniMessage("ℹ️ 空闲自动动作当前未启用。").send(target=target, bot=bot)
         return
 
     adapter_name = get_adapter_name(target)
@@ -170,13 +170,15 @@ async def handle_delay(bot: Bot, event: Event, matcher: Matcher):
         return
     group_id = None if target.private else target.id
     internal_id = session_manager.set_idle_paused(adapter_name, target.private, user_id, group_id, True)
-    logger.info(f"[HERMES] /delay: T1 计时已暂停 ({internal_id})")
-    await alconna.UniMessage(f"⏸️ 已暂停本会话的空闲自动重置,{_display_cmd('resume')} 恢复。").send(target=target, bot=bot)
+    logger.info(f"[HERMES] /delay: 空闲动作计时已暂停 ({internal_id})")
+    await alconna.UniMessage(
+        f"⏸️ 已暂停本会话的空闲自动动作，{_display_cmd('resume')} 恢复。"
+    ).send(target=target, bot=bot)
 
 
 @resume_command.handle()
 async def handle_resume(bot: Bot, event: Event, matcher: Matcher):
-    """恢复当前会话的 T1 空闲自动重置,并重置计时"""
+    """恢复当前会话的空闲动作计时,并重置计时"""
     target = alconna.get_target()
     if not check_isolation(event, target):
         matcher.skip()
@@ -189,8 +191,8 @@ async def handle_resume(bot: Bot, event: Event, matcher: Matcher):
         return
     group_id = None if target.private else target.id
     internal_id = session_manager.set_idle_paused(adapter_name, target.private, user_id, group_id, False)
-    logger.info(f"[HERMES] /resume: T1 计时已恢复并重置 ({internal_id})")
-    await alconna.UniMessage("▶️ 已恢复空闲自动重置,计时重新开始。").send(target=target, bot=bot)
+    logger.info(f"[HERMES] /resume: 空闲动作计时已恢复并重置 ({internal_id})")
+    await alconna.UniMessage("▶️ 已恢复空闲自动动作，计时重新开始。").send(target=target, bot=bot)
 
 
 # --- /ping ---
@@ -293,10 +295,10 @@ def build_help_text(
         f"{_cl('ping')} - 检查连接状态",
         f"{_cl('help')} - 显示本帮助",
     ]
-    if load_chat_config().session_idle_reset_sec > 0:
-        # T1 启用时才暴露超控命令,免得用户对着不存在的功能打命令
-        lines.append(f"{_cl('delay')} - 暂停空闲自动重置")
-        lines.append(f"{_cl('resume')} - 恢复空闲自动重置")
+    if idle_actions_enabled():
+        # 任一闲置动作启用就暴露超控命令,免得用户对着不存在的功能打命令
+        lines.append(f"{_cl('delay')} - 暂停空闲自动动作")
+        lines.append(f"{_cl('resume')} - 恢复空闲自动动作")
     if is_admin:
         # 管理员才看见运行时状态命令,普通用户视角下此命令"不存在"
         lines.append(f"{_cl('hermes-status')} - 查看插件运行时状态(管理员)")
@@ -683,6 +685,10 @@ async def handle_compress(bot: Bot, event: Event, matcher: Matcher):
         # 轮换后旧会话已 closed;必须采纳新 id,别把后续 turn 写回已关闭的旧会话。
         adopted = session_manager.adopt_session_key(session_key, new_key)
         logger.info(f"[HERMES] /compress 轮换采纳: {session_key} -> {new_key} adopted={adopted}")
+    if result.get("ok") and not preview:
+        # 手动压缩成功也算一次 clear／compress 动作:计时归零并关闭闲置动作资格,
+        # 免得刚压缩完的会话立刻被自动保活或再压一遍。预览不压缩,不关资格。
+        session_manager.disarm_idle(adapter_name, is_private, user_id, group_id)
     lines = compress_receipt_lines(result, previous_key=session_key, adopted=adopted)
     await alconna.UniMessage("\n".join(lines)).send(target=target, bot=bot)
 

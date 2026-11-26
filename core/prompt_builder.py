@@ -793,6 +793,15 @@ def _render_notice_region(notices: Sequence[str]) -> str:
     )
 
 
+def render_system_notice_region(*, kind: str, summary: str, body: str = "") -> str:
+    """单条系统通知的完整区域(定时/后台动作构造 ``context_notices`` 的唯一入口)。
+
+    外观与拼装只认上面这一份通知文法;调用方给业务事实("缓存保活"/当前时间),
+    不在这里另写区域标签或通知行格式。
+    """
+    return _render_notice_region([_render_notice(kind, summary, body)])
+
+
 def render_chat_region(lines: Sequence[str]) -> str:
     """聊天消息区域唯一构造点:开标签、固定说明、空行分隔的消息行、闭标签。
 
