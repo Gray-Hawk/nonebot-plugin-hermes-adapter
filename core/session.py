@@ -46,6 +46,44 @@ def normalize_domain_tag(name: str | None) -> str:
     return normalize_adapter_name(name or "")
 
 
+def same_session_domain(left: str | None, right: str | None) -> bool:
+    """两个 adapter/域标签是否属于同一业务会话域。
+
+    未登记的 adapter 就是它自己，所以未知平台只与同名标签相等；官方 QQ 与
+    QQTPC 永不相等。空标签不参与匹配（返回 False）。
+    """
+    left_tag = normalize_domain_tag(left)
+    right_tag = normalize_domain_tag(right)
+    if not left_tag or not right_tag:
+        return False
+    return session_domain(left_tag) == session_domain(right_tag)
+
+
+def composite_matches(entry: str, adapter_name: str | None, target_id: object) -> bool:
+    """``{adapter}:{id}`` 复合键是否命中当前会话。
+
+    adapter 段按业务会话域比较：``onebotv11:10001`` 在 Milky 下同样命中，
+    ``qqtpc:10001`` 命中全部 QQTPC transport；官方 QQ 与未知平台仍要求同域
+    （即标签逐字相同）。target_id 逐字比较（数字/字符串都以 ``str`` 形式）。
+    """
+    head, sep, tail = str(entry or "").partition(":")
+    if not sep or not tail:
+        return False
+    if tail != str(target_id):
+        return False
+    return same_session_domain(head, adapter_name)
+
+
+def composite_target_ids(entries, adapter_name: str | None) -> list[str]:
+    """从复合键集合里筛出同域目标的裸 id（去重、升序）。"""
+    ids = {
+        str(entry).split(":", 1)[1]
+        for entry in entries or ()
+        if composite_matches(str(entry), adapter_name, str(entry).split(":", 1)[1])
+    }
+    return sorted(ids)
+
+
 # session key 前缀按**真实后端**命名(不再把 Hermes 名字硬绑在 key 上):
 # - 上游 session id 不可本地强改,已缓存的 key 必须原样续用,否则断上游历史;
 # - 换后端前缀时只改**本地派生**形态 ``{prefix}-{internal_id}[-gN]`` 的名字。
@@ -170,7 +208,8 @@ class SessionManager:
             return
         scope = "private" if is_private else "group"
         scope_id = user_id if is_private else (group_id or "")
-        scope_key = f"{adapter_name}:{scope}:{scope_id}"
+        # canonical 业务会话域：OneBot/Milky/icqq 同域，clear 后栅栏落在 qqtpc。
+        scope_key = f"{session_domain(adapter_name)}:{scope}:{scope_id}"
         try:
             result = tracker.fence_scope_generation(
                 scope_key,

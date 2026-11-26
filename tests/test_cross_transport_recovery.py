@@ -136,7 +136,7 @@ class CrossTransportRecoveryTests(RestartRouteHarness):
     async def test_current_driver_inflight_blocks_cross_transport_resume(self) -> None:
         self._bind_with_adapter(run_id="run-current-inflight", adapter="onebotv11")
         inflight = run_resume._mcp.inflight
-        inflight.is_inflight.side_effect = lambda key: key[0] == "milky"
+        inflight.is_inflight.side_effect = lambda key: key[0] == "qqtpc"
 
         with patch.object(session_mod, "_live_transports", lambda domain: ["milky"]), patch.object(
             run_resume, "_RESUME_RETRY_MAX", 1

@@ -9,6 +9,8 @@ from __future__ import annotations
 import builtins
 from dataclasses import dataclass
 
+from .session import session_domain
+
 # turn 收尾时给窗口垫的最小剩余量。只需盖住「turn 结束 → pending 接力 refire」这次
 # 交接(一次事件循环跳转,期间 cron sweep 可能扫过),不是再送一个 TTL。
 _TURN_END_GRACE_MS = 10_000
@@ -139,6 +141,11 @@ class ActiveSessionManager:
         self._store = None
 
     # --- 阶段2a 持久化镜像 ---
+    @staticmethod
+    def _key(adapter: str, group_id: str) -> tuple[str, str]:
+        """窗口键的 adapter 段按业务会话域归一（QQTPC 跨协议共用同一窗口）。"""
+        return (session_domain(adapter), group_id)
+
     def bind_store(self, store, now_ms: int) -> int:
         """绑定 WindowStore 并装回未死窗口,返回装回条数。
 
@@ -150,11 +157,23 @@ class ActiveSessionManager:
         self._store = store
         restored = 0
         for adapter, group_id, payload, _ in store.load_all():
-            s = session_from_payload(adapter, group_id, payload)
+            key = self._key(adapter, group_id)
+            s = session_from_payload(key[0], group_id, payload)
             if not s.is_alive_ttl(now_ms) or self._beyond_t5(s, now_ms):
                 store.delete(adapter, group_id)
+                if key != (adapter, group_id):
+                    store.delete(key[0], group_id)
                 continue
-            self._sessions[(adapter, group_id)] = s
+            existing = self._sessions.get(key)
+            if existing is not None and existing.expires_at >= s.expires_at:
+                store.delete(adapter, group_id)
+                continue
+            self._sessions[key] = s
+            if (adapter, group_id) != key:
+                # 旧 transport 行按域归一后落到 canonical 行；旧行只留作本次迁移
+                # 证据之外不再需要，删除避免下次启动重复装回。
+                store.delete(adapter, group_id)
+                store.upsert(key[0], group_id, payload, s.expires_at)
             restored += 1
         return restored
 
@@ -163,11 +182,16 @@ class ActiveSessionManager:
             return
         from .storage.window_store import session_to_payload
 
-        self._store.upsert(s.adapter, s.group_id, session_to_payload(s), s.expires_at)
+        domain, group_id = self._key(s.adapter, s.group_id)
+        self._store.upsert(domain, group_id, session_to_payload(s), s.expires_at)
 
     def _drop(self, adapter: str, group_id: str) -> None:
         if self._store is not None:
-            self._store.delete(adapter, group_id)
+            domain, _ = self._key(adapter, group_id)
+            self._store.delete(domain, group_id)
+            if domain != adapter:
+                # 兼容迁移前的 transport 行
+                self._store.delete(adapter, group_id)
 
     def _beyond_t5(self, s: ActiveSession, now_ms: int) -> bool:
         """T5 封顶:窗口仅靠隐式续期吊着的时间超过 T5 即视为不活跃。
@@ -195,7 +219,7 @@ class ActiveSessionManager:
         user_id: str,
         now_ms: int,
     ) -> ActiveSession:
-        key = (adapter, group_id)
+        key = self._key(adapter, group_id)
         old = self._sessions.get(key)
         if old is not None and self.is_alive_with_lease(adapter, group_id, now_ms):
             # 活窗续期复用同一实例(TTL 或租约任一即活;不看 T5——显式触发本身
@@ -210,7 +234,7 @@ class ActiveSessionManager:
             return old
         # 无窗或死窗(TTL 与租约都过期):新建实例。锚随旧窗死,不继承。
         s = ActiveSession(
-            adapter=adapter,
+            adapter=key[0],
             group_id=group_id,
             triggered_by=user_id,
             started_at=now_ms,
@@ -223,7 +247,7 @@ class ActiveSessionManager:
         return s
 
     def touch(self, adapter: str, group_id: str, now_ms: int) -> ActiveSession | None:
-        s = self._sessions.get((adapter, group_id))
+        s = self._sessions.get(self._key(adapter, group_id))
         if s is None or not self.is_alive_with_lease(adapter, group_id, now_ms):
             return None
         if self._beyond_t5(s, now_ms):
@@ -240,17 +264,17 @@ class ActiveSessionManager:
         多数 handler 应改用 `get_if_trigger_alive` 或先 `is_alive_for_trigger` 校验。本方法保留是为了
         调试 / 日志场景需要观测已过期但尚未被 sweep 的 session。
         """
-        return self._sessions.get((adapter, group_id))
+        return self._sessions.get(self._key(adapter, group_id))
 
     def get_if_trigger_alive(self, adapter: str, group_id: str, now_ms: int) -> ActiveSession | None:
         """TTL 感知的 get:只在 session 存在且未过期时返回。T5 封顶同样视为不活跃。"""
-        s = self._sessions.get((adapter, group_id))
+        s = self._sessions.get(self._key(adapter, group_id))
         if s is None or not self.is_alive_with_lease(adapter, group_id, now_ms) or self._beyond_t5(s, now_ms):
             return None
         return s
 
     def is_alive_for_trigger(self, adapter: str, group_id: str, now_ms: int) -> bool:
-        s = self._sessions.get((adapter, group_id))
+        s = self._sessions.get(self._key(adapter, group_id))
         return (
             s is not None
             and self.is_alive_with_lease(adapter, group_id, now_ms)
@@ -279,7 +303,7 @@ class ActiveSessionManager:
         唯一调用点),同 turn 去重这一轮失去依据 —— 调用方应当把它记出来,否则
         在日志里只表现为 last_bot_reply_at 永远是 0,查不到原因。
         """
-        s = self._sessions.get((adapter, group_id))
+        s = self._sessions.get(self._key(adapter, group_id))
         if s is None:
             return False
         s.last_bot_reply_at = now_ms
@@ -336,7 +360,7 @@ class ActiveSessionManager:
         模型的 release_anchor 决策字段经 handlers 到这里;who 是模型给的字符串,
         不匹配任何在钉锚的 commissioner 时安全 no-op。
         """
-        s = self._sessions.get((adapter, group_id))
+        s = self._sessions.get(self._key(adapter, group_id))
         if s is None:
             return 0
         released = 0
@@ -351,7 +375,7 @@ class ActiveSessionManager:
 
     def pinned_commissioners(self, adapter: str, group_id: str) -> set[str]:
         """当前在钉锚的委托人裸 id 集合(answer_anchor 的合法值校验用)。无窗口/无锚 = 空集。"""
-        s = self._sessions.get((adapter, group_id))
+        s = self._sessions.get(self._key(adapter, group_id))
         if s is None:
             return set()
         return {
@@ -367,7 +391,7 @@ class ActiveSessionManager:
         在调用方(handler)做,本方法只管标记;无窗口/无匹配 = 0 安全 no-op。
         已 answered 的锚不重复计数。应答 ≠ 松锚——追问期锚继续钉到窗口死/超龄/release。
         """
-        s = self._sessions.get((adapter, group_id))
+        s = self._sessions.get(self._key(adapter, group_id))
         if s is None:
             return 0
         marked = 0
@@ -395,7 +419,7 @@ class ActiveSessionManager:
         """按首条委托消息 id 找在钉锚,命中返回发起者 id(quote 自动归并用)。"""
         if msg_id is None:
             return None
-        s = self._sessions.get((adapter, group_id))
+        s = self._sessions.get(self._key(adapter, group_id))
         if s is None:
             return None
         for rec in (s.anchor_master, s.anchor_guest):
@@ -467,7 +491,7 @@ class ActiveSessionManager:
 
     def lease_count(self, adapter: str, group_id: str) -> int:
         """该群当前在跑的 turn 租约数(本部署补丁, key 级)。"""
-        return self._leases.get((adapter, group_id), 0)
+        return self._leases.get(self._key(adapter, group_id), 0)
 
     def is_alive_with_lease(self, adapter: str, group_id: str, now_ms: int) -> bool:
         """TTL 或租约任一成立即活(不看 T5 —— T5 是「值不值得听」,租约是「还在干活」)。
@@ -475,9 +499,9 @@ class ActiveSessionManager:
         状态展示 / 工具过滤 / sweep 用这个口径;实例上的 `ActiveSession.is_alive_ttl`
         是纯 TTL,别混用。
         """
-        s = self._sessions.get((adapter, group_id))
+        s = self._sessions.get(self._key(adapter, group_id))
         return s is not None and (
-            s.is_alive_ttl(now_ms) or self._leases.get((adapter, group_id), 0) > 0
+            s.is_alive_ttl(now_ms) or self._leases.get(self._key(adapter, group_id), 0) > 0
         )
 
     def begin_turn(self, adapter: str, group_id: str) -> tuple[str, str]:
@@ -492,7 +516,7 @@ class ActiveSessionManager:
         end_turn。不新建窗口的语义不变:窗口只会被显式触发/发言建立,
         should_exit_active 收掉的窗不会被一发排队的 turn 复活。
         """
-        key = (adapter, group_id)
+        key = self._key(adapter, group_id)
         self._leases[key] = self._leases.get(key, 0) + 1
         return key
 
@@ -528,7 +552,7 @@ class ActiveSessionManager:
 
     def end(self, adapter: str, group_id: str) -> None:
         """按 key 无条件收窗。turn 内表达"这轮谈完了"请用 `end_if_current_generation`。"""
-        self._sessions.pop((adapter, group_id), None)
+        self._sessions.pop(self._key(adapter, group_id), None)
         self._drop(adapter, group_id)
 
     def end_if_current_generation(self, session: ActiveSession, generation: int) -> bool:
@@ -541,7 +565,7 @@ class ActiveSessionManager:
         等 refire 的 @ 会在 get_if_trigger_alive 处静默蒸发,用户侧只看到
         一个 busy 表情。
         """
-        key = (session.adapter, session.group_id)
+        key = self._key(session.adapter, session.group_id)
         if self._sessions.get(key) is not session or session.generation != generation:
             return False
         del self._sessions[key]
@@ -551,7 +575,8 @@ class ActiveSessionManager:
     def list(self, adapter: str | None = None) -> builtins.list[ActiveSession]:
         if adapter is None:
             return list(self._sessions.values())
-        return [s for s in self._sessions.values() if s.adapter == adapter]
+        domain = session_domain(adapter)
+        return [s for s in self._sessions.values() if session_domain(s.adapter) == domain]
 
     def sweep_expired(self, now_ms: int) -> builtins.list[ActiveSession]:
         expired = [
@@ -560,6 +585,6 @@ class ActiveSessionManager:
             if not s.is_alive_ttl(now_ms) and self._leases.get(key, 0) <= 0
         ]
         for s in expired:
-            self._sessions.pop((s.adapter, s.group_id), None)
+            self._sessions.pop(self._key(s.adapter, s.group_id), None)
             self._drop(s.adapter, s.group_id)
         return expired

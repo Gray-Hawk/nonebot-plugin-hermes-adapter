@@ -3,7 +3,9 @@
 custom_dir/runs_delivery.yaml，全部键可缺省：
   mode: observe                # off=停用对账与顺序门；observe=只记录；repair=允许补发
   repair_scopes: []            # 灰度：仅这些稳定 scope 提升为 repair
-                               # 形态 adapter:private:<QQ> 或 adapter:group:<群号>
+                               # 形态 qqtpc:private:<QQ> 或 qqtpc:group:<群号>
+                               # （旧 onebotv11:* / milky:* / icqq:* 条目继续兼容：
+                               #   比较按业务会话域归一，协议切换不丢灰度）
   grace_sec: 5.0               # legacy 主发宽限，超过才允许补发器接管
   order_gate_timeout_sec: 3.0  # 顺序门等待前序的上限，超时放行并记录
   unknown_backoff_sec: 60.0    # unknown 结果不明组件的重试退避
@@ -71,17 +73,42 @@ def load_runs_delivery_config() -> RunsDeliveryConfig:
 
 
 def stable_scope(adapter: str, is_private: bool, user_id, group_id) -> str:
-    """灰度用的稳定聊天目标 scope(与 hermes scope_key 无关)。"""
+    """灰度用的稳定聊天目标 scope（按业务会话域，与 hermes scope_key 同形）。
+
+    QQTPC 的 OneBot v11/v12、Milky、icqq 都是 ``qqtpc``：协议切换后同一条
+    repair_scopes 仍命中；官方 QQ 与未登记平台保留自己的标签。
+    """
+    from .session import session_domain
+
+    domain = session_domain(adapter)
     if is_private:
-        return f"{adapter}:private:{user_id}"
-    return f"{adapter}:group:{group_id}"
+        return f"{domain}:private:{user_id}"
+    return f"{domain}:group:{group_id}"
+
+
+def _canonical_scope_entry(entry: str) -> str:
+    """配置里的 ``adapter:scope:id`` → 域形；裸/坏条目原样返回。"""
+    from .session import session_domain
+
+    head, sep, rest = str(entry or "").partition(":")
+    if not sep or not rest:
+        return str(entry or "")
+    return f"{session_domain(head)}:{rest}"
 
 
 def effective_mode(cfg: RunsDeliveryConfig, *, adapter: str | None = None,
                    is_private: bool = False, user_id=None, group_id=None) -> str:
-    """全局 mode＋灰度 scope 提升;off 不接受提升。"""
+    """全局 mode＋灰度 scope 提升;off 不接受提升。
+
+    repair_scopes 同时接受 ``qqtpc:group:<号>`` 新写法与旧 ``onebotv11:*`` /
+    ``milky:*`` 条目：比较前两侧都归一到业务会话域，所以协议切换不会让灰度
+    静默掉回全局 observe。官方 QQ 条目只命中官方 QQ。
+    """
     if cfg.mode == "off":
         return "off"
-    if adapter is not None and stable_scope(adapter, is_private, user_id, group_id) in cfg.repair_scopes:
-        return "repair"
+    if adapter is not None:
+        target = stable_scope(adapter, is_private, user_id, group_id)
+        allowed = {_canonical_scope_entry(entry) for entry in cfg.repair_scopes}
+        if target in allowed:
+            return "repair"
     return cfg.mode

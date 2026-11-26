@@ -64,7 +64,7 @@ class BackgroundIdentityAttributionTests(unittest.TestCase):
             "canonical": f"hermes-qqtpc+group+{GROUP}-g3",
             "onebot": f"hermes-onebotv11+group+{GROUP}-g1057",
             "milky": f"hermes-milky+group+{GROUP}-g5",
-            "future": f"hermes-icqq9+group+{GROUP}-g1",
+            "future": f"hermes-icqq+group+{GROUP}-g1",
             "sibling": f"hermes-onebotv11+group+{SIBLING}-g7",
             "official": f"hermes-qq+group+{GROUP}",
             "otherbackend": f"astrbot-qqtpc+group+{GROUP}",

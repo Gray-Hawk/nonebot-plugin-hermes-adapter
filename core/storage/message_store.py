@@ -270,6 +270,27 @@ class MessageStore:
             logger.error(f"[message_store] append failed: {exc}; msg dropped (ts={msg.ts})")
             return None
 
+    @staticmethod
+    def _adapter_filter(adapter: str) -> tuple[str, list[str]]:
+        """消息表 adapter 过滤：按业务会话域读，不按 transport 分面。
+
+        ``messages.adapter`` 仍是**到达事实**（保留原始 transport 供排障），但查询
+        身份是会话域：OneBot/Milky/icqq 的同一群/私聊共享一份连续历史；官方 QQ 与
+        其它平台只读自己的行。
+        """
+        from ...adapter_norm import normalize_adapter_name
+        from ..session import SESSION_DOMAIN_TRANSPORTS, session_domain
+
+        domain = session_domain(adapter)
+        tags = {
+            tag for tag, mapped in SESSION_DOMAIN_TRANSPORTS.items() if mapped == domain
+        }
+        tags.add(domain)
+        tags.add(normalize_adapter_name(adapter or ""))
+        ordered = sorted(tag for tag in tags if tag)
+        placeholders = ",".join("?" for _ in ordered)
+        return f"adapter IN ({placeholders})", ordered
+
     def get_recent(
         self,
         adapter: str,
@@ -281,8 +302,9 @@ class MessageStore:
         """新→旧顺序返回最近 limit 条;同 MessageBuffer.get_recent 语义。"""
         if group_id is None and owner_user_id is None:
             raise ValueError("owner_user_id is required when group_id is None (private chat lookup)")
-        params: list[Any] = [adapter]
-        where = "adapter = ?"
+        adapter_sql, adapter_params = self._adapter_filter(adapter)
+        params: list[Any] = [*adapter_params]
+        where = adapter_sql
         if group_id is None:
             where += " AND group_id IS NULL AND private_owner_id = ?"
             params.append(owner_user_id)
@@ -501,20 +523,21 @@ class MessageStore:
             return None
         if not isinstance(adapter, str) or not adapter.strip():
             return None
+        adapter_sql, adapter_params = self._adapter_filter(adapter)
         if group_id is None:
             if not isinstance(owner_user_id, str) or not owner_user_id.strip():
                 return None
             sql = (
                 "SELECT qq_message_id, user_id FROM messages "
-                "WHERE id = ? AND adapter = ? AND group_id IS NULL AND private_owner_id = ?"
+                f"WHERE id = ? AND {adapter_sql} AND group_id IS NULL AND private_owner_id = ?"
             )
-            params: tuple[Any, ...] = (message_id, adapter, owner_user_id)
+            params: tuple[Any, ...] = (message_id, *adapter_params, owner_user_id)
         else:
             sql = (
                 "SELECT qq_message_id, user_id FROM messages "
-                "WHERE id = ? AND adapter = ? AND group_id = ?"
+                f"WHERE id = ? AND {adapter_sql} AND group_id = ?"
             )
-            params = (message_id, adapter, group_id)
+            params = (message_id, *adapter_params, group_id)
         try:
             row = self._conn.execute(sql, params).fetchone()
         except sqlite3.Error as exc:

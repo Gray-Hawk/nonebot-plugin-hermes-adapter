@@ -31,7 +31,7 @@ from ..core.config_reload import reload_runtime_config
 from ..core.chat_config import idle_actions_enabled, load_chat_config
 from ..core.misc_config import load_misc_config, startup_command_prefix
 from ..core.user_lists import load_user_lists
-from ..core.session import session_manager
+from ..core.session import composite_matches, session_manager
 from ..utils import check_isolation, get_adapter_name
 from .message_perception import _claim_event_db_id
 
@@ -462,8 +462,11 @@ run_stop_command = on_command(_cmd("run-stop"), force_whitespace=True, priority=
 
 
 def _is_admin(adapter_name: str, user_id: str) -> bool:
-    """管理员判定(与 /hermes-status 同口径:白名单 {adapter}:{user_id})。"""
-    return f"{adapter_name}:{user_id}" in load_user_lists().admin_users
+    """管理员判定（与 authority_role 同口径：复合键按业务会话域匹配）。"""
+    return any(
+        composite_matches(entry, adapter_name, user_id)
+        for entry in load_user_lists().admin_users
+    )
 
 
 _HERMES_CONTROL_UNAVAILABLE = "当前 AstrBot 后端未提供此 Hermes 专用命令"

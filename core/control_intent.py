@@ -146,16 +146,28 @@ def neutralize_anchor_fields(control: dict[str, Any]) -> tuple[dict[str, Any], l
 
 
 class ControlQueue:
-    """按会话键维护的简单 FIFO；只登记、只按决策顺序弹出。"""
+    """按会话键维护的简单 FIFO；只登记、只按决策顺序弹出。
+
+    键的 adapter 段按业务会话域归一（``make_inflight_key`` 同口径）：
+    OneBot/Milky/icqq 共用同一个 ``qqtpc`` 队列，协议切换不会漏掉或错配控制。
+    """
     def __init__(self, *, max_pending: int = MAX_PENDING_CONTROLS) -> None:
         self._queues: dict[tuple[str, str], deque[dict[str, Any]]] = {}
         self._lock = threading.Lock()
         self.max_pending = max_pending
 
+    @staticmethod
+    def _key(key: tuple[str, str]) -> tuple[str, str]:
+        from .session import session_domain
+
+        adapter, scope = key
+        return (session_domain(adapter), scope)
+
     def register(self, key: tuple[str, str], control: dict[str, Any]) -> int:
         """登记一份控制，返回登记后队列深度。空控制不占位。"""
         if not control:
             return self.pending(key)
+        key = self._key(key)
         with self._lock:
             queue = self._queues.setdefault(key, deque())
             if len(queue) >= self.max_pending:
@@ -164,6 +176,7 @@ class ControlQueue:
             return len(queue)
 
     def pop(self, key: tuple[str, str]) -> dict[str, Any] | None:
+        key = self._key(key)
         with self._lock:
             queue = self._queues.get(key)
             if not queue:
@@ -174,12 +187,14 @@ class ControlQueue:
             return control
 
     def pending(self, key: tuple[str, str]) -> int:
+        key = self._key(key)
         with self._lock:
             queue = self._queues.get(key)
             return len(queue) if queue else 0
 
     def discard(self, key: tuple[str, str]) -> int:
         """丢弃该会话剩余控制（一轮结束时的收尾）：不跨轮误配给下一份正文。"""
+        key = self._key(key)
         with self._lock:
             queue = self._queues.pop(key, None)
             return len(queue) if queue else 0

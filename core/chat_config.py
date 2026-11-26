@@ -44,6 +44,24 @@ class ChatConfig:
     forward_extract_max_chars: int = 800
     greet_on_join: bool = False
 
+    def proactive_group_enabled(self, adapter: str, group_id: str) -> bool:
+        """该群是否在主动发言范围内（空集 = 全部群）。
+
+        ``proactive_groups`` 条目是 ``adapter:group_id`` 复合键：adapter 段按
+        业务会话域比较（OneBot/Milky/icqq 同域），新旧写法都生效；无冒号的裸
+        群号保留为旧配置兼容。官方 QQ 与其它平台各自隔离。
+        """
+        if not self.proactive_groups:
+            return True
+        from .session import composite_matches
+
+        return any(
+            composite_matches(entry, adapter, group_id)
+            if ":" in str(entry)
+            else str(entry) == str(group_id)
+            for entry in self.proactive_groups
+        )
+
     def idle_reset_exempt(
         self, *, is_private: bool, user_id: str, group_id: str | None
     ) -> bool:

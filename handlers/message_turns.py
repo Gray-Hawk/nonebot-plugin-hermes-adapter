@@ -87,7 +87,7 @@ from ..core.prompt_builder import (
     steer_region_decorations,
 )
 from ..core.routing import resolve_target
-from ..core.session import session_manager
+from ..core.session import session_domain, session_manager
 from .message_media import (
     _absent_media_note,
     _collect_inline_image_urls,
@@ -1087,7 +1087,9 @@ async def _run_passive_turn(
     use_private_decision = is_private
     # 本部署补丁:计算记忆根路径,用于路由提示动态跟随配置
     _custom_dir = resolve_custom_dir()
-    _memory_root = str(_custom_dir / "memory" / adapter_name) if _custom_dir else None
+    _memory_root = (
+        str(_custom_dir / "memory" / session_domain(adapter_name)) if _custom_dir else None
+    )
     # 身份表：发言者标签正主名注释，custom_dir 不可用/查不到都静默 None
     _name_resolver = _speaker_name_resolver(adapter_name)
     system_prompt = build_passive_system_prompt(
@@ -1712,7 +1714,9 @@ async def _run_reactive_turn(
 
     # 本部署补丁:计算记忆根路径,用于路由提示动态跟随配置
     _custom_dir = resolve_custom_dir()
-    _memory_root = str(_custom_dir / "memory" / adapter_name) if _custom_dir else None
+    _memory_root = (
+        str(_custom_dir / "memory" / session_domain(adapter_name)) if _custom_dir else None
+    )
     # 身份表：发言者标签正主名注释，custom_dir 不可用/查不到都静默 None
     _name_resolver = _speaker_name_resolver(adapter_name)
     system_prompt = build_reactive_system_prompt(

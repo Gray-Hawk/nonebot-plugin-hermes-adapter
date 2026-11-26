@@ -13,23 +13,26 @@ known_bots: []
 
 # 私聊主动下行白名单（裸 id，全局）——允许被主动下行私聊的账号，唤起（wake_turn）与直发（push_message）
 # 两通道共用。与下方 allow_users（被动聊天白名单，复合 id）语义不同，不得合并。
-# 未配置本键时回落管理员集合（admin_users 复合键按当前适配器拆前缀取裸 id）；
+# 未配置本键时回落管理员集合（admin_users 复合键按业务会话域匹配取裸 id）；
 # 显式配置（含空表 []）以显式值为准——显式空表 = 不允许任何人被主动下行。
 # 需要限制时取消注释并填写真实账号。
 # private_allow: []
 
 # 私聊 allowlist 模式的被动聊天白名单（{adapter}:{user_id} 复合 id）。
+# adapter 段按业务会话域匹配：onebotv11 / onebotv12 / milky / icqq / qqtpc 互相命中，
+# 官方 QQ 与其它平台各自隔离；协议切换不需要重配。
 # 仅当 chat_config.yaml 的 private_trigger = allowlist 时生效；与 private_allow 语义不同，不得合并。
 allow_users: []
 
-# 允许响应的群集合（{adapter}:{group_id} 复合 id）；空集 = 全部群。
+# 允许响应的群集合（{adapter}:{group_id} 复合 id，同一会话域规则）；空集 = 全部群。
 allow_groups: []
 
 # 敏感命令与管理操作的管理员集合（{adapter}:{user_id} 复合 id）；空集 = 默认 deny。
-# 手动重载先按旧集合鉴权，成功后再替换新集合。
+# adapter 段按业务会话域匹配：onebotv11 / onebotv12 / milky / icqq / qqtpc 互相命中，
+# 官方 QQ 与其它平台各自隔离。手动重载先按旧集合鉴权，成功后再替换新集合。
 admin_users: []
 
-# admin_users 中属于「主人」的子集（{adapter}:{user_id} 复合 id），可选。
+# admin_users 中属于「主人」的子集（{adapter}:{user_id} 复合 id，同一会话域规则），可选。
 # 缺键 = 沿用既有口径：整组 admin_users 即主人（active_session 的 master_ids 同源）。
 # 显式配置（含空表 []）后，列出的账号呈现为主人，其余 admin_users 呈现为管理员。
 # 只影响聊天行身份栏，不改变权限判定；权限仍只看 admin_users。

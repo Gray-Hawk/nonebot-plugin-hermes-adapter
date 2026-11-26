@@ -27,6 +27,7 @@ from .. import mcp as _mcp  # lazy access to runtime singletons
 from ..core.chat_config import load_chat_config
 from ..core.bg_tasks import spawn_bg_task
 from ..core.inflight import make_inflight_key
+from ..core.session import session_domain
 from ..core.message_origin import MessageOrigin, MessageSource
 
 # 调度 tick 周期:实际触发节奏由 per-group 的 _next_check_at 控制(T2+T3 随机),
@@ -118,12 +119,23 @@ def register_proactive_activation() -> None:
         now_ms = int(now * 1000)
         interval = cfg.proactive_interval_sec
 
+        # 同一 QQ 群可能有多个 QQTPC transport 路由（断线残留/双驱动）。巡查状态与
+        # 判重按业务会话域——同一域+群只巡查一次，取最近一次真实感知的路由。
+        targets: dict[tuple[str, str], tuple[str, str, int]] = {}
         for adapter, scope, scope_id in _mcp.bot_registry.known():
             if scope != "group":
                 continue
-            if cfg.proactive_groups and scope_id not in cfg.proactive_groups:
+            domain = session_domain(adapter)
+            key = (domain, scope_id)
+            entry = _mcp.bot_registry.get(adapter, "group", scope_id)
+            seen_at = int(getattr(entry, "last_seen_at", 0) or 0)
+            if key not in targets or seen_at > targets[key][2]:
+                targets[key] = (adapter, scope_id, seen_at)
+
+        for (domain, scope_id), (adapter, _scope_id, _seen) in targets.items():
+            if not cfg.proactive_group_enabled(adapter, scope_id):
                 continue
-            gkey = (adapter, scope_id)
+            gkey = (domain, scope_id)
             if now < _next_check_at.get(gkey, 0):
                 continue
 

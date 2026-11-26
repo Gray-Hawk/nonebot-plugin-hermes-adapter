@@ -46,6 +46,7 @@ from ..core.prompt_builder import (
     render_steer_rows,
 )
 from ..core.routing import resolve_target
+from ..core.session import session_domain
 from .message_turns import (
     _run_passive_turn,
     _run_reactive_turn,
@@ -1477,7 +1478,7 @@ def _resolve_wake_route(adapter_name: str, scope: str, scope_id: str):
 def _wake_rate_limited(adapter_name: str, scope: str, scope_id: str) -> str | None:
     """令牌桶闸:取格成功 → None;超限 → 给调用方看的报错文案。"""
     limits = rate_bucket.load_wake_limits()
-    bucket_key = f"{adapter_name}:{scope}:{scope_id}"
+    bucket_key = f"{session_domain(adapter_name)}:{scope}:{scope_id}"
     if rate_bucket.try_acquire(bucket_key, capacity=limits.capacity, refill_seconds=limits.refill_seconds):
         return None
     wait = rate_bucket.seconds_until_next(bucket_key, refill_seconds=limits.refill_seconds)

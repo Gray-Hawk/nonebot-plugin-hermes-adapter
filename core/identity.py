@@ -1,6 +1,6 @@
 """用户身份表（跨群用户画像系统残项重启）。
 
-存储：<hermes_custom_dir>/memory/<适配器>/identities.csv——人手可改
+存储：<hermes_custom_dir>/memory/<会话域>/identities.csv——人手可改
 （CSV，表格类数据用 CSV，方便手动编辑/表格软件打开；
 存储量无上限，纯文本随便长），助手软触发维护也用 write_file/patch 直改。
 插件侧只读 + mtime 缓存（文件出现/消失/改动自然失效重建，与 group_profile
@@ -68,18 +68,55 @@ def _load_raw(path: Path) -> dict[str, dict]:
     return data
 
 
+def _domain_tag(adapter: str) -> str:
+    from .session import session_domain
+
+    return session_domain(adapter)
+
+
 def _path(custom_dir: Path, adapter: str) -> Path:
-    return custom_dir / "memory" / adapter / "identities.csv"
+    """写入/新建路径：记忆身份表按业务会话域落 ``memory/qqtpc/identities.csv``。"""
+    return custom_dir / "memory" / _domain_tag(adapter) / "identities.csv"
+
+
+def _legacy_paths(custom_dir: Path, adapter: str) -> list[Path]:
+    """旧 transport 身份表（只读兼容；不参与新建/写入）。"""
+    from .session import QQTPC_TRANSPORTS, is_session_domain
+
+    domain = _domain_tag(adapter)
+    if not is_session_domain(domain):
+        return []
+    return [
+        custom_dir / "memory" / tag / "identities.csv"
+        for tag in QQTPC_TRANSPORTS
+        if tag != domain and (custom_dir / "memory" / tag / "identities.csv").exists()
+    ]
+
+
+def _read_path(custom_dir: Path, adapter: str) -> Path:
+    """读路径：canonical 优先；不存在时回退旧 transport。"""
+    canonical = _path(custom_dir, adapter)
+    if canonical.exists():
+        return canonical
+    for legacy in _legacy_paths(custom_dir, adapter):
+        return legacy
+    return canonical
 
 
 def _ensure_table(custom_dir: Path | None, adapter: str) -> None:
-    """功能开启且缺档时自动建档（连带建父目录）；失败按空表容错，不抛异常。"""
+    """功能开启且缺档时自动建档（连带建父目录）；失败按空表容错，不抛异常。
+
+    旧 transport 表存在时只读沿用，不新建空 canonical 表遮住旧条目。
+    """
     if custom_dir is None:
         return
     if not load_misc_config().group_profile_enabled:
         return
+    canonical = _path(custom_dir, adapter)
+    if canonical.exists() or _legacy_paths(custom_dir, adapter):
+        return
     try:
-        ensure_file(_path(custom_dir, adapter), _HEADER, "identity", label="身份表")
+        ensure_file(canonical, _HEADER, "identity", label="身份表")
     except Exception:
         return
 
@@ -87,12 +124,14 @@ def _ensure_table(custom_dir: Path | None, adapter: str) -> None:
 def _resolve_entry(custom_dir: Path, adapter: str, user_id: str) -> tuple[str, dict] | None:
     """返回 (主档 user_id, 主档条目)。merged_into 只跟一跳，自环/断链按无主档。"""
     _ensure_table(custom_dir, adapter)
-    entry = _load_raw(_path(custom_dir, adapter)).get(str(user_id))
+    path = _read_path(custom_dir, adapter)
+    table = _load_raw(path)
+    entry = table.get(str(user_id))
     if entry is None:
         return None
     merged = entry.get("merged_into") or ""
     if merged:
-        primary = _load_raw(_path(custom_dir, adapter)).get(merged)
+        primary = table.get(merged)
         if primary is not None and not (primary.get("merged_into") or ""):
             return merged, primary
         return None
@@ -109,7 +148,7 @@ def loaded_identity_dirs(adapter: str) -> list["Path"]:
     out: list[Path] = []
     for key in reversed(list(_cache)):
         path = Path(key)
-        if path.name != "identities.csv" or path.parent.name != adapter:
+        if path.name != "identities.csv" or _domain_tag(path.parent.name) != _domain_tag(adapter):
             continue
         if not _cache[key][1]:
             continue
@@ -128,7 +167,7 @@ def has_identity_entries(custom_dir: Path | None, adapter: str) -> bool:
     if custom_dir is None:
         return False
     try:
-        return bool(_load_raw(_path(custom_dir, adapter)))
+        return bool(_load_raw(_read_path(custom_dir, adapter)))
     except Exception:
         return False
 

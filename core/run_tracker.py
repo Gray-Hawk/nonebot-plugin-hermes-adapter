@@ -232,11 +232,27 @@ class ComponentClaim:
     token: str | None = None
 
 
+def _domain_scope_key(scope_key: str) -> str:
+    """``adapter:scope:id`` → ``session_domain(adapter):scope:id``（坏形原样返回）。"""
+    from .session import session_domain
+
+    head, sep, rest = str(scope_key or "").partition(":")
+    if not sep or not rest:
+        return str(scope_key or "")
+    return f"{session_domain(head)}:{rest}"
+
+
 def make_scope_key(adapter: str, is_private: bool, user_id: str, group_id: str | None) -> str:
-    """与 inflight registry 键同形,resume 时并发检查/送达定位直接可用。"""
+    """与 inflight registry 键同形,resume 时并发检查/送达定位直接可用。
+
+    adapter 段是**业务会话域**：QQTPC 的 OneBot/Milky/icqq 都是 ``qqtpc``，
+    协议切换不会分叉交付 scope；官方 QQ 与未登记平台保留自己的标签。
+    """
+    from .session import session_domain
+
     scope = "private" if is_private else "group"
     scope_id = user_id if is_private else (group_id or "")
-    return f"{adapter}:{scope}:{scope_id}"
+    return f"{session_domain(adapter)}:{scope}:{scope_id}"
 
 
 def _is_plan_prefix_growth(old_json: str, new_json: str) -> bool:
@@ -295,6 +311,11 @@ class RunTracker:
         # 提交只发生在 OS 掉电级事故(应用崩溃不丢),FULL 的每提交 fsync 不值得。
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute(_SCHEMA)
+        # scope 身份比较统一走 Python 的 session_domain：旧 transport scope_key 与
+        # canonical qqtpc 行在 SQL 里也能等同，迁移前落下的交付/栅栏保持可读。
+        self._conn.create_function(
+            "scope_domain_key", 1, _domain_scope_key, deterministic=True
+        )
         self._conn.execute(_STEER_LEDGER_SCHEMA)
         self._conn.execute(_RECOVERED_REPLY_LEDGER_SCHEMA)
         self._conn.executescript(_DELIVERY_LEDGER_SCHEMA)
@@ -410,7 +431,7 @@ class RunTracker:
         rows = self._conn.execute(
             "SELECT run_id, scope_key, adapter, is_private, user_id, group_id,"
             " bot_self_id, session_key, mode, expect_structured, last_seq, started_at"
-            " FROM active_runs WHERE scope_key=? ORDER BY started_at DESC LIMIT 1",
+            " FROM active_runs WHERE scope_domain_key(scope_key)=? ORDER BY started_at DESC LIMIT 1",
             (scope_key,),
         ).fetchall()
         if not rows:
@@ -433,15 +454,15 @@ class RunTracker:
         """
         if is_private:
             row = self._conn.execute(
-                "SELECT 1 FROM active_runs WHERE adapter=? AND is_private=1"
-                " AND user_id=? LIMIT 1",
-                (adapter, str(user_id or "")),
+                "SELECT 1 FROM active_runs WHERE scope_domain_key(scope_key)=?"
+                " AND is_private=1 AND user_id=? LIMIT 1",
+                (_domain_scope_key(f"{adapter}:private:{user_id or ''}"), str(user_id or "")),
             ).fetchone()
         else:
             row = self._conn.execute(
-                "SELECT 1 FROM active_runs WHERE adapter=? AND is_private=0"
-                " AND group_id=? LIMIT 1",
-                (adapter, str(group_id or "")),
+                "SELECT 1 FROM active_runs WHERE scope_domain_key(scope_key)=?"
+                " AND is_private=0 AND group_id=? LIMIT 1",
+                (_domain_scope_key(f"{adapter}:group:{group_id or ''}"), str(group_id or "")),
             ).fetchone()
         return row is not None
 
@@ -704,7 +725,7 @@ class RunTracker:
         """
         rows = self._conn.execute(
             "SELECT id, run_id, m_id, scope_key, session_key, sender_id, steer_text, raw_text,"
-            f" accepted_at, status FROM steer_ledger WHERE scope_key=?"
+            f" accepted_at, status FROM steer_ledger WHERE scope_domain_key(scope_key)=?"
             f" AND status IN ({_STEER_LIVE_STATUSES})"
             " ORDER BY id",
             (scope_key,),
@@ -808,7 +829,7 @@ class RunTracker:
         )
         params: list[object] = []
         if scope_key is not None:
-            sql += " AND scope_key=?"
+            sql += " AND scope_domain_key(scope_key)=?"
             params.append(scope_key)
         sql += " AND ? LIKE '%'||steer_text||'%'"
         params.append(recovered_text)
@@ -903,7 +924,8 @@ class RunTracker:
                 return int(row[0])
             if delivery_generation is not None:
                 fence = self._conn.execute(
-                    "SELECT fence_generation FROM delivery_generation_fences WHERE scope_key=?",
+                    "SELECT MAX(fence_generation) FROM delivery_generation_fences"
+                    " WHERE scope_domain_key(scope_key)=?",
                     (scope_key,),
                 ).fetchone()
                 if fence is not None and fence[0] is not None and int(delivery_generation) < int(fence[0]):
@@ -1093,48 +1115,61 @@ class RunTracker:
         竞态由 fence_generation 在原子提交门与出站 guard 失败关闭。旧 NULL 行
         继续按序号兼容，上游压缩不换 SessionManager generation，不会误伤。
         已 sent 组件与历史事实保留,只取消未发送部分。
+
+        身份按**业务会话域**：任意 QQTPC transport 触发的 clear 取消同域下全部
+        transport 写过的 ready 交付；栅栏只写 canonical ``qqtpc:*`` 一行（迁移后
+        不再生成 transport fence）。代际水位只升不降——病态 0 / None 不得把已有
+        值改小或归零。旧 transport 栅栏行原样保留供读取兼容，不删除不改写。
         """
+        canonical = _domain_scope_key(scope_key)
         now = time.time()
         with self._conn:
             row = self._conn.execute(
-                "SELECT COALESCE(MAX(submission_seq), 0) FROM run_submissions WHERE scope_key=?",
-                (scope_key,),
+                "SELECT COALESCE(MAX(submission_seq), 0) FROM run_submissions"
+                " WHERE scope_domain_key(scope_key)=?",
+                (canonical,),
             ).fetchone()
             previous = self._conn.execute(
-                "SELECT fence_seq, fence_generation FROM delivery_generation_fences WHERE scope_key=?",
-                (scope_key,),
+                "SELECT COALESCE(MAX(fence_seq), 0), MAX(fence_generation)"
+                " FROM delivery_generation_fences WHERE scope_domain_key(scope_key)=?",
+                (canonical,),
             ).fetchone()
-            fence_seq = max(int(row[0] or 0), int(previous[0]) if previous else 0)
-            if fence_generation is not None and previous is not None and previous[1] is not None:
-                fence_generation = max(int(fence_generation), int(previous[1]))
-            elif fence_generation is None and previous is not None:
-                fence_generation = previous[1]
+            fence_seq = max(int(row[0] or 0), int(previous[0] or 0))
+            previous_generation = previous[1] if previous is not None else None
+            if fence_generation is not None:
+                fence_generation = int(fence_generation)
+                if previous_generation is not None:
+                    fence_generation = max(fence_generation, int(previous_generation))
+            elif previous_generation is not None:
+                fence_generation = int(previous_generation)
             self._conn.execute(
                 "INSERT INTO delivery_generation_fences(scope_key, fence_seq, fence_generation, updated_at)"
                 " VALUES(?,?,?,?) ON CONFLICT(scope_key) DO UPDATE SET"
                 " fence_seq=excluded.fence_seq, fence_generation=excluded.fence_generation,"
                 " updated_at=excluded.updated_at",
-                (scope_key, fence_seq, fence_generation, now),
+                (canonical, fence_seq, fence_generation, now),
             )
             old_deliveries = (
-                "SELECT run_id FROM run_deliveries WHERE scope_key=?"
+                "SELECT run_id FROM run_deliveries WHERE scope_domain_key(scope_key)=?"
                 " AND submission_seq<=? AND expected_state='ready'"
             )
             component_cur = self._conn.execute(
                 "UPDATE delivery_components SET state='cancelled', claim_owner=NULL,"
                 " claim_until=NULL, last_error=?, updated_at=?"
                 " WHERE state IN ('pending','claimed','failed') AND run_id IN (" + old_deliveries + ")",
-                (reason, now, scope_key, fence_seq),
+                (reason, now, canonical, fence_seq),
             )
             delivery_cur = self._conn.execute(
                 "UPDATE run_deliveries SET expected_state='cancelled', cancel_reason=?, updated_at=?"
-                " WHERE scope_key=? AND submission_seq<=? AND expected_state='ready'",
-                (reason, now, scope_key, fence_seq),
+                " WHERE scope_domain_key(scope_key)=? AND submission_seq<=?"
+                " AND expected_state='ready'",
+                (reason, now, canonical, fence_seq),
             )
             submission_cur = self._conn.execute(
                 "UPDATE run_submissions SET state='cancelled', updated_at=?"
-                " WHERE scope_key=? AND submission_seq<=? AND run_id IS NULL AND state='submitted'",
-                (now, scope_key, fence_seq),
+                " WHERE scope_domain_key(scope_key)=? AND submission_seq<=?"
+                " AND run_id IS NULL AND state='submitted'",
+                (now, canonical, fence_seq),
             )
         return {
             "fence_seq": fence_seq,
@@ -1144,12 +1179,19 @@ class RunTracker:
         }
 
     def is_delivery_current(self, run_id: str) -> bool:
-        """出站前再核代际：新 token 比代际，旧 NULL 行退回提交序水位。"""
+        """出站前再核代际：新 token 比代际，旧 NULL 行退回提交序水位。
+
+        栅栏按业务会话域 join：迁移前 ``onebotv11:*`` 交付行能读到 canonical
+        ``qqtpc:*`` 栅栏；旧的 transport 栅栏行也仍被同域行读回。
+        """
         row = self._conn.execute(
-            "SELECT d.submission_seq, s.delivery_generation, f.fence_seq, f.fence_generation"
+            "SELECT d.submission_seq, s.delivery_generation,"
+            " MAX(f.fence_seq), MAX(f.fence_generation)"
             " FROM run_deliveries d LEFT JOIN run_submissions s ON s.run_id=d.run_id"
-            " LEFT JOIN delivery_generation_fences f ON f.scope_key=d.scope_key"
-            " WHERE d.run_id=?",
+            " LEFT JOIN delivery_generation_fences f"
+            "   ON f.scope_key=d.scope_key"
+            "   OR f.scope_key=scope_domain_key(d.scope_key)"
+            " WHERE d.run_id=? GROUP BY d.run_id",
             (run_id,),
         ).fetchone()
         if row is None or row[0] is None:
@@ -1476,7 +1518,7 @@ class RunTracker:
         )
         params: tuple = ()
         if scope_key is not None:
-            sql += " AND scope_key=?"
+            sql += " AND scope_domain_key(scope_key)=?"
             params = (scope_key,)
         sql += " ORDER BY submission_seq"
         return [self.get_delivery(r[0]) for r in self._conn.execute(sql, params).fetchall()]
@@ -1527,7 +1569,7 @@ class RunTracker:
         """同 scope、提交序更早且仍未终态的 deliveries(顺序门前序)。"""
         rows = self._conn.execute(
             "SELECT run_id FROM run_deliveries"
-            " WHERE scope_key=? AND submission_seq<? AND expected_state='ready'"
+            " WHERE scope_domain_key(scope_key)=? AND submission_seq<? AND expected_state='ready'"
             " ORDER BY submission_seq",
             (scope_key, submission_seq),
         ).fetchall()

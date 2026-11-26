@@ -13,6 +13,7 @@ import httpx
 from nonebot import logger
 
 from .routing import resolve_target
+from .session import same_session_domain
 
 _mcp = None  # 测试可注入；生产由 _runtime() 取真实单例
 _http_post = None  # 测试缝；生产走 httpx
@@ -30,7 +31,7 @@ def _runtime():
 
 
 def _scope_components(scope_key: str) -> tuple[str, bool, str, str | None]:
-    """make_scope_key 的逆变换:adapter:private:<QQ> / adapter:group:<群号>。"""
+    """make_scope_key 的逆变换:会话域或 adapter:private:<QQ> / :group:<群号>。"""
     adapter, kind, scope_id = scope_key.split(":", 2)
     if kind == "private":
         return adapter, True, scope_id, None
@@ -70,9 +71,21 @@ async def reclaim_pending_submissions() -> dict:
             logger.warning(f"[HERMES run-reclaim] 超 24h 保留期，转人工核对 key={key}")
             continue
         try:
-            adapter, is_private, user_id, group_id = _scope_components(submission["scope_key"])
+            domain, is_private, user_id, group_id = _scope_components(submission["scope_key"])
+            # 真实发送 adapter 从提交时的指纹取（scope_key 已按业务域归一，不能
+            # 拿 qqtpc 当 adapter 登记 active_runs）；指纹里的 transport 只用于
+            # 兼容旧行，按会话域比较，官方 QQ/其它平台不会与 QQTPC 串域。
+            fingerprint_adapter, _, fingerprint_base = str(
+                submission["target_fingerprint"]
+            ).partition("|")
+            if not same_session_domain(fingerprint_adapter, domain):
+                tracker.mark_submission_state(key, "needs_manual")
+                stats["needs_manual"] += 1
+                logger.warning(f"[HERMES run-reclaim] 台账身份与提交指纹不一致，转人工核对 key={key}")
+                continue
+            adapter = fingerprint_adapter or domain
             tgt = resolve_target(adapter, is_private, group_id)
-            if submission["target_fingerprint"] != f"{adapter}|{tgt.base_url}":
+            if fingerprint_base != tgt.base_url:
                 tracker.mark_submission_state(key, "needs_manual")
                 stats["needs_manual"] += 1
                 logger.warning(f"[HERMES run-reclaim] 上游路由已变化，转人工核对 key={key}")

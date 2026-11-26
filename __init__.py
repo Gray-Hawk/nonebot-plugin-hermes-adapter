@@ -72,14 +72,6 @@ async def _hermes_m1_startup():
     from .core.sticker_library import ensure_sticker_library_template, init_sticker_feature
 
     initialize_runtime_config()
-    # QQ-09: QQTPC 归一后 user_lists / repair_scopes 仍按真实 adapter 配；某面只覆盖
-    # 部分 transport 时切协议会静默降级。这里只做一次覆盖检查并打 WARN，不改判定。
-    from .core.qqtpc_config_coverage import warn_config_coverage
-
-    try:
-        warn_config_coverage()
-    except Exception:  # noqa: BLE001 - 检查是辅助通道，绝不拖垮启动
-        logger.warning("[HERMES config] QQTPC 配置覆盖检查异常(不影响启动)", exc_info=True)
     from .core.companion_config import load_companion_config
 
     load_companion_config()

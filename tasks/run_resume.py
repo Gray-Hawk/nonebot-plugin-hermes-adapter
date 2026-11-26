@@ -811,7 +811,7 @@ async def retry_scope_deliveries(adapter_name: str, is_private: bool, user_id: s
     rows = [
         r
         for r in tracker.list_running()
-        if r.adapter == adapter_name
+        if session_domain(r.adapter) == session_domain(adapter_name)
         and r.is_private == is_private
         and str(r.user_id) == str(user_id)
         and (r.group_id or None) == (group_id or None)

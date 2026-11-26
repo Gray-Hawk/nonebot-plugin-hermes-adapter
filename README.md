@@ -41,6 +41,26 @@ NoneBot 插件，将 NoneBot2 桥接到 Hermes Agent 的 API Server
 私聊续发顺延，普通最长等待恒为时长 ×3（默认 9 秒）。已知 bot 的
 `reply_delay_for_bot_sec` 专用延迟独立保留，首条可超过普通 ×3 上限，普通防抖为 `0` 时也可开窗。
 
+## QQTPC 会话身份（OneBot v11/v12、Milky、icqq）
+
+QQTPC＝QQ Third-Party Client。OneBot v11/v12、Milky、icqq 是同一 QQ 用户侧整体在不同
+驱动下的形态，运行期统一归一到业务会话域 `qqtpc`：
+
+- 会话、交付 scope、in-flight 槽、活跃窗口、控制队列、recent 查询、群记忆与后台归属
+  都按 `qqtpc` 身份；协议切换不产生第二个会话，也不会漏掉旧的在跑 run。
+- `user_lists.yaml` 的四类复合键（`admin_users` / `master_users` / `allow_users` /
+  `allow_groups`）、`runs_delivery.yaml` 的 `repair_scopes` 与
+  `chat_config.yaml` 的 `proactive_groups` 仍写 `adapter:…`，但 adapter 段按业务会话域
+  匹配：`onebotv11:` / `onebotv12:` / `milky:` / `icqq:` / `qqtpc:` 互相命中，无需按协议
+  重复配置。官方 QQ（`qq:`）与其它平台各自隔离。
+- 真实 adapter 只作运行时路由事实（当前 Bot 连接、事件、BotRegistry）；台账与消息行里的
+  `adapter` 是**到达事实/排障元数据**，实际发送始终选当前真实 adapter。
+- 记忆文件写入 `memory/qqtpc/`。旧 `memory/onebotv11|milky|icqq/` 档案（群档案、画像、
+  `identities.csv`）运行期只读兼容；首次写入同群档案时复制到 canonical 目录。批量搬迁
+  属于离线运维，不在运行期自动改库/改目录。
+- `messages.db.adapter` 保留原始 transport；`get_recent_messages` 等查询按会话域跨
+  transport 读取同一会话历史（官方 QQ 不串域）。
+
 ## 用法
 
 - 群聊：@机器人或命中关键词后对话；进入活跃窗口后，窗口内的相关话题会被按需接话。
@@ -105,7 +125,7 @@ NoneBot 插件，将 NoneBot2 桥接到 Hermes Agent 的 API Server
 | 表情回执（429 忙信号） | 不调平台，直接跳过 |
 | 合并转发（长文） | 不转发，走既有截断 |
 | 本地表情库 / 本地文件直传 | unsupported（本地表情原样拒绝） |
-| 审批私聊通知 | 跳过并记日志（原有 onebotv11 门控） |
+| 审批私聊通知 | 跳过并记日志（能力位 `approval_notify` 为 False） |
 | 正文受控标记 `@QQ号` | 不转义，原样当文本（官方 @ 目标是 openid） |
 | 对任意历史消息显式引用 | 只保留「被动回复触发消息」语义（`msg_id`/`msg_seq` 由适配器带），不伪造引用段 |
 

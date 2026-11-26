@@ -48,9 +48,18 @@ async def list_active_sessions_impl(
     if now_ms is None:
         now_ms = int(time.time() * 1000)
     rows = active_sessions.list(adapter=inp.adapter)
+    from ...core.session import session_manager
+
+    def _display_adapter(session) -> str:
+        # 窗口 identity 是业务会话域；展示/后续工具调用的 adapter 必须是当前真实驱动。
+        resolved = session_manager.resolve_adapter_for_domain(
+            session.adapter, False, "", session.group_id
+        )
+        return resolved or session.adapter
+
     views = [
         ActiveSessionView(
-            adapter=r.adapter,
+            adapter=_display_adapter(r),
             group_id=r.group_id,
             triggered_by=r.triggered_by,
             started_at=r.started_at,

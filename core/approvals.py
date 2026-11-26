@@ -253,28 +253,42 @@ def build_admin_notice(entry: PendingApproval) -> str:
 
 
 def admin_user_ids(admin_users: set[str], adapter_name: str) -> list[str]:
-    """从 {adapter}:{user_id} 白名单里筛出指定适配器的管理员 id 列表(纯函数)。"""
-    prefix = f"{adapter_name}:"
-    return sorted(k[len(prefix):] for k in admin_users if k.startswith(prefix))
+    """从 ``{adapter}:{user_id}`` 白名单里筛出当前会话域的管理员裸 id 列表。
+
+    adapter 段按业务会话域比较——同一个 QQ 管理员写在 onebotv11 / milky / qqtpc
+    任一条目下，在当前驱动下都命中；官方 QQ 与其它平台仍各自隔离。
+    """
+    from .session import composite_target_ids
+
+    return composite_target_ids(admin_users, adapter_name)
+
+
+def _send_adapter(bot, adapter_name: str | None) -> str:
+    """真实发送 adapter：优先 bot 自身协议；取不到时回退会话身份标签。"""
+    real = platform_compat.adapter_name_of(bot)
+    if real and real != "unknown":
+        return real
+    return str(adapter_name or "")
 
 
 async def notify_admins(*, bot, adapter_name: str, entry: PendingApproval, admin_users: set[str]) -> int:
     """给所有管理员发审批私聊通知,返回送达数。
 
-    能不能发由能力位 ``approval_notify`` 裁决(官方 QQ 恒 False,零平台调用);
-    怎么发由 ``qqtpc_api.send_private_text`` 按协议选原语(OneBot
-    ``send_private_msg`` / Milky ``send_private_message``)。单个管理员发送失败
-    不影响其余。
+    能不能发由**真实 bot** 的能力位 ``approval_notify`` 裁决(官方 QQ 恒 False,
+    零平台调用);怎么发由 ``qqtpc_api.send_private_text`` 按真实 bot 协议选原语。
+    管理员身份仍按 ``entry``/``adapter_name`` 的业务会话域筛——台账记的是到达
+    时的 transport,协议切换后同域管理员照样命中。单个管理员发送失败不影响其余。
     """
-    if not platform_compat.capabilities(adapter_name).approval_notify:
-        logger.info(f"[HERMES approval] 适配器 {adapter_name} 无审批私聊通知能力,跳过")
+    send_adapter = _send_adapter(bot, adapter_name)
+    if not platform_compat.capabilities(send_adapter).approval_notify:
+        logger.info(f"[HERMES approval] 适配器 {send_adapter} 无审批私聊通知能力,跳过")
         return 0
     text = build_admin_notice(entry)
     sent = 0
     for uid in admin_user_ids(admin_users, adapter_name):
         try:
             await qqtpc_api.send_private_text(
-                bot, adapter_name=adapter_name, user_id=uid, text=text
+                bot, adapter_name=send_adapter, user_id=uid, text=text
             )
             sent += 1
         except Exception as exc:
@@ -285,52 +299,47 @@ async def notify_admins(*, bot, adapter_name: str, entry: PendingApproval, admin
 async def renotify_pending(*, admin_users: set[str], delay_sec: float = 20.0) -> int:
     """启动后延迟重发未过期挂起审批的管理员通知(best-effort,返回送达数)。
 
-    重启装回的条目管理员此前可能根本没看到(通知随旧进程死了)。通知按
-    ``{adapter}:`` 前缀分组,每组取该 adapter 当前在线的 bot——QQTPC 会话切到
-    Milky 后,只配了 milky 管理员也照样送达;某组无在线 bot 时 WARN 并保留条目
-    (现有语义),不再整体跳过。条目本身留在 _pending,/approve 随时可答。
+    重启装回的条目管理员此前可能根本没看到(通知随旧进程死了)。每条审批只通知
+    与**该会话同域**的管理员:换到 Milky 后,原先登记在 onebotv11 的管理员仍由
+    当前在线的 Milky bot 送达;某域无在线 bot 时 WARN 并保留条目(现有语义),
+    不跨平台乱投。条目本身留在 _pending,/approve 随时可答。
     """
     await asyncio.sleep(delay_sec)
     if not _pending:
         return 0
     from nonebot import get_bots
 
-    from ..adapter_norm import normalize_adapter_name
+    from .session import session_domain
 
-    bots_by_adapter: dict[str, object] = {}
+    bots_by_domain: dict[str, object] = {}
     for candidate in get_bots().values():
-        get_name = getattr(getattr(candidate, "adapter", None), "get_name", None)
-        raw = str(get_name() or "") if callable(get_name) else ""
-        name = normalize_adapter_name(raw)
-        if not name or not platform_compat.capabilities(name).approval_notify:
+        name = platform_compat.adapter_name_of(candidate)
+        if not name or name == "unknown":
             continue
-        bots_by_adapter.setdefault(name, candidate)
-    if not bots_by_adapter:
+        if not platform_compat.capabilities(name).approval_notify:
+            continue
+        bots_by_domain.setdefault(session_domain(name), candidate)
+    if not bots_by_domain:
         logger.info(
             "[HERMES approval] 重发审批通知时无具备通知能力的 bot 在线,"
             "跳过(条目仍在,/approve 可答)"
         )
         return 0
 
-    adapters: list[str] = []
-    for key in sorted(admin_users):
-        adapter = key.split(":", 1)[0]
-        if adapter and adapter not in adapters:
-            adapters.append(adapter)
     sent = 0
-    for adapter in adapters:
-        bot = bots_by_adapter.get(adapter)
+    for aid in sorted(_pending):
+        entry = _pending[aid]
+        if entry.expired:
+            continue
+        domain = session_domain(entry.adapter)
+        bot = bots_by_domain.get(domain)
         if bot is None:
             logger.warning(
-                f"[HERMES approval] 重发审批通知跳过 adapter={adapter}: 当前无在线 bot"
+                f"[HERMES approval] 重发审批通知跳过 domain={domain}: 当前无在线 bot"
                 "(条目仍在,/approve 可答)"
             )
             continue
-        for aid in sorted(_pending):
-            entry = _pending[aid]
-            if entry.expired:
-                continue
-            sent += await notify_admins(
-                bot=bot, adapter_name=adapter, entry=entry, admin_users=admin_users
-            )
+        sent += await notify_admins(
+            bot=bot, adapter_name=entry.adapter, entry=entry, admin_users=admin_users
+        )
     return sent

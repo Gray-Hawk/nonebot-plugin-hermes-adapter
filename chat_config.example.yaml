@@ -93,7 +93,9 @@ proactive_jitter_sec: 0
 # 原 T4：每次定时激活向前回看新消息的时间窗口秒数。
 proactive_window_sec: 300
 
-# 主动发言群范围（adapter:group_id 复合 id）；空集 = BotRegistry 已知的全部群。
+# 主动发言群范围（adapter:group_id 复合 id，adapter 段按业务会话域匹配：
+# onebotv11 / onebotv12 / milky / icqq / qqtpc 互相命中；官方 QQ 与其它平台各自隔离）；
+# 空集 = BotRegistry 已知的全部群。
 proactive_groups: []
 
 # ---- 工具、转发与通知：4 键 ----

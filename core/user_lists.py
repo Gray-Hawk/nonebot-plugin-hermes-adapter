@@ -6,17 +6,21 @@
   - known_bots:         已知 bot 账号表——发言不钉委托锚,仍可被正常响应,全局生效。
   - private_allow:      私聊主动下行白名单——允许被主动下行私聊的账号(裸 id),
     唤起(wake_turn)与直发(push_message)两通道共用。未配置本键(或整文件
-    缺失/坏档)时回落到管理员集合(本文件 admin_users,复合键按当前适配器拆
-    前缀取裸 id);显式配置(含空表)以显式值为准,显式空表 = 不允许任何人。
-  - admin_users:        敏感命令与管理操作的管理员集合({adapter}:{user_id} 复合 id),
-    空集 = 默认 deny。手动重载先按旧集合鉴权,成功后再替换新集合。
-  - master_users:       admin_users 中属于「主人」的子集({adapter}:{user_id} 复合 id),
-    可选键。缺键 = 沿用既有架构口径(admin_users 即 master_ids,整组按主人呈现);
-    显式配置(含空表)只把列出的账号当主人,其余 admin_users 呈现为管理员。
-  - allow_users:        私聊 allowlist 模式的被动聊天白名单({adapter}:{user_id} 复合 id),
-    仅当 chat_config.yaml 的 private_trigger = allowlist 时生效;与 private_allow
-    语义不同,不得合并。
-  - allow_groups:       允许响应的群集合({adapter}:{group_id} 复合 id),空集 = 全部群。
+    缺失/坏档)时回落到管理员集合(本文件 admin_users,复合键按业务会话域匹配取
+    裸 id);显式配置(含空表)以显式值为准,显式空表 = 不允许任何人。
+  - admin_users:        敏感命令与管理操作的管理员集合({adapter}:{user_id} 复合 id，
+    adapter 段按业务会话域匹配：onebotv11 / onebotv12 / milky / icqq / qqtpc 互相
+    命中；官方 QQ 与其它平台各自隔离)。空集 = 默认 deny。手动重载先按旧集合鉴权,
+    成功后再替换新集合。
+  - master_users:       admin_users 中属于「主人」的子集({adapter}:{user_id} 复合 id,
+    同一会话域规则),可选键。缺键 = 沿用既有架构口径(admin_users 即 master_ids,
+    整组按主人呈现);显式配置(含空表)只把列出的账号当主人,其余 admin_users
+    呈现为管理员。
+  - allow_users:        私聊 allowlist 模式的被动聊天白名单({adapter}:{user_id} 复合
+    id,同一会话域规则),仅当 chat_config.yaml 的 private_trigger = allowlist 时生效;
+    与 private_allow 语义不同,不得合并。
+  - allow_groups:       允许响应的群集合({adapter}:{group_id} 复合 id,同一会话域
+    规则),空集 = 全部群。
 
 纪律:文件缺失/坏档 → 全默认(启动)或保留旧快照(重载);条目只做字符校验,
 坏条目跳过;裸 id 只允许数字/字母/下划线/横线,复合 id 为 adapter:id 两段。
@@ -201,7 +205,7 @@ def private_allowed(adapter_name: str, user_id: str) -> bool:
     """私聊主动下行白名单硬闸(唤起与直发两通道共用)。
 
     显式配置了 private_allow(含空表)以显式值为准;未配置时回落本文件
-    admin_users(复合键按当前适配器拆前缀取裸 id),不再读 plugin_config。
+    admin_users(复合键按业务会话域匹配取裸 id),不再读 plugin_config。
     """
     lists = load_user_lists()
     if lists.private_allow is not None:

@@ -1,11 +1,12 @@
-"""群档案（群记忆外挂）：按「适配器+群号」读取策展式纯文本档案，拼成字节稳定的注入块。
+"""群档案（群记忆外挂）：按「业务会话域+群号」读取策展式纯文本档案，拼成字节稳定的注入块。
 
 设计定稿：项目文档库（详细定稿）
 要点：
-- 存储：<hermes_custom_dir>/memory/<适配器>/groups/<群号>.md、people/<QQ号>.md
+- 存储：<hermes_custom_dir>/memory/<会话域>/groups/<群号>.md、people/<QQ号>.md
+  （QQTPC 统一写 memory/qqtpc；旧 memory/<transport> 只读兼容，批量迁移离线执行）
 - 群友行：群档案内单独一行 "群友: 1000000004, 1000000005"（冒号兼容全角，分隔兼容中文逗号）
 - 群友排序：去重后按 QQ 号数值升序——字节稳定钉死在代码侧，与文件书写顺序无关
-- 缓存：key=(adapter, group_id)，按涉及文件的 mtime 签名失效；缺失文件以 None 参与签名
+- 缓存：key=(会话域, group_id)，按涉及文件的 mtime 签名失效；缺失文件以 None 参与签名
 - 上限：块超 _MAX_BLOCK_CHARS 只 WARN 不截断（防画像越写越肥悄悄吃提示词预算）
 - 纪律：未配 custom_dir / 文件缺失 / 私聊(group_id=None) / 路径异常 一律静默返回 None
 """
@@ -21,6 +22,7 @@ from ..config import resolve_custom_dir
 from . import identity as _identity
 from .config_bootstrap import ensure_file
 from .misc_config import load_misc_config
+from .session import session_domain
 
 # 路径段白名单：适配器名/群号/QQ 号只许这些字符，异常值按档案缺失处理（防穿出目录）。
 _VALID_SEGMENT = re.compile(r"^[0-9A-Za-z_-]+$")
@@ -72,14 +74,23 @@ def sync_buddy_to_group(adapter: str | None, group_id: str | None, user_id: str 
         custom_dir = resolve_custom_dir()
         if custom_dir is None:
             return False
-        group_path, people_dir = _profile_paths(custom_dir, adapter, group_id)
-        # 身份表挂钩：merged 小号的画像归主档文件
-        people_file = people_dir / f"{_identity.resolve_people_id(custom_dir, adapter, user_id)}.md"
-        if not people_file.exists():
-            return False  # 无画像，不自动补
+        group_path, _people_dir = _resolve_profile(custom_dir, adapter, group_id)
+        if not group_path.exists():
+            return False  # 群档案不存在（应该已被自动创建，防御）
         group_text = _read_text(group_path)
         if group_text is None:
-            return False  # 群档案不存在（应该已被自动创建，防御）
+            return False
+        # 旧 transport 档案在首次写入时复制到 canonical 目录；此后 canonical 为
+        # 唯一写入面（画像文件按需从旧目录只读回退）。批量离线迁移见文档边界。
+        canonical_group, _canonical_people = _profile_paths(custom_dir, adapter, group_id)
+        if group_path != canonical_group:
+            canonical_group.parent.mkdir(parents=True, exist_ok=True)
+            canonical_group.write_text(group_text, encoding="utf-8")
+            group_path = canonical_group
+        # 身份表挂钩：merged 小号的画像归主档文件
+        people_file = _people_profile_path(custom_dir, adapter, user_id)
+        if not people_file.exists():
+            return False  # 无画像，不自动补
         buddy_ids = _parse_buddy_ids(group_text)
         if user_id in buddy_ids:
             return False  # 已在群友行
@@ -99,7 +110,7 @@ def sync_buddy_to_group(adapter: str | None, group_id: str | None, user_id: str 
         group_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
         logger.info(f"[HERMES group-profile] 自动补群友: {user_id} → 群 {group_id}")
         # 清缓存，下次重建
-        _cache.pop((adapter, group_id), None)
+        _cache.pop((session_domain(adapter), group_id), None)
         return True
     except Exception as exc:
         logger.warning(f"[HERMES group-profile] 自动补群友失败 {user_id}→{group_id}: {exc}")
@@ -127,9 +138,64 @@ def _assemble(group_text: str, buddies: list[tuple[str, str]]) -> str:
 
 def _profile_paths(custom_dir: Path, adapter: str, group_id: str) -> tuple[Path, Path]:
     """档案路径构造的唯一收口（文件结构后续可能调整，
-    改结构只动这个函数）。返回 (群档案路径, 群友画像目录)。"""
-    base = custom_dir / "memory" / adapter
+    改结构只动这个函数）。返回 (群档案路径, 群友画像目录)。
+
+    写入/新建一律落在业务会话域目录 ``memory/qqtpc/…``；旧 transport 目录只读。
+    """
+    from .session import session_domain
+
+    base = custom_dir / "memory" / session_domain(adapter)
     return base / "groups" / f"{group_id}.md", base / "people"
+
+
+def _legacy_profile_dirs(custom_dir: Path, adapter: str) -> list[Path]:
+    """旧 transport 档案目录（只读兼容；不参与新建/写入）。"""
+    from .session import QQTPC_TRANSPORTS, is_session_domain, session_domain
+
+    domain = session_domain(adapter)
+    if not is_session_domain(domain):
+        return []
+    return [
+        custom_dir / "memory" / tag
+        for tag in QQTPC_TRANSPORTS
+        if tag != domain and (custom_dir / "memory" / tag).is_dir()
+    ]
+
+
+def memory_root(adapter: str) -> Path | None:
+    """该会话域的记忆根目录（路由提示用）：``<custom_dir>/memory/<domain>``。"""
+    from .session import session_domain
+
+    custom_dir = resolve_custom_dir()
+    if custom_dir is None:
+        return None
+    return custom_dir / "memory" / session_domain(adapter)
+
+
+def _resolve_profile(custom_dir: Path, adapter: str, group_id: str) -> tuple[Path, Path]:
+    """读路径：canonical 优先；不存在时回退旧 transport（只读兼容）。"""
+    group_path, people_dir = _profile_paths(custom_dir, adapter, group_id)
+    if group_path.exists():
+        return group_path, people_dir
+    for legacy_base in _legacy_profile_dirs(custom_dir, adapter):
+        legacy_group = legacy_base / "groups" / f"{group_id}.md"
+        if legacy_group.exists():
+            return legacy_group, legacy_base / "people"
+    return group_path, people_dir
+
+
+def _people_profile_path(custom_dir: Path, adapter: str, user_id: str) -> Path:
+    """画像文件路径：canonical 优先；canonical 缺失时回退旧 transport（只读）。"""
+    people_id = _identity.resolve_people_id(custom_dir, adapter, user_id)
+    _group_path, people_dir = _profile_paths(custom_dir, adapter, "")
+    canonical = people_dir / f"{people_id}.md"
+    if canonical.exists():
+        return canonical
+    for legacy_base in _legacy_profile_dirs(custom_dir, adapter):
+        legacy = legacy_base / "people" / f"{people_id}.md"
+        if legacy.exists():
+            return legacy
+    return canonical
 
 
 def _build_block(
@@ -139,17 +205,23 @@ def _build_block(
     custom_dir = resolve_custom_dir()
     if custom_dir is None:
         return (), None  # 开关关闭或解析失败：不缓存，下轮重试
-    group_path, people_dir = _profile_paths(custom_dir, adapter, group_id)
+    group_path, _people_dir = _resolve_profile(custom_dir, adapter, group_id)
+    canonical_group, _ = _profile_paths(custom_dir, adapter, group_id)
     # 缺档自动建档走公共引线：档案不存在时写基础模板，避免「群档案丢失」漏洞。
-    ensure_file(group_path, f"群 {group_id}。\n群友: \n", "HERMES group-profile", label="群档案")
+    # 旧 transport 档案存在时只读沿用，不新建空 canonical 遮住旧内容。
+    if group_path == canonical_group:
+        ensure_file(group_path, f"群 {group_id}。\n群友: \n", "HERMES group-profile", label="群档案")
     signature: list[tuple[str, float | None]] = [(str(group_path), _mtime(group_path))]
+    if canonical_group != group_path:
+        # 旧档案读取期间 canonical 出现（首次写入复制或离线迁移）必须让缓存失效。
+        signature.append((str(canonical_group), _mtime(canonical_group)))
     group_text = _read_text(group_path)
     if group_text is None:
         return tuple(signature), None
     buddies: list[tuple[str, str]] = []
-    # 身份表挂钩：merged 小号读主档画像文件
+    # 身份表挂钩：merged 小号读主档画像文件（canonical 优先，旧目录只读回退）
     for qq in _parse_buddy_ids(group_text):
-        p = people_dir / f"{_identity.resolve_people_id(custom_dir, adapter, qq)}.md"
+        p = _people_profile_path(custom_dir, adapter, qq)
         signature.append((str(p), _mtime(p)))
         text = _read_text(p)
         if text is not None:  # 群友文件缺失：跳过该人，不炸（定稿五.4）
@@ -174,7 +246,7 @@ def build_group_profile_block(adapter: str | None, group_id: str | None) -> str 
             return None  # 功能开关关闭（缺省开）
         if not (adapter and group_id and _valid_segment(adapter) and _valid_segment(group_id)):
             return None
-        key = (adapter, group_id)
+        key = (session_domain(adapter), group_id)
         cached = _cache.get(key)
         if cached is not None:
             signature, block = cached

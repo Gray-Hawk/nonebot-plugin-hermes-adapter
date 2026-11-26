@@ -214,11 +214,15 @@ class BackgroundPrefixMatchTests(_Case):
         identity = conversation_identity(ADAPTER, True, USER, None)
         self.set_interface("runs")
         prefixes = session_manager.session_key_prefixes()
-        for name in ("qqtpc", ADAPTER, "milky", "icqq", "somefuture"):
+        for name in ("qqtpc", ADAPTER, "milky", "icqq"):
             with self.subTest(name=name):
                 self.assertTrue(
                     identity_matches(f"hermes-{name}+private+{USER}-g4", identity, prefixes=prefixes)
                 )
+        self.assertFalse(
+            identity_matches(f"hermes-somefuture+private+{USER}-g4", identity, prefixes=prefixes),
+            "未登记 transport 不是 QQTPC 身份",
+        )
         self.assertFalse(
             identity_matches(f"{OTHER_PREFIX}-{INTERNAL_ID}", identity, prefixes=prefixes),
             "其它后端前缀不在本会话前缀集合内",

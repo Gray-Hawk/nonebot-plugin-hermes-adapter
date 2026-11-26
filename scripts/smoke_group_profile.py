@@ -68,21 +68,21 @@ check(
 d = fresh_dir()
 block = gp.build_group_profile_block("onebotv11", "2000000001")
 check("无群档案自动创建模板", block is not None and "2000000001" in block, repr(block[:80]))
-check("模板文件已落盘", (d / "memory/onebotv11/groups/2000000001.md").is_file())
+check("模板文件已落盘", (d / "memory/qqtpc/groups/2000000001.md").is_file())
 
 # --- 3. 有群档案、无群友行：只挂群档案本体 ---
 d = fresh_dir()
-write(d / "memory/onebotv11/groups/2000000001.md", "示例群。群规：别吵架。\n")
+write(d / "memory/qqtpc/groups/2000000001.md", "示例群。群规：别吵架。\n")
 block = gp.build_group_profile_block("onebotv11", "2000000001")
 check("只挂群档案", block == "<group_profile>\n# 群档案\n示例群。群规：别吵架。\n</group_profile>", repr(block))
 
 # --- 4. 群友行容错 + 排序 + 缺文件跳过 ---
 d = fresh_dir()
 write(
-    d / "memory/onebotv11/groups/2000000001.md",
+    d / "memory/qqtpc/groups/2000000001.md",
     "示例群。\n群友： 1000000005，1000000004  abc  1000000005\n群友: 999999999\n",
 )
-write(d / "memory/onebotv11/people/1000000004.md", "测试友：粉毛狐耳。\n")
+write(d / "memory/qqtpc/people/1000000004.md", "测试友：粉毛狐耳。\n")
 # 1000000005 的 people 文件故意不写 → 跳过不炸；999999999 在第二行 → 不认
 block = gp.build_group_profile_block("onebotv11", "2000000001")
 expect = (
@@ -107,7 +107,7 @@ check("第二次命中缓存未重建", calls["n"] == 1, f"builds={calls['n']}")
 
 # --- 6. mtime 失效后重建 ---
 import time
-p = d / "memory/onebotv11/groups/2000000001.md"
+p = d / "memory/qqtpc/groups/2000000001.md"
 write(p, "示例群v2。\n")
 t = time.time() + 5
 os.utime(p, (t, t))
@@ -116,7 +116,7 @@ check("档案改动后重建", block2 is not None and "示例群v2" in block2 an
 
 # --- 7. 超限不截断 ---
 d = fresh_dir()
-write(d / "memory/onebotv11/groups/2000000001.md", "长" * 5000)
+write(d / "memory/qqtpc/groups/2000000001.md", "长" * 5000)
 block3 = gp.build_group_profile_block("onebotv11", "2000000001")
 check("超 4000 不截断", block3 is not None and len(block3) > 4000, f"len={len(block3) if block3 else 0}")
 

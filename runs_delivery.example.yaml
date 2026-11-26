@@ -4,8 +4,11 @@ mode: observe
 
 # repair_scopes 不受全局 mode=observe 限制：下列 scope 单独提升为 repair。
 # 推荐灰度形态是全局 observe＋单点 repair_scopes；mode=repair 则全量开启。
-# 私聊格式：onebotv11:private:<QQ号>
-# 群聊格式：onebotv11:group:<群号>
+# 推荐写法（业务会话域，协议切换后仍命中）：
+#   私聊：qqtpc:private:<QQ号>
+#   群聊：qqtpc:group:<群号>
+# 兼容旧条目：onebotv11:* / onebotv12:* / milky:* / icqq:* 与 qqtpc:* 等价；
+# 官方 QQ（qq:*）与其它平台保持各自独立。实际发送仍用台账里的真实 adapter。
 repair_scopes: []
 
 # 主发送流程结束后的宽限期，避免正常回执尚未写完就被判缺件。

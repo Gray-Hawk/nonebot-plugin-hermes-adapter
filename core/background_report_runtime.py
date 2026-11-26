@@ -58,20 +58,19 @@ def parse_session_key(
 def platform_family(adapter_tag: str | None) -> str:
     """会话键里的 adapter/域标签 → **平台族**（身份归属的唯一平台维度）。
 
-    当前部署只有 QQ 侧两条链路：QQTPC（OneBot / Milky / 未来任何 transport
-    名的统一会话域）与官方 QQ。transport 名不是身份——同一群的
-    ``onebotv11`` / ``milky`` / ``qqtpc`` / 将来未登记的新驱动都归
-    ``qqtpc`` 一族，所以查询/清场不需要维护 transport 清单。
-
-    接入其它平台（tg 等）时在这里登记各自族名；在此之前任何非官方 QQ 的
-    adapter 标签都按 QQTPC 处理。
+    当前部署 QQ 侧两条链路：QQTPC（OneBot v11/v12、Milky、icqq 的统一会话域）与
+    官方 QQ。transport 名不是身份——同一群的 ``onebotv11`` / ``milky`` /
+    ``qqtpc`` 都归 ``qqtpc`` 一族。**只有已登记的 QQTPC transport 归一**；未登记
+    的 adapter（官方 QQ、astrbot、icqq9 等）就是自己的族，不会被 QQTPC 查询/清场
+    误伤。
     """
     from . import platform_compat
+    from .session import session_domain
 
     tag = normalize_domain_tag(adapter_tag)
     if platform_compat.is_official_qq(tag):
         return platform_compat.OFFICIAL_QQ_ADAPTER
-    return SESSION_DOMAIN_QQTPC
+    return session_domain(tag)
 
 
 def conversation_identity(

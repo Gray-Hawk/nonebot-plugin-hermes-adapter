@@ -22,9 +22,10 @@
 也一样**（dry-run 只报冲突不改库）；先 dry-run 确认，再用 ``--exclude``/``--override``
 显式指定运维认可的目标后重跑。脚本可重放：已归一的库第二次运行计数为 0。
 
-**本脚本只改 session_keys**：``user_lists``（admin/master/allow）、
-``runs_delivery.repair_scopes`` 与 ``chat_config`` 仍按真实 adapter 生效；运行结束会
-在 stderr 打印这些面的核对清单，启动期另有一次覆盖检查 WARN。
+**本脚本只改 session_keys**：``user_lists``、``runs_delivery.repair_scopes``
+的复合键运行期已按业务会话域匹配（旧 transport 条目继续生效），无需按协议重复
+配置；交付台账与群记忆的旧 transport 数据由运行期按域同读，批量离线迁移另行执行
+（本脚本不碰）。运行结束在 stderr 打印核对清单。
 """
 
 from __future__ import annotations
@@ -45,21 +46,22 @@ from nonebot_plugin_hermes_adapter.core.storage.session_key_store import (  # no
     SessionKeyStore,
 )
 
-# QQ-09：归一后**不会**自动跟着变的配置面。只做运维清单与 WARN，不改语义。
+# 归一后的配置/数据身份边界。只做运维清单，不改语义。
 _CONFIG_COVERAGE_CHECKLIST = """
-[WARN] session_keys 已归一到 qqtpc 业务会话域，但下列配置仍按**真实 adapter** 生效。
-       切协议前请逐项确认覆盖（本脚本不会修改它们）：
+[INFO] session_keys 已归一到 qqtpc 业务会话域。相关身份面的现状：
   1) user_lists.yaml
-     - admin_users / master_users：敏感命令与审批通知按 {adapter}:{user_id} 判定；
-       只配一个 transport 时，切到另一个协议后这些命令会按非管理员静默 skip。
-     - allow_users / allow_groups：私聊/群 allowlist 同理；缺口会让唤醒被拒并无限重试。
+     - admin_users / master_users / allow_users / allow_groups：复合键按业务
+       会话域匹配；onebotv11 / onebotv12 / milky / icqq / qqtpc 条目互相命中，
+       无需按协议重复配置。官方 QQ 与其它平台仍各自隔离。
   2) runs_delivery.yaml
-     - repair_scopes：形如 {adapter}:{group|private}:{id}；只配旧 adapter 时，
-       切换后 effective_mode 落回全局 observe，自动补发静默关闭。
-  3) chat_config.yaml
-     - greet_on_join / 其它按 adapter 分流的开关：Milky 入群事件当前未接线，
-       greet_on_join=true 时 Milky 群不会迎新（QQ-10，另行处理）。
-启动时会由 core/qqtpc_config_coverage.py 对 1/2 做一次覆盖检查并打 WARN。
+     - repair_scopes：同样按业务会话域匹配；旧 onebotv11:* / milky:* 条目
+       在切换协议后继续生效。实际发送仍用台账里的真实 adapter。
+  3) 交付台账 / 群记忆
+     - 运行时按业务会话域同读旧 transport 的 delivery/栅栏行与
+       memory/<transport> 档案；新写入落 canonical 域。批量离线迁移另行执行，
+       本脚本不改这些库/目录。
+  4) chat_config.yaml
+     - greet_on_join 仍按事件层能力：Milky 入群事件当前未接线（QQ-10，另行处理）。
 """.strip()
 
 

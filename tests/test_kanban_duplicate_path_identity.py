@@ -63,10 +63,21 @@ class DuplicatePathIdentityTests(unittest.TestCase):
             "同一会话的旧 OneBot 订阅与 canonical key 必须按 identity 命中",
         )
 
-    def test_unknown_transport_subscription_still_matches(self) -> None:
+    def test_registered_icqq_transport_subscription_still_matches(self) -> None:
+        self._sub(f"hermes-icqq+group+{GROUP}-g1")
+
+        self.assertTrue(
+            self._warn(f"hermes-qqtpc+group+{GROUP}-g3"),
+            "已登记 transport（icqq）与 canonical key 必须按 identity 命中",
+        )
+
+    def test_unknown_transport_subscription_does_not_match(self) -> None:
         self._sub(f"hermes-icqq9+group+{GROUP}-g1")
 
-        self.assertTrue(self._warn(f"hermes-qqtpc+group+{GROUP}-g3"))
+        self.assertFalse(
+            self._warn(f"hermes-qqtpc+group+{GROUP}-g3"),
+            "未登记 transport 不是 QQTPC，不得被同域清场/订阅命中",
+        )
 
     def test_sibling_group_is_not_matched(self) -> None:
         self._sub(f"hermes-onebotv11+group+{SIBLING}-g7")

@@ -44,17 +44,20 @@ def make_inflight_key(
 ) -> tuple[str, str]:
     """inflight/scope 键的单一构造函数(tuple 形)。
 
-    键形(同源化收口批,审计确认6;此前 9+ 处逐字手拼):
-      - 群: (adapter, "group:<group_id>")
-      - 私聊: (adapter, "private:<user_id>")
-    group_id 缺省(None)回落空串;私聊恒用 user_id(group_id 不参与)。
-    消费方:InflightRegistry / 防抖键 / 反馈便签 scope / T1 空闲重置 /
-    background_report / run_resume / proactive 点火前复查。字符串孪生形见
-    core/run_tracker.make_scope_key(冒号串,另行保留)。
+    键形(QQTPC 身份统一批):
+      - 群: (session_domain(adapter), "group:<group_id>")
+      - 私聊: (session_domain(adapter), "private:<user_id>")
+    OneBot v11/v12、Milky、icqq 归一到 ``qqtpc``——协议切换不产生第二个在跑槽;
+    官方 QQ 与未登记平台保持自己的标签。group_id 缺省(None)回落空串;私聊恒用
+    user_id(group_id 不参与)。消费方:InflightRegistry / 防抖键 / 反馈便签 scope /
+    T1 空闲重置 / background_report / run_resume / proactive 点火前复查。字符串
+    孪生形见 core/run_tracker.make_scope_key(冒号串,另行保留)。
     """
+    from .session import session_domain
+
     scope = "private" if is_private else "group"
     scope_id = user_id if is_private else (group_id or "")
-    return (adapter, f"{scope}:{scope_id}")
+    return (session_domain(adapter), f"{scope}:{scope_id}")
 
 
 @dataclass

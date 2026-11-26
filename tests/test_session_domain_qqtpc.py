@@ -355,7 +355,10 @@ class NoDomainLeakTests(_Base):
             manager.bind_run_tracker(tracker)
 
             manager.clear_internal(GROUP_ID)
-            self.assertEqual(tracker.scopes, [f"milky:group:{GROUP}"])
+            self.assertEqual(
+                tracker.scopes, [f"{SESSION_DOMAIN_QQTPC}:group:{GROUP}"],
+                "解析出真实 adapter 后栅栏落业务会话域，协议切换后同域交付一起取消",
+            )
         self.assertEqual(manager.get_session_key("milky", False, "u1", GROUP), f"hermes-{GROUP_ID}-g1")
 
     def test_unresolved_transport_skips_fence_instead_of_using_domain(self) -> None:
@@ -709,9 +712,13 @@ class BackgroundRoutingTests(_Base):
 
         identity = _session_identity("milky", True, USER)
         prefixes = session_manager.session_key_prefixes()
-        for name in ("qqtpc", "milky", "onebotv11", "onebotv12", "icqq", "somefuture"):
+        for name in ("qqtpc", "milky", "onebotv11", "onebotv12", "icqq"):
             with self.subTest(name=name):
                 self.assertTrue(_belongs(f"hermes-{name}+private+{USER}", identity, prefixes))
+        self.assertFalse(
+            _belongs(f"hermes-somefuture+private+{USER}", identity, prefixes),
+            "未登记 transport 不是 QQTPC 身份",
+        )
 
         class _Outbox:
             def active_events(self):
@@ -843,7 +850,10 @@ class StaleDriverSwitchTests(_Base):
         self.assertEqual(resolved, "onebotv11", "离线驱动的残留 real 路由不是当前事实")
         self.assertEqual([row[1] for row in rows], ["onebotv11"])
         self.assertEqual([comp[0] for _, comp in expired], ["onebotv11"])
-        self.assertEqual(tracker_scope, [f"onebotv11:group:{GROUP}"], "T1 栅栏跟当前在线驱动")
+        self.assertEqual(
+            tracker_scope, [f"{SESSION_DOMAIN_QQTPC}:group:{GROUP}"],
+            "T1 栅栏跟当前在线驱动解析，但 scope 落业务会话域",
+        )
         self.assertEqual(
             [row[0] for row in self._dump()[0]], [GROUP_ID],
             "解析真实 adapter 不改 internal_id、不新增行",
@@ -888,7 +898,10 @@ class StaleDriverSwitchTests(_Base):
             tracker = _Tracker()
             manager.bind_run_tracker(tracker)
             manager.clear_internal(GROUP_ID)
-        self.assertEqual(tracker.scopes, [f"onebotv11:group:{GROUP}"])
+        self.assertEqual(
+            tracker.scopes, [f"{SESSION_DOMAIN_QQTPC}:group:{GROUP}"],
+            "T1 栅栏按解析出的当前驱动触发，scope 仍落业务会话域",
+        )
 
     def test_official_qq_memory_is_not_gated_by_domain_resolution(self) -> None:
         with patch.object(session_mod, "_live_transports", lambda domain: []):

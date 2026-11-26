@@ -100,7 +100,7 @@ class ApprovalNotifyTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent, 0)
         self.assertEqual(bot.calls, [])
 
-    async def test_renotify_groups_admins_by_adapter_and_uses_live_bot(self) -> None:
+    async def test_renotify_notifies_same_domain_admins_through_live_driver(self) -> None:
         harness = MilkyHarness()
         harness.replies["send_private_message"] = {"message_seq": 12, "time": 1}
         approvals._pending[7] = _entry()
@@ -113,10 +113,13 @@ class ApprovalNotifyTransportTests(unittest.IsolatedAsyncioTestCase):
                 admin_users={"milky:10001", "onebotv11:10002"}, delay_sec=0.0,
             )
 
-        self.assertEqual(sent, 1, "只有 milky 在线：milky 管理员送达，onebot 组跳过")
-        self.assertEqual(harness.actions(), ["send_private_message"])
-        self.assertEqual(harness.params_for("send_private_message")[0]["user_id"], 10001)
-        self.assertIn(7, approvals._pending, "无在线 bot 的组不得删除条目")
+        self.assertEqual(sent, 2, "同属 QQTPC 域：两条管理员都经当前 Milky 在线驱动送达")
+        self.assertEqual(harness.actions(), ["send_private_message", "send_private_message"])
+        self.assertEqual(
+            sorted(p["user_id"] for p in harness.params_for("send_private_message")),
+            [10001, 10002],
+        )
+        self.assertIn(7, approvals._pending, "条目由 /approve 应答后才删除")
 
     async def test_renotify_without_any_capable_bot_keeps_entries(self) -> None:
         approvals._pending[7] = _entry()

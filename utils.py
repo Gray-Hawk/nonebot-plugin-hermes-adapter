@@ -3,6 +3,7 @@ from nonebot.adapters import Event
 
 from .adapter_norm import normalize_adapter_name
 from .core.chat_config import load_chat_config
+from .core.session import composite_matches
 from .core.user_lists import load_user_lists
 
 
@@ -40,7 +41,10 @@ def check_isolation(event: Event, target: alconna.Target) -> bool:
         # 私聊触发检查
         if (
             load_chat_config().private_trigger == "allowlist"
-            and f"{adapter_name}:{user_id}" not in lists.allow_users
+            and not any(
+                composite_matches(entry, adapter_name, user_id)
+                for entry in lists.allow_users
+            )
         ):
             return False
     else:
@@ -48,7 +52,10 @@ def check_isolation(event: Event, target: alconna.Target) -> bool:
         group_id = target.id
         if (
             lists.allow_groups
-            and f"{adapter_name}:{group_id}" not in lists.allow_groups
+            and not any(
+                composite_matches(entry, adapter_name, group_id)
+                for entry in lists.allow_groups
+            )
         ):
             return False
 

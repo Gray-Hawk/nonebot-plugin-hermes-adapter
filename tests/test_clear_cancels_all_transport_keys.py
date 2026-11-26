@@ -38,7 +38,8 @@ class ClearCancelsAllTransportKeysTests(unittest.TestCase):
             "canonical": f"hermes-qqtpc+group+{GROUP}-g3",
             "onebot": f"hermes-onebotv11+group+{GROUP}-g1057",
             "milky": f"hermes-milky+group+{GROUP}-g5",
-            "future": f"hermes-icqq9+group+{GROUP}-g1",
+            "icqq": f"hermes-icqq+group+{GROUP}-g1",
+            "unknown": f"hermes-icqq9+group+{GROUP}-g1",
             "sibling": f"hermes-onebotv11+group+{SIBLING}-g7",
         }
         for name, origin in self.origins.items():
@@ -68,16 +69,18 @@ class ClearCancelsAllTransportKeysTests(unittest.TestCase):
         )
 
         states = self._states()
-        for name in ("canonical", "onebot", "milky", "future"):
+        for name in ("canonical", "onebot", "milky", "icqq"):
             self.assertEqual(states[name], "cancelled", name)
+        self.assertEqual(states["unknown"], "pending",
+                         "未登记 transport（icqq9）不是 QQTPC，不被同域清场误伤")
         self.assertEqual(states["sibling"], "pending", "兄弟群不得被同一 /clear 清掉")
         self.assertEqual(
             sorted(cancelled),
-            ["canonical", "future", "milky", "onebot"],
+            ["canonical", "icqq", "milky", "onebot"],
             "返回的是被取消的事件号（与既有 cancel_session 同语义）",
         )
         cancels = set(self.outbox.pending_session_cancels())
-        for name in ("canonical", "onebot", "milky", "future"):
+        for name in ("canonical", "onebot", "milky", "icqq"):
             self.assertIn(self.origins[name], cancels)
 
     def test_official_qq_key_is_not_swept_by_qqtpc_clear(self) -> None:

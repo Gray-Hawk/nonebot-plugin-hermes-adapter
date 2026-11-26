@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from ...core.image_inline import encode_image_frames_bytes, sniff_mime
 from ...core.media_config import MediaConfig, load_media_config
+from ...core.session import same_session_domain
 from ...core.routing import CallerScope
 
 
@@ -125,7 +126,7 @@ async def get_message_images_impl(
         for mid, (adapter, group_id) in owners.items()
         if scope is None
         or not scope.allows(adapter, group_id or "")
-        or inp.adapter != adapter
+        or not same_session_domain(inp.adapter, adapter)
         or (inp.group_id is not None and inp.group_id != group_id)
     }
     if denied:
