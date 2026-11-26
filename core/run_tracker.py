@@ -1189,8 +1189,7 @@ class RunTracker:
             " MAX(f.fence_seq), MAX(f.fence_generation)"
             " FROM run_deliveries d LEFT JOIN run_submissions s ON s.run_id=d.run_id"
             " LEFT JOIN delivery_generation_fences f"
-            "   ON f.scope_key=d.scope_key"
-            "   OR f.scope_key=scope_domain_key(d.scope_key)"
+            "   ON scope_domain_key(f.scope_key)=scope_domain_key(d.scope_key)"
             " WHERE d.run_id=? GROUP BY d.run_id",
             (run_id,),
         ).fetchone()

@@ -213,6 +213,18 @@ class FenceIdentityTests(unittest.TestCase):
             "读取兼容不产生新 transport 栅栏",
         )
 
+    def test_legacy_delivery_reads_other_legacy_transport_fence(self) -> None:
+        """OneBot 交付也必须读到仅存在 Milky 名下的旧栅栏。"""
+        self._legacy_ready("run-cross-legacy-fence", adapter="onebotv11", generation=2)
+        with self.tracker._conn:
+            self.tracker._conn.execute(
+                "INSERT INTO delivery_generation_fences(scope_key, fence_seq, fence_generation, updated_at)"
+                " VALUES(?,?,?,?)",
+                (f"milky:group:{GROUP}", 0, 9, 0.0),
+            )
+
+        self.assertFalse(self.tracker.is_delivery_current("run-cross-legacy-fence"))
+
     def test_legacy_fence_generation_carries_into_canonical_fence(self) -> None:
         key = make_scope_key("milky", False, "u1", GROUP)
         with self.tracker._conn:

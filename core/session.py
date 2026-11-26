@@ -18,7 +18,7 @@ from .storage.session_key_store import (
 # 业务会话域：QQTPC＝QQ Third-Party Client。OneBot v11/v12、Milky、icqq 都是
 # QQ 用户侧同一整体在不同驱动下的形态，用户在协议间切换不应产生新会话。
 # 会话身份归一到 ``qqtpc``；真实 adapter 只是运行时路由事实（当前 Bot 连接／
-# 事件／BotRegistry），**不落库**，切换协议因此零人工迁移。
+# 事件／BotRegistry），身份键不落 transport；原始消息与台账的 adapter 字段仍保留到达事实。
 SESSION_DOMAIN_QQTPC = "qqtpc"
 QQTPC_TRANSPORTS: tuple[str, ...] = ("onebotv11", "onebotv12", "milky", "icqq")
 # transport -> 业务会话域。未登记 adapter（QQ 官方 ``qq``、tg 等）不归一，
