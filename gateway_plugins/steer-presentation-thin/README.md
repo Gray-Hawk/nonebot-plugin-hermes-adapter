@@ -1,4 +1,4 @@
-# steer-presentation-thin（候选，未部署）
+# steer-presentation-thin
 
 Runs 车道中途 steer 的呈递收口：**NB 渲染的零包装正文原样落成那条 user 行，不再套上游的
 `[OUT-OF-BAND USER MESSAGE — …]` 外壳。** 发送者、m:id 与媒体身份继续由 NB 的
@@ -96,9 +96,13 @@ python scripts/install_gateway_plugin.py steer-presentation-thin           # 装
 `$HERMES_HOME/plugins/steer-presentation-thin/` 并重启；NB 侧无需同批回滚，标记字段会被上游
 忽略。提示词追加段随插件一起卸载。
 
-## 部署边界（本次只交付候选）
+## 部署边界
 
-本阶段不部署、不重启、不上传。steer 行不再被上游按 `[OUT-OF-BAND` 前缀归为合成脚手架，
+2026-11-27 主实例已部署持久化根治提交 `c35d30c`，运行文件哈希、编译、Doctor、
+网关冷启动与生产安装树反例均完成验证。部署前完整插件备份在
+`work/body-zero-wrap-20261126/deploy-steer-persist-20261127-1755/backup/`。
+
+steer 行不再被上游按 `[OUT-OF-BAND` 前缀归为合成脚手架，
 上下文压缩的 verbatim 用户消息段会把它当真实用户消息收录，摘要预算占用可能略增。多批正文
 保持单换行，系统提示只留末尾一条；单批逐字节不动。
 
