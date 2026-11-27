@@ -285,16 +285,21 @@ def pending_after_interim(interim: str, fragment: str) -> str:
     if not frag.strip():
         return fragment
     interim_norm = _normalize(interim).rstrip("\n")
-    if not interim_norm:
-        return fragment
     tail = unsealed_tail(interim)
     tail_norm = _normalize(tail).rstrip("\n")
-    if frag.startswith(interim_norm):
+    if interim_norm and frag.startswith(interim_norm):
         # 碎片带着 interim 的尾巴，还多出后续字节：从尾巴开头原样切出来。
         keep_from = len(interim_norm) - len(tail_norm)
         return fragment[origin[keep_from] :]
-    if interim_norm.startswith(frag):
+    if interim_norm and interim_norm.startswith(frag):
+        # 包括单个开口标记：interim 已覆盖它，不能留下来和下一份正文粘在一起。
         return tail
+    if not tail_norm and not frag.replace(SEPARATOR, "").strip():
+        # interim 已确认这段没有未闭合正文：纯标记碎片里的空信封（含 EOF 闭合）随它
+        # 自己消费；奇数标记留下的独立开头仍由 unsealed_tail 原样保留。
+        return unsealed_tail(fragment)
+    if not interim_norm:
+        return fragment
     if not tail_norm and _recuts_a_closed_unit(frag, interim_norm):
         return ""
     consumed = _consume_confirmed_envelopes(interim_norm, frag)

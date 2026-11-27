@@ -899,7 +899,7 @@ class _StreamingChat:
             self.tracker.record_expected_delivery(
                 run_id=self.run_id, output=output, expect_structured=True
             )
-        terminal = runs_text.decisions_from_text(output) if output.strip() else []
+        terminal = parser.terminal_decisions() if output.strip() else []
         terminal_only = not self.streamed
         for decision in terminal:
             if terminal_only:
@@ -973,6 +973,18 @@ class ReactiveLiveChainTests(_e2._ReactiveHarness):
         tracker, chat, calls = await self._run_stream([], output=f"{SEP}\n{SEP}")
         self.assertEqual(calls["send"], [])
         self.assertEqual(chat.sent_at, [])
+
+    async def test_empty_envelope_replay_reaches_handler_as_one_body(self) -> None:
+        body = "对，官方这份就是教我怎么使用 AGY CLI 的，已经装好并启用了"
+        raw = f"§\n{body}\n§\n§\n§"
+        _tracker, chat, calls = await self._run_stream([
+            {"event": "message.delta", "delta": raw, "seq": 0},
+            {"event": "message.interim", "text": "", "seq": 1},
+            {"event": "message.delta", "delta": raw, "seq": 2},
+        ], output=raw)
+        # 真实 client→parser→queue→handler：平台出口没有 ``§§＋正文`` 复合单元。
+        self.assertEqual([c["text"] for c in calls["send"]], [body])
+        self.assertEqual(chat.sent_at, [body])
 
     async def test_reply_to_control_bound_to_first_unit(self) -> None:
         from nonebot_plugin_hermes_adapter.core import control_intent
@@ -1104,3 +1116,77 @@ class InterimClosedEnvelopeAtEofTests(unittest.TestCase):
             ),
             "§\n丁\n§",
         )
+
+
+class InterimEmptyEnvelopeReplayTests(unittest.TestCase):
+    """正文后的空信封在 EOF 闭合，interim 后重放不得拼出 ``§§＋正文``。"""
+
+    BODY = "对，官方这份就是教我怎么使用 AGY CLI 的，已经装好并启用了"
+    RAW = f"§\n{BODY}\n§\n§\n§"
+
+    def test_real_incident_frame_sequence_sends_body_once(self) -> None:
+        parser = RunsEventParser()
+        drained = feed_all(parser, [
+            {"event": "message.delta", "delta": self.RAW, "seq": 0},
+            {"event": "message.interim", "text": self.RAW[:0], "seq": 1},
+            {"event": "message.delta", "delta": self.RAW, "seq": 2},
+            {"event": "run.completed", "output": self.RAW, "seq": 3},
+        ])
+        bodies = [d["body"] for d in drained]
+        bodies.extend(d["body"] for d in parser.terminal_decisions())
+        self.assertEqual(bodies, [self.BODY])
+
+    def test_full_interim_then_next_body_and_tool_boundary(self) -> None:
+        parser = RunsEventParser()
+        drained = feed_all(parser, [
+            {"event": "message.delta", "delta": self.RAW, "seq": 0},
+            {"event": "message.interim", "text": self.RAW, "seq": 1},
+            {"event": "message.delta", "delta": unit({}, "下一份") + "\n", "seq": 2},
+            {"event": "tool.started", "tool": "lookup", "seq": 3},
+            {"event": "run.completed", "output": unit({}, "工具后正文"), "seq": 4},
+        ])
+        bodies = [d["body"] for d in drained]
+        bodies.extend(d["body"] for d in parser.terminal_decisions())
+        self.assertEqual(bodies, [self.BODY, "下一份", "工具后正文"])
+
+    def test_multiple_bodies_with_empty_envelope_replay(self) -> None:
+        raw = batch(({}, "甲"), ({}, "乙")) + "\n§\n§"
+        parser = RunsEventParser()
+        drained = feed_all(parser, [
+            {"event": "message.delta", "delta": raw, "seq": 0},
+            {"event": "message.interim", "text": raw, "seq": 1},
+            {"event": "message.delta", "delta": raw, "seq": 2},
+            {"event": "run.completed", "output": raw, "seq": 3},
+        ])
+        bodies = [d["body"] for d in drained]
+        bodies.extend(d["body"] for d in parser.terminal_decisions())
+        self.assertEqual(bodies, ["甲", "乙"])
+
+    def test_full_interim_still_consumes_covered_marker_fragment(self) -> None:
+        parser = RunsEventParser()
+        drained = feed_all(parser, [
+            {"event": "message.delta", "delta": "§", "seq": 0},
+            {"event": "message.interim", "text": self.RAW, "seq": 1},
+            {"event": "message.delta", "delta": unit({}, "下一份") + "\n", "seq": 2},
+            {"event": "tool.started", "tool": "lookup", "seq": 3},
+            {"event": "run.completed", "output": unit({}, "工具后正文"), "seq": 4},
+        ])
+        bodies = [d["body"] for d in drained]
+        bodies.extend(d["body"] for d in parser.terminal_decisions())
+        self.assertEqual(bodies, [self.BODY, "下一份", "工具后正文"])
+
+    def test_only_empty_closed_prefix_is_consumed(self) -> None:
+        for interim in ("", self.RAW):
+            with self.subTest(interim=interim, fragment="empty-at-eof"):
+                self.assertEqual(
+                    runs_text.pending_after_interim(interim, "§\n§"), ""
+                )
+            with self.subTest(interim=interim, fragment="next-open"):
+                self.assertEqual(
+                    runs_text.pending_after_interim(interim, "§\n§\n§"), "§"
+                )
+            with self.subTest(interim=interim, fragment="next-body"):
+                fragment = unit({}, "下一")
+                self.assertEqual(
+                    runs_text.pending_after_interim(interim, fragment), fragment
+                )
