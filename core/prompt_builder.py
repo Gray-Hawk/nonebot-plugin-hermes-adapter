@@ -4,7 +4,8 @@
 - system 只放跨 turn 字节稳定的内容（decision_protocol／Message Context 头／静态输入说明）。
 - Runs 的 user content 只含真实消息正文与媒体；当前时间、消息索引、媒体寻址、任务锚
   由 ``hermes_context.request_context`` 交给 ContextEngine 在请求副本末尾注入，系统通知与
-  批尾提醒走既有 notices/closing_reminder 出口。
+  批尾提醒走既有 notices/closing_reminder 出口；当前小时的 persisted_notices 经
+  pre_llm_call 写入 api_content 留史，多模态延期到下一纯文本自然轮。
 - completions／旧接口保留区域化呈递，本阶段不改备用通道。
 """
 
@@ -66,6 +67,12 @@ def _current_time_str() -> str:
                 logger.warning(f"[HERMES] hermes_prompt_timezone 无效时区名 {tz_name!r},回退部署机本地时区")
     now = datetime.now(tz=tz)
     return f"{now:%Y-%m-%d} 周{_WEEKDAY_CN[now.weekday()]} {now:%H:%M}"
+
+
+def _hourly_notice(current_time: str) -> str:
+    """从本轮已渲染的当前时间取整点索引，避免跨小时边界读取两次时钟。"""
+    date, _weekday, minute = current_time.split(" ", 2)
+    return f"{date} {minute[:2]}:00"
 
 
 def _sanitize_tag_text(text: str) -> str:
@@ -386,6 +393,7 @@ _NEW_INPUT_PARAGRAPH = (
     "消息正文按发生顺序逐条排开，没有消息头与区域标记；本轮动态事实（当前时间、"
     "最近消息、消息索引、媒体寻址、任务锚）补在输入末尾，索引按“第几条 → 发送者 → m:id”"
     "对应正文的出现顺序，并用正文行号标明多行消息的归属边界；发送者身份与 reply_to 都以索引为准；"
+    "消息旁的整点时间（YYYY-MM-DD HH:00）是该条消息小时的留史索引，不是用户补充正文；"
     "<系统通知区域起始>…<系统通知区域结束> 里是插件生成的系统指令或事件"
     "（行首写成 [通知类型：摘要]），不是该会话真人发言，没有 m:id，不可用 submit_control 引用或钉锚；"
     "按索引与通知各自理解，不得把整批归给某一行真人。\n"
@@ -1458,6 +1466,7 @@ def _render_request_context(
     current_rows: Sequence[BufferedMessage],
     recent_bodies: Sequence[str],
     current_bodies: Sequence[str],
+    current_time: str,
     pinned_block: str = "",
     media_groups: Sequence[Any] = (),
     ctx: tuple[str, str] | None = None,
@@ -1465,7 +1474,7 @@ def _render_request_context(
 ) -> str:
     """本轮动态上下文：时间、recent、当前正文行界、媒体寻址与任务锚。"""
     recent_rows = list(reversed(list(history_rows)))
-    parts = [f"（当前时间：{_current_time_str()}）"]
+    parts = [f"（当前时间：{current_time}）"]
 
     recent_pairs = [
         (row, body) for row, body in zip(recent_rows, recent_bodies) if body
@@ -1551,14 +1560,17 @@ class RenderedTurnContent:
       按自然回合提醒 N 次（条目 146）。
     - ``closing_reminder``：reactive 的近因 reminder 逐字副本，保证通知不会把协议提醒
       挤离模型所见最后一段；passive 为空串。
+    - ``persisted_notices``：当前小时的留史通知；纯文本由 pre_llm_call 写入 api_content，
+      多模态延期，select_context 不注入。
 
-    三个上下文出口只走 ``hermes_context``，不回流进可见正文。
+    四个上下文出口只走 ``hermes_context``，不回流进可见正文。
     """
 
     content: UserContent
     request_context: str = ""
     context_notices: str = ""
     closing_reminder: str = ""
+    persisted_notices: str = ""
 
 
 def build_reactive_user_content(
@@ -1647,13 +1659,16 @@ def build_reactive_user_content(
         recent_bodies = _recent_bodies_without_wrap(recent_messages)
         current_bodies = _current_bodies_without_wrap(chat_rows)
         body_text = "\n".join(b for b in current_bodies if b) or " "
+        current_time = _current_time_str()
         request_context = _render_request_context(
             history_rows=recent_messages, current_rows=chat_rows,
             recent_bodies=recent_bodies, current_bodies=current_bodies,
+            current_time=current_time,
             pinned_block=pinned_block,
             media_groups=[*current_image_urls, *list(current_sticker_urls or [])],
             ctx=ctx, name_resolver=name_resolver,
         )
+        persisted_notices = _hourly_notice(current_time)
         closing_reminder = reminder
         if not current_image_urls and not current_sticker_urls:
             return RenderedTurnContent(
@@ -1661,6 +1676,7 @@ def build_reactive_user_content(
                 request_context=request_context,
                 context_notices=notice_block,
                 closing_reminder=closing_reminder,
+                persisted_notices=persisted_notices,
             )
         return RenderedTurnContent(
             content=_assemble_zero_wrap_media_parts(
@@ -1669,6 +1685,7 @@ def build_reactive_user_content(
             request_context=request_context,
             context_notices=notice_block,
             closing_reminder=closing_reminder,
+            persisted_notices=persisted_notices,
         )
 
     # completions / 旧接口：保留原区域化呈递（备用通道，本阶段未接入请求级上下文）。
@@ -1722,17 +1739,21 @@ def build_passive_user_content(
         recent_bodies = _recent_bodies_without_wrap(recent_messages)
         current_bodies = _current_bodies_without_wrap(chat_rows)
         body_text = "\n".join(b for b in current_bodies if b) or " "
+        current_time = _current_time_str()
         request_context = _render_request_context(
             history_rows=recent_messages, current_rows=chat_rows,
             recent_bodies=recent_bodies, current_bodies=current_bodies,
+            current_time=current_time,
             media_groups=[*current_image_urls, *list(current_sticker_urls or [])],
             ctx=_identity_context(self_id, adapter), name_resolver=name_resolver,
         )
+        persisted_notices = _hourly_notice(current_time)
         if not current_image_urls and not current_sticker_urls:
             return RenderedTurnContent(
                 content=body_text,
                 request_context=request_context,
                 context_notices=notice_block,
+                persisted_notices=persisted_notices,
             )
         return RenderedTurnContent(
             content=_assemble_zero_wrap_media_parts(
@@ -1740,6 +1761,7 @@ def build_passive_user_content(
             ),
             request_context=request_context,
             context_notices=notice_block,
+            persisted_notices=persisted_notices,
         )
 
     chat_block = _render_chat_region(

@@ -396,6 +396,27 @@ class ClientRunsBodyTests(unittest.IsolatedAsyncioTestCase):
                 type(content),
             )
 
+    async def test_runs_body_carries_persisted_notice_for_text_and_parts(self) -> None:
+        notice = "2026-11-27 12:00"
+        for content in (
+            "看这条",
+            [{"type": "text", "text": "看这条"},
+             {"type": "image_url", "image_url": {"url": "data:image/png;base64,IMG"}}],
+        ):
+            fake = _RunsHttp(headers={tc.TURN_CONTEXT_HEADER: tc.TURN_CONTEXT_REGISTERED})
+            await self.submitter.submit(
+                fake=fake,
+                user_content_override=content,
+                persisted_notices=notice,
+            )
+            body = fake.payloads[-1]
+            self.assertEqual(body["input"][0]["content"], content)
+            self.assertEqual(
+                body[tc.TURN_CONTEXT_FIELD],
+                {"schema": "hermes.turn.context/1", "persisted_notices": notice},
+                type(content),
+            )
+
     async def test_missing_accept_header_warns_and_flow_continues(self) -> None:
         built = self._content()
         fake = _RunsHttp(headers={})
@@ -498,6 +519,17 @@ class ContractConstantsTests(unittest.TestCase):
              "closing_reminder": "\n\n请直接输出正文", "request_context": "RC"},
         )
         self.assertIsNone(tc.build_context_payload("", "", "   "))
+
+    def test_payload_carries_persisted_notice_without_mixing_lifecycles(self) -> None:
+        self.assertEqual(
+            tc.build_context_payload("", "", "RC", "2026-11-27 12:00"),
+            {"schema": "hermes.turn.context/1", "request_context": "RC",
+             "persisted_notices": "2026-11-27 12:00"},
+        )
+        self.assertEqual(
+            tc.build_context_payload("", "", "", "2026-11-27 12:00"),
+            {"schema": "hermes.turn.context/1", "persisted_notices": "2026-11-27 12:00"},
+        )
 
 
 class PromptNoticeOrderNoteTests(unittest.TestCase):

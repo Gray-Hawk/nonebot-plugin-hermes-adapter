@@ -1404,6 +1404,7 @@ class HermesClient:
         context_notices: str = "",
         closing_reminder: str = "",
         request_context: str = "",
+        persisted_notices: str = "",
     ) -> ChatResult:
         """调用 Hermes,返回 ChatResult。
 
@@ -1420,10 +1421,9 @@ class HermesClient:
           单上游下恒为默认接入点(handler 经 routing.resolve_target() 解析后传入)。
         - on_suppressed: 可选正文被吞观察口 (reason, text, source)，仅 runs 通道
           生效（completions 无段内去重，不会调用）；默认 None，不影响正文发送。
-        - context_notices / closing_reminder: runs 文本轮的回合通知上下文（条目 145）。
-          由 ``prompt_builder`` 的 ``RenderedTurnContent`` 直接带下来，只在纯文本 runs
-          回合且确有通知时进入请求体的 ``hermes_context``；completions／astrbot／
-          媒体 parts 回合一律不带，行为与旧版逐字一致。
+        - context_notices / closing_reminder / request_context / persisted_notices:
+          由 ``prompt_builder`` 的 ``RenderedTurnContent`` 直接带下来，runs 纯文本与媒体
+          parts 回合都可携带；completions／astrbot 保持原有正文契约。
         - mode 字段当前为路由元数据,chat() 内部不分支判断;Task 15 handler 据此决定
           如何呈现结果(reactive 走 structured 流,passive 走 raw_text)。
         - **按 session_key 串行**:同一会话的 ``chat()`` 与 ``compress_session()`` 在
@@ -1629,6 +1629,7 @@ class HermesClient:
                     context_notices=context_notices,
                     closing_reminder=closing_reminder,
                     request_context=request_context,
+                    persisted_notices=persisted_notices,
                     scope=dict(
                         adapter=adapter_name, is_private=is_private, user_id=user_id,
                         group_id=group_id, bot_self_id=bot_self_id or "",
@@ -2098,6 +2099,7 @@ class HermesClient:
         context_notices: str = "",
         closing_reminder: str = "",
         request_context: str = "",
+        persisted_notices: str = "",
     ) -> tuple[str, str | None, "ChatResult | None", str, str]:
         """runs 通道(本部署补丁:阶段1)。返回 (raw_text, rotated, failure, pending_steer, run_id)。
 
@@ -2124,10 +2126,10 @@ class HermesClient:
             "session_id": session_key,
             "model": "hermes-agent",
         }
-        # 回合上下文（request_context／notices／closing_reminder）对纯文本与多模态
-        # parts 一视同仁：插件按其 content 文本视图精确匹配，媒体 parts 原样透传。
+        # 回合上下文（request_context／persisted_notices／notices／closing_reminder）对纯文本
+        # 与多模态 parts 一视同仁：插件按其 content 文本视图精确匹配，媒体 parts 原样透传。
         context_payload = build_context_payload(
-            context_notices, closing_reminder, request_context
+            context_notices, closing_reminder, request_context, persisted_notices
         )
         if context_payload is not None:
             body[TURN_CONTEXT_FIELD] = context_payload

@@ -1219,6 +1219,7 @@ async def _run_passive_turn(
         context_notices=user_content_renderer.context_notices,
         closing_reminder=user_content_renderer.closing_reminder,
         request_context=user_content_renderer.request_context,
+        persisted_notices=user_content_renderer.persisted_notices,
         target=hermes_target,
         decision_callback=(
             _live_deliver if _live_enabled else None
@@ -1917,6 +1918,7 @@ async def _run_reactive_turn(
         context_notices=user_content_renderer.context_notices,
         closing_reminder=user_content_renderer.closing_reminder,
         request_context=user_content_renderer.request_context,
+        persisted_notices=user_content_renderer.persisted_notices,
         target=hermes_target,
         decision_callback=(
             _live_deliver if plugin_config.hermes_api_interface == "runs" else None

@@ -248,6 +248,22 @@ class ZeroWrapContentTests(_TimePatched):
         self.assertIn("get_message_images", rc)
         self.assertEqual(rc.count("第1条"), 2, "索引与媒体各一处")
 
+    def test_hourly_notice_is_separate_from_body_and_request_context(self) -> None:
+        expected = "2026-11-27 12:00"
+        for builder in (build_reactive, build_passive):
+            for images in ((), (["data:image/png;base64,IMG"],)):
+                with self.subTest(builder=builder.__name__, images=bool(images)):
+                    with _Interface(self, "runs"):
+                        out = builder([human(content="正文")], images=images)
+                    self.assertEqual(out.persisted_notices, expected)
+                    self.assertNotIn(expected, out.request_context)
+                    text = out.content if isinstance(out.content, str) else out.content[0]["text"]
+                    self.assertEqual(text, "正文")
+
+        with _Interface(self, "completions"):
+            old = build_reactive([human(content="正文")])
+        self.assertEqual(old.persisted_notices, "", "备用通道不增加留史通知")
+
     def test_notice_only_turn_uses_space_placeholder_and_notice_goes_to_context(self) -> None:
         with _Interface(self, "runs"):
             out = build_reactive([notice()])
@@ -354,6 +370,8 @@ class StaticPromptTests(unittest.TestCase):
             self.assertIn("[有人@我]", block)
             self.assertIn("get_message_images", block)
             self.assertIn("（a／b）", block)
+            self.assertIn("整点时间", block)
+            self.assertIn("留史索引", block)
             self.assertIn("§", block)
             self.assertNotIn("<聊天消息区域起始>", block)
             self.assertNotIn("输入两区", block)
