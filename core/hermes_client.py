@@ -1234,6 +1234,12 @@ class ChatResult:
     """runs turn 被取消/中断(阶段3b, /run-stop 或 gateway 关停)。
     handler 硬静默:终止是管理员的主动动作,命令回执已说明,不再发错误兜底文本。"""
 
+    is_stale_generation: bool = False
+    """消息入场代际低于 clear 栅栏，runs 在提交前失败关闭。
+
+    与普通取消分开：活动包装层据此撤销本轮打开过的闲置动作资格，避免空保活会话。
+    """
+
     is_run_detached: bool = False
     """已登记 runs turn 的事件订阅断开,但原 run 仍由恢复链负责。
     这不是传输失败或取消:handler 硬静默并保留台账,由既有 reattach 续订与投递。"""
@@ -2181,7 +2187,11 @@ class HermesClient:
                 # 消息在 clear 前入场、clear 后才提交：原子门已拒绝落账，
                 # 不得进入通用“untracked 仍 legacy POST”兜底，否则旧代照样开 run。
                 logger.info(f"[HERMES] 旧代 turn 已在提交前取消 scope={scope_key}")
-                cancelled = ChatResult(raw_text="")
+                cancelled = ChatResult(
+                    raw_text="",
+                    is_local_refusal=True,
+                    is_stale_generation=True,
+                )
                 if scope.get("expect_structured"):
                     cancelled.structured = {"should_reply": False}
                 return "", None, cancelled, "", ""

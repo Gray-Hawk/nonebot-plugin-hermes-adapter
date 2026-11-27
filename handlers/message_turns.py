@@ -569,14 +569,25 @@ async def _chat_and_adopt_rotation(**chat_kwargs) -> ChatResult:
 
     chat_kwargs["activity_callback"] = lambda: _mark(force=False)
     _mark()
+    result = None
     try:
         result = await hermes_client.chat(**chat_kwargs)
         if result.effective_session_key:
             session_manager.adopt_session_key(chat_kwargs["session_key"], result.effective_session_key)
         return result
     finally:
-        # 正常完成、失败结果与异常出口都留下最后状态。
-        _mark()
+        if result is not None and getattr(result, "is_stale_generation", False):
+            # 提交前取消没有真实 run。撤销入场时打开的保活资格，避免空会话被
+            # 定时保活写成“空格 + §§”的可见历史；下一次真实 chat 会重新武装。
+            session_manager.disarm_idle(
+                chat_kwargs["adapter_name"],
+                chat_kwargs["is_private"],
+                chat_kwargs["user_id"],
+                chat_kwargs.get("group_id"),
+            )
+        else:
+            # 正常完成、失败结果与异常出口都留下最后状态。
+            _mark()
 
 async def _chat_with_persistence_retry(label: str, /, **chat_kwargs) -> ChatResult:
     """调 chat();命中瞬时(locked)持久化失败时用**同一个** session_key 重试一次。

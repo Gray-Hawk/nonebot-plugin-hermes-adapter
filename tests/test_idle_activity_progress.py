@@ -114,6 +114,28 @@ class ActivityWrapperTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mark.call_count, 3)
         self.assertEqual([call.kwargs.get("force", True) for call in mark.call_args_list], [True, False, True])
 
+    async def test_stale_generation_cancellation_disarms_idle_instead_of_rearming(self):
+        async def fake_chat(**kwargs):
+            result = ChatResult(raw_text="")
+            result.is_stale_generation = True
+            return result
+
+        kwargs = dict(
+            text="@bot",
+            session_key="hermes-qq+group+1-g23",
+            user_id="",
+            group_id="1",
+            adapter_name="qq",
+            is_private=False,
+        )
+        with patch.object(message_turns.hermes_client, "chat", side_effect=fake_chat), patch.object(
+            message_turns.session_manager, "mark_activity"
+        ) as mark, patch.object(message_turns.session_manager, "disarm_idle") as disarm:
+            await message_turns._chat_and_adopt_rotation(**kwargs)
+
+        self.assertEqual(mark.call_count, 1, "只有入场登记；取消收尾不得再次武装保活")
+        disarm.assert_called_once_with("qq", False, "", "1")
+
 
 if __name__ == "__main__":
     unittest.main()
