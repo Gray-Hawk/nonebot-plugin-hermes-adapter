@@ -278,6 +278,40 @@ class ZeroWrapContentTests(_TimePatched):
         self.assertNotIn("仅作情绪", out.content)
 
 
+class CurrentFileEntryWiringTests(_TimePatched):
+    def test_real_fragment_carries_file_and_video_addressing_out_of_body(self):
+        from nonebot_plugin_hermes_adapter.handlers import message as message_mod
+        from nonebot_plugin_hermes_adapter.handlers.message_media import _collect_file_placeholders
+
+        own = [{"kind": "file", "name": "例.pdf"}]
+        forwarded = [{"kind": "video", "name": "例.mp4"}]
+        entries = own + forwarded
+        text = "看这个 " + " ".join(_collect_file_placeholders(entries, 51))
+        with patch.object(message_mod, "_peek_event_db_id", return_value=51):
+            fragment = message_mod._build_current_fragment(
+                now_ms=1000, adapter_name=ADAPTER, group_id=GROUP, user_id="10001",
+                nickname="小光", msg_text=text,
+                own_image_urls=[], sticker_urls=[], quote_image_urls=[], forward_image_urls=[],
+                own_file_entries=own, forward_video_entries=forwarded,
+                delivery_generation=1, event_msg_id="ev-1", at_user_ids=(),
+            )
+        self.assertEqual(fragment.file_entries, entries)
+        with _Interface(self, "runs"):
+            reactive = build_reactive([fragment])
+            passive = build_passive([fragment])
+        for out in (reactive, passive):
+            self.assertEqual(out.content, "看这个 [文件:例.pdf] [视频]")
+            self.assertNotIn("#f0", out.content)
+            self.assertNotIn("#f1", out.content)
+            self.assertIn("[m:51]#f0", out.request_context)
+            self.assertIn("[m:51]#f1", out.request_context)
+            self.assertIn("get_message_files", out.request_context)
+        steer = pb.render_steer_rows([fragment], self_id=SELF, adapter=ADAPTER)
+        self.assertEqual(steer.text, "看这个 [文件:例.pdf] [视频]")
+        self.assertNotIn("#f0", steer.text)
+        self.assertNotIn("#f1", steer.text)
+
+
 class ZeroWrapMultimodalTests(_TimePatched):
     def test_parts_keep_body_then_media_without_labels(self) -> None:
         with _Interface(self, "runs"):

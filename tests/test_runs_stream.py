@@ -1190,3 +1190,42 @@ class InterimEmptyEnvelopeReplayTests(unittest.TestCase):
                 self.assertEqual(
                     runs_text.pending_after_interim(interim, fragment), fragment
                 )
+
+
+class InterimEmptySnapshotDeltaReplayTests(unittest.TestCase):
+    """空 interim 后，delta 重放本段累计文本不得与未闭合碎片二次拼接。"""
+
+    def _bodies(self, frames):
+        parser = RunsEventParser()
+        drained = feed_all(parser, frames)
+        bodies = [decision["body"] for decision in drained]
+        bodies.extend(decision["body"] for decision in parser.terminal_decisions())
+        return bodies
+
+    def test_two_bodies_empty_interim_then_full_delta_replay(self):
+        raw = "§\n甲\n§\n§\n乙\n§"
+        self.assertEqual(self._bodies([
+            {"event": "message.delta", "delta": raw, "seq": 0},
+            {"event": "message.interim", "text": "", "seq": 1},
+            {"event": "message.delta", "delta": raw, "seq": 2},
+            {"event": "run.completed", "output": raw, "seq": 3},
+        ]), ["甲", "乙"])
+
+    def test_one_body_empty_interim_then_cumulative_delta_with_newline(self):
+        raw = "§\n甲\n§"
+        self.assertEqual(self._bodies([
+            {"event": "message.delta", "delta": raw, "seq": 0},
+            {"event": "message.interim", "text": "", "seq": 1},
+            {"event": "message.delta", "delta": raw + "\n", "seq": 2},
+            {"event": "run.completed", "output": raw, "seq": 3},
+        ]), ["甲"])
+
+    def test_one_body_empty_interim_then_replay_before_tool(self):
+        raw = "§\n甲\n§"
+        self.assertEqual(self._bodies([
+            {"event": "message.delta", "delta": raw, "seq": 0},
+            {"event": "message.interim", "text": "", "seq": 1},
+            {"event": "message.delta", "delta": raw, "seq": 2},
+            {"event": "tool.started", "tool": "lookup", "seq": 3},
+            {"event": "run.completed", "output": "§\n工具后\n§", "seq": 4},
+        ]), ["甲", "工具后"])

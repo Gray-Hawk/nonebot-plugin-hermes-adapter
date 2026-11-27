@@ -1260,10 +1260,7 @@ def _render_steer_message_line(row: BufferedMessage) -> str:
         raise ValueError("bot 消息不得作为 steer 输入")
     if row.origin.author_kind is AuthorKind.SYSTEM:
         raise ValueError("系统来源行不得作为 steer 输入")
-    body = row.content or ""
-    if body.strip():
-        return body
-    return _semantic_media_placeholder(row)
+    return _body_without_wrap(row, history=False)
 
 
 def render_steer_batch(rows: Sequence[SteerRowPresentation]) -> str:

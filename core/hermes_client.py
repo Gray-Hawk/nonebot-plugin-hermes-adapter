@@ -767,7 +767,10 @@ class RunsEventParser:
         # 到达时就拆成单位进队，不在这里二次缓冲。`_seg_sent` 是本段**已原样发出**的完整
         # 单元文本。去重只在段内做全文匹配（interim 与 delta 是同一段文本的两种切帧），
         # 工具／控制帧封段即清空，跨段同文是两条独立消息——不做任何后缀折叠。
+        # `_seg_delta` 另存本段 delta 的累计原文：上游在 interim 后可能重放累计快照，
+        # 它能区分“续增字节”与“旧文重放”，避免把后者再拼到未闭合碎片后面。
         self._seg_text = ""
+        self._seg_delta = ""
         self._seg_sent: list[str] = []
         self._stream_pending: list[dict] = []
         self.decision_batch = 0
@@ -837,13 +840,21 @@ class RunsEventParser:
         self._queue_units(units)
 
     def _ingest_delta(self, piece: str) -> None:
-        """delta 增量 → 新闭合的正文单位立刻入队，未闭合碎片留在 ``_seg_text``。"""
+        """delta → 新闭合单位；累计快照重放则从快照重切，不接到旧碎片后。"""
         if not piece:
             return
         from .runs_text import TextUnitsError, take_closed_units
 
+        replay = bool(self._seg_delta) and piece.startswith(self._seg_delta)
+        if replay:
+            source = piece
+            self._seg_text = ""
+            self._seg_delta = piece
+        else:
+            source = self._seg_text + piece
+            self._seg_delta += piece
         try:
-            units, self._seg_text = take_closed_units(self._seg_text + piece)
+            units, self._seg_text = take_closed_units(source)
         except TextUnitsError as exc:
             self._fail_text(exc)
             return
@@ -878,6 +889,7 @@ class RunsEventParser:
         """封段：补发当前段 delta 里尚未发出的单元，然后开新段（段内去重清零）。"""
         self._emit_text(self._seg_text)
         self._seg_text = ""
+        self._seg_delta = ""
         self._seg_sent = []
 
     def drain_stream_decisions(self) -> list[Any]:
@@ -933,6 +945,10 @@ class RunsEventParser:
             self.interim_count += 1
             text = str(payload.get("text") or "")
             fragment, self._seg_text = self._seg_text, ""
+            if text and not self._seg_delta.startswith(text):
+                # 非空 interim 是权威全文；空快照不能擦掉此前 delta 的累计原文。
+                # delta 已比 interim 更长时保留较长者，后续累计重放仍可识别。
+                self._seg_delta = text
             self._emit_text(text)
             from .runs_text import pending_after_interim
 
@@ -979,6 +995,7 @@ class RunsEventParser:
             if self._seg_text.replace(SEPARATOR, "").strip():
                 self._note_suppressed("unsealed_delta_tail", self._seg_text, "terminal")
             self._seg_text = ""
+            self._seg_delta = ""
             self.terminal = True
             return
         if event == "run.failed":

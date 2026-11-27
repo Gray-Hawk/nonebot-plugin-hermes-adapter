@@ -102,6 +102,8 @@ def _build_current_fragment(
     delivery_generation: int | None, event_msg_id,
     at_user_ids: tuple[str, ...] = (),
     quote_sticker_urls: list[str] | None = None,
+    own_file_entries: list[dict] | None = None,
+    forward_video_entries: list[dict] | None = None,
 ) -> BufferedMessage:
     """构造本事件的触发 fragment(P-08:生产唯一构造点)。
 
@@ -119,6 +121,7 @@ def _build_current_fragment(
         quote_image_urls=list(quote_image_urls),
         quote_sticker_urls=list(quote_sticker_urls or []),
         forward_image_urls=list(forward_image_urls),
+        file_entries=list(own_file_entries or []) + list(forward_video_entries or []),
         reply_to_ts=None, is_bot=False,
         at_user_ids=tuple(at_user_ids),
         delivery_generation=delivery_generation,
@@ -471,6 +474,8 @@ async def handle_message(bot: Bot, event: Event, matcher: Matcher):
         quote_image_urls=list(replied_image_urls),
         quote_sticker_urls=list(replied_sticker_urls),
         forward_image_urls=list(_forward_image_urls or []),
+        own_file_entries=list(own_file_entries),
+        forward_video_entries=list(forward_video_entries),
         delivery_generation=delivery_generation,
         event_msg_id=event_platform_id,
         at_user_ids=at_user_ids,
