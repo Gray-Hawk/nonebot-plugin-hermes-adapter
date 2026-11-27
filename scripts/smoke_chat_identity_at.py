@@ -148,7 +148,7 @@ legacy = pb.render_current_rows([human("10001", "主人")], is_private=False)
 print(legacy)
 check("未给身份上下文保持旧字节形态", legacy == "[m:101] [id=10001 user=主人]:\n你好")
 
-print("\n== 6. steer 聊天行（直注/跟帖同一渲染入口） ==")
+print("\n== 6. steer 零包装正文与 source_row 身份（直注/跟帖同一渲染入口） ==")
 steer_rows = [
     human("10001", "主人", mid=501, at=(SELF,), text="插一句"),
     human("10003", "路人", mid=502, at=("10001",),
@@ -157,43 +157,41 @@ steer_rows = [
 ]
 steer = pb.render_steer_rows(steer_rows[:2], self_id=SELF, adapter=ADAPTER)
 print(steer.text)
-steer_body = region_rows(steer.text)
-check("steer 主人行与 current 行逐字节一致（同一条聊天行）",
-      steer_body.split("\n\n")[0] == "[有人@我] [m:501] [主人] [id=10001 user=主人]:\n插一句")
-check("steer 引用块/伪造 CQ/At 他人不误标",
-      "\n\n[m:502] [普通用户] [id=10003 user=路人]:\n" in steer.text
-      and "[有人@我] [m:502]" not in steer.text)
+check("steer 两行只保留正文与原顺序",
+      steer.text == f"插一句\n(引用 主人(10001): 提及{SELF}) [CQ:at,qq={SELF}] 我也说")
+check("steer source_row 保留各自行号、作者与结构化 @",
+      [item.source_row.id for item in steer.rows] == [501, 502]
+      and steer.rows[0].source_row.at_user_ids == (SELF,)
+      and steer.rows[1].source_row.at_user_ids == ("10001",))
 try:
     pb.render_steer_rows(steer_rows, self_id=SELF, adapter=ADAPTER)
     check("steer 来源闸仍然拒绝 bot 行", False)
 except ValueError:
     check("steer 来源闸仍然拒绝 bot 行", True)
-legacy_steer = pb.render_steer_rows(steer_rows[:1]).text
-print(legacy_steer)
-check("steer 无 bot 上下文:不贴身份栏，行文法与 current 同源",
-      region_rows(legacy_steer) == "[m:501] [id=10001 user=主人]:\n插一句")
+legacy_steer = pb.render_steer_rows(steer_rows[:1])
+print(legacy_steer.text)
+check("steer 无 bot 上下文仍保留 source_row，正文不加身份栏",
+      legacy_steer.text == "插一句" and legacy_steer.rows[0].source_row.user_id == "10001")
 
-print("\n== 7. 同一事实跨入口对照（普通 current / steer / 私聊） ==")
+print("\n== 7. 同一事实跨入口对照（普通 current 保留旧行头 / steer 零包装） ==")
 fact = human("10001", "主人", mid=601, at=(SELF,), text="在吗")
 cur_group = pb.render_current_rows([fact], is_private=False, self_id=SELF, adapter=ADAPTER)
 st_group = pb.render_steer_rows([fact], is_private=False, self_id=SELF, adapter=ADAPTER).text
 print("群 current:", cur_group)
 print("群 steer  :", st_group)
-check("群聊:current 与 steer 逐字节一致", cur_group == region_rows(st_group))
-check("群聊:steer 是聊天区区域块(同普通消息外观)",
-      st_group.startswith(pb._CHAT_REGION_OPEN + "\n") and st_group.endswith(pb._CHAT_REGION_CLOSE))
+check("群聊:current 旧接口行头不变，steer 只发正文",
+      cur_group == "[有人@我] [m:601] [主人] [id=10001 user=主人]:\n在吗" and st_group == "在吗")
 fact_p = human("10001", "主人", mid=602, at=(SELF,), group=None, text="在吗")
 cur_priv = pb.render_current_rows([fact_p], is_private=True, self_id=SELF, adapter=ADAPTER)
 st_priv = pb.render_steer_rows([fact_p], is_private=True, self_id=SELF, adapter=ADAPTER).text
 print("私 current:", cur_priv)
 print("私 steer  :", st_priv)
-check("私聊:current 与 steer 逐字节一致", cur_priv == region_rows(st_priv))
-check("私聊单人行省略 speaker", cur_priv == "[m:602]:\n在吗")
+check("私聊:current 省略 speaker，steer 只发正文", cur_priv == "[m:602]:\n在吗" and st_priv == "在吗")
 from nonebot_plugin_hermes_adapter.core import steer_reconcile  # noqa: E402
-stripped = steer_reconcile.original_text_of({"m_id": "401", "raw_text": "插一句\n(引用 主人(10001): 提及2968545011) [CQ:at,qq=2968545011] 我也说"})
+stripped = steer_reconcile.original_text_of({"m_id": "401", "raw_text": f"插一句\n(引用 主人(10001): 提及{SELF}) [CQ:at,qq={SELF}] 我也说"})
 print("回收剥壳 →", repr(stripped))
 check("恢复改投逐字节读原文(零剥壳)",
-      stripped == "插一句\n(引用 主人(10001): 提及2968545011) [CQ:at,qq=2968545011] 我也说")
+      stripped == f"插一句\n(引用 主人(10001): 提及{SELF}) [CQ:at,qq={SELF}] 我也说")
 check("旧账项剥壳幂等（兼容边界不叠壳）",
       steer_reconcile.strip_steer_presentation("[主人] 只是正文") == "[主人] 只是正文")
 check("私聊改投读原文",

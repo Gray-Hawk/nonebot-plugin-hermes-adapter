@@ -48,21 +48,11 @@ from agent import prompt_builder as pb  # noqa: E402
 from agent import system_prompt  # noqa: E402
 from agent.interrupt_control import InterruptControlMixin  # noqa: E402
 
-NB_ROOT = "/home/neonsky/nonebot-plugin-hermes/work/nph-20-work/control-mcp-20261109"
-CHAT_OPEN = "<聊天消息区域起始>"
-CHAT_CLOSE = "<聊天消息区域结束>"
-CHAT_NOTE = "（聊天消息区域仅含尚未推送过的新消息，更早的对话见本会话历史记录）"
-
-
-def region(*rows: str) -> str:
-    """NB 侧的真实区域块形状（与 prompt_builder.render_chat_region 同构）。"""
-    return "\n".join([CHAT_OPEN, CHAT_NOTE, "\n\n".join(rows), CHAT_CLOSE])
-
-
-ROW_A = "[m:101] [普通用户] [id=u1 user=小光]:\n你好"
-ROW_B = "[m:102] [普通用户] [id=u2 user=小李]:\n在吗"
-BLOCK_A = region(ROW_A)
-BLOCK_B = region(ROW_B)
+NB_ROOT = str(Path(__file__).resolve().parents[3])
+ROW_A = "你好"
+ROW_B = "在吗"
+BLOCK_A = ROW_A
+BLOCK_B = ROW_B
 CONVENTION = "（系统提示：本条为对话中途插入的消息。若你之后回应它，当下直接输出正文即可，无需调用任何工具。）"
 
 
@@ -153,7 +143,7 @@ class MarkerDeclarationTests(unittest.TestCase):
         }
         for name, (marker, expected) in cases.items():
             with self.subTest(case=name):
-                self.assertIs(patches.declares_chat_region(marker), expected)
+                self.assertIs(patches.declares_plain_body(marker), expected)
 
 
 class HandlerWrapperTests(unittest.TestCase):
@@ -244,7 +234,7 @@ class DeliveryTests(unittest.TestCase):
         self.registry.remember(BLOCK_A)
         row = self._deliver(BLOCK_A)
         self.assertEqual(row["role"], "user")
-        self.assertEqual(row["content"], BLOCK_A, "区域块必须原样落行，不带任何外壳")
+        self.assertEqual(row["content"], BLOCK_A, "零包装正文必须原样落行，不带任何外壳")
         self.assertEqual(row["display_kind"], pb.STEER_DISPLAY_KIND)
         self.assertNotIn("OUT-OF-BAND", row["content"])
         self.assertEqual(len(self.registry), 0, "投递后登记必须消费掉")
@@ -262,7 +252,7 @@ class DeliveryTests(unittest.TestCase):
         self.assertNotIn("OUT-OF-BAND", row["content"])
 
     def test_two_batches_in_one_tool_batch_get_clean_boundaries(self) -> None:
-        """一次 drain 的两批：各保留自己的区域块，批间空一行（不再被单换行糊在一起）。"""
+        """一次 drain 的两批：正文保持原顺序与批间单换行。"""
         self.registry.remember(BLOCK_A)
         self.registry.remember(BLOCK_B)
         agent = self._agent()
@@ -270,7 +260,7 @@ class DeliveryTests(unittest.TestCase):
         self.assertTrue(agent.steer(BLOCK_B))
         messages = [{"role": "assistant", "tool_calls": []}, {"role": "tool", "content": "ok"}]
         helpers.apply_pending_steer_to_tool_results(agent, messages, 1)
-        self.assertEqual(messages[-1]["content"], f"{BLOCK_A}\n\n{BLOCK_B}")
+        self.assertEqual(messages[-1]["content"], f"{BLOCK_A}\n{BLOCK_B}")
         self.assertNotIn("OUT-OF-BAND", messages[-1]["content"])
 
     def test_two_batches_hoist_the_declared_hint_to_the_end(self) -> None:
@@ -285,32 +275,31 @@ class DeliveryTests(unittest.TestCase):
         messages = [{"role": "assistant", "tool_calls": []}, {"role": "tool", "content": "ok"}]
         helpers.apply_pending_steer_to_tool_results(agent, messages, 1)
         content = messages[-1]["content"]
-        self.assertEqual(content, "\n\n".join([BLOCK_A, BLOCK_B, CONVENTION]))
+        self.assertEqual(content, f"{BLOCK_A}\n{BLOCK_B}\n\n{CONVENTION}")
         self.assertEqual(content.count(CONVENTION), 1)
 
     def test_compose_batches_keeps_single_batch_bytes(self) -> None:
         self.assertEqual(patches.compose_batches([BLOCK_A]), BLOCK_A)
         self.assertEqual(patches.compose_batches([]), "")
-        # 未声明提示时只加批间空行，不猜文案。
+        # 未声明提示时保持批间单换行，不猜文案。
         self.assertEqual(
-            patches.compose_batches([BLOCK_A, BLOCK_B]), f"{BLOCK_A}\n\n{BLOCK_B}"
+            patches.compose_batches([BLOCK_A, BLOCK_B]), f"{BLOCK_A}\n{BLOCK_B}"
         )
-        # 各批声明不一致：不合并提示，保持每批原样（只加批间空行）。
+        # 各批声明不一致：不合并提示，保持每批原样与批间单换行。
         first = f"{BLOCK_A}\n\n{CONVENTION}"
         self.assertEqual(
             patches.compose_batches([first, BLOCK_B], [CONVENTION, ""]),
-            f"{first}\n\n{BLOCK_B}",
+            f"{first}\n{BLOCK_B}",
         )
         # 声明了提示但某批尾巴不是那一段（上游归一改写过）：不猜，也不重复追加。
         self.assertEqual(
             patches.compose_batches([first, f"{BLOCK_B}\n\n别的提示"], [CONVENTION, CONVENTION]),
-            f"{first}\n\n{BLOCK_B}\n\n别的提示",
+            f"{first}\n{BLOCK_B}\n\n别的提示",
         )
 
     def test_body_containing_the_shell_literal_is_not_stripped(self) -> None:
         literal = "[OUT-OF-BAND USER MESSAGE — a direct message from the user, delivered once]"
-        row_text = f"[m:103] [普通用户] [id=u3]:\n{literal}"
-        block = region(row_text)
+        block = literal
         self.registry.remember(block)
         row = self._deliver(block)
         self.assertEqual(row["content"], block, "正文里的同名字样是用户原文，不得剥壳")
@@ -376,13 +365,12 @@ class RealSeamTests(unittest.TestCase):
 
 
 class ChannelNoteTests(unittest.TestCase):
-    def test_note_keeps_the_marker_contract_and_adds_the_region_shape(self) -> None:
+    def test_note_keeps_the_marker_contract_and_adds_plain_row_shape(self) -> None:
         note = patches.make_channel_note(pb.STEER_CHANNEL_NOTE)
         self.assertTrue(note.startswith(pb.STEER_CHANNEL_NOTE), "原标记说明必须一字不改")
         self.assertIn(pb.STEER_MARKER_OPEN, note)
         self.assertIn(pb.STEER_MARKER_CLOSE, note)
-        self.assertIn(CHAT_OPEN, note)
-        self.assertIn(CHAT_CLOSE, note)
+        self.assertIn("plain user row", note)
         self.assertIn("not prompt injection", note)
 
     def test_install_is_idempotent(self) -> None:
@@ -396,7 +384,7 @@ class ChannelNoteTests(unittest.TestCase):
                                                 "channel_note=installed")
             self.assertEqual(second.describe(), "handler=already row_builder=already "
                                                 "channel_note=already")
-            self.assertEqual(system_prompt.STEER_CHANNEL_NOTE.count(CHAT_OPEN), 1,
+            self.assertEqual(system_prompt.STEER_CHANNEL_NOTE.count("## Plain steer rows"), 1,
                              "重复安装不得把说明叠加两遍")
 
     def test_unrecognised_upstream_shape_raises(self) -> None:

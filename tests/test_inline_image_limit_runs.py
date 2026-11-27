@@ -34,6 +34,7 @@ from tests.test_runs_stream import _ClientChain, sse_lines  # noqa: E402
 from nonebot_plugin_hermes_adapter.config import plugin_config  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import hermes_client as hc  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
+from nonebot_plugin_hermes_adapter.core import turn_context as tc  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.run_tracker import RunTracker  # noqa: E402
@@ -83,6 +84,15 @@ def part_texts(content) -> list[str]:
     return [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
 
 
+class _ContextAckChain(_ClientChain):
+    """插件受理了 hermes_context：避免无关的「未被受理」WARNING 混进计数。"""
+
+    async def post(self, url, json=None, headers=None, timeout=None):
+        resp = await super().post(url, json=json, headers=headers, timeout=timeout)
+        resp.headers[tc.TURN_CONTEXT_HEADER] = tc.TURN_CONTEXT_REGISTERED
+        return resp
+
+
 class _RunsSubmit:
     """真实 chat → 真实 _chat_via_runs，只在 HTTP 处截获 POST /v1/runs 的 body。"""
 
@@ -90,7 +100,7 @@ class _RunsSubmit:
         tmp = tempfile.TemporaryDirectory()
         self.add_cleanup = tmp.cleanup
         self.tracker = RunTracker(Path(tmp.name) / "t.db")
-        self.fake = _ClientChain(
+        self.fake = _ContextAckChain(
             "run-inline-cap",
             sse_lines([{"event": "run.completed", "output": "§\n收到\n§", "seq": 0}]),
         )
@@ -99,7 +109,7 @@ class _RunsSubmit:
         self.tracker.close()
         self.add_cleanup()
 
-    async def submit(self, content):
+    async def submit(self, built):
         from nonebot_plugin_hermes_adapter import mcp as mcp_module
 
         with patch.object(hc, "_get_http_client", return_value=self.fake), \
@@ -115,7 +125,8 @@ class _RunsSubmit:
                 expect_structured=True,
                 structured_tool_name="submit_decision",
                 system_prompt="SYS",
-                user_content_override=content,
+                user_content_override=built.content,
+                request_context=built.request_context,
                 target=SimpleNamespace(base_url="http://127.0.0.1:1", api_key="", timeout=5, label="t"),
                 bot_self_id=SELF,
             )
@@ -142,13 +153,13 @@ class InlineImageCapTests(unittest.IsolatedAsyncioTestCase):
             current_image_urls=image_urls or [],
             current_sticker_urls=sticker_urls or [],
             self_id=SELF, adapter=ADAPTER,
-        ).content
+        )
 
     async def test_twelve_inline_images_keep_the_last_ten(self) -> None:
         mids = [71420 + i for i in range(12)]
         built = self._built(image_groups(mids))
         # 构造前提：真实 builder 确实吐出 12 个 data 图片 part（上游 _IMAGE_LIMIT=10 会拒）
-        self.assertEqual(inline_images(built), [data_image(i) for i in range(12)])
+        self.assertEqual(inline_images(built.content), [data_image(i) for i in range(12)])
 
         body = await self.submit_ctx.submit(built)
         content = body["input"][0]["content"]
@@ -158,7 +169,7 @@ class InlineImageCapTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(inline_images(content)), 10)
 
     async def test_dropped_images_keep_recall_labels(self) -> None:
-        """被移除的图片仍留 `[图 m:id#idx]` 文本标记：用户与模型可按 m:id 召回。"""
+        """被移除的图片仍在请求级媒体索引里可按 m:id 召回（正文不再贴标签）。"""
         mids = [71420 + i for i in range(12)]
         built = self._built(image_groups(mids))
 
@@ -166,11 +177,12 @@ class InlineImageCapTests(unittest.IsolatedAsyncioTestCase):
         content = body["input"][0]["content"]
 
         self.assertEqual(inline_images(content), [data_image(i) for i in range(2, 12)])
-        labels = "\n".join(part_texts(content))
+        request_context = body["hermes_context"]["request_context"]
         for mid in mids:  # 含被丢的最早两张
-            self.assertIn(f"[图 m:{mid}#0]", labels)
-        # 文本 part 一个不少：12 个寻址标签 + 开头总文本块
-        self.assertEqual(sum(1 for text in part_texts(content) if "[图 m:" in text), 12)
+            self.assertIn(f"[m:{mid}]#0", request_context)
+        self.assertEqual(request_context.count("#0 图"), 12)
+        # 正文零包装：媒体寻址不再以 text part 形式混进 user content
+        self.assertFalse(any("[m:" in text for text in part_texts(content)))
 
     async def test_over_limit_logs_counts_without_payload(self) -> None:
         """WARNING 只报丢弃/保留数量；不打印 data URL、图片字节或提示词正文。"""
@@ -196,7 +208,7 @@ class InlineImageCapTests(unittest.IsolatedAsyncioTestCase):
             body = await self.submit_ctx.submit(built)
 
         content = body["input"][0]["content"]
-        self.assertIs(content, built, "恰好 10 张不该被重建")
+        self.assertIs(content, built.content, "恰好 10 张不该被重建")
         self.assertEqual(len(inline_images(content)), 10)
         warn.assert_not_called()
 
@@ -206,8 +218,12 @@ class InlineImageCapTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(hc.logger, "warning") as warn:
             body = await self.submit_ctx.submit(built)
 
-        self.assertIsInstance(built, str)
-        self.assertEqual(body["input"][0]["content"], built)
+        self.assertIsInstance(built.content, str)
+        self.assertEqual(body["input"][0]["content"], built.content)
+        self.assertEqual(
+            body["hermes_context"]["request_context"], built.request_context,
+            "纯文本回合同样携带请求级上下文",
+        )
         warn.assert_not_called()
 
     async def test_mixed_images_and_stickers_keep_the_last_ten(self) -> None:
@@ -217,7 +233,7 @@ class InlineImageCapTests(unittest.IsolatedAsyncioTestCase):
         built = self._built(
             image_groups(image_mids), sticker_groups(sticker_mids, start=7)
         )
-        self.assertEqual(len(inline_images(built)), 13)
+        self.assertEqual(len(inline_images(built.content)), 13)
 
         body = await self.submit_ctx.submit(built)
         content = body["input"][0]["content"]
@@ -226,11 +242,11 @@ class InlineImageCapTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             inline_images(content), [data_image(i) for i in range(3, 13)]
         )
-        labels = "\n".join(part_texts(content))
+        request_context = body["hermes_context"]["request_context"]
         for mid in image_mids:
-            self.assertIn(f"[图 m:{mid}#0]", labels)
+            self.assertIn(f"[m:{mid}]#0 图", request_context)
         for mid in sticker_mids:
-            self.assertIn(f"[表情包 m:{mid}#0]", labels)
+            self.assertIn(f"[m:{mid}]#0 表情", request_context)
 
     async def test_remote_url_parts_are_not_counted_or_dropped(self) -> None:
         """远程 URL 图片 part 不受内联数量闸约束（上限只管 data: 内联字节）。"""

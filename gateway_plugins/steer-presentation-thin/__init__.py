@@ -2,7 +2,7 @@
 
 * ``patches``：``/v1/runs/{id}/steer`` 请求体带 NB 的结构化呈递标记时，本批文本投递
   时不再套 ``[OUT-OF-BAND …]`` 外壳（原样落成那条 user 行）；系统提示的 steer 说明
-  追加一段，让模型认识区域块外观的可信身份。
+  追加一段，让模型认识零包装 user 行的可信身份。
 
 ``register`` 与 ``api_server.connect()`` 两处都调用 install（幂等，重连不叠 wrapper）。
 """

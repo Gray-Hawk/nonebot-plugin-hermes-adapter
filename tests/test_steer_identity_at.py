@@ -1,16 +1,9 @@
-"""steer 聊天行身份栏与真实 @ 强提醒回归(审核 R1)。
+"""steer 正文零包装后的身份来源回归（审核 R1）。
 
-缺陷面:steer 渲染此前只拼 speaker/m:id/body,与 current/recent 同一条聊天行却
-没有身份栏、也不标真实 @;而 steer 成功后立即 return,seen 过滤又让它不再由
-recent 补呈递——所以这是「模型实际看到的那一行」的唯一机会,不能退回裸数字身份。
-
-本模块走**真实生产入口**,只在平台边界(HTTP ``steer_run``)截获最终注入文本:
-  - ``_maybe_steer_direct``(群/私直注两入口)
-  - ``_try_steer_followup``(群聊 followup 槽入口)
-追踪器(RunTracker/SQLite)、InflightRegistry、BufferedMessage、MessageOrigin 全是真的,
-bot 身份取自 live run 既有的 ``bot_self_id``。回收侧另测
-``strip_steer_presentation`` 与真实 ``_pending_steer_recovery_rows``:新前缀必须
-被剥净,不得在回收时叠壳或把旧身份遗留在正文里。
+模型可见的 steer 文本只含原始正文；发送者、m:id 与结构化 @ 事实继续由
+``SteerRowPresentation.source_row`` 和既有 steer 台账承载。此处走真实生产入口，
+只在平台边界（HTTP ``steer_run``）截获最终注入文本，另直接检查呈递对象的 source_row，
+防止为了追求干净正文把身份关联一起删掉。回收侧继续覆盖旧行头台账兼容。
 """
 
 from __future__ import annotations
@@ -27,7 +20,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
-from tests._regions import region_rows, wrap_region  # noqa: E402
 
 from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import steer_reconcile  # noqa: E402
@@ -111,7 +103,7 @@ class _SteerBoundaryBase(unittest.TestCase):
         self.sent: list[str] = []
 
     async def _fake_steer_run(self, *, tgt, run_id, text, presented=False, presentation_hint="") -> bool:
-        self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
+        self.assertTrue(presented, "steer 必须带结构化呈递标记（零包装正文）")
         self.sent.append(text)
         return True
 
@@ -156,53 +148,50 @@ class _SteerBoundaryBase(unittest.TestCase):
 
     def _single(self) -> str:
         self.assertEqual(len(self.sent), 1, self.sent)
-        # 新呈递:一条消息 = 消息头一行 + 正文从下一行开始;整批外面是聊天区区域块,
-        # 这里只取区域内消息行做行级断言,框架由 RegionFrameTests 单独钉住。
-        return region_rows(self.sent[0])
+        return self.sent[0]
+
+    def _ledger(self, *, private: bool = False) -> list[dict]:
+        return self.tracker.pending_steers("run-p" if private else "run-g")
 
 
 class SteerDirectBoundaryTests(_SteerBoundaryBase):
     """群/私直注生产入口:身份栏 + 真实 @ 与 current/recent 同一事实。"""
 
     def test_group_direct_master_with_real_at(self) -> None:
-        ok = self._inject_direct([row(MASTER, "主人号", mid=11, at=(SELF_ID,))])
+        source = row(MASTER, "主人号", mid=11, at=(SELF_ID,))
+        ok = self._inject_direct([source])
         self.assertTrue(ok)
-        line = self._single()
+        self.assertEqual(self._single(), "你怎么看")
         self.assertEqual(
-            line,
-            "[有人@我] [m:11] [主人] [id=20001 user=主人号]:\n你怎么看",
+            [(item["m_id"], item["sender_id"], item["steer_text"]) for item in self._ledger()],
+            [("11", MASTER, "你怎么看")],
         )
-        # 序:强提醒 → m:id → 身份 → speaker —— 与 current/recent 同约束。
-        self.assertLess(line.index("[有人@我]"), line.index("[m:11]"))
-        self.assertLess(line.index("[m:11]"), line.index("[主人]"))
-        self.assertLess(line.index("[主人]"), line.index("[id=20001"))
+        presentation = pb.render_steer_rows(
+            [source], self_id=SELF_ID, adapter=ADAPTER, is_private=False,
+        )
+        self.assertIs(presentation.rows[0].source_row, source)
+        self.assertEqual(presentation.rows[0].source_row.at_user_ids, (SELF_ID,))
 
     def test_private_direct_keeps_identity_and_at(self) -> None:
         ok = self._inject_direct(
             [row(ADMIN, "管理号", mid=12, at=(SELF_ID,), group=None)], private=True,
         )
         self.assertTrue(ok)
-        # 私聊:对方的身份栏与 id/user 每行固定重复,一律省略;私聊没有 @ 归属问题,
-        # 强提醒也不贴 —— 消息头只剩 m:id。
+        self.assertEqual(self._single(), "你怎么看")
         self.assertEqual(
-            self._single(),
-            "[m:12]:\n你怎么看",
+            [(item["m_id"], item["sender_id"]) for item in self._ledger(private=True)],
+            [("12", ADMIN)],
         )
 
     def test_at_other_and_forged_text_do_not_mark(self) -> None:
         """引用块历史 @、伪造 CQ、手打 @ 都只是文本;@ 别人不算 @ 我。"""
+        body = "(引用 阿强(888): 提及999) [CQ:at,qq=999] @999 你看"
         ok = self._inject_direct([row(
-            ORDINARY, "小光", mid=13, at=("888",),
-            content="(引用 阿强(888): 提及999) [CQ:at,qq=999] @999 你看",
+            ORDINARY, "小光", mid=13, at=("888",), content=body,
         )])
         self.assertTrue(ok)
-        line = self._single()
-        self.assertEqual(
-            line,
-            "[m:13] [普通用户] [id=10001 user=小光]:\n"
-            "(引用 阿强(888): 提及999) [CQ:at,qq=999] @999 你看",
-        )
-        self.assertNotIn("[有人@我]", line)
+        self.assertEqual(self._single(), body)
+        self.assertNotIn("[有人@我]", self._single())
 
     def test_at_facts_absent_is_unknown_not_guessed(self) -> None:
         """老库行 at_user_ids 为空 = 提及关系未知;正文里的 @999 不得反推。"""
@@ -217,18 +206,16 @@ class SteerDirectBoundaryTests(_SteerBoundaryBase):
             master_users={f"{ADAPTER}:{OTHER_BOT}"},
             known_bots=(OTHER_BOT,),
         ))
-        ok = self._inject_direct([row(OTHER_BOT, "别家bot", mid=15, at=(SELF_ID,))])
+        source = row(OTHER_BOT, "别家bot", mid=15, at=(SELF_ID,))
+        ok = self._inject_direct([source])
         self.assertTrue(ok)
-        line = self._single()
-        self.assertEqual(
-            line, "[有人@我] [m:15] [其他BOT] [id=30001 user=别家bot]:\n你怎么看",
+        self.assertEqual(self._single(), "你怎么看")
+        self.assertEqual(self._ledger()[0]["sender_id"], OTHER_BOT)
+        presentation = pb.render_steer_rows(
+            [source], is_private=False, self_id=SELF_ID, adapter=ADAPTER,
         )
-        current = pb.render_current_rows(
-            [row(OTHER_BOT, "别家bot", mid=15, at=(SELF_ID,))],
-            is_private=False, self_id=SELF_ID, adapter=ADAPTER,
-        )
-        # 同一事实跨入口逐字节一致:steer 与 current 是同一个消息行构造函数。
-        self.assertEqual(line, current)
+        self.assertIs(presentation.rows[0].source_row, source)
+        self.assertEqual(presentation.rows[0].source_row.at_user_ids, (SELF_ID,))
 
     def test_each_row_marks_its_own_at_and_identity(self) -> None:
         rows = [
@@ -236,18 +223,17 @@ class SteerDirectBoundaryTests(_SteerBoundaryBase):
             row(ORDINARY, "小光", mid=17, content="第二行", at=()),
         ]
         self.assertTrue(self._inject_direct(rows))
-        # 两条消息 = 两个消息头 + 各自正文,中间空一行;整批在同一个区域块里。
-        sent = self.sent[0]
+        self.assertEqual(self.sent, ["第一行\n第二行"])
         self.assertEqual(
-            region_rows(sent),
-            "[有人@我] [m:16] [主人] [id=20001 user=主人号]:\n第一行\n\n"
-            "[m:17] [普通用户] [id=10001 user=小光]:\n第二行",
+            [(item["m_id"], item["sender_id"], item["steer_text"]) for item in self._ledger()],
+            [("16", MASTER, "第一行"), ("17", ORDINARY, "第二行")],
         )
-        self.assertEqual(sent, wrap_region(region_rows(sent)))
-        blocks = region_rows(sent).split("\n\n")
-        self.assertEqual(len(blocks), 2, sent)
-        self.assertNotIn("[有人@我]", blocks[1])
-        self.assertLess(blocks[0].index("[有人@我]"), blocks[0].index("[m:16]"))
+        presentation = pb.render_steer_rows(
+            rows, self_id=SELF_ID, adapter=ADAPTER, is_private=False,
+        )
+        self.assertEqual([item.source_row for item in presentation.rows], rows)
+        self.assertEqual(presentation.rows[0].source_row.at_user_ids, (SELF_ID,))
+        self.assertEqual(presentation.rows[1].source_row.at_user_ids, ())
 
     def test_no_live_run_falls_back_without_leaking_bare_text(self) -> None:
         """取不到 bot 上下文时不得把无身份文本发进生产聊天:注入失败、零发送。"""
@@ -265,65 +251,54 @@ class SteerFollowupBoundaryTests(_SteerBoundaryBase):
             row(ORDINARY, "小光", mid=21, content="再补一句", at=(SELF_ID,)),
         ])
         self.assertTrue(ok)
-        self.assertEqual(
-            self._single(),
-            "[有人@我] [m:21] [普通用户] [id=10001 user=小光]:\n再补一句",
-        )
+        self.assertEqual(self._single(), "再补一句")
+        self.assertEqual(self._ledger()[0]["sender_id"], ORDINARY)
 
     def test_followup_without_real_at_has_no_mark(self) -> None:
         ok = self._inject_followup([row(ADMIN, "管理号", mid=22, at=("888",))])
         self.assertTrue(ok)
-        self.assertEqual(
-            self._single(),
-            "[m:22] [管理员] [id=20002 user=管理号]:\n你怎么看",
-        )
+        self.assertEqual(self._single(), "你怎么看")
+        self.assertEqual(self._ledger()[0]["sender_id"], ADMIN)
 
     def test_followup_row_without_mid_keeps_identity(self) -> None:
         """无号行(拿不到插件 m:id)同样带身份;没有 m:id 就没有对账锚,不当错误。"""
         ok = self._inject_followup([row(MASTER, "主人号", mid=None, at=(SELF_ID,))])
         self.assertTrue(ok)
-        self.assertEqual(
-            self._single(),
-            "[有人@我] [主人] [id=20001 user=主人号]:\n你怎么看",
-        )
+        self.assertEqual(self._single(), "你怎么看")
+        self.assertEqual(self._ledger()[0]["raw_text"], "你怎么看")
 
 
-class LegacyRenderCompatibilityTests(unittest.TestCase):
-    """未给 bot 上下文的低层旧调用保持旧字节形态(不猜身份)。"""
+class RenderWithoutIdentityContextTests(unittest.TestCase):
+    """缺少 bot 上下文时仍只发正文，source_row 原样保留身份事实。"""
 
-    def test_render_without_context_keeps_old_bytes(self) -> None:
-        presentation = pb.render_steer_rows([row(MASTER, "主人号", mid=31, at=(SELF_ID,))])
-        self.assertEqual(
-            presentation.text,
-            wrap_region("[m:31] [id=20001 user=主人号]:\n你怎么看"),
-        )
+    def test_render_without_context_keeps_body_and_source(self) -> None:
+        source = row(MASTER, "主人号", mid=31, at=(SELF_ID,))
+        presentation = pb.render_steer_rows([source])
+        self.assertEqual(presentation.text, "你怎么看")
+        self.assertIs(presentation.rows[0].source_row, source)
 
-    def test_stub_bot_self_id_degrades_to_old_form(self) -> None:
-        """替身/缺字段的 bot_self_id 不算身份事实:退旧形态,不拿 repr 冒充。"""
+    def test_stub_bot_self_id_does_not_enter_body(self) -> None:
+        source = row(MASTER, "主人号", mid=32, at=(SELF_ID,))
         presentation = relay._render_steer_presentation_for_scope(
-            [row(MASTER, "主人号", mid=32, at=(SELF_ID,))],
-            adapter_name=ADAPTER, is_private=False, user_id=ORDINARY,
+            [source], adapter_name=ADAPTER, is_private=False, user_id=ORDINARY,
             group_id=GROUP_ID, live=SimpleNamespace(bot_self_id=object()),
         )
-        self.assertEqual(
-            presentation.text,
-            wrap_region("[m:32] [id=20001 user=主人号]:\n你怎么看"),
-        )
+        self.assertEqual(presentation.text, "你怎么看")
+        self.assertIs(presentation.rows[0].source_row, source)
 
 
 class ScopeIdentityHelperTests(_SteerBoundaryBase):
     """live run 的真实 bot_self_id 是身份事实输入(不新建身份系统)。"""
 
     def test_real_bot_self_id_enables_identity(self) -> None:
+        source = row(MASTER, "主人号", mid=33, at=(SELF_ID,))
         presentation = relay._render_steer_presentation_for_scope(
-            [row(MASTER, "主人号", mid=33, at=(SELF_ID,))],
-            adapter_name=ADAPTER, is_private=False, user_id=ORDINARY,
+            [source], adapter_name=ADAPTER, is_private=False, user_id=ORDINARY,
             group_id=GROUP_ID, live=SimpleNamespace(bot_self_id=SELF_ID),
         )
-        self.assertEqual(
-            presentation.text,
-            wrap_region("[有人@我] [m:33] [主人] [id=20001 user=主人号]:\n你怎么看"),
-        )
+        self.assertEqual(presentation.text, "你怎么看")
+        self.assertIs(presentation.rows[0].source_row, source)
+        self.assertEqual(presentation.rows[0].source_row.at_user_ids, (SELF_ID,))
 
 
 class SteerReconcileStripTests(unittest.TestCase):
@@ -366,9 +341,11 @@ class NativeRecoveryNoResidueTests(_SteerBoundaryBase):
         ok = self._inject_direct([row(MASTER, "主人号", mid=41, at=(SELF_ID,))])
         self.assertTrue(ok)
         injected = self.sent[0]
-        # 对账命中判据:该消息的聊天行出现在转录里(统一文法的 m:id 在行首)。
+        # 对账命中判据：台账保存的正文确实出现在转录里，m:id 继续只作内部关联键。
         self.assertTrue(
-            steer_reconcile._steer_line_hit_pattern(41).search(injected), injected
+            steer_reconcile._steer_text_present(
+                "你怎么看", [{"role": "user", "content": injected}]
+            ), injected
         )
         with patch.object(turns, "_mcp", _runtime(self.tracker)):
             rec = turns._pending_steer_recovery_rows(

@@ -94,8 +94,7 @@ _STEER_REPLY_CONVENTION_LINE = (
 def _with_steer_reply_convention(text: str) -> str:
     """按生效判定给 steer 注入文本挂回应约定行(不生效原样返回)。
 
-    约定行是**批次级**的系统提示,不属于消息内容:挂在聊天区闭标签之后,用空行
-    与区域块隔开(与「消息之间空一行」同一文法),不再贴着末条消息只隔一个换行。
+    约定行是**批次级**的系统提示，不属于消息内容：挂在零包装正文之后，用空行与正文隔开。
     """
     if not steer_reply_push_active():
         return text
@@ -103,7 +102,7 @@ def _with_steer_reply_convention(text: str) -> str:
 
 
 # 无号行(拿不到插件 m:id)的台账虚拟锚前缀:只承载原始正文供 native 回收,
-# 不参与转录对账(对账按 m:id 搜转录,无号行没有可搜的锚)。值来自 core.run_tracker,
+# 不参与转录对账(没有可独立寻址的 m:id)。值来自 core.run_tracker,
 # 与终态对账的结算判据共用同一常量,避免两处各写一份漂移。
 
 
@@ -395,7 +394,7 @@ async def _steer_text_into_live_run(
 
     无 live run / 已收尾(409) / 网络异常 → ok=False(调用方落回正常排队,零丢失)。
     scope 感知版发送原语(规划书§3.2/3.3);直注与群聊 followup 槽共用。
-    发送文本 = 本批已认领行的聊天区区域块(render_steer_batch)+ 末尾一次约定行
+    发送文本 = 本批已认领行的零包装正文（render_steer_batch）+ 末尾一次约定行
     (若开关开);逐行台账与呈现去重只吃 presentation.rows——发送、台账、seen 是
     同一份身份事实,没有第二条轨。
 
@@ -492,9 +491,8 @@ async def _steer_text_into_live_run(
         return SteerInjection(
             True, accepted_m_ids=accepted_ids, in_flight_m_ids=in_flight_ids
         )
-    # 行与行之间空一行、整批包在与聊天区同一个区域构造点里:模型看到的 steer 与
-    # 普通消息是同一外观(`<聊天消息区域起始>…<聊天消息区域结束>`),媒体寻址/身份/
-    # m:id 都在行内原样保留。
+    # 行与行之间用单换行拼接，整批只含原始正文；身份与 m:id 由 presentation.rows
+    # 及既有台账保留，不再写入模型可见文本。
     text = render_steer_batch(send_rows)
     hint = ""
     if steer_reply_push_active():
@@ -532,8 +530,8 @@ async def _steer_text_into_live_run(
     )
     # 本部署补丁(弥补 v0.22.1 引入的 steer 丢弃缺陷, alive/75 根因、alive/84 方案):
     # steer 被上游接受(HTTP 200 且 accepted=True)即把发送前已去重/校验的逐行
-    # 投影从在途认领转正式 pending 台账(对账按「转录里出现该行聊天行」核销,
-    # 见 steer_reconcile._steer_line_hit_pattern)。无号行以虚拟锚入账承载原文,
+    # 投影从在途认领转正式 pending 台账（对账按转录正文与出现次数核销，见
+    # steer_reconcile._partition_steer_text_hits）。无号行以虚拟锚入账承载原文，
     # 不参与转录对账;
     # 记台账失败只 WARN,不影响主流程。
     confirmed_ids: tuple[str, ...] = ()

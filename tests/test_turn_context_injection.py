@@ -141,19 +141,19 @@ class BuilderRunsSplitTests(unittest.TestCase):
             out = build_reactive([human(), notice])
 
         self.assertIsInstance(out.content, str)
-        # 1. 可见 content 不含顶层通知区
+        # 1. 可见 content 只有真实正文，不含通知／时间／区域／消息头
+        self.assertEqual(out.content, "看这条")
         self.assertNotIn(NOTICE_OPEN, out.content)
-        self.assertNotIn(NOTICE_CLOSE, out.content)
+        self.assertNotIn(CHAT_OPEN, out.content)
         # 2. 通知完整进了独立字段
         self.assertEqual(out.context_notices, expected_notice_region([notice]))
         self.assertIn("t_1 已完成", out.context_notices)
-        # 3. 正文 reminder 与 closing_reminder 一致，且只出现一次
+        # 3. 近因 reminder 只走 closing_reminder，不再写回正文
         self.assertTrue(out.closing_reminder.startswith("\n\n请直接输出正文"))
-        self.assertTrue(out.content.endswith(out.closing_reminder))
-        self.assertEqual(out.content.count("请直接输出正文"), 1)
-        # 聊天正文原样可见
-        self.assertIn("看这条", out.content)
-        self.assertIn(CHAT_OPEN, out.content)
+        self.assertNotIn("请直接输出正文", out.content)
+        # 4. 动态事实走 request_context
+        self.assertTrue(out.request_context.startswith(f"（当前时间：{FIXED_TIME}）"))
+        self.assertIn("[m:71429]", out.request_context)
 
     def test_passive_text_turn_moves_notice_out_without_reminder(self) -> None:
         notice = notice_row()
@@ -161,10 +161,11 @@ class BuilderRunsSplitTests(unittest.TestCase):
             out = build_passive([human(), notice])
 
         self.assertIsInstance(out.content, str)
+        self.assertEqual(out.content, "看这条")
         self.assertNotIn(NOTICE_OPEN, out.content)
         self.assertEqual(out.context_notices, expected_notice_region([notice]))
         self.assertEqual(out.closing_reminder, "", "passive 不带 closing_reminder")
-        self.assertIn("看这条", out.content)
+        self.assertTrue(out.request_context.startswith(f"（当前时间：{FIXED_TIME}）"))
 
     def test_pure_notice_wake_keeps_visible_input_non_empty(self) -> None:
         notice = notice_row()
@@ -172,50 +173,44 @@ class BuilderRunsSplitTests(unittest.TestCase):
             reactive = build_reactive([notice])
             passive = build_passive([notice])
 
-        # reactive：当前时间 + 原有 reminder，通知不在正文
-        self.assertTrue(reactive.content)
+        # 没有可呈递正文时用单个空格占位；通知与时间都不在正文里
+        self.assertEqual(reactive.content, " ")
+        self.assertEqual(passive.content, " ")
         self.assertNotIn(NOTICE_OPEN, reactive.content)
-        self.assertTrue(reactive.content.startswith(f"（当前时间：{FIXED_TIME}）"))
-        self.assertTrue(reactive.content.endswith(reactive.closing_reminder))
+        self.assertNotIn("当前时间", reactive.content)
         self.assertEqual(reactive.context_notices, expected_notice_region([notice]))
-
-        # passive：只剩当前时间，仍非空
-        self.assertEqual(passive.content, f"（当前时间：{FIXED_TIME}）")
         self.assertEqual(passive.context_notices, expected_notice_region([notice]))
+        self.assertTrue(reactive.request_context.startswith(f"（当前时间：{FIXED_TIME}）"))
 
-    def test_no_notice_turn_is_byte_identical_to_legacy(self) -> None:
-        """无通知回合：可见 content 只由时间 + 聊天区 + 本模式 reminder 组成（逐字节锁定）。"""
+    def test_no_notice_turn_has_clean_body_and_request_context(self) -> None:
+        """无通知回合：可见 content 只有正文；动态事实仍在 request_context。"""
         rows = [human()]
         with _Interface(self, "runs"):
             out = build_passive(rows)
+        self.assertEqual(out.content, "看这条")
         self.assertEqual(out.context_notices, "")
         self.assertEqual(out.closing_reminder, "")
         self.assertNotIn(NOTICE_OPEN, out.content)
-        self.assertTrue(out.content.startswith(f"（当前时间：{FIXED_TIME}）\n\n"))
-        self.assertTrue(out.content.endswith(CHAT_CLOSE))
+        self.assertIn("[m:71429]", out.request_context)
 
         with _Interface(self, "runs"):
             out_r = build_reactive(rows)
+        self.assertEqual(out_r.content, "看这条")
         self.assertEqual(out_r.context_notices, "")
-        self.assertEqual(out_r.closing_reminder, "")
-        self.assertNotIn(NOTICE_OPEN, out_r.content)
-        self.assertTrue(out_r.content.startswith(f"（当前时间：{FIXED_TIME}）\n\n"))
-        # 正文尾部逐字等于运行模式的近因 reminder（旧版就是这个形状）
-        self.assertTrue(out_r.content.endswith(_runs_reminder()))
-        middle = out_r.content[len(f"（当前时间：{FIXED_TIME}）\n\n"):-len(_runs_reminder())]
-        self.assertTrue(middle.startswith(CHAT_OPEN))
-        self.assertTrue(middle.endswith(CHAT_CLOSE))
+        self.assertTrue(out_r.closing_reminder.startswith("\n\n请直接输出正文"))
+        self.assertNotIn("请直接输出正文", out_r.content)
 
-    def test_completions_and_multimodal_keep_legacy_content(self) -> None:
+    def test_completions_keeps_legacy_and_multimodal_is_zero_wrapped(self) -> None:
         notice = notice_row()
         with _Interface(self, "completions"):
             out = build_reactive([human(), notice])
-            # 旧顺序：通知区在聊天区之前，且仍在同一份 content 里
+            # 备用通道：旧顺序，通知区在聊天区之前，且仍在同一份 content 里
             self.assertIsInstance(out.content, str)
             self.assertIn(NOTICE_OPEN, out.content)
             self.assertLess(out.content.index(NOTICE_OPEN), out.content.index(CHAT_OPEN))
             self.assertEqual(out.context_notices, "")
             self.assertEqual(out.closing_reminder, "")
+            self.assertEqual(out.request_context, "")
 
         with _Interface(self, "runs"):
             media = build_reactive(
@@ -224,10 +219,11 @@ class BuilderRunsSplitTests(unittest.TestCase):
             )
         parts = media.content if isinstance(media.content, list) else None
         self.assertIsNotNone(parts, "多模态回合仍是 parts 列表")
-        text = parts[0]["text"]
-        self.assertIn(NOTICE_OPEN, text, "带媒体 parts 的回合保留旧内联呈递")
-        self.assertEqual(media.context_notices, "")
-        self.assertEqual(media.closing_reminder, "")
+        self.assertEqual(parts[0], {"type": "text", "text": "看这条"})
+        self.assertEqual(parts[1]["type"], "image_url")
+        self.assertEqual(media.context_notices, expected_notice_region([notice]))
+        self.assertTrue(media.closing_reminder.startswith("\n\n请直接输出正文"))
+        self.assertIn("[m:71429]", media.request_context)
 
     def test_region_literals_inside_texts_are_not_re_split(self) -> None:
         # 通知正文里出现聊天区标记；聊天正文里出现通知区字面量
@@ -379,6 +375,27 @@ class ClientRunsBodyTests(unittest.IsolatedAsyncioTestCase):
             {k: v for k, v in body.items() if k != tc.TURN_CONTEXT_FIELD}, plain
         )
 
+    async def test_runs_body_carries_request_context_for_text_and_parts(self) -> None:
+        request_context = "（当前时间：2026-11-27 周五 12:00）\n第1条 → 普通用户 [id=10001 user=小光] [m:7]"
+        for content in (
+            "看这条",
+            [{"type": "text", "text": "看这条"},
+             {"type": "image_url", "image_url": {"url": "data:image/png;base64,IMG"}}],
+        ):
+            fake = _RunsHttp(headers={tc.TURN_CONTEXT_HEADER: tc.TURN_CONTEXT_REGISTERED})
+            await self.submitter.submit(
+                fake=fake,
+                user_content_override=content,
+                request_context=request_context,
+            )
+            body = fake.payloads[-1]
+            self.assertEqual(body["input"][0]["content"], content)
+            self.assertEqual(
+                body[tc.TURN_CONTEXT_FIELD],
+                {"schema": "hermes.turn.context/1", "request_context": request_context},
+                type(content),
+            )
+
     async def test_missing_accept_header_warns_and_flow_continues(self) -> None:
         built = self._content()
         fake = _RunsHttp(headers={})
@@ -469,13 +486,26 @@ class ContractConstantsTests(unittest.TestCase):
              "closing_reminder": "\n\n请直接输出正文"},
         )
 
+    def test_payload_carries_request_context_alongside_notices(self) -> None:
+        self.assertEqual(
+            tc.build_context_payload("", "", "（当前时间：2026-11-27 周五 12:00）"),
+            {"schema": "hermes.turn.context/1",
+             "request_context": "（当前时间：2026-11-27 周五 12:00）"},
+        )
+        self.assertEqual(
+            tc.build_context_payload("N", "\n\n请直接输出正文", "RC"),
+            {"schema": "hermes.turn.context/1", "notices": "N",
+             "closing_reminder": "\n\n请直接输出正文", "request_context": "RC"},
+        )
+        self.assertIsNone(tc.build_context_payload("", "", "   "))
+
 
 class PromptNoticeOrderNoteTests(unittest.TestCase):
-    """§7.3：runs 提示词补清「通知区可能排在聊天区之后」，且不写内部字段名。"""
+    """§7.3：runs 提示词说清通知区在输入最末尾，且不写内部字段名。"""
 
-    ORDER_NOTE = "系统通知区会补在协议提醒之后"
+    ORDER_NOTE = "系统通知补在输入最末尾"
 
-    def test_runs_protocol_states_notice_region_may_follow_chat(self) -> None:
+    def test_runs_protocol_states_notice_region_is_last(self) -> None:
         with _Interface(self, "runs"):
             group = pb._reactive_protocol_block()
             private = pb._private_protocol_block()

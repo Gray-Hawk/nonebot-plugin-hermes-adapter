@@ -4,7 +4,7 @@
 steer 被上游接口接受不等于模型真的看到那条消息——上游在 turn 边界可能把注入静默丢弃
 (被吞 steer 不上模型上下文, pending_steer 上浮是唯一还回通道)。批 1 已把每条被接受的
 steer 记进台账(steer_ledger, status=pending), 本模块在 run 终态后:
-  1. 拉会话转录按 m:id 精确搜, 搜得到置 reconciled;
+  1. 拉会话转录按台账正文及出现次数核验, 搜得到置 reconciled;
   2. 搜不到 = 被吞, 按情形 A/B 构造补投消息发新 turn(置 replayed);
   3. 查询失败/会话 404 = 全部置 replay_failed, 不补(故障面归 run_resume 层)。
 全链每步局部捕获, 任何失败只 WARN 不抛, 不炸主 turn(对账是终态钩子 fire-and-forget
@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from typing import Any
 
 import httpx
 from nonebot import get_bot, logger
@@ -86,6 +87,16 @@ async def _reconcile_claimed(tracked, pending: list[dict]) -> None:
             f"(run_id={tracked.run_id})"
         )
         pending = [p for p in pending if not is_virtual_ledger_mid(p.get("m_id"))]
+    # 正文零包装后空正文（用户发了一条空行消息）在转录里没有可锚定的字符：
+    # 与虚拟锚同样随 run 收尾结算；补投一条空消息本身也无意义。
+    empty = [p for p in pending if not str(p.get("steer_text") or "")]
+    if empty:
+        _mark_status(tracked, [p["m_id"] for p in empty], "reconciled")
+        logger.info(
+            f"[HERMES steer对账] 空正文账项 {len(empty)} 条随 run 收尾结算 "
+            f"(run_id={tracked.run_id})"
+        )
+        pending = [p for p in pending if str(p.get("steer_text") or "")]
     if not pending:
         return
     logger.info(
@@ -102,23 +113,16 @@ async def _reconcile_claimed(tracked, pending: list[dict]) -> None:
         return
     rows, complete = result
 
-    # 逐条判定:任一转录行里出现「这一行消息的聊天行」即落账。统一呈递后 steer
-    # 行与普通聊天行同文法(m:id 在行首),不再有 `标签 [m:id]: 内容` 这一带冒号的
-    # 独占形态;判据因此改为「行首出现该行 m:id」(强提醒/身份栏可前置),并继续
-    # 认旧文法 `[id=…] [m:id]:`——升级前已送达的旧台账行照样核销,不会因为改了
-    # 呈递文法就被误判成「被吞」而重复补投。语义未变:仍是「这条原始消息的聊天行
-    # 是否真的出现在模型可见转录里」。
+    # 逐条判定:任一转录行的文本里出现台账记下的 ``steer_text`` 即落账。零包装后
+    # 模型可见文本就是正文本身,台账按 ``source_row`` 保存的 m_id 仍是内部关联键,
+    # 但不再依赖行首 m:id 才能核销；旧台账行的 steer_text 带旧行头，仍按同一
+    # 字符串判据命中，不会因为改了呈递文法就被误判成「被吞」而重复补投。语义未变:
+    # 仍是「这条原始消息的文本是否真的出现在模型可见转录里」。
     # 不加 display_kind 过滤: 上游
     # _merge_leftover_steer 会把 leftover steer 恢复为下一轮正常 user 行、回收路径落账
     # 后也是正常 user 行, 过滤会把这两类恢复误判成缺件导致双重投递。
-    reconciled: list[str] = []
-    missing: list[dict] = []
-    for p in pending:
-        hit = _steer_line_hit_pattern(p["m_id"])
-        if any(hit.search(transcript_text(r.get("content"))) for r in rows):
-            reconciled.append(p["m_id"])
-        else:
-            missing.append(p)
+    hits, missing = _partition_steer_text_hits(pending, rows)
+    reconciled = [p["m_id"] for p in hits]
     if reconciled:
         _mark_status(tracked, reconciled, "reconciled")
         logger.info(f"[HERMES steer对账] 命中 {len(reconciled)} 条 (run_id={tracked.run_id})")
@@ -193,14 +197,14 @@ async def _fetch_transcript(tracked, pending: list[dict] | None = None):
     完整持久转录,不是模型当前可见窗口。
     分页用上游 limit/offset(latest 序)。查询期间新行只落在页尖,后续页旧行
     相对后移→页间可能重复(按 id 去重)但不会漏行。停止条件:全部 pending
-    行的聊天行已在累计行里出现(`_steer_line_hit_pattern`,无需更多证据)、
+    行的正文已按出现次数在累计行里核销(`_partition_steer_text_hits`,无需更多证据)、
     遇到本 run 触发批(首个普通 user 行,display_kind 空=覆盖本 run 范围)、
     页返回不足 limit(没有更多)。
     """
     tgt = resolve_target(tracked.adapter, tracked.is_private, tracked.group_id)
     url = f"{tgt.base_url}/api/sessions/{tracked.session_key}/messages"
     headers = {"Authorization": f"Bearer {tgt.api_key}"} if tgt.api_key else {}
-    needles = [_steer_line_hit_pattern(p["m_id"]) for p in (pending or [])]
+    needles = [p for p in (pending or []) if str(p.get("steer_text") or "")]
     rows: list[dict] = []
     seen: set = set()
     offset = 0
@@ -250,11 +254,10 @@ async def _fetch_transcript(tracked, pending: list[dict] | None = None):
                             continue
                         seen.add(rid)
                     rows.append(r)
-                if needles and all(
-                    any(n.search(transcript_text(r.get("content"))) for r in rows)
-                    for n in needles
-                ):
-                    return rows, True
+                if needles:
+                    _hits, missing = _partition_steer_text_hits(needles, rows)
+                    if not missing:
+                        return rows, True
                 if any(
                     r.get("role") == "user" and not r.get("display_kind") for r in page
                 ):
@@ -632,22 +635,51 @@ def strip_steer_presentation(text: str) -> str:
     return _steer_strip_pattern().sub("", text)
 
 
-def _steer_line_hit_pattern(m_id) -> re.Pattern:
-    """对账命中判据:转录里是否出现这一行消息的聊天行。
+def _steer_text_present(text: Any, rows: list[dict]) -> bool:
+    """台账文本是否真的出现在模型可见转录里（对账命中判据）。
 
-    统一呈递后 steer 行的 m:id 在行首(强提醒可前置),旧文法把 m:id 挂在
-    speaker 之后/冒号之前。两种形态都认,判据只回答一件事:这条原始消息的
-    聊天行有没有真的进模型可见转录——与「用哪种文法渲染」无关。
+    零包装后 steer 行就是正文本身，台账的 m_id／sender 仍按 source_row 保存，
+    但可见文本里没有行头可搜；判据因此回到台账自己记下的 ``steer_text``。
+    空串没有可锚定的字符，由调用方按「无锚项」结算，不在这里当成命中。
     """
-    from ..core.prompt_builder import _AT_ME_MARK, _IDENTITY_LABELS
+    needle = str(text or "")
+    if not needle:
+        return False
+    return any(
+        row.get("role") == "user" and needle in transcript_text(row.get("content"))
+        for row in rows
+    )
 
-    labels = "|".join(re.escape(x) for x in _IDENTITY_LABELS)
-    mid = rf"\[m:{re.escape(str(m_id))}\]"
-    return re.compile(
-        rf"^(?:{re.escape(_AT_ME_MARK.strip())}[ \t]+)?"
-        rf"(?:\[(?:{labels})\][ \t]+)?"
-        rf"(?:\[id=[^\]\n]+\][ \t]+)?{mid}",
-        flags=re.MULTILINE,
+
+def _partition_steer_text_hits(
+    pending: list[dict], rows: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """按转录出现次数分配命中，同文两条台账不得共用同一次出现。
+
+    会话 API 按 latest 返回，台账按接受先后排列；倒序认领出现位置，让最新账项先匹配
+    最新转录。每命中一次就从该行剩余文本中消费这一段，随后按原台账顺序返回命中与缺件。
+    """
+    # assistant／tool 对同文的自然复述不构成用户 steer 已交付；普通 user 恢复行仍按
+    # 既有语义参与，不过滤 display_kind。
+    remaining = [
+        transcript_text(row.get("content")) if row.get("role") == "user" else ""
+        for row in rows
+    ]
+    matched: set[int] = set()
+    for index in reversed(range(len(pending))):
+        needle = str(pending[index].get("steer_text") or "")
+        if not needle:
+            continue
+        for row_index, text in enumerate(remaining):
+            if not _steer_text_present(needle, [{"role": "user", "content": text}]):
+                continue
+            start = text.index(needle)
+            remaining[row_index] = text[:start] + text[start + len(needle):]
+            matched.add(index)
+            break
+    return (
+        [item for index, item in enumerate(pending) if index in matched],
+        [item for index, item in enumerate(pending) if index not in matched],
     )
 
 

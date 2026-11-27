@@ -1,14 +1,11 @@
 """Prompt 拼装。
 
-缓存友好的分层约定:
-- system 只放跨 turn 字节稳定的内容(decision_protocol / Message Context 头),
-  让前缀缓存能延伸到 system 之后的会话历史。
-- per-turn 变化的字段(当前时间、待处理新消息、系统通知)全部放进 user content。
-
-user content 只有三段(后两段按需出现):
-- 当前时间独立置顶;
-- 可选系统通知区 `<系统通知区域起始>…<系统通知区域结束>`:系统合成输入;
-- 可选聊天区 `<聊天消息区域起始>…<聊天消息区域结束>`:全部待处理新消息。
+缓存友好的分层约定：
+- system 只放跨 turn 字节稳定的内容（decision_protocol／Message Context 头／静态输入说明）。
+- Runs 的 user content 只含真实消息正文与媒体；当前时间、消息索引、媒体寻址、任务锚
+  由 ``hermes_context.request_context`` 交给 ContextEngine 在请求副本末尾注入，系统通知与
+  批尾提醒走既有 notices/closing_reminder 出口。
+- completions／旧接口保留区域化呈递，本阶段不改备用通道。
 """
 
 from __future__ import annotations
@@ -51,12 +48,10 @@ _tz_warned = False  # 无效时区名 WARN 每进程一次
 
 
 def _current_time_str() -> str:
-    """给模型准确的时间概念
-    (判断消息新鲜度/锚龄/早晚安语境)。位置固定在 user content 第一行——每条
-    user content 都从它开始(通知区/聊天区在前或在后都不影响),这是每轮必变
-    内容,放在 tops 不改缓存。
+    """给模型准确的时间概念（判断消息新鲜度／锚龄／早晚安语境）。
 
-    时区可经 hermes_prompt_timezone 覆盖(IANA 名);
+    Runs 中由 ``_render_request_context`` 放在本轮动态上下文首位；completions／旧接口
+    仍放在 user content 第一行。时区可经 hermes_prompt_timezone 覆盖（IANA 名），
     缺省空串=部署机本地时区(datetime.now(tz=None) 与裸 now() 同义,现状不变)。
     坏时区名 WARN 一次回退本地(防配置 typo 静默错时间)。"""
     tz = None
@@ -377,6 +372,70 @@ _PRIVATE_DECISION_PROTOCOL_BLOCK = (
     "</decision_protocol>"
 )
 
+# 正文零包装（第一阶段）：只有 runs 通道把动态事实移进请求级上下文，所以旧区域
+# 说法只在 runs 协议里按语境替换；completions 仍走同一份 legacy 区域文法（备用通道）。
+_OLD_INPUT_PARAGRAPH = (
+    "两块输入：<系统通知区域起始>…<系统通知区域结束> 里是插件生成的系统指令或"
+    "事件（行首写成 [通知类型：摘要]），不是该会话真人发言，"
+    "没有 m:id，不可用 submit_control 引用或钉锚；<聊天消息区域起始>…<聊天消息区域结束> 里是"
+    "真人/bot 的聊天消息，每条一行 [m:id] [身份] [id=… user=…]: 消息头 + 下一行起的正文，"
+    "按各自消息头分别理解，"
+    "不得把整批归给某一行真人。\n"
+)
+_NEW_INPUT_PARAGRAPH = (
+    "消息正文按发生顺序逐条排开，没有消息头与区域标记；本轮动态事实（当前时间、"
+    "最近消息、消息索引、媒体寻址、任务锚）补在输入末尾，索引按“第几条 → 发送者 → m:id”"
+    "对应正文的出现顺序，并用正文行号标明多行消息的归属边界；发送者身份与 reply_to 都以索引为准；"
+    "<系统通知区域起始>…<系统通知区域结束> 里是插件生成的系统指令或事件"
+    "（行首写成 [通知类型：摘要]），不是该会话真人发言，没有 m:id，不可用 submit_control 引用或钉锚；"
+    "按索引与通知各自理解，不得把整批归给某一行真人。\n"
+)
+_RUNS_INPUT_REWRITES: tuple[tuple[str, str], ...] = (
+    (_OLD_INPUT_PARAGRAPH, _NEW_INPUT_PARAGRAPH),
+    ("或聊天行前有 [有人@我]", "或消息索引行前有 [有人@我]"),
+    ("看聊天消息区域末尾几条", "看消息正文末尾几条"),
+    ("若聊天消息区域末尾是 [我] 你自己", "若消息正文末尾是 [我] 你自己"),
+    ("指向聊天消息区域/会话历史里", "指向消息正文与索引/会话历史里"),
+    ("在聊天消息区域/会话历史里直接读不到", "在消息正文与索引/会话历史里直接读不到"),
+    (
+        "必须能在聊天消息区域/会话历史里 [我] 你自己的行里定位到",
+        "必须能在消息正文与索引/会话历史里 [我] 你自己的条目定位到",
+    ),
+    ("聊天消息区域/会话历史里的图", "消息正文与索引/会话历史里的图"),
+    (
+        "  - 开头的“(引用 昵称(id): …)”块是被引用的历史消息：冒号前是被引消息的发送者，",
+        "  - 正文开头可能出现“（引用 …）”块，是被引用的历史消息；当前消息自己的发送者与 m:id 以消息索引为准，",
+    ),
+    (
+        "聊天消息里标 `[我]` 的行就是你自己说过的话；",
+        "消息索引里标 `[我]` 的条目就是你自己说过的话；",
+    ),
+    (
+        "称呼与身份：speaker 标签格式 `[id=用户ID user=昵称]`；",
+        "称呼与身份：speaker 标签格式 `[id=用户ID user=昵称]`（位于请求级消息索引）；",
+    ),
+    (
+        "    输入末尾（聊天消息区域）： [m:55] [普通用户] [id=u1 user=小光]:\n",
+        "    输入末尾（消息索引）： 第1条 → 普通用户 [id=u1 user=小光] [m:55]\n",
+    ),
+    (
+        "    输入末尾（聊天消息区域）： [m:56] [普通用户] [id=u1 user=小光]:\n",
+        "    输入末尾（消息索引）： 第2条 → 普通用户 [id=u1 user=小光] [m:56]\n",
+    ),
+    (
+        "    输入末尾（聊天消息区域）： [m:57] [普通用户] [id=10002 user=小光]:\n",
+        "    输入末尾（消息索引）： 第3条 → 普通用户 [id=10002 user=小光] [m:57]\n",
+    ),
+)
+
+
+def _rewrite_runs_input_language(text: str) -> str:
+    """runs 协议里剔除已不存在的区域说法，按语境改称消息正文／消息索引。"""
+    for old, new in _RUNS_INPUT_REWRITES:
+        text = text.replace(old, new)
+    return text
+
+
 def _build_json_lines_protocol(base: str, *, runs: bool = False) -> str:
     """把旧协议块的字段段与尾部换成乙信封，保留归属/插话/安全判断。
 
@@ -439,6 +498,8 @@ def _build_json_lines_protocol(base: str, *, runs: bool = False) -> str:
     ):
         combined = combined.replace(stray, fixed)
     built = render_decision_protocol(runs=runs, group_rules=combined)
+    if runs:
+        built = _rewrite_runs_input_language(built)
     # 允许“不要再输出 should_reply/reply_text”这条禁令本身,但不能残留旧字段用法
     assert "should_reply=" not in built and "把决策提交为" not in built
     assert "任务便签" not in built and "2026-10-16" not in built
@@ -541,13 +602,6 @@ def _json_lines_envelope() -> bool:
     return _json_lines_mode() != "legacy"
 
 
-# 表情包/收藏表情的口径：进 vision 只为情绪与语气，不把梗图本身当分析对象。
-_STICKER_MOOD_NOTE = (
-    "\n\n[表情包] 仅作情绪/语气信号：可用来判断用户心情；不要描述画面、不要考据梗图、"
-    "不要把表情包当工单，除非用户明确要求解读/评价。"
-    "“表情包 第i/N帧”是同一动图按时间顺序抽出的连续帧，合起来理解为一个表情。"
-)
-
 _FILE_TOOL_GUIDANCE = FILE_TOOL_GUIDANCE
 
 _STICKER_TOOL_GUIDANCE = STICKER_TOOL_GUIDANCE
@@ -626,9 +680,9 @@ def build_reactive_system_prompt(
 ) -> str:
     """reactive 路径的 system prompt:decision_protocol + 会话上下文 + 路由提示 + 群档案。
 
-    per-turn 变化的事实(当前时间、待处理新消息、系统通知)走 user content
-    顶端与两个可选区域(见 build_reactive_user_content),system 在 turn 间字节稳定,有利于 LLM
-    前缀缓存延伸到后续的会话历史段。
+    per-turn 变化的事实走 ``hermes_context.request_context`` 与 notices；system 在 turn 间
+    字节稳定，有利于 LLM 前缀缓存延伸到后续的会话历史段。completions／旧接口仍由
+    user content 携带时间与区域。
 
     profile_block(群记忆外挂 定稿):群档案注入块,拼在协议块末尾。
     块内容按群字节稳定(静态文件,仅编辑时变化);挂上后 reactive system 按群分叉,
@@ -841,7 +895,7 @@ def _turn_fact_notices(
     ):
         notices.append(_render_notice(
             "寻址",
-            "平台已确认聊天消息区域末条是冲你说的",
+            "平台已确认消息正文末条是冲你说的",
             "（本条没有结构化 @ 段：来自引用你说的话，或 @ 已被适配器剥离。）",
         ))
     return notices
@@ -1086,9 +1140,8 @@ def _render_chat_line(
     with_speaker: bool = True,
     show_identity: bool = True,
     show_at: bool = True,
-    media: str = "summary",
 ) -> str:
-    """模型可见聊天行的唯一构造函数(普通 / 历史 / steer 共用)。
+    """模型可见聊天行的构造函数（completions／旧接口的区域化呈递使用）。
 
     行文法固定为「消息头一行 + 正文从下一行开始」:
 
@@ -1101,9 +1154,7 @@ def _render_chat_line(
 
     - ``with_speaker`` / ``show_identity``:由 `_row_marks` 一份判据给出,私聊
       省略对方身份与 speaker,自己的行只留 `[我]`;
-    - ``media``:``summary`` = 行尾紧凑清单 ``(图#0)``;``steer`` = 完整寻址标签
-      ``[图 m:id#idx]`` + 随条读图提示(steer 走文本通道、媒体不内联,必须给出
-      可寻址的号);
+    - 行尾固定附紧凑媒体清单 ``(图#0)``（runs 零包装正文不使用本函数）;
     - ``content``:调用方自己的数据投影(历史截断/折叠展开)已完成,本函数只负责
       呈递,不再改写正文——正文里的多行、冒号、形似标签的字面量都原样保留。
 
@@ -1127,19 +1178,9 @@ def _render_chat_line(
     )
     head = f"{at_mark}{mid}{identity_prefix}{tag}".strip()
     body = content
-    if media == "steer":
-        items = iter_message_media(row)
-        if items:
-            if row.id is None:
-                raise ValueError("有媒体但无合法行号,拒绝 steer 行渲染")
-            labels = " ".join(
-                media_label(kind, row.id, idx) for idx, (kind, _u) in enumerate(items)
-            )
-            body = f"{body} {labels}{_STEER_MEDIA_HINT.format(m_id=row.id)}"
-    else:
-        summary = render_media_summary(row)
-        if summary:
-            body = f"{body} {summary}"
+    summary = render_media_summary(row)
+    if summary:
+        body = f"{body} {summary}"
     return f"{head}:\n{body}" if head else f"{body}"
 
 
@@ -1180,27 +1221,15 @@ def render_current_rows(
     ))
 
 
-# --- steer 行呈递(P-07 + 呈递统一):与 current/recent 走同一个消息行构造函数
-# `_render_chat_line`,前缀文法(`[有人@我] [m:id] [身份] [id=…]: 正文`)逐字节同源;
-# 整批外观与聊天区同一个区域构造点 `render_chat_region`——模型看到的是普通的
-# `<聊天消息区域起始>…<聊天消息区域结束>` 块,不是裸露消息行。
-# steer 只保留两处真实差异,且都由参数表达:
-#   1) 媒体形态:steer 走文本通道、媒体不内联,行尾给完整寻址标签
-#      (`[图 m:id#idx]`)与随条读图提示;current/recent 用紧凑清单 `(图#0)`;
-#   2) 私聊单人 steered 行的 speaker 省略由 `_private_single_human` 与 current 共用。
-# m:id 在行首后,steer_reconcile 的转录命中判据随之改为「行首出现该行 m:id」
-# (语义不变:仍是「这条原始消息的聊天行是否真的出现在模型可见转录里」),
-# 回收剥壳正则同步认新文法并继续兼容旧台账形态。
-
-_STEER_MEDIA_HINT = (
-    "（随条媒体未内联，需要看图/表情时用 get_message_images "
-    "按 m:{m_id} 加对应 idx 取）"
-)
-
+# --- steer 行呈递（正文零包装）：与普通消息同一条正文，不带行头/区域标 ---------
+# steer 的归属事实仍由 ``SteerRowPresentation.source_row`` 承载（台账按 m_id／sender
+# 落库）；模型可见文本只保留原始正文，因此台账匹配改用既有的 ``steer_text``，不再
+# 从转录行首找 m:id。媒体只留 [图片]/[表情包] 语义占位：steer 通道没有请求级上下文，
+# 要取字节等该消息进入下一自然轮的消息索引后再按 m:id 取。
 
 @dataclass(frozen=True)
 class SteerRowPresentation:
-    """一行 steer 呈递:source_row 是身份来源,rendered_line 是实发整批的连续子串。"""
+    """一行 steer 呈递：source_row 是身份来源，rendered_line 是实发整批的连续子串。"""
 
     source_row: BufferedMessage
     rendered_line: str
@@ -1210,32 +1239,20 @@ class SteerRowPresentation:
 class SteerPresentation:
     """steer 发送、逐行台账与呈现去重共用的唯一值对象。
 
-    rows 保序保存 (source_row, rendered_line);text 是整批发送文本——一个与普通
-    消息同一外观的聊天区区域块(`render_steer_batch`),不含尾部约定行——约定行
-    由发送原语在区域块之后追加一次,不写进单行账项,否则逐行台账与批次约定行
-    会互相污染。每行 rendered_line 仍是 text 的连续子串(台账/去重按行结算)。
+    rows 保序保存 (source_row, rendered_line)；text 是整批发送文本——各行正文
+    按原顺序以单换行拼接，不含区域标、固定说明或批次约定行之外的任何包装。
+    每行 rendered_line 仍是 text 的连续子串（台账/去重按行结算）。
     """
 
     rows: tuple[SteerRowPresentation, ...]
     text: str
 
 
-def _render_steer_message_line(
-    row: BufferedMessage, *, name_resolver=None,
-    identity_ctx: tuple[str, str] | None = None,
-    with_speaker: bool = True,
-    show_identity: bool = True,
-    show_at: bool = True,
-) -> str:
-    """渲染一条 steer 行;不合法时抛 ValueError,由 relay 边界转成安全回退。
+def _render_steer_message_line(row: BufferedMessage) -> str:
+    """渲染一条 steer 正文；不合法时抛 ValueError，由 relay 边界转成安全回退。
 
-    来源闸(混合/系统/bot)留在这里——steer 通道只接受真人行;通过闸后直接调用
-    `_render_chat_line`,与普通/历史行共用身份栏、真实 @、speaker、m:id 与
-    正文拼接的全部逻辑,只有媒体形态走 steer 参数。
-
-    identity_ctx 非空时在 `[id=…]` 前加身份栏、在 `[m:id]` 前加真实 @ 强提醒
-    (与普通行同一套判定与同一优先级);None 时不贴身份栏(低层调用拿不到 bot
-    上下文,不猜身份),行文法仍与普通行无 ctx 时一致。
+    来源闸（混合/系统/bot）留在这里——steer 通道只接受真人行。正文零包装后不再
+    拼消息头、身份栏或媒体寻址；身份事实由调用方从 ``source_row`` 台账落库。
     """
     if row.origin.author_kind is AuthorKind.MIXED:
         raise ValueError("混合聚合消息必须先展开 fragments 再呈递")
@@ -1243,34 +1260,28 @@ def _render_steer_message_line(
         raise ValueError("bot 消息不得作为 steer 输入")
     if row.origin.author_kind is AuthorKind.SYSTEM:
         raise ValueError("系统来源行不得作为 steer 输入")
-    return _render_chat_line(
-        row, content=row.content or "", name_resolver=name_resolver,
-        identity_ctx=identity_ctx, with_speaker=with_speaker,
-        show_identity=show_identity, show_at=show_at, media="steer",
-    )
+    body = row.content or ""
+    if body.strip():
+        return body
+    return _semantic_media_placeholder(row)
 
 
 def render_steer_batch(rows: Sequence[SteerRowPresentation]) -> str:
-    """steer 整批呈递文本:与聊天区**同一个**区域构造点。
+    """steer 整批呈递文本：各行正文按顺序以单换行拼接。
 
-    steer 是「中途插进来的聊天消息」,给模型看的必须是普通消息那种块:同一对
-    `<聊天消息区域起始>`／`<聊天消息区域结束>`、同一条固定说明、消息之间空一行。
-    这里不手写包壳——直接走 `render_chat_region`,外观由聊天区那一个构造点决定。
-
-    单条只是一元素序列的特例;空序列返回空串(不输出空区域)。
+    单条只是一元素序列的特例；空序列返回空串（不输出空批）。
     """
-    return render_chat_region([item.rendered_line for item in rows])
+    return "\n".join(item.rendered_line for item in rows)
 
 
-def steer_region_decorations() -> tuple[str, ...]:
-    """steer 批次发送侧加的**块框架**(区域开标签行、固定说明行、闭标签),按出现顺序。
+def steer_batch_decorations() -> tuple[str, ...]:
+    """steer 批次发送侧加的块框架。
 
-    这些字面量是发送原语加的装饰,不属于任何一条账项的正文。native 回收
-    (`message_turns._match_pending_steer_rows`)按台账把上游还回的 pending_steer
-    逐行还原时,必须在「当前位置没有账项命中」处把它们当分隔符跳过——否则整批
-    认不出,退化成整段原文归属触发者。取字面量只从这里取,不在别处手抄。
+    正文零包装后没有区域标／固定说明，返回空元组；保留这个入口是因为 native 回收
+    （``message_turns._match_pending_steer_rows``）需要一个「账项之外的装饰」清单，
+    由这里统一回答，避免调用方在别处手写分支。
     """
-    return (_CHAT_REGION_OPEN + "\n\n", _CHAT_REGION_NOTE + "\n\n", _CHAT_REGION_CLOSE)
+    return ()
 
 
 def render_steer_rows(
@@ -1278,56 +1289,277 @@ def render_steer_rows(
     self_id: str | None = None, adapter: str | None = None,
     is_private: bool = False,
 ) -> SteerPresentation:
-    """steer 唯一呈递入口:正文、媒体寻址、台账与去重同一份身份事实。
+    """steer 唯一呈递入口：正文、台账与去重同一份身份事实。
 
-    单条只是一元素序列的特例。任一行来源不合法(系统/混合/bot)或有媒体却没有
-    可寻址行号,整批 ValueError——由 relay 边界失败关闭,不半贴号、不丢媒体、
-    不改写原始消息。
+    单条只是一元素序列的特例。任一行来源不合法（系统/混合/bot）整批 ValueError
+    ——由 relay 边界失败关闭，不半贴号、不改写原始消息。
 
-    self_id/adapter 是身份栏与 [有人@我] 的事实输入,取自本 scope 在跑 run 的
-    bot_self_id 与当前 adapter(与普通/历史行同一事实源);不传则不贴身份栏。
-
-    is_private 用与普通行同一份判据 `_row_marks`:私聊省略对方身份与 speaker,
-    自己的行只留 `[我]`;群聊全带。行与行之间空一行,与聊天区一致。
-
-    整批 text 是**聊天区形态**的区域块(`render_steer_batch` → `render_chat_region`):
-    steer 与普通消息在模型转录里外观相同,不再是一串裸露的消息行。
+    self_id/adapter/is_private/name_resolver 保留既有调用签名，不写进可见正文；
+    身份、m:id 与来源仍由每行的 ``source_row`` 原样保留。
     """
     if not rows:
         raise ValueError("steer 行序列不得为空")
-    ctx = _identity_context(self_id, adapter)
     items = []
     for row in rows:
-        with_speaker, show_identity, show_at = _row_marks(row, ctx, is_private=is_private)
         items.append(SteerRowPresentation(
             source_row=row,
-            rendered_line=_render_steer_message_line(
-                row, name_resolver=name_resolver, identity_ctx=ctx,
-                with_speaker=with_speaker, show_identity=show_identity, show_at=show_at,
-            ),
+            rendered_line=_render_steer_message_line(row),
         ))
     items = tuple(items)
     return SteerPresentation(rows=items, text=render_steer_batch(items))
 
 
+# --- 正文零包装（第一阶段）：请求级动态上下文 ------------------------------
+# 可见 user content 只留真实消息正文与媒体；每轮变化的事实（时间、消息索引、
+# 媒体寻址、任务锚）由 Hermes 插件的 ContextEngine.select_context 在请求副本
+# 末尾注入。这里只渲染这份字符串，不另造信封协议。
+_REQUEST_INDEX_HEAD = "本轮消息索引（第几条 → 发送者 → m:id，对应消息正文的出现顺序；正文行号从 1 开始）："
+_MEDIA_OPERATION_NOTE = (
+    "（需要内容时用 get_message_images 按 m:id 与 idx 取；"
+    "已随本轮内联的图片直接看，没人点名的图不要主动拉）"
+)
+_MEDIA_PLACEHOLDER = {
+    "image": "[图片]",
+    "sticker": "[表情包]",
+    "quote": "[引用图片]",
+    "quote_sticker": "[引用表情]",
+    "forward_image": "[转发图片]",
+}
+
+
+def _semantic_media_placeholder(row: BufferedMessage) -> str:
+    """无正文的媒体消息 → 语义占位（[图片]/[表情包]/…）；不带 idx 寻址。"""
+    words: list[str] = []
+    for kind, _url in iter_message_media(row):
+        word = _MEDIA_PLACEHOLDER.get(kind, "[媒体]")
+        if word not in words:
+            words.append(word)
+    return " ".join(words)
+
+
+def _body_without_wrap(
+    row: BufferedMessage, *, history: bool, expand_forward: bool = False
+) -> str:
+    """一条消息的可见正文：只做既有历史处理，不补消息头、媒体清单或空行。"""
+    if history and expand_forward and row.forward_content:
+        content = _sanitize_history_content(
+            _expand_forward_preview(row.content, row.forward_content),
+            max_chars=_MAX_EXPANDED_FORWARD_LINE_CHARS,
+        )
+    else:
+        content = _sanitize_history_content(row.content or "") if history else (row.content or "")
+    if row.file_entries:
+        # 入站层把生成的文件／视频寻址附加在正文里。Runs 只替换由本条
+        # ``file_entries`` 能逐字重建的那些标签，不扫描或改写其他用户原文；
+        # completions 继续走旧区域呈递，不经过这里。
+        from ..handlers.message_media import _collect_file_placeholders
+
+        for idx, entry in enumerate(row.file_entries):
+            addressed = _collect_file_placeholders([entry], row.id, idx_base=idx)[0]
+            semantic = _collect_file_placeholders([entry], None, idx_base=idx)[0]
+            if addressed == semantic:
+                continue
+            position = content.rfind(addressed)
+            if position >= 0:
+                content = content[:position] + semantic + content[position + len(addressed):]
+    if content.strip():
+        return content
+    return _semantic_media_placeholder(row)
+
+
+def _recent_bodies_without_wrap(rows: Sequence[BufferedMessage]) -> list[str]:
+    """recent（新→旧）→ 正文（旧→新），保留原「只展开最新折叠」规则。"""
+    msgs = list(rows)
+    expand_target = next((row for row in msgs if row.forward_content), None)
+    return [
+        _body_without_wrap(row, history=True, expand_forward=row is expand_target)
+        for row in reversed(msgs)
+    ]
+
+
+def _current_bodies_without_wrap(rows: Sequence[BufferedMessage]) -> list[str]:
+    """当前触发批正文；保留混合／bot 来源闸，系统行已在调用方分流。"""
+    bodies: list[str] = []
+    for row in rows:
+        if row.origin.author_kind is AuthorKind.MIXED:
+            raise ValueError("混合聚合消息必须先展开 fragments 再呈递")
+        if row.origin.author_kind is AuthorKind.BOT:
+            raise ValueError("bot 消息不得作为当前输入呈递")
+        bodies.append(_body_without_wrap(row, history=False))
+    return bodies
+
+
+def _index_line(
+    row: BufferedMessage, ordinal: int, ctx: tuple[str, str] | None, name_resolver,
+    body_span: str = "",
+) -> str:
+    """请求级消息索引的一行：第几条 → 发送者 → m:id，可附当前正文行界。"""
+    at = _at_me_mark(row, ctx)
+    identity = _identity_label(row, ctx) or _IDENTITY_USER
+    tag = _format_speaker_tag(
+        row.nickname, row.user_id,
+        canonical=name_resolver(row.user_id) if name_resolver else None,
+    )
+    mid = f" [m:{row.id}]" if row.id is not None else ""
+    return f"第{ordinal}条 → {at}{identity} {tag}{mid}{body_span}"
+
+
+def _file_context_line(rows: Sequence[BufferedMessage], *, heading: str = "文件／视频") -> str:
+    """文件与视频寻址只放请求级上下文；正文保留同名语义占位。"""
+    items: list[str] = []
+    for ordinal, row in enumerate(rows, start=1):
+        if row.id is None:
+            continue
+        for idx, entry in enumerate(row.file_entries):
+            kind = "视频" if entry.get("kind") == "video" else "文件"
+            name = str(entry.get("name") or "").strip()
+            suffix = f" {name}" if kind == "文件" and name else ""
+            items.append(f"第{ordinal}条 [m:{row.id}]#f{idx} {kind}{suffix}")
+    if not items:
+        return ""
+    return heading + "：" + "；".join(items) + "（需要内容时用 get_message_files 按 m:id#fidx 取）"
+
+
+def _media_context_line(
+    rows: Sequence[BufferedMessage], media_groups: Sequence[Any] = (), *, heading: str = "媒体"
+) -> str:
+    """媒体寻址：按消息序号列出 m:id#idx 与种类，附按需取用的操作提示。
+
+    ``media_groups`` 是本轮实际内联的帧组（带 (kind, m:id, idx) 寻址三元组）；
+    只补库里行本身没带寻址的项，按 (m:id, idx) 去重，顺序与库行一致。
+    """
+    ordinal_by_mid = {row.id: ordinal for ordinal, row in enumerate(rows, start=1)
+                      if row.id is not None}
+    items: list[str] = []
+    seen: set[tuple[int, int]] = set()
+    for ordinal, row in enumerate(rows, start=1):
+        if row.id is None:
+            continue
+        for idx, (kind, _url) in enumerate(iter_message_media(row)):
+            items.append(
+                f"第{ordinal}条 [m:{row.id}]#{idx} {media_kind_word(kind, compact=True)}"
+            )
+            seen.add((row.id, idx))
+    for group in media_groups:
+        addr, _frames = _normalize_media_group(group)
+        if addr is None:
+            continue
+        kind, mid, idx = addr
+        if (mid, idx) in seen:
+            continue
+        prefix = f"第{ordinal_by_mid[mid]}条 " if mid in ordinal_by_mid else ""
+        items.append(f"{prefix}[m:{mid}]#{idx} {media_kind_word(kind, compact=True)}")
+        seen.add((mid, idx))
+    if not items:
+        return ""
+    return heading + "：" + "；".join(items) + _MEDIA_OPERATION_NOTE
+
+
+def _render_request_context(
+    *,
+    history_rows: Sequence[BufferedMessage],
+    current_rows: Sequence[BufferedMessage],
+    recent_bodies: Sequence[str],
+    current_bodies: Sequence[str],
+    pinned_block: str = "",
+    media_groups: Sequence[Any] = (),
+    ctx: tuple[str, str] | None = None,
+    name_resolver=None,
+) -> str:
+    """本轮动态上下文：时间、recent、当前正文行界、媒体寻址与任务锚。"""
+    recent_rows = list(reversed(list(history_rows)))
+    parts = [f"（当前时间：{_current_time_str()}）"]
+
+    recent_pairs = [
+        (row, body) for row, body in zip(recent_rows, recent_bodies) if body
+    ]
+    if recent_pairs:
+        lines = ["最近消息（旧→新，每条索引后分别是该条正文）："]
+        for ordinal, (row, body) in enumerate(recent_pairs, start=1):
+            lines.extend((_index_line(row, ordinal, ctx, name_resolver), body))
+        parts.append("\n".join(lines))
+        for block in (
+            _media_context_line([row for row, _body in recent_pairs], heading="最近媒体"),
+            _file_context_line([row for row, _body in recent_pairs], heading="最近文件／视频"),
+        ):
+            if block:
+                parts.append(block)
+
+    current_pairs = [
+        (row, body) for row, body in zip(current_rows, current_bodies) if body
+    ]
+    if current_pairs:
+        lines = [_REQUEST_INDEX_HEAD]
+        line_no = 1
+        visible_rows = []
+        for ordinal, (row, body) in enumerate(current_pairs, start=1):
+            line_count = len(body.split("\n"))
+            end = line_no + line_count - 1
+            span = f"；正文第{line_no}行" if end == line_no else f"；正文第{line_no}-{end}行"
+            lines.append(_index_line(row, ordinal, ctx, name_resolver, span))
+            visible_rows.append(row)
+            line_no = end + 1
+        parts.append("\n".join(lines))
+        for block in (
+            _media_context_line(visible_rows, media_groups),
+            _file_context_line(visible_rows),
+        ):
+            if block:
+                parts.append(block)
+    if pinned_block:
+        parts.append(pinned_block)
+    return "\n\n".join(parts)
+
+
+def _assemble_zero_wrap_media_parts(
+    text_block: str,
+    image_groups: Sequence[Any],
+    sticker_groups: Sequence[Any],
+) -> list[dict[str, Any]]:
+    """正文 text part + 媒体帧（顺序与请求级媒体索引一致），不贴 m:id 标签。
+
+    多帧动图仍保留纯语义的帧序说明（不含 m:id/idx 寻址），这是「同一表情合起来理解」
+    的静态规则需要的唯一结构；单帧不加任何标签。
+    """
+    parts: list[dict[str, Any]] = [{"type": "text", "text": text_block}]
+
+    def _append(frames: Sequence[str], word: str) -> None:
+        total = len(frames)
+        for index, url in enumerate(frames):
+            if total > 1:
+                parts.append({"type": "text", "text": (
+                    f"[{word} 第{index + 1}/{total}帧，同一动图按时间顺序]"
+                )})
+            parts.append({"type": "image_url", "image_url": {"url": url}})
+
+    for item in image_groups:
+        _addr, frames = _normalize_media_group(item)
+        _append(frames, "动图")
+    for item in sticker_groups:
+        _addr, frames = _normalize_media_group(item)
+        _append(frames, "表情包")
+    return parts
+
+
 @dataclass
 class RenderedTurnContent:
-    """一轮的 user content 产出：可见正文 + runs 文本轮的独立通知上下文。
+    """一轮的 user content 产出：可见正文 + 请求级动态上下文 + 通知。
 
     - ``content``：真正发给 Hermes 的可见 user content（纯文本 str 或媒体 parts 列表）。
-      runs 纯文本回合里它**不含**顶层系统通知区。
-    - ``context_notices``：runs 纯文本回合拆出的完整通知区（``<系统通知区域起始>`` …
-      ``<系统通知区域结束>``），由 ``hermes_context.notices`` 带给插件，再由官方
-      ``ContextEngine.select_context`` 在请求副本尾部注入（按自然回合提醒 N 次，
-      条目 146）；其余回合为空串。
-    - ``closing_reminder``：reactive 的近因 reminder 逐字副本，作为
-      ``hermes_context.closing_reminder``，保证通知不会把协议提醒挤离模型所见最后一段；
-      passive 与无通知回合为空串。
+      正文零包装后只含真实消息正文与媒体，不再含时间／区域标记／消息头／通知／提醒。
+    - ``request_context``：本轮动态事实（当前时间、recent 正文、有序消息索引、媒体寻址、任务锚），
+      作为 ``hermes_context.request_context`` 交给插件，在请求副本末尾注入；随本自然轮
+      （含工具续跑）生效，下一自然轮换新值。
+    - ``context_notices``：系统通知区（``<系统通知区域起始>`` … ``<系统通知区域结束>``），
+      按自然回合提醒 N 次（条目 146）。
+    - ``closing_reminder``：reactive 的近因 reminder 逐字副本，保证通知不会把协议提醒
+      挤离模型所见最后一段；passive 为空串。
 
-    拆出的两个字段只走 ``hermes_context`` 这条出口（条目 145／146），不回流进可见正文。
+    三个上下文出口只走 ``hermes_context``，不回流进可见正文。
     """
 
     content: UserContent
+    request_context: str = ""
     context_notices: str = ""
     closing_reminder: str = ""
 
@@ -1347,30 +1579,18 @@ def build_reactive_user_content(
     self_id: str | None = None,
     adapter: str | None = None,
 ) -> RenderedTurnContent:
-    """reactive user content:当前时间 + 可选 <pinned_tasks> + 可选系统通知区 + 可选聊天区。
+    """reactive 一轮输入：Runs 正文零包装，completions／旧接口保留区域化呈递。
 
-    结构只有三层(不是每轮都出现):
-      1. 当前时间独立置顶;
-      2. `<系统通知区域起始>` … `<系统通知区域结束>`:系统合成输入(跨会话递纸条、
-         Kanban／子代理汇报、补投重构、插件便签、本轮寻址/黑名单事实);
-      3. `<聊天消息区域起始>` … `<聊天消息区域结束>`:全部待处理新消息(历史未推送
-         段 + 本轮触发批),最新一条在末位。
-    没有通知/没有聊天时对应区域整段省略。不再有 <runtime_state> / <recent_messages>
-    / <current_message> 三块:每轮必变的时间提到顶上,寻址由聊天行 `[有人@我]`
-    与本轮通知表达,触发者身份由聊天区末条的作者行表达。
+    Runs 的可见 content 只含当前触发批的真实正文及媒体；当前时间、recent（旧→新）、
+    有序“第几条 → 发送者 → m:id”索引、当前正文行界、媒体寻址与 pinned tasks 进入
+    request_context。系统通知进入 context_notices，批尾协议提醒进入 closing_reminder，
+    均不写回正文。recent 保留既有历史截断与“只展开最新折叠”规则；当前批保留混合／bot
+    来源闸。
 
-    rows 是当前输入的有序碎片,身份、正文、m:id 与媒体清单只从这里读取;系统来源
-    的碎片进通知区,真人/bot 碎片进聊天区,不互相冒充。pinned_anchors 只在任务锚
-    总开关开启时渲染(关闭时整块不出现),位置在时间与通知区之间。
-    current_image_urls / current_sticker_urls: 内联帧组,每项为 (寻址三元组, 帧列表)
-    或裸帧列表;三元组 (kind, mid, idx) 用于给 parts 打全称标签 [图 m:ID#idx]。
-
-    runs 纯文本回合(条目 145 §7.1):通知区从可见 content 拆到
-    ``context_notices``,由 Hermes 插件经官方 ``ContextEngine.select_context`` 在请求
-    副本尾部注入(条目 146 起;按自然回合提醒 N 次);正文 reminder 仍留在可见 content,
-    并原样复制进 ``closing_reminder``。
-    非 runs 或带媒体 parts 的回合完整保留旧版内联呈递(两个 context 字段为空)——
-    那是明确未覆盖路径,不是插件缺席降级。
+    rows 是当前输入的有序碎片，系统来源进通知，真人碎片进正文与索引。pinned_anchors
+    只在任务锚总开关开启时渲染。current_image_urls／current_sticker_urls 是内联帧组，
+    可为（寻址三元组, 帧列表）或裸帧列表；媒体操作寻址只放 request_context。
+    completions／旧接口不生成请求级上下文字段，保持原区域文法。
     """
     ctx = _identity_context(self_id, adapter)
     notice_rows = [r for r in rows if r.origin.author_kind is AuthorKind.SYSTEM]
@@ -1390,16 +1610,6 @@ def build_reactive_user_content(
         if pinned_anchors and task_anchor_enabled()
         else ""
     )
-    chat_block = _render_chat_region(
-        history_rows=recent_messages, current_rows=chat_rows, is_private=False,
-        name_resolver=name_resolver, self_id=self_id, adapter=adapter,
-    )
-    if current_sticker_urls:
-        chat_block += _STICKER_MOOD_NOTE
-
-    # 近因 reminder:小模型容易在长 protocol + 角色 core 双重 system 下忘掉正文协议,
-    # 又把回复写回 JSON 信封。把契约提示放到 user content 最末,LLM 近因效应让它最难忘
-    # ——这一行不能改成 byte-stable system 的一部分,必须紧贴聊天区。
     mode = _json_lines_mode()
     anchor_on = task_anchor_enabled()
     if mode == "completions":
@@ -1434,24 +1644,51 @@ def build_reactive_user_content(
     # message_origin 的旧签名参数:triggered_by 已由聊天区末条作者行表达,
     # current_origin 不再参与任何文案(保留形参会变成第二套来源叙事,故一并删除)。
 
-    # 顶层通知区只在 runs 纯文本回合拆出去;媒体 parts 回合保持旧内联呈递。
-    split = mode == "runs" and not current_image_urls and not current_sticker_urls
+    if mode == "runs":
+        # 正文零包装：可见 content 只有真实正文与媒体；时间／索引／媒体寻址／任务锚
+        # 作为 request_context 由插件在请求副本末尾注入，通知与批尾提醒走原有出口。
+        recent_bodies = _recent_bodies_without_wrap(recent_messages)
+        current_bodies = _current_bodies_without_wrap(chat_rows)
+        body_text = "\n".join(b for b in current_bodies if b) or " "
+        request_context = _render_request_context(
+            history_rows=recent_messages, current_rows=chat_rows,
+            recent_bodies=recent_bodies, current_bodies=current_bodies,
+            pinned_block=pinned_block,
+            media_groups=[*current_image_urls, *list(current_sticker_urls or [])],
+            ctx=ctx, name_resolver=name_resolver,
+        )
+        closing_reminder = reminder
+        if not current_image_urls and not current_sticker_urls:
+            return RenderedTurnContent(
+                content=body_text,
+                request_context=request_context,
+                context_notices=notice_block,
+                closing_reminder=closing_reminder,
+            )
+        return RenderedTurnContent(
+            content=_assemble_zero_wrap_media_parts(
+                body_text, current_image_urls, list(current_sticker_urls or []),
+            ),
+            request_context=request_context,
+            context_notices=notice_block,
+            closing_reminder=closing_reminder,
+        )
+
+    # completions / 旧接口：保留原区域化呈递（备用通道，本阶段未接入请求级上下文）。
+    chat_block = _render_chat_region(
+        history_rows=recent_messages, current_rows=chat_rows, is_private=False,
+        name_resolver=name_resolver, self_id=self_id, adapter=adapter,
+    )
     blocks = [
         f"（当前时间：{_current_time_str()}）",
         pinned_block,
-        "" if split else notice_block,
+        notice_block,
         chat_block,
     ]
     text_block = "\n\n".join(b for b in blocks if b) + reminder
-    context_notices = notice_block if split else ""
-    closing_reminder = reminder if context_notices else ""
 
     if not current_image_urls and not current_sticker_urls:
-        return RenderedTurnContent(
-            content=text_block,
-            context_notices=context_notices,
-            closing_reminder=closing_reminder,
-        )
+        return RenderedTurnContent(content=text_block)
 
     return RenderedTurnContent(content=_assemble_media_parts(
         text_block, current_image_urls, list(current_sticker_urls or []),
@@ -1470,13 +1707,11 @@ def build_passive_user_content(
     self_id: str | None = None,
     adapter: str | None = None,
 ) -> RenderedTurnContent:
-    """passive user content:当前时间 + 可选系统通知区 + 可选聊天区(图片走多模态 parts)。
+    """passive user content：正文零包装（runs）／区域化（completions 备用通道）。
 
-    与 reactive 同一套区域文法,差别只有 is_private(私聊省略固定对方的身份与
-    speaker)和没有本轮寻址/黑名单事实(私聊不存在归属歧义),也没有近因 reminder。
-
-    runs 纯文本回合同样把通知区拆到 ``context_notices``(passive 不带
-    ``closing_reminder``);非 runs 或带媒体 parts 保留旧内联呈递。
+    runs：可见 content 只含真实正文与媒体；时间／索引／媒体寻址走 request_context，
+    系统通知走 ``context_notices``。passive 没有近因 reminder，也没有本轮寻址/黑名单
+    事实（私聊不存在归属歧义）。completions／旧接口保留原区域文法。
     """
     notice_rows = [r for r in rows if r.origin.author_kind is AuthorKind.SYSTEM]
     chat_rows = [r for r in rows if r.origin.author_kind is not AuthorKind.SYSTEM]
@@ -1484,26 +1719,45 @@ def build_passive_user_content(
     if plugin_note:
         summary, body = _notice_summary(plugin_note)
         notices.append(_render_notice("插件提示", summary, body))
+    notice_block = _render_notice_region(notices)
+
+    if _json_lines_mode() == "runs":
+        recent_bodies = _recent_bodies_without_wrap(recent_messages)
+        current_bodies = _current_bodies_without_wrap(chat_rows)
+        body_text = "\n".join(b for b in current_bodies if b) or " "
+        request_context = _render_request_context(
+            history_rows=recent_messages, current_rows=chat_rows,
+            recent_bodies=recent_bodies, current_bodies=current_bodies,
+            media_groups=[*current_image_urls, *list(current_sticker_urls or [])],
+            ctx=_identity_context(self_id, adapter), name_resolver=name_resolver,
+        )
+        if not current_image_urls and not current_sticker_urls:
+            return RenderedTurnContent(
+                content=body_text,
+                request_context=request_context,
+                context_notices=notice_block,
+            )
+        return RenderedTurnContent(
+            content=_assemble_zero_wrap_media_parts(
+                body_text, current_image_urls, list(current_sticker_urls or []),
+            ),
+            request_context=request_context,
+            context_notices=notice_block,
+        )
+
     chat_block = _render_chat_region(
         history_rows=recent_messages, current_rows=chat_rows, is_private=is_private,
         name_resolver=name_resolver, self_id=self_id, adapter=adapter,
     )
-    if current_sticker_urls:
-        chat_block += _STICKER_MOOD_NOTE
-    notice_block = _render_notice_region(notices)
-    split = _json_lines_mode() == "runs" and not current_image_urls and not current_sticker_urls
     blocks = [
         f"（当前时间：{_current_time_str()}）",
-        "" if split else notice_block,
+        notice_block,
         chat_block,
     ]
     text_block = "\n\n".join(b for b in blocks if b)
 
     if not current_image_urls and not current_sticker_urls:
-        return RenderedTurnContent(
-            content=text_block,
-            context_notices=notice_block if split else "",
-        )
+        return RenderedTurnContent(content=text_block)
 
     return RenderedTurnContent(content=_assemble_media_parts(
         text_block, current_image_urls, list(current_sticker_urls or []),

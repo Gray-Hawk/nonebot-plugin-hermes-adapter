@@ -2,9 +2,9 @@
 
 背景：`POST /v1/runs/{id}/steer` 的上游实现在投递时会把文本包进
 `[OUT-OF-BAND USER MESSAGE — …]` 外壳（自描述标记 + 注入防御）。本部署的 steer
-已经是普通的聊天消息，NB 在 `/steer` 请求体里带上本模块的标记后，网关薄插件
-（`gateway_plugins/steer-presentation-thin`）对**这一批**跳过上游外壳，按 NB 呈递
-的区域块原样落成 user 行。
+已经是普通的聊天消息（正文零包装），NB 在 `/steer` 请求体里带上本模块的标记后，
+网关薄插件（`gateway_plugins/steer-presentation-thin`）对**这一批**跳过上游外壳，
+按 NB 给的纯正文原样落成 user 行。
 
 为什么不是「按文本前缀识别上游外壳」：识别上游包裹靠文本形状猜测，任何一次上游
 文案调整都会静默失效，而且模型正文里出现同样字样时会被误剥。这里传的是结构化
@@ -13,12 +13,12 @@
 契约（改动必须两侧同批，且有测试比对字面量）：
 
     POST /v1/runs/{run_id}/steer
-    {"input": "<区域块文本>",
+    {"input": "<纯正文>",
      "presentation": {"schema": "hermes.steer.presentation/1",
-                      "format": "chat_region"}}
+                      "format": "plain_body"}}
 
 插件缺失/版本不认识 → 请求体多出来的字段被上游丢弃，文本照旧被外壳包住：
-翻滚回退是安全的（模型仍看到区域块，只是套着可信标记），不会丢内容。
+翻滚回退是安全的（模型仍看到同一份正文，只是套着可信标记），不会丢内容。
 """
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ from typing import Any
 
 # 契约版本。任何语义变化（例如换成别的块形态）都必须同时改插件侧字面量。
 PRESENTATION_SCHEMA = "hermes.steer.presentation/1"
-# 呈递形态：与普通消息共用的聊天消息区域块（prompt_builder.render_chat_region）。
-PRESENTATION_FORMAT = "chat_region"
+# 呈递形态：纯正文（prompt_builder.render_steer_batch 只拼正文，无区域标/行头）。
+PRESENTATION_FORMAT = "plain_body"
 # 批尾系统提示字段：本批文本末尾挂着的那一段（发送原语追加的约定行）。
 # 一次 drain 里多批被上游用单换行拼成一段时，薄插件据此把各批的系统提示收拢到
 # 整段最后、只留一条——不按文案形状猜，只认 NB 显式声明过的那一段。
@@ -42,8 +42,8 @@ def presentation_marker(hint: str = "") -> dict[str, str]:
     return marker
 
 
-def declares_chat_region(marker: Any) -> bool:
-    """标记是否声明了「本批文本已是聊天区区域块」。
+def declares_plain_body(marker: Any) -> bool:
+    """标记是否声明了「本批文本已是纯正文」。
 
     只认本模块声明的字段值：不是对象、缺字段、版本/形态不认识，一律 False（走上游
     原样包装）。这是与网关插件同一份判据，测试用同一批用例比对两侧。

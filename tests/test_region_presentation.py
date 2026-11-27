@@ -219,7 +219,7 @@ class SourceAuditTests(unittest.TestCase):
             self_id=SELF, adapter=ADAPTER,
         ).content
         self.assertIn("[黑名单：当前发言者在黑名单名单里]", out)
-        self.assertIn("[寻址：平台已确认聊天消息区域末条是冲你说的]", out)
+        self.assertIn("[寻址：平台已确认消息正文末条是冲你说的]", out)
         # 聊天行仍是真人行,不因通知而被改写
         self.assertIn("[m:41]", out)
 

@@ -38,19 +38,23 @@ TURN_CONTEXT_REGISTERED = "registered"
 TURN_CONTEXT_REJECTED = "rejected"
 
 
-def build_context_payload(notices: str, closing_reminder: str = "") -> dict[str, Any] | None:
-    """通知区 + 可选的批尾 reminder → 请求体里的 ``hermes_context``。
+def build_context_payload(
+    notices: str, closing_reminder: str = "", request_context: str = ""
+) -> dict[str, Any] | None:
+    """通知区 + 可选批尾 reminder + 本轮动态上下文 → 请求体里的 ``hermes_context``。
 
-    没有通知（空串或全空白）时返回 ``None``：无通知回合不发字段、不创建登记项，
-    请求体与模型字节保持现状（§6「无通知回合」）。``closing_reminder`` 只有
-    reactive 会带；空串表示省略该键（passive 不多出空段）。
+    三者都空（空串或全空白）时返回 ``None``：无上下文回合不发字段、不创建登记项。
+    ``request_context`` 是本轮动态事实（时间、消息索引、媒体寻址、任务锚），随本自然轮
+    （含工具续跑）注入；``notices`` 仍按自然回合提醒 N 次；``closing_reminder`` 只有
+    reactive 会带，空串表示省略该键（passive 不多出空段）。
     """
-    if not isinstance(notices, str) or not notices.strip():
-        return None
-    payload: dict[str, Any] = {
-        "schema": TURN_CONTEXT_SCHEMA,
-        "notices": notices,
-    }
+    payload: dict[str, Any] = {"schema": TURN_CONTEXT_SCHEMA}
+    if isinstance(notices, str) and notices.strip():
+        payload["notices"] = notices
     if isinstance(closing_reminder, str) and closing_reminder:
         payload["closing_reminder"] = closing_reminder
+    if isinstance(request_context, str) and request_context.strip():
+        payload["request_context"] = request_context
+    if len(payload) == 1:
+        return None
     return payload

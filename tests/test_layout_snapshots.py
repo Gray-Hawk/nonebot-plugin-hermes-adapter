@@ -4,8 +4,7 @@
 
 1. 普通单条聊天消息保留聊天区域起止结构，只补正确的回车／换行：时间、固定说明、
    m:id 消息头、正文、结束标各占自己的段落，不再挤在一起；
-2. 连续 steer 的缺陷在拼装层修：保留缓冲与批量出队，插件呈递层把上游用单换行拼起来
-   的多批重排成「每批自己的区域块 + 批间空行 + 批尾系统提示只留一条」；
+2. 连续 steer 在拼装层保持各批原始正文与顺序：正文批间使用单换行，批尾系统提示只留一条；
 3. steer 补投把「当前需要补投的插话」和「历史定位证据」清晰分层，历史助手正文、
    Kanban 通知与区域标留在自己的证据项里，不再伪装成一段新用户正文。
 
@@ -105,7 +104,7 @@ class NormalSingleMessageLayoutTests(unittest.TestCase):
 
 
 class SteerBatchLayoutTests(unittest.TestCase):
-    """单条 / 连续 steer：每批自己的区域块，批间空行，系统提示只留一条。"""
+    """单条／连续 steer：纯正文批保持单换行，系统提示只留末尾一条。"""
 
     def _batch(self, mid: int, content: str) -> str:
         pres = pb.render_steer_rows(
@@ -115,13 +114,11 @@ class SteerBatchLayoutTests(unittest.TestCase):
 
     def test_single_steer_batch_snapshot(self) -> None:
         text = self._batch(21, "插一句")
-        self.assertEqual(text, "\n\n".join([
-            OPEN, NOTE, "[m:21] [普通用户] [id=10001 user=小光]:\n插一句", CLOSE,
-        ]))
-        # 批尾系统提示由发送原语用空行分隔挂在区域块之后。
+        self.assertEqual(text, "插一句")
+        # 批尾系统提示由发送原语用空行分隔挂在正文之后。
         with patch.object(relay, "steer_reply_push_active", return_value=True):
             sent = relay._with_steer_reply_convention(text)
-        self.assertEqual(sent, f"{text}\n\n{HINT}")
+        self.assertEqual(sent, f"插一句\n\n{HINT}")
 
     def test_consecutive_steer_batches_are_relaid_out(self) -> None:
         plugin = _load_plugin()
@@ -140,8 +137,8 @@ class SteerBatchLayoutTests(unittest.TestCase):
         self.assertEqual(row["display_kind"], "steer")
         self.assertEqual(
             row["content"],
-            "\n\n".join([first, second, HINT]),
-            "两批各保留自己的区域块，批间空一行，系统提示只留末尾一条",
+            f"{first}\n{second}\n\n{HINT}",
+            "两批正文保持单换行，系统提示只留末尾一条",
         )
         self.assertNotIn("WRAPPED", row["content"])
 
@@ -156,7 +153,7 @@ class SteerBatchLayoutTests(unittest.TestCase):
         )(text)
         self.assertEqual(row["content"], text)
 
-    def test_composed_batches_without_hint_only_add_blank_lines(self) -> None:
+    def test_composed_batches_without_hint_keep_single_newline(self) -> None:
         plugin = _load_plugin()
         first = self._batch(51, "第一批")
         second = self._batch(52, "第二批")
@@ -167,7 +164,7 @@ class SteerBatchLayoutTests(unittest.TestCase):
             lambda value: {"role": "user", "content": value, "display_kind": "steer"},
             registry, "steer",
         )(first + "\n" + second)
-        self.assertEqual(row["content"], f"{first}\n\n{second}")
+        self.assertEqual(row["content"], f"{first}\n{second}")
         self.assertEqual(row["content"].count(HINT), 0)
 
 

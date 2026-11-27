@@ -74,6 +74,17 @@ def _render(mode: str, enabled: bool) -> dict[str, str]:
     _commit(enabled)
     with patch.object(plugin_config, "hermes_api_interface", mode), \
             patch.object(pb, "sticker_feature_enabled", return_value=False):
+        group = pb.build_reactive_user_content(
+            addressed_to_bot=True,
+            recent_messages=[], rows=[_row_obj()], current_image_urls=[],
+            pinned_anchors=[_anchor()], now_ms=NOW, self_id="999",
+            adapter="onebotv11", plugin_note="进度更新",
+        )
+        private = pb.build_passive_user_content(
+            recent_messages=[], rows=[_row_obj()], current_image_urls=[],
+            is_private=True, self_id="999", adapter="onebotv11",
+            plugin_note="进度更新",
+        )
         out = {
             "group_system": pb.build_reactive_system_prompt(
                 adapter="onebotv11", group_id="g1", self_id="999",
@@ -83,16 +94,9 @@ def _render(mode: str, enabled: bool) -> dict[str, str]:
                 adapter="onebotv11", is_private=True, user_id="u1", group_id=None,
                 private_decision=True,
             ),
-            "group_user": pb.build_reactive_user_content(
-                addressed_to_bot=True,
-                recent_messages=[], rows=[_row_obj()], current_image_urls=[],
-                pinned_anchors=[_anchor()], now_ms=NOW, self_id="999",
-                adapter="onebotv11",
-            ).content,
-            "private_user": pb.build_passive_user_content(
-                recent_messages=[], rows=[_row_obj()], current_image_urls=[],
-                is_private=True, self_id="999", adapter="onebotv11",
-            ).content,
+            # 模型一轮能看到的全部动态文本：正文 + 请求级上下文 + 批尾 reminder。
+            "group_user": group.content + "\n\n" + group.request_context + group.closing_reminder,
+            "private_user": private.content + "\n\n" + private.request_context + private.closing_reminder,
         }
     return out
 

@@ -115,7 +115,7 @@ class SteerRowPresentationTests(_TrackerCase):
         captured: list[str] = []
 
         async def fake_steer_run(*, tgt, run_id, text, presented=False, presentation_hint=""):
-            self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
+            self.assertTrue(presented, "steer 必须带结构化呈递标记（零包装正文）")
             captured.append(text)
             return True
 
@@ -151,23 +151,19 @@ class SteerRowPresentationTests(_TrackerCase):
 
         self.assertTrue(ok)
         self.assertEqual(len(captured), 1)
-        # 媒体寻址只贴本行自己的号与自己的 idx;整批在聊天区区域块里(同普通消息外观)。
+        # 可见文本只含两行正文；m:id 与作者由既有台账逐行保存。
         sent = captured[0]
-        self.assertTrue(is_region(sent), sent)
-        blocks = region_rows(sent).split("\n\n")
-        self.assertEqual(len(blocks), 2, captured[0])
-        self.assertTrue(blocks[0].startswith("[m:101] [普通用户] [id=u1 user=小光]:\n"), blocks[0])
-        self.assertTrue(blocks[1].startswith("[m:102] [普通用户] [id=u2 user=小李]:\n"), blocks[1])
-        self.assertIn("[图 m:101#0]", blocks[0])
-        self.assertIn("[引用图 m:101#1]", blocks[0])
-        self.assertNotIn("m:102", blocks[0])
-        self.assertIn("[转发图 m:102#0]", blocks[1])
-        self.assertNotIn("m:101", blocks[1])
+        self.assertEqual(sent, "A 这条先发\nB 再补一句")
+        self.assertNotIn("[m:", sent)
+        self.assertNotIn("get_message_images", sent)
         # 台账逐行,发送人/正文与实发文本逐字对齐
         ledger = self.ledger()
         self.assertEqual([(r["m_id"], r["sender_id"]) for r in ledger],
                          [("101", "u1"), ("102", "u2")])
-        self.assertEqual([r["steer_text"] for r in ledger], blocks)
+        self.assertEqual([r["steer_text"] for r in ledger], ["A 这条先发", "B 再补一句"])
+        # 原始媒体身份仍在 source_row 对应的消息里，未混入可见正文。
+        self.assertEqual([kind for kind, _u in iter_message_media(row_a)], ["image", "quote"])
+        self.assertEqual([kind for kind, _u in iter_message_media(row_b)], ["forward_image"])
         # 呈现去重名单同样从这份呈递派生
         self.assertEqual(self.seen_ids(), {101, 102})
 
@@ -192,15 +188,18 @@ class SteerRowPresentationTests(_TrackerCase):
         )
         self.assertTrue(ok)
         self.assertNotEqual(captured[0], old_form)
-        self.assertIn("id=u2", captured[0])
-        self.assertIn("[引用图 m:101#1]", captured[0])
+        self.assertEqual(captured[0], "A 这条先发\nB 再补一句")
+        self.assertEqual(
+            [(item["m_id"], item["sender_id"]) for item in self.ledger()],
+            [("101", "u1"), ("102", "u2")],
+            "第二作者身份必须留在台账，不能随旧单行归一而丢失",
+        )
 
     def test_same_row_twice_presented_and_ledged_once(self) -> None:
         row = msg(user="u1", nickname="小光", content="同一行", m_id=101)
         ok, captured = self._direct([row, row])
         self.assertTrue(ok)
-        self.assertEqual(region_rows(captured[0]).split("\n\n"),
-                         ["[m:101] [普通用户] [id=u1 user=小光]:\n同一行"])
+        self.assertEqual(captured, ["同一行"])
         self.assertEqual(len(self.ledger()), 1)
         self.assertEqual(self.seen_ids(), {101})
 
@@ -245,11 +244,20 @@ class MediaTypingTests(unittest.TestCase):
         )
         self.assertEqual(fragment.id, 501)
 
-        line = render_steer_rows([fragment]).rows[0].rendered_line
-        self.assertIn("[图 m:501#0]", line)
-        self.assertIn("[表情包 m:501#1]", line)
-        self.assertIn("[引用图 m:501#2]", line)
-        self.assertIn("[转发图 m:501#3]", line)
+        presentation = render_steer_rows([fragment])
+        line = presentation.rows[0].rendered_line
+        self.assertEqual(line, "own 图 + 引用图 + 转发图")
+        self.assertNotIn("m:501", line)
+        # 可见正文不带寻址，原始 source_row 仍能推出同序、同 idx 的媒体身份。
+        source = presentation.rows[0].source_row
+        labels = [
+            media_label(kind, source.id, idx)
+            for idx, (kind, _u) in enumerate(iter_message_media(source))
+        ]
+        self.assertEqual(labels, [
+            "[图 m:501#0]", "[表情包 m:501#1]",
+            "[引用图 m:501#2]", "[转发图 m:501#3]",
+        ])
 
     def test_negative_control_flat_image_urls_shift_quote_index(self) -> None:
         """负对照:引用图并进 image_urls 的旧构造会把它编到 #1,与入库 idx 错位。"""
@@ -292,7 +300,7 @@ class FollowupSteerGateTests(_TrackerCase):
         captured: list[str] = []
 
         async def fake_steer_run(*, tgt, run_id, text, presented=False, presentation_hint=""):
-            self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
+            self.assertTrue(presented, "steer 必须带结构化呈递标记（零包装正文）")
             captured.append(text)
             if during_await is not None:
                 during_await()
@@ -314,7 +322,7 @@ class FollowupSteerGateTests(_TrackerCase):
         )
         ok, captured = self._try()
         self.assertTrue(ok)
-        self.assertEqual(captured, [wrap_region("[m:103] [普通用户] [id=u3 user=小周]:\n你怎么看")])
+        self.assertEqual(captured, ["你怎么看"])
         self.assertIsNone(self.registry.peek_followup(KEY), "纯文本注入成功后应摘槽")
         self.assertEqual(
             [(r["m_id"], r["sender_id"]) for r in self.ledger()], [("103", "u3")]
@@ -335,7 +343,7 @@ class FollowupSteerGateTests(_TrackerCase):
         )
         ok, captured = self._try()
         self.assertTrue(ok)
-        self.assertEqual(captured, [wrap_region("[普通用户] [id=u3 user=小周]:\n没有行号的跟帖")])
+        self.assertEqual(captured, ["没有行号的跟帖"])
         self.assertIsNone(
             self.registry.peek_followup(KEY), "已呈现的无号行必须结算,留槽会重复呈递"
         )
@@ -473,7 +481,7 @@ class FollowupSteerGateTests(_TrackerCase):
         ok, captured = self._try(during_await=merge_notice)
         # 冻结集在 await 前已定:injected 只含真人那一行(系统事件行不冒充 steer 输入);
         # 结算按对象身份发现新 fragment → 槽保留,系统行留给接力轮呈递
-        self.assertEqual(captured, [wrap_region("[m:114] [普通用户] [id=u3 user=小周]:\n我再补一句")])
+        self.assertEqual(captured, ["我再补一句"])
         self.assertTrue(ok)
         # 槽里只剩系统事件行(未呈现,交由接力轮呈递);已 steer 的真人行已摘。
         self.assertEqual(len(entry.fragments), 1)
@@ -492,7 +500,7 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
         captured: list[str] = []
 
         async def fake_steer_run(*, tgt, run_id, text, presented=False, presentation_hint=""):
-            self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
+            self.assertTrue(presented, "steer 必须带结构化呈递标记（零包装正文）")
             captured.append(text)
             return True
 
@@ -636,7 +644,7 @@ class NativeRecoveryTests(_TrackerMixin, unittest.IsolatedAsyncioTestCase):
         captured: list[str] = []
 
         async def fake_steer_run(*, tgt, run_id, text, presented=False, presentation_hint=""):
-            self.assertTrue(presented, "steer 必须带结构化呈递标记(区域块)")
+            self.assertTrue(presented, "steer 必须带结构化呈递标记（零包装正文）")
             captured.append(text)
             return True
 

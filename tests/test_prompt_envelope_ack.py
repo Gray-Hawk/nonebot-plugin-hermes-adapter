@@ -88,15 +88,17 @@ class PlainTextPromptTests(unittest.TestCase):
         row = BufferedMessage(ts=1, adapter='onebotv11', group_id='g1', user_id='u1',
                               nickname='小光', content='请核对这个项目', origin=MessageOrigin.human())
         with patch.object(plugin_config, 'hermes_api_interface', 'runs'):
-            prompts['reactive_reminder'] = pb.build_reactive_user_content(
+            built = pb.build_reactive_user_content(
                 addressed_to_bot=True, recent_messages=[], rows=[row], current_image_urls=[],
-            ).content
+            )
         for path in ('group_reactive', 'private_passive'):
             prompt = prompts[path]
             self.assertIn('轮中进度直接输出正文', prompt)
             self.assertIn('不要攒到整轮结束', prompt)
             self.assertNotIn('决策信封', prompt)
-        reminder = prompts['reactive_reminder']
+        # 近因 reminder 已移出正文，走 hermes_context.closing_reminder（N 次提醒的批尾）。
+        self.assertEqual(built.content, '请核对这个项目')
+        reminder = built.closing_reminder
         self.assertIn('工具调用之间想对用户说的话也直接输出正文', reminder)
         self.assertIn('不要写 JSON 信封', reminder)
 

@@ -2,14 +2,13 @@
 
 现场形态(上游会话 API 的合法多模态 user 行):
 ``content=[{"type":"text",...},{"type":"text",...},{"type":"image_url",...}]``。
-``_fetch_transcript`` 的提前命中搜索与 ``reconcile_run_finished`` 的终态搜索都把
-``content`` 直接交给 ``re.Pattern.search``,于是
-``TypeError: expected string or bytes-like object, got 'list'``:第一次异常被分页
-兜底吞掉,第二次异常直接逃出后台任务,``steer_ledger`` 永久停在 ``reconciling``。
+早期实现对 ``content`` 直接使用正则搜索，于是
+``TypeError: expected string or bytes-like object, got 'list'``：第一次异常被分页
+兜底吞掉，第二次异常逃出后台任务，``steer_ledger`` 停在 ``reconciling``。
 
-覆盖:
-  - A 真实形态 content=[text,text,image_url]:含目标 m:id → 核销;缺件但证据完整
-    → 照旧进入既有补投路径,全程无 TypeError;
+当前覆盖：
+  - A 真实形态 content=[text,text,image_url]：含目标正文则核销；同文两条台账必须
+    由两次独立转录出现分别核销；缺件但证据完整则进入既有补投路径；
   - B 直接跑真实 reconcile_run_finished:首次转录读取抛 TypeError → 不向外炸、
     台账回 pending;第二次正常返回 → 成功处理、无 reconciling 残留、补投至多一次;
   - C reply_recovery 共用同一读取入口与同一纯文本视图,普通字符串行为不变。
@@ -47,10 +46,10 @@ MEDIA_HINT = "[图片]（随条媒体未内联，需要看图时用 get_message_
 
 
 def _steer_content(m_id: str = M_ID, text: str = STEER_TEXT) -> list[dict]:
-    """现场 steer 行形态:聊天行一段 + 媒体提示一段 + image_url 一段。"""
+    """零包装 steer 的多模态转录形态：正文文本 + 语义占位 + image_url。"""
     return [
-        {"type": "text", "text": f"[m:{m_id}] [普通用户] [id={UID} user=合成昵称]:\n{text}"},
-        {"type": "text", "text": MEDIA_HINT},
+        {"type": "text", "text": text},
+        {"type": "text", "text": "[图片]"},
         IMAGE_PART,
     ]
 
@@ -94,7 +93,7 @@ class _ReconcileRig(unittest.IsolatedAsyncioTestCase):
             run_id=run_id, scope_key=self.scope_key, session_key="sess",
             accepted_at=0,
             items=[{"m_id": m_id, "sender_id": UID,
-                    "steer_text": f"[m:{m_id}]:\n{STEER_TEXT}", "raw_text": STEER_TEXT}],
+                    "steer_text": STEER_TEXT, "raw_text": STEER_TEXT}],
         )
 
     def _statuses(self, run_id: str = "run-mm") -> list[tuple[str, str]]:
@@ -172,7 +171,7 @@ class ContentTextTests(unittest.TestCase):
 
 
 class MultimodalHitTests(_ReconcileRig):
-    """A:含目标 m:id 的多模态行必须如实核销,不得因 TypeError 崩退。"""
+    """A:含目标正文的多模态行必须如实核销，不得因 TypeError 崩退。"""
 
     async def test_hit_in_multimodal_row_is_settled(self) -> None:
         self._pending_steer()
@@ -188,6 +187,50 @@ class MultimodalHitTests(_ReconcileRig):
         await sc.reconcile_run_finished(tracked)
         self.assertEqual(self._statuses(), [(M_ID, "reconciled")])
         self.assertEqual(self.replays, [], "已进入转录的行不得再补投")
+
+    async def test_identical_bodies_require_distinct_transcript_occurrences(self) -> None:
+        self._register()
+        self.tracker.record_steer(
+            run_id="run-mm", scope_key=self.scope_key, session_key="sess", accepted_at=0,
+            items=[
+                {"m_id": "70001", "sender_id": UID,
+                 "steer_text": STEER_TEXT, "raw_text": STEER_TEXT},
+                {"m_id": "70002", "sender_id": UID,
+                 "steer_text": STEER_TEXT, "raw_text": STEER_TEXT},
+            ],
+        )
+        tracked = self.tracker.get_by_run_id("run-mm")
+        page = [
+            {"id": 21, "role": "assistant", "content": "最终回复正文"},
+            {"id": 20, "role": "user", "content": _steer_content()},
+        ]
+        sc, stack = self._patch_reconcile(page)
+        for item in stack:
+            item.start()
+            self.addCleanup(item.stop)
+        await sc.reconcile_run_finished(tracked)
+        self.assertEqual(self._statuses(), [("70001", "replayed"), ("70002", "reconciled")])
+        self.assertEqual(len(self.replays), 1, "同文两条台账不能共用同一次转录出现")
+
+    async def test_assistant_only_quote_cannot_settle_missing_steer(self) -> None:
+        self._register()
+        body = "改成周三"
+        self.tracker.record_steer(
+            run_id="run-mm", scope_key=self.scope_key, session_key="sess", accepted_at=0,
+            items=[{"m_id": "70001", "sender_id": UID, "steer_text": body, "raw_text": body}],
+        )
+        tracked = self.tracker.get_by_run_id("run-mm")
+        page = [
+            {"id": 21, "role": "assistant", "content": "也可以改成周三，不着急。"},
+            {"id": 20, "role": "user", "content": "先帮我看看时间安排。"},
+        ]
+        sc, stack = self._patch_reconcile(page)
+        for item in stack:
+            item.start()
+            self.addCleanup(item.stop)
+        await sc.reconcile_run_finished(tracked)
+        self.assertEqual(self._statuses(), [("70001", "replayed")])
+        self.assertEqual(len(self.replays), 1)
 
 
 class MultimodalReplayTests(_ReconcileRig):

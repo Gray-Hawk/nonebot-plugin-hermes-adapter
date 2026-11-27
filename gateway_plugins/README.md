@@ -41,13 +41,13 @@ python scripts/install_gateway_plugin.py queued-lane-interim-thin --check
 
 ## steer-presentation-thin（候选，未部署）
 
-Runs 车道中途 steer 的呈递收口：NB 渲染的聊天区区域块**原样落成那条 user 行**，不再套上游
+Runs 车道中途 steer 的呈递收口：NB 渲染的零包装正文**原样落成那条 user 行**，不再套上游
 `[OUT-OF-BAND USER MESSAGE — …]` 外壳。上游在 `steer_user_row` 加壳，`_handle_steer_run`
 又把请求体多余字段丢掉，所以窄补丁点是「前置读 body 登记本批 → 投递时对登记过的文本跳过
-包装」，不按文本前缀猜包裹。系统提示里只**追加**一段区域块外观说明，原标记语义不动。
+包装」，不按文本前缀猜包裹。系统提示里只**追加**一段零包装 user 行说明，原标记语义不动。
 请求契约（NB 同批）：`{"input": …, "presentation": {"schema":
-"hermes.steer.presentation/1", "format": "chat_region"}}`，两侧字面量有双向测试比对；插件缺失
-或版本不认识时上游丢弃该字段、退化成「外壳里套区域块」，不丢内容。详见
+"hermes.steer.presentation/1", "format": "plain_body"}}`，两侧字面量有双向测试比对；插件缺失
+或版本不认识时上游丢弃该字段、退化成「外壳里套正文」，不丢内容。详见
 [`steer-presentation-thin/README.md`](steer-presentation-thin/README.md)。
 
 ```bash

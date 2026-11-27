@@ -1386,6 +1386,7 @@ class HermesClient:
         activity_callback: Callable[[], None] | None = None,
         context_notices: str = "",
         closing_reminder: str = "",
+        request_context: str = "",
     ) -> ChatResult:
         """调用 Hermes,返回 ChatResult。
 
@@ -1610,6 +1611,7 @@ class HermesClient:
                     activity_callback=activity_callback,
                     context_notices=context_notices,
                     closing_reminder=closing_reminder,
+                    request_context=request_context,
                     scope=dict(
                         adapter=adapter_name, is_private=is_private, user_id=user_id,
                         group_id=group_id, bot_self_id=bot_self_id or "",
@@ -1903,7 +1905,7 @@ class HermesClient:
         run 不在 running(收尾/终态)→ 409 不接受,调用方回退 pending 排队语义。
         任何网络/协议异常都归 False,调用方走同一回退,不区分原因。
 
-        presented=True:文本已是 NB 的聊天区区域块,请求体带结构化呈递标记
+        presented=True：文本已是 NB 的零包装正文，请求体带结构化呈递标记
         (core/steer_presentation),网关薄插件据此跳过上游 `[OUT-OF-BAND …]` 外壳。
         presentation_hint 非空时随标记声明「批尾系统提示」那一段:一次 drain 里多批
         被上游拼成一段时,薄插件把各批的提示收拢到整段最后只留一条。
@@ -2078,6 +2080,7 @@ class HermesClient:
         activity_callback: Callable[[], None] | None = None,
         context_notices: str = "",
         closing_reminder: str = "",
+        request_context: str = "",
     ) -> tuple[str, str | None, "ChatResult | None", str, str]:
         """runs 通道(本部署补丁:阶段1)。返回 (raw_text, rotated, failure, pending_steer, run_id)。
 
@@ -2104,11 +2107,10 @@ class HermesClient:
             "session_id": session_key,
             "model": "hermes-agent",
         }
-        # 条目 145：回合通知上下文只挂在纯文本回合上（媒体 parts 回合 compose 侧
-        # 也拿不到字符串 sidecar，不在这里造第二条注入链）。
-        context_payload = (
-            build_context_payload(context_notices, closing_reminder)
-            if isinstance(content, str) else None
+        # 回合上下文（request_context／notices／closing_reminder）对纯文本与多模态
+        # parts 一视同仁：插件按其 content 文本视图精确匹配，媒体 parts 原样透传。
+        context_payload = build_context_payload(
+            context_notices, closing_reminder, request_context
         )
         if context_payload is not None:
             body[TURN_CONTEXT_FIELD] = context_payload

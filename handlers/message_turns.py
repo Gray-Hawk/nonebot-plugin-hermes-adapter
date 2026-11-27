@@ -84,7 +84,7 @@ from ..core.prompt_builder import (
     build_reactive_system_prompt,
     build_reactive_user_content,
     split_unpushed_messages,
-    steer_region_decorations,
+    steer_batch_decorations,
 )
 from ..core.routing import resolve_target
 from ..core.session import session_domain, session_manager
@@ -185,8 +185,8 @@ def _match_pending_steer_rows(
     当分隔符跳过一次。绝不能先对整段文本做全局删除——用户正文里引用同一行字面量
     时会被删掉,匹配随之失败,原文被永久改写。
 
-    decorations 同理:steer 整批在聊天区区域块里发送,开标签行/固定说明行/闭标签
-    是块框架(`prompt_builder.steer_region_decorations`),不是任何账项正文。同样
+    decorations 同理：steer 整批发送侧可能附加的块框架由
+    ``prompt_builder.steer_batch_decorations`` 统一回答（零包装后为空），不是任何账项正文。
     只在没有账项命中处跳过。
     """
     remaining = list(candidates)
@@ -278,7 +278,7 @@ def _pending_steer_recovery_rows(
 
     matched = _match_pending_steer_rows(
         pending_steer, candidates, convention_line=_STEER_REPLY_CONVENTION_LINE,
-        decorations=steer_region_decorations(),
+        decorations=steer_batch_decorations(),
     )
     if matched is None:
         if candidates:
@@ -1218,6 +1218,7 @@ async def _run_passive_turn(
         user_content_override=user_content,
         context_notices=user_content_renderer.context_notices,
         closing_reminder=user_content_renderer.closing_reminder,
+        request_context=user_content_renderer.request_context,
         target=hermes_target,
         decision_callback=(
             _live_deliver if _live_enabled else None
@@ -1915,6 +1916,7 @@ async def _run_reactive_turn(
         user_content_override=user_content,
         context_notices=user_content_renderer.context_notices,
         closing_reminder=user_content_renderer.closing_reminder,
+        request_context=user_content_renderer.request_context,
         target=hermes_target,
         decision_callback=(
             _live_deliver if plugin_config.hermes_api_interface == "runs" else None

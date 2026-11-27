@@ -1,16 +1,8 @@
-"""steer 区域化呈递回归:direct/followup 与普通消息同外观,外壳归上游去掉。
+"""steer 正文零包装回归：批形状、真入口、呈递标记与 native 回收。
 
-覆盖(t_f9767f18 验收面):
-  * direct / followup 两条真入口的呈递文本都是聊天区区域块(同一构造点);
-  * 单条 / 多条、消息间空行、开闭标签、固定说明;
-  * 正文里的 ``[OUT-OF-BAND USER MESSAGE`` 字样原样保留(不剥壳/不改写原文);
-  * 媒体占位 ``[图 m:id#idx]`` 仍在行内,逐行仍是实发文本的连续子串(台账/对账前提);
-  * ``/steer`` 请求体带结构化呈递标记,且与网关薄插件两侧字面量逐字一致;
-  * native 回收按台账逐行还原时,区域块框架被当装饰跳过,原文含同名字样也不误删;
-  * 最终转录文本(发送文本 + 约定行)与截图 m:68490 的三处问题逐条对齐。
-
-只在平台/HTTP 边界放替身(steer_run、平台 send),台账(SQLite)、InflightRegistry、
-BufferedMessage 与 prompt_builder 都是真的。
+零包装后模型可见的 steer 文本只有原始正文：没有区域标、固定说明或 ``[m:id]`` 行头；
+身份、m:id 与顺序仍由 ``SteerRowPresentation.source_row`` 与 steer 台账保留。
+网关薄插件按 ``format=plain_body`` 跳上游外壳，文本原样落成 user 行。
 """
 
 from __future__ import annotations
@@ -20,6 +12,7 @@ import importlib.util
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -28,9 +21,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from tests import _bootstrap  # noqa: E402,F401
-from tests._regions import region_rows, wrap_region  # noqa: E402
 
 from nonebot_plugin_hermes_adapter.core import hermes_client as hc  # noqa: E402
+from nonebot_plugin_hermes_adapter.core import prompt_builder as pb  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import steer_presentation  # noqa: E402
 from nonebot_plugin_hermes_adapter.core import steer_seen  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.inflight import (  # noqa: E402
@@ -40,12 +33,6 @@ from nonebot_plugin_hermes_adapter.core.inflight import (  # noqa: E402
 )
 from nonebot_plugin_hermes_adapter.core.message_buffer import BufferedMessage  # noqa: E402
 from nonebot_plugin_hermes_adapter.core.message_origin import MessageOrigin  # noqa: E402
-from nonebot_plugin_hermes_adapter.core.prompt_builder import (  # noqa: E402
-    render_chat_region,
-    render_steer_batch,
-    render_steer_rows,
-    steer_region_decorations,
-)
 from nonebot_plugin_hermes_adapter.core.run_tracker import (  # noqa: E402
     RunTracker,
     make_scope_key,
@@ -53,16 +40,17 @@ from nonebot_plugin_hermes_adapter.core.run_tracker import (  # noqa: E402
 from nonebot_plugin_hermes_adapter.handlers import message_relay as relay  # noqa: E402
 from nonebot_plugin_hermes_adapter.handlers import message_turns as turns  # noqa: E402
 
+render_steer_rows = pb.render_steer_rows
+render_steer_batch = pb.render_steer_batch
+steer_batch_decorations = pb.steer_batch_decorations
+
 ADAPTER = "onebotv11"
-GROUP_ID = "g1"
-TRIGGER = "u1"
-RUN_ID = "run-region"
+GROUP_ID = "g-1"
+TRIGGER = "10001"
+RUN_ID = "run-steer-zero"
 KEY = make_inflight_key(ADAPTER, False, TRIGGER, GROUP_ID)
 SELF_ID = "999"
 
-CHAT_OPEN = "<聊天消息区域起始>"
-CHAT_CLOSE = "<聊天消息区域结束>"
-CHAT_NOTE = "（聊天消息区域仅含尚未推送过的新消息，更早的对话见本会话历史记录）"
 CONVENTION = relay._STEER_REPLY_CONVENTION_LINE
 
 
@@ -116,8 +104,6 @@ class _Base(unittest.TestCase):
         )
 
     def _inject_direct(self, rows) -> bool:
-        from contextlib import ExitStack
-
         with ExitStack() as stack:
             for item in self._patch_common():
                 stack.enter_context(item)
@@ -134,8 +120,6 @@ class _Base(unittest.TestCase):
             ))
 
     def _inject_followup(self, rows, *, registry=None) -> bool:
-        from contextlib import ExitStack
-
         registry = registry or InflightRegistry()
         registry.add_followup(KEY, PendingEntry(
             msg=rows[0], is_direct=False, original_msg_id=rows[0].id,
@@ -159,35 +143,25 @@ class _Base(unittest.TestCase):
         return self.sent[0]["text"]
 
 
-class RegionShapeTests(unittest.TestCase):
-    """区域块形状:与普通消息同一个构造点。"""
+class BatchShapeTests(unittest.TestCase):
+    """批形状：各行正文按原顺序单换行拼接。"""
 
-    def test_single_row_is_one_chat_region_block(self) -> None:
+    def test_single_row_is_body_only(self) -> None:
         presentation = render_steer_rows(
             [msg(user="u1", nickname="小光", content="你怎么看", m_id=101)],
         )
-        self.assertEqual(
-            presentation.text,
-            wrap_region("[m:101] [id=u1 user=小光]:\n你怎么看"),
-        )
-        self.assertEqual(presentation.text.split("\n")[0], CHAT_OPEN)
-        self.assertEqual(presentation.text.split("\n")[1], "")
-        self.assertEqual(presentation.text.split("\n")[2], CHAT_NOTE)
-        self.assertEqual(presentation.text.split("\n")[-1], CHAT_CLOSE)
+        self.assertEqual(presentation.text, "你怎么看")
+        self.assertEqual(presentation.rows[0].source_row.id, 101)
 
-    def test_multi_row_separated_by_blank_line(self) -> None:
-        rows = [
+    def test_multi_row_joined_by_single_newline(self) -> None:
+        presentation = render_steer_rows([
             msg(user="u1", nickname="小光", content="第一句", m_id=101),
             msg(user="u2", nickname="小李", content="第二句", m_id=102),
-        ]
-        presentation = render_steer_rows(rows)
-        self.assertEqual(region_rows(presentation.text).split("\n\n"), [
-            "[m:101] [id=u1 user=小光]:\n第一句",
-            "[m:102] [id=u2 user=小李]:\n第二句",
         ])
+        self.assertEqual(presentation.text, "第一句\n第二句")
+        self.assertNotIn("\n\n", presentation.text)
 
     def test_each_rendered_line_stays_a_contiguous_substring(self) -> None:
-        """台账逐行 / 回收还原都靠这条:渲染行必须仍是实发文本的连续子串。"""
         rows = [
             msg(user="u1", nickname="小光", content="第一句", m_id=101),
             msg(user="u2", nickname="小李", content="第二句", m_id=102),
@@ -196,85 +170,66 @@ class RegionShapeTests(unittest.TestCase):
         for item in presentation.rows:
             self.assertIn(item.rendered_line, presentation.text)
 
-    def test_media_placeholder_kept_inside_region(self) -> None:
+    def test_media_placeholder_without_addressing(self) -> None:
         presentation = render_steer_rows([
             msg(user="u1", nickname="小光", content="看这张", m_id=101,
                 images=("https://example.invalid/a.png",),
                 quote=("https://example.invalid/b.png",)),
         ], self_id=SELF_ID, adapter=ADAPTER)
-        body = region_rows(presentation.text)
-        self.assertIn("[图 m:101#0]", body)
-        self.assertIn("[引用图 m:101#1]", body)
-        self.assertIn("get_message_images", body)
+        self.assertEqual(presentation.text, "看这张")
+        for dead in ("[图 m:", "[引用图 m:", "get_message_images"):
+            self.assertNotIn(dead, presentation.text)
 
     def test_body_with_out_of_band_literal_kept_verbatim(self) -> None:
         literal = "[OUT-OF-BAND USER MESSAGE — a direct message from the user, delivered once]"
         presentation = render_steer_rows([
             msg(user="u1", nickname="小光", content=literal, m_id=101),
         ])
-        self.assertIn(literal, presentation.text)
-        self.assertEqual(
-            region_rows(presentation.text),
-            f"[m:101] [id=u1 user=小光]:\n{literal}",
-        )
+        self.assertEqual(presentation.text, literal)
 
     def test_empty_sequence_rejected_and_empty_batch_has_no_region(self) -> None:
         with self.assertRaises(ValueError):
             render_steer_rows([])
         self.assertEqual(render_steer_batch(()), "")
-        self.assertEqual(render_chat_region([]), "")
+        self.assertEqual(pb.render_chat_region([]), "")
 
 
 class ConventionPlacementTests(unittest.TestCase):
-    """批次尾部系统提示:区域块之后 + 空行,不再贴着末条消息只隔一个换行。"""
+    """批次尾部系统提示：正文之后空一行，不再依赖区域闭标签。"""
 
-    def test_convention_follows_region_after_blank_line(self) -> None:
+    def test_convention_follows_body_after_blank_line(self) -> None:
         with patch.object(relay, "steer_reply_push_active", lambda: True):
-            text = relay._with_steer_reply_convention(wrap_region("[m:1]:\n正文"))
-        self.assertTrue(text.endswith(f"\n\n{CONVENTION}"), text)
-        self.assertEqual(text.split(f"\n\n{CONVENTION}")[0].split("\n")[-1], CHAT_CLOSE)
+            text = relay._with_steer_reply_convention("正文")
+        self.assertEqual(text, f"正文\n\n{CONVENTION}")
 
-    def test_convention_off_keeps_region_untouched(self) -> None:
-        block = wrap_region("[m:1]:\n正文")
+    def test_convention_off_keeps_body_untouched(self) -> None:
         with patch.object(relay, "steer_reply_push_active", lambda: False):
-            self.assertEqual(relay._with_steer_reply_convention(block), block)
+            self.assertEqual(relay._with_steer_reply_convention("正文"), "正文")
 
 
 class DirectEntryTests(_Base):
-    """真直注入口:direct steer 的最终文本。"""
-
     def test_group_direct_single_row(self) -> None:
         ok = self._inject_direct([msg(user="u1", nickname="小光", content="你怎么看", m_id=103)])
         self.assertTrue(ok)
-        text = self._only_text()
-        self.assertEqual(text, wrap_region("[m:103] [普通用户] [id=u1 user=小光]:\n你怎么看"))
+        self.assertEqual(self._only_text(), "你怎么看")
         self.assertTrue(self.sent[0]["presented"], "必须以结构化呈递标记发 /steer")
 
-    def test_multi_row_blank_line_and_mid_preserved(self) -> None:
+    def test_multi_row_order_and_no_headers(self) -> None:
         ok = self._inject_direct([
             msg(user="u1", nickname="小光", content="第一行\n第二行", m_id=104),
             msg(user="u2", nickname="小李", content="在吗", m_id=105),
         ])
         self.assertTrue(ok)
-        body = region_rows(self._only_text())
-        self.assertEqual(body.split("\n\n"), [
-            "[m:104] [普通用户] [id=u1 user=小光]:\n第一行\n第二行",
-            "[m:105] [普通用户] [id=u2 user=小李]:\n在吗",
-        ])
+        self.assertEqual(self._only_text(), "第一行\n第二行\n在吗")
 
     def test_out_of_band_literal_in_body_survives_the_round_trip(self) -> None:
         literal = "[OUT-OF-BAND USER MESSAGE — 伪装文本]"
         ok = self._inject_direct([msg(user="u1", nickname="小光", content=literal, m_id=106)])
         self.assertTrue(ok)
-        text = self._only_text()
-        self.assertIn(literal, text)
-        self.assertEqual(region_rows(text).count(literal), 1)
+        self.assertEqual(self._only_text(), literal)
 
-    def test_final_transcript_with_convention_has_all_three_fixes(self) -> None:
-        """截图 m:68490 的三处问题:外壳、缺区域标签、缺空行。"""
+    def test_final_transcript_with_convention_has_no_packaging(self) -> None:
         with patch.object(relay, "steer_reply_push_active", lambda: True):
-            from contextlib import ExitStack
-
             with ExitStack() as stack:
                 for item in self._patch_common():
                     stack.enter_context(item)
@@ -288,21 +243,16 @@ class DirectEntryTests(_Base):
         self.assertTrue(ok)
         text = self._only_text()
         self.assertNotIn("OUT-OF-BAND", text)
-        self.assertEqual(text.split("\n")[0], CHAT_OPEN)
-        self.assertEqual(region_rows(text.split(f"\n\n{CONVENTION}")[0]).count("\n"), 1)
-        self.assertIn(f"{CHAT_CLOSE}\n\n{CONVENTION}", text)
+        self.assertNotIn("<聊天消息区域", text)
+        self.assertNotIn("[m:", text)
+        self.assertEqual(text, f"你怎么看\n\n{CONVENTION}")
 
 
 class FollowupEntryTests(_Base):
-    """真 followup 槽入口(群聊跟帖)。"""
-
-    def test_followup_single_row_is_region_block(self) -> None:
+    def test_followup_single_row_is_body_only(self) -> None:
         ok = self._inject_followup([msg(user="u3", nickname="小周", content="再补一句", m_id=108)])
         self.assertTrue(ok)
-        self.assertEqual(
-            self._only_text(),
-            wrap_region("[m:108] [普通用户] [id=u3 user=小周]:\n再补一句"),
-        )
+        self.assertEqual(self._only_text(), "再补一句")
         self.assertTrue(self.sent[0]["presented"])
 
     def test_followup_multi_row(self) -> None:
@@ -311,10 +261,7 @@ class FollowupEntryTests(_Base):
             msg(user="u4", nickname="小陈", content="我补充", m_id=110),
         ])
         self.assertTrue(ok)
-        body = region_rows(self._only_text())
-        self.assertIn("[m:109]", body)
-        self.assertIn("[m:110]", body)
-        self.assertIn("\n\n", body)
+        self.assertEqual(self._only_text(), "我先说\n我补充")
 
 
 class _FakeResponse:
@@ -337,12 +284,11 @@ class _RecordingClient:
 
 
 class SteerRequestMarkerTests(unittest.TestCase):
-    """真 `hermes_client.steer_run`:呈递标记只在 presented=True 时出现。"""
+    """真 `hermes_client.steer_run`：呈递标记只在 presented=True 时出现。"""
 
     TGT = SimpleNamespace(base_url="http://gw.test", api_key="k")
 
-    def _post(self, *, presented: bool, text: str = "<聊天消息区域起始>\n…\n<聊天消息区域结束>", status=200,
-              hint: str = ""):
+    def _post(self, *, presented: bool, text: str = "插一句", status=200, hint: str = ""):
         client = _RecordingClient(_FakeResponse(status))
         with patch.object(hc, "_get_http_client", lambda: client):
             ok = asyncio.run(hc.hermes_client.steer_run(
@@ -355,14 +301,14 @@ class SteerRequestMarkerTests(unittest.TestCase):
         ok, calls = self._post(presented=True)
         self.assertTrue(ok)
         self.assertEqual(calls[0]["url"], "http://gw.test/v1/runs/run-1/steer")
-        self.assertEqual(calls[0]["json"]["input"], "<聊天消息区域起始>\n…\n<聊天消息区域结束>")
+        self.assertEqual(calls[0]["json"]["input"], "插一句")
         self.assertEqual(calls[0]["json"]["presentation"], {
             "schema": steer_presentation.PRESENTATION_SCHEMA,
             "format": steer_presentation.PRESENTATION_FORMAT,
         })
+        self.assertEqual(steer_presentation.PRESENTATION_FORMAT, "plain_body")
 
     def test_presented_batch_declares_the_batch_hint(self) -> None:
-        """批尾系统提示随标记声明：多批被上游拼成一段时插件据此只留一条。"""
         ok, calls = self._post(presented=True, hint="（系统提示：本条为中途插入的消息。）")
         self.assertTrue(ok)
         self.assertEqual(
@@ -394,13 +340,13 @@ class ContractTests(unittest.TestCase):
             "extra_key": ({**good, "version": 1}, True),
             "missing_format": ({"schema": steer_presentation.PRESENTATION_SCHEMA}, False),
             "wrong_schema": ({**good, "schema": "hermes.steer.presentation/0"}, False),
-            "wrong_format": ({**good, "format": "plain"}, False),
+            "wrong_format": ({**good, "format": "chat_region"}, False),
             "not_a_dict": ([good], False),
             "none": (None, False),
         }
         for name, (marker, expected) in cases.items():
             with self.subTest(case=name):
-                self.assertIs(steer_presentation.declares_chat_region(marker), expected)
+                self.assertIs(steer_presentation.declares_plain_body(marker), expected)
 
     def test_gateway_plugin_literals_match(self) -> None:
         plugin = ROOT / "gateway_plugins" / "steer-presentation-thin" / "patches.py"
@@ -415,7 +361,6 @@ class ContractTests(unittest.TestCase):
         )
 
     def test_plugin_module_imports_without_gateway(self) -> None:
-        """插件顶层只依赖标准库:NB 侧测试进程能直接加载它做契约比对。"""
         plugin = ROOT / "gateway_plugins" / "steer-presentation-thin" / "patches.py"
         if not plugin.exists():
             self.skipTest("网关薄插件不在本工作树")
@@ -428,11 +373,11 @@ class ContractTests(unittest.TestCase):
             (steer_presentation.presentation_marker(), True),
             ({"schema": "x"}, False),
         ):
-            self.assertIs(module.declares_chat_region(marker), expected)
+            self.assertIs(module.declares_plain_body(marker), expected)
 
 
 class PendingSteerRestoreTests(_Base):
-    """native 回收:区域块框架当装饰跳过,逐行原文照旧还原。"""
+    """native 回收：零包装正文按台账逐行还原，旧台账行（带行头）继续兼容。"""
 
     def _ledger_rows(self, texts: list[tuple[int, str, str]]) -> None:
         for mid, sender, rendered in texts:
@@ -452,47 +397,40 @@ class PendingSteerRestoreTests(_Base):
                 user_id=TRIGGER, group_id=GROUP_ID, now_ms=1_700_000_001_000,
             )
 
-    def test_region_wrapped_batch_restores_rows_in_order(self) -> None:
-        a = "[m:201] [普通用户] [id=u1]:\nfirst"
-        b = "[m:202] [普通用户] [id=u2]:\nsecond"
-        self._ledger_rows([(201, "u1", a), (202, "u2", b)])
-        rec = self._restore(f"{wrap_region(a + chr(10) + chr(10) + b)}")
-        self.assertIsNotNone(rec, "区域框架不得让台账逐行还原失效")
-        self.assertEqual([(f.user_id, f.content) for _m, f in rec], [("u1", "first"), ("u2", "second")])
+    def test_plain_batch_restores_rows_in_order(self) -> None:
+        self._ledger_rows([(201, "u1", "first"), (202, "u2", "second")])
+        rec = self._restore("first\nsecond")
+        self.assertIsNotNone(rec, "零包装正文必须能按台账逐行还原")
+        self.assertEqual([(f.user_id, f.content) for _m, f in rec],
+                         [("u1", "first"), ("u2", "second")])
 
     def test_two_batches_joined_like_upstream(self) -> None:
-        a = "[m:211] [普通用户] [id=u1]:\nfirst"
-        b = "[m:212] [普通用户] [id=u2]:\nsecond"
-        self._ledger_rows([(211, "u1", a), (212, "u2", b)])
-        pending = f"{wrap_region(a)}\n{wrap_region(b)}"
-        rec = self._restore(pending)
+        self._ledger_rows([(211, "u1", "first"), (212, "u2", "second")])
+        rec = self._restore("first\nsecond")
         self.assertIsNotNone(rec)
-        self.assertEqual([(f.user_id, f.content) for _m, f in rec], [("u1", "first"), ("u2", "second")])
+        self.assertEqual([(f.user_id, f.content) for _m, f in rec],
+                         [("u1", "first"), ("u2", "second")])
 
     def test_old_bare_batch_still_restores(self) -> None:
-        """升级边界:上线瞬间在飞的旧裸正文 pending_steer 仍按原样还原。"""
+        """升级边界：上线瞬间在飞的旧行头 pending_steer 仍按原样还原。"""
         a = "[m:221] [普通用户] [id=u1]:\nfirst"
         self._ledger_rows([(221, "u1", a)])
         rec = self._restore(a)
         self.assertIsNotNone(rec)
         self.assertEqual([(f.user_id, f.content) for _m, f in rec], [("u1", "first")])
 
-    def test_body_quoting_the_close_tag_is_not_swallowed(self) -> None:
-        """正文里整行出现闭标签字样:它是账项正文,不能被当装饰跳过。"""
-        a = f"[m:231] [普通用户] [id=u1]:\n{CHAT_CLOSE}\n正文继续"
+    def test_body_containing_old_header_literal_is_not_swallowed(self) -> None:
+        a = "[m:231] [普通用户] [id=u1]:\n[m:999] 正文继续"
         self._ledger_rows([(231, "u1", a)])
-        rec = self._restore(wrap_region(a))
+        rec = self._restore(a)
         self.assertIsNotNone(rec)
         self.assertEqual(
             [(f.user_id, f.content) for _m, f in rec],
-            [("u1", f"{CHAT_CLOSE}\n正文继续")],
+            [("u1", "[m:999] 正文继续")],
         )
 
-    def test_decorations_come_from_one_place(self) -> None:
-        decorations = steer_region_decorations()
-        self.assertEqual(
-            decorations, (CHAT_OPEN + "\n\n", CHAT_NOTE + "\n\n", CHAT_CLOSE)
-        )
+    def test_decorations_are_empty_after_zero_wrap(self) -> None:
+        self.assertEqual(steer_batch_decorations(), ())
 
 
 if __name__ == "__main__":
