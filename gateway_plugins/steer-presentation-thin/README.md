@@ -17,7 +17,7 @@ NB 侧在 `core/prompt_builder.render_steer_batch` 以单换行拼接各行正�
 `handlers/message_relay._with_steer_reply_convention` 按需追加批次级系统提示。网关插件只负责
 去掉上游外壳，不重建 NB 的消息身份或排版。
 
-## 三处窄补丁（全部包装，不改上游一行）
+## 五处窄补丁（全部包装，不改上游一行）
 
 1. **`api_server_runs._handle_steer_run` 前置读一次 body**：body 带 NB 的结构化呈递标记
    `{"presentation": {"schema": "hermes.steer.presentation/1", "format": "plain_body"}}`
@@ -35,6 +35,18 @@ NB 侧在 `core/prompt_builder.render_steer_batch` 以单换行拼接各行正�
    也可以是可信的中途 steer。原标记说明一字不改，CLI／桌面／Kanban 工具注入仍走上游标记的
    通道语义不变。没有这段说明，模型可能把无标记的中途 user 行按注入拒收（上游 #40240 的
    历史故障）。
+4. **`SessionAuthority.steer_agent` 代际保护**：当前代际尚未 `adopt_agent` 时，即使存在上一轮
+   缓存 agent，也只把正文 latch 到 `pending_steers[session]=(generation, …)`；新 agent 接管时
+   由上游 `adopt_agent` 原样投递。已接管代际、Stop 控制与无 owner-agent 的执行仍走原函数。
+5. **`TurnRunner._native_image_run_message` / `_load_turn_history` 递归跟进隔离**：Runs 无工具
+   短回合结束后，leftover steer（`result["pending_steer"]`）在同一任务上下文内递归进入
+   `_run_agent(_interrupt_depth + 1)`；外层 `execute_admission` 绑定的 `api_execution`
+   ContextVar 仍携带首轮的 `content`（`list`）与 `history`。若不隔离，`_native_image_run_message`
+   会无条件返回首轮 `list` content，丢弃递归轮的 `ctx.message`（真实第二句）并以
+   `display_kind=None` 重放首句；显式 `conversation_history` 场景下 `_load_turn_history` 也会
+   回退到首轮旧历史。补丁在 `_interrupt_depth > 0` 时仅临时把副本中的 `content`／`history`／
+   `resume_unanswered` 置空，完整保留 `settings`／`adapter`／`browser_control` 等运行字段，
+   并在 `finally` 复原 ContextVar。
 
 **不按文本前缀猜上游包裹。** 登记表的键是 NB 明确声明过的整段原文，判据只有精确相等，或
 「由若干登记批按上游的 `"\n"` 拼接而成」。代码不识别 `[OUT-OF-BAND` 形状，正文含同名字样

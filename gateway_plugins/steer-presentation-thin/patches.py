@@ -34,6 +34,19 @@ master 批准的口径：**steer 只发原始正文，去掉上游外壳；身�
 同 UID 行属于正常留史，不做数据清洗或界面遮罩。
 安装/卸载幂等：``install()`` 在包装函数上打标，重复调用只回报状态。
 
+2026-11-27 代际保护：新代际尚未 ``adopt_agent`` 时，``SessionAuthority.steer_agent`` 避免把
+正文投给上一代缓存 agent，改为 latch 到 ``pending_steers`` 由 ``adopt_agent`` 接管投递；
+已接管直投、Stop 控制与非 owner-agent 路径保持原样。
+
+2026-11-27 无工具短回合递归隔离：Runs 无工具短回合结束后，leftover steer 在同一任务上下文
+递归进入 ``_run_agent(_interrupt_depth + 1)``；外层 ``execute_admission`` 绑定的
+``api_execution`` ContextVar 仍带着首轮的 ``content``（list）与 ``history``，导致
+``TurnRunner._native_image_run_message`` 丢弃递归轮 ``ctx.message``（第二句）并重放首轮
+``content``，``_load_turn_history`` 在显式历史场景下也会覆盖更新后的 ``ctx.history``。
+本插件在 ``_interrupt_depth > 0`` 时仅临时剥离 ``api_execution`` 的首轮输入字段
+（``content``／``history``／``resume_unanswered``），保留 ``settings``／``adapter`` 等运行
+字段并在 ``finally`` 复原 ContextVar。
+
 提示面（同一处收口的一部分）：系统提示里 ``STEER_CHANNEL_NOTE`` 说「只信这个标记」，
 本部署的 steer 是一行纯正文，必须让模型认识它的可信身份，否则会把它当真注入拒收
 （上游 #40240 的历史故障正是如此）。这里只在原 note 后**追加一段**，原标记说明一字不改，
@@ -50,6 +63,8 @@ logger = logging.getLogger(__name__)
 
 PATCH_ID = "steer-presentation-thin/1"
 _MARK = "__steer_presentation_thin__"
+_GENERATION_MARK = "steer-presentation-thin/generation/3"
+_FOLLOWUP_MARK = "steer-presentation-thin/followup/1"
 
 # 与 NB 侧 `nonebot_plugin_hermes_adapter/core/steer_presentation.py` 同一组字面量
 # （两侧各有一份拷贝 + 一条测试逐字比对；改这里必须同批改那边）。
@@ -359,6 +374,84 @@ def make_final_override_guard(original: Callable, display_kind: str) -> Callable
     return _apply_persist_user_message_override
 
 
+def _unwrap_previous(fn: Callable) -> Callable:
+    """热重载升级本插件既有包装时还原原始上游函数，避免叠包或残留旧版逻辑。"""
+    seen: set[int] = set()
+    cur = fn
+    while callable(cur) and id(cur) not in seen and getattr(cur, _MARK, None):
+        seen.add(id(cur))
+        orig = getattr(cur, "__wrapped__", None)
+        if callable(orig):
+            cur = orig
+            continue
+        code = getattr(cur, "__code__", None)
+        closure = getattr(cur, "__closure__", None)
+        if code and closure and "original" in code.co_freevars:
+            cell = closure[code.co_freevars.index("original")].cell_contents
+            if callable(cell):
+                cur = cell
+                continue
+        break
+    return cur
+
+
+def make_generation_guard(original: Callable) -> Callable:
+    """新代际接管前的 steer 只 latch，绝不投进上一代缓存 agent。"""
+
+    def steer_agent(self, ref, generation, text):
+        adopted_generation, adopted_agent = self.adopted.get(ref.session_id, (None, None))
+        if adopted_generation == generation and adopted_agent is not None and text is not None:
+            return adopted_agent, False
+        if text is None:
+            return original(self, ref, generation, text)
+        from gateway.session_busy_controls import adopts_owner_agent
+        if not adopts_owner_agent(self, ref):
+            return original(self, ref, generation, text)
+        latched, texts = self.pending_steers.get(ref.session_id, (None, []))
+        self.pending_steers[ref.session_id] = (
+            generation, [*texts, text] if latched == generation else [text]
+        )
+        return None, True
+
+    setattr(steer_agent, "__wrapped__", original)
+    setattr(steer_agent, _MARK, _GENERATION_MARK)
+    return steer_agent
+
+
+def make_followup_api_execution_guard(original: Callable, api_execution_var: Any) -> Callable:
+    """递归跟进轮（``_interrupt_depth > 0``）临时剥离 ``api_execution`` 首轮输入字段。
+
+    仅清 ``content`` / ``history`` / ``resume_unanswered``，保留 ``settings`` / ``adapter`` /
+    ``browser_control`` / ``turn_author`` / ``relay_metadata`` 等运行期字段，调用后无论正常
+    返回还是异常都通过 ``finally`` 复原 ContextVar。
+    """
+
+    def guarded(self, *args, **kwargs):
+        ctx = getattr(self, "_ctx", None)
+        depth = getattr(ctx, "_interrupt_depth", 0) if ctx is not None else 0
+        if not isinstance(depth, int) or depth <= 0:
+            return original(self, *args, **kwargs)
+        current = api_execution_var.get()
+        if not isinstance(current, dict):
+            return original(self, *args, **kwargs)
+        if (
+            current.get("content") is None
+            and current.get("history") is None
+            and not current.get("resume_unanswered")
+        ):
+            return original(self, *args, **kwargs)
+        sanitized = {**current, "content": None, "history": None, "resume_unanswered": False}
+        token = api_execution_var.set(sanitized)
+        try:
+            return original(self, *args, **kwargs)
+        finally:
+            api_execution_var.reset(token)
+
+    setattr(guarded, "__wrapped__", original)
+    setattr(guarded, _MARK, _FOLLOWUP_MARK)
+    return guarded
+
+
 PLAIN_STEER_NOTE = (
     "\n\n## Plain steer rows (this deployment)\n"
     "A steer from the linked chat relay can also arrive as a plain user row with no "
@@ -380,16 +473,27 @@ _REGISTRY = PresentedBatches()
 
 
 class InstallState:
-    def __init__(self, handler: str, row_builder: str, channel_note: str, persistence: str) -> None:
+    def __init__(
+        self,
+        handler: str,
+        row_builder: str,
+        channel_note: str,
+        persistence: str,
+        generation: str,
+        followup: str,
+    ) -> None:
         self.handler = handler
         self.row_builder = row_builder
         self.channel_note = channel_note
         self.persistence = persistence
+        self.generation = generation
+        self.followup = followup
 
     def describe(self) -> str:
         return (
             f"handler={self.handler} row_builder={self.row_builder} "
-            f"channel_note={self.channel_note} persistence={self.persistence}"
+            f"channel_note={self.channel_note} persistence={self.persistence} "
+            f"generation={self.generation} followup={self.followup}"
         )
 
 
@@ -457,6 +561,38 @@ def _install_channel_note(system_prompt: Any) -> str:
     return "installed"
 
 
+def _install_generation_guard(authority_module: Any) -> str:
+    mixin = getattr(authority_module, "SessionAuthority", None)
+    current = getattr(mixin, "steer_agent", None)
+    if mixin is None or not callable(current):
+        raise RuntimeError("steer-presentation-thin: SessionAuthority.steer_agent not found")
+    if getattr(current, _MARK, None) == _GENERATION_MARK:
+        return "already"
+    mixin.steer_agent = make_generation_guard(_unwrap_previous(current))
+    return "installed"
+
+
+def _install_followup_guard(turn_runner_module: Any, api_turn_module: Any) -> str:
+    runner_cls = getattr(turn_runner_module, "TurnRunner", None)
+    api_execution_var = getattr(api_turn_module, "api_execution", None)
+    native_msg = getattr(runner_cls, "_native_image_run_message", None)
+    load_history = getattr(runner_cls, "_load_turn_history", None)
+    if runner_cls is None or api_execution_var is None or not all(callable(fn) for fn in (native_msg, load_history)):
+        raise RuntimeError("steer-presentation-thin: TurnRunner followup seam not found")
+    changed = False
+    if getattr(native_msg, _MARK, None) != _FOLLOWUP_MARK:
+        runner_cls._native_image_run_message = make_followup_api_execution_guard(
+            _unwrap_previous(native_msg), api_execution_var
+        )
+        changed = True
+    if getattr(load_history, _MARK, None) != _FOLLOWUP_MARK:
+        runner_cls._load_turn_history = make_followup_api_execution_guard(
+            _unwrap_previous(load_history), api_execution_var
+        )
+        changed = True
+    return "installed" if changed else "already"
+
+
 def install(
     runs_module: Any = None,
     prompt_builder: Any = None,
@@ -464,6 +600,9 @@ def install(
     system_prompt: Any = None,
     session_persistence: Any = None,
     turn_context: Any = None,
+    authority_module: Any = None,
+    turn_runner_module: Any = None,
+    api_turn_module: Any = None,
 ) -> InstallState:
     """幂等安装呈递与持久化身份保护；上游形状认不出就抛。"""
     if runs_module is None:
@@ -478,6 +617,12 @@ def install(
         from agent import session_persistence as session_persistence
     if turn_context is None:
         from agent import turn_context as turn_context
+    if authority_module is None:
+        from gateway import session_authority as authority_module
+    if turn_runner_module is None:
+        from gateway import run_turn_runner as turn_runner_module
+    if api_turn_module is None:
+        from gateway import session_api_turn as api_turn_module
     registry = _REGISTRY
     return InstallState(
         handler=_install_handler(runs_module, registry),
@@ -487,6 +632,8 @@ def install(
             session_persistence, turn_context,
             getattr(prompt_builder, "STEER_DISPLAY_KIND", "steer")
         ),
+        generation=_install_generation_guard(authority_module),
+        followup=_install_followup_guard(turn_runner_module, api_turn_module),
     )
 
 
