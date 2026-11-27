@@ -40,6 +40,26 @@ NB 侧在 `core/prompt_builder.render_steer_batch` 以单换行拼接各行正�
 「由若干登记批按上游的 `"\n"` 拼接而成」。代码不识别 `[OUT-OF-BAND` 形状，正文含同名字样
 不会被误剥，有测试钉住。
 
+## 持久化身份根治（2026-11-27）
+
+生产异常：带图长任务发生压缩后，后续 steer 在会话视图里重复显示最初自然轮的正文与旧时间。
+QQ 投递台账和 Milky 发送时延正常，问题位于 Hermes 转录持久化。
+
+根因链：多模态自然轮压缩成文本投影后，与运行时图片 parts 不再逐字相等；
+`reanchor_current_turn_user_idx` 的精确匹配失败，fallback 把最近的 `display_kind=steer`
+误认为当前自然轮。后续压缩／工具结果裁剪再次重锚时可继续选中新的 steer，自然轮的
+干净正文、原始提交时间和平台身份于是覆盖到插话上。
+
+修复仍全部在插件侧：
+
+1. 重锚结果若指向 steer，剔除 steer 后按上游同一套规则重算，并把索引映射回原列表；
+2. `_db_flush_row` 复核身份，steer 永不接受自然轮覆盖；
+3. `_apply_persist_user_message_override` 在回合收尾原地改写前做同样复核。
+
+压缩产生的“归档旧行＋现役新行”会共享 `message_uid`，但分别只有一个 `active=0`
+和一个 `active=1`，属于正常版本链，不按重复写入修。历史坏行保留取证，不用界面
+遮罩或自动数据清洗冒充根治。
+
 ## 不做
 
 - 不改 `_pending_steer` 队列、`steer()`、drain 与投递时机。

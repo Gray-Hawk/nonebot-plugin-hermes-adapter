@@ -45,7 +45,9 @@ import patches  # noqa: E402
 
 from agent import agent_runtime_helpers as helpers  # noqa: E402
 from agent import prompt_builder as pb  # noqa: E402
+from agent import session_persistence  # noqa: E402
 from agent import system_prompt  # noqa: E402
+from agent import turn_context  # noqa: E402
 from agent.interrupt_control import InterruptControlMixin  # noqa: E402
 
 NB_ROOT = str(Path(__file__).resolve().parents[3])
@@ -364,6 +366,164 @@ class RealSeamTests(unittest.TestCase):
             )
 
 
+class PersistenceIsolationTests(unittest.TestCase):
+    """steer 是独立真实消息，永不是当前自然轮的持久化覆盖目标。"""
+
+    ORIGINAL = "好好，那先这样，推下远端，然后看鸭鸭服务器的问题 [表情包]"
+    OLD_TS = 1795767682.530025
+    STEER_TS = 1795769021.0
+
+    def setUp(self) -> None:
+        self.original = session_persistence._db_flush_row
+        self.original_reanchor = turn_context.reanchor_current_turn_user_idx
+        self.original_final_override = session_persistence.SessionPersistenceMixin._apply_persist_user_message_override
+        self.assertEqual(
+            patches._install_persistence_guard(
+                session_persistence, turn_context, pb.STEER_DISPLAY_KIND
+            ),
+            "installed",
+        )
+
+    def tearDown(self) -> None:
+        session_persistence._db_flush_row = self.original
+        turn_context.reanchor_current_turn_user_idx = self.original_reanchor
+        session_persistence.SessionPersistenceMixin._apply_persist_user_message_override = self.original_final_override
+
+    def collect(self, messages, ov_idx, pending=None):
+        agent = SimpleNamespace(
+            session_id="steer-persistence-test",
+            _last_flushed_db_idx=0,
+            _flushed_db_message_session_id=None,
+            _flushed_db_message_ids=None,
+            _db_flush_scan_prefix=None,
+            _pending_cli_user_message=pending,
+            _persist_user_message_idx=ov_idx,
+            _persist_user_message_override=self.ORIGINAL,
+            _persist_user_message_timestamp=self.OLD_TS,
+            _mute_notification_reply=False,
+        )
+        return session_persistence._db_flush_collect(agent, messages, [])[0]
+
+    def test_multimodal_reanchor_never_falls_back_to_steer(self) -> None:
+        multimodal = [
+            {"type": "text", "text": self.ORIGINAL},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+        ]
+        natural = {"role": "user", "content": self.ORIGINAL + "\n[screenshot]"}
+        first = {"role": "user", "content": "第一条插话", "display_kind": "steer"}
+        second = {"role": "user", "content": "第二条插话", "display_kind": "steer"}
+        self.assertEqual(
+            turn_context.reanchor_current_turn_user_idx([natural, first], multimodal), 0
+        )
+        self.assertEqual(
+            turn_context.reanchor_current_turn_user_idx([natural, first, second], multimodal), 0,
+            "后续压缩／裁剪仍不得重锚到更新的 steer",
+        )
+
+    def test_reanchor_plain_text_control_stays_on_natural_row(self) -> None:
+        natural = {"role": "user", "content": "可靠修复呢？"}
+        steer = {"role": "user", "content": "插话", "display_kind": "steer"}
+        self.assertEqual(
+            turn_context.reanchor_current_turn_user_idx([natural, steer], "可靠修复呢？"), 0
+        )
+
+    def test_final_in_place_override_refuses_a_steer_target(self) -> None:
+        steer = {
+            "role": "user", "content": "独立插话", "display_kind": "steer",
+            "timestamp": self.STEER_TS, "platform_message_id": "new-id",
+        }
+        agent = SimpleNamespace(
+            _persist_user_message_idx=0,
+            _persist_user_message_override=self.ORIGINAL,
+            _persist_user_message_timestamp=self.OLD_TS,
+            _persist_user_message_platform_id="old-id",
+        )
+        session_persistence.SessionPersistenceMixin._apply_persist_user_message_override(
+            agent, [steer]
+        )
+        self.assertEqual(steer["content"], "独立插话")
+        self.assertEqual(steer["timestamp"], self.STEER_TS)
+        self.assertEqual(steer["platform_message_id"], "new-id")
+
+    def test_final_in_place_override_still_updates_natural_row(self) -> None:
+        natural = {"role": "user", "content": "带上下文的 API 原文"}
+        agent = SimpleNamespace(
+            _persist_user_message_idx=0,
+            _persist_user_message_override=self.ORIGINAL,
+            _persist_user_message_timestamp=self.OLD_TS,
+            _persist_user_message_platform_id="old-id",
+        )
+        session_persistence.SessionPersistenceMixin._apply_persist_user_message_override(
+            agent, [natural]
+        )
+        self.assertEqual(natural["content"], self.ORIGINAL)
+        self.assertEqual(natural["timestamp"], self.OLD_TS)
+        self.assertEqual(natural["platform_message_id"], "old-id")
+
+    def test_steer_index_alias_cannot_inherit_original_content_or_time(self) -> None:
+        text = "怎么样怎么样\n\n（系统提示：本条为对话中途插入的消息。）"
+        steer = {
+            "role": "user", "content": text, "display_kind": "steer",
+            "timestamp": self.STEER_TS, "platform_message_id": "106252",
+        }
+        rows = self.collect([{"role": "user", "content": "原轮"}, steer], 1)
+        self.assertEqual(rows[1]["content"], text)
+        self.assertEqual(rows[1]["timestamp"], self.STEER_TS)
+        self.assertIsNone(rows[1]["api_content"])
+        self.assertEqual(rows[1]["platform_message_id"], "106252")
+        self.assertEqual(rows[1]["display_kind"], "steer")
+
+    def test_pending_identity_alias_also_cannot_retarget_steer(self) -> None:
+        steer = {"role": "user", "content": "独立插话", "display_kind": "steer"}
+        row = self.collect([steer], None, pending=steer)[0]
+        self.assertEqual(row["content"], "独立插话")
+        self.assertIsNone(row["timestamp"])
+        self.assertIsNone(row["api_content"])
+
+    def test_stock_marker_and_plain_rows_share_the_same_guard(self) -> None:
+        stock = pb.steer_user_row("stock 插话")
+        plain = {"role": "user", "content": "零包装插话", "display_kind": "steer"}
+        rows = self.collect([stock, plain], 1)
+        self.assertEqual(rows[0]["content"], stock["content"])
+        self.assertEqual(rows[1]["content"], "零包装插话")
+
+    def test_consecutive_steers_keep_distinct_text_and_timestamps(self) -> None:
+        first = {"role": "user", "content": "第一句", "display_kind": "steer", "timestamp": 100.0}
+        second = {"role": "user", "content": "第二句", "display_kind": "steer", "timestamp": 200.0}
+        rows = self.collect([first, second], 1)
+        self.assertEqual([r["content"] for r in rows], ["第一句", "第二句"])
+        self.assertEqual([r["timestamp"] for r in rows], [100.0, 200.0])
+
+    def test_compression_summary_does_not_retarget_the_next_steer(self) -> None:
+        summary = {
+            "role": "user", "content": "[压缩摘要] 原轮已归档",
+            "_compressed_summary": True,
+        }
+        steer = {"role": "user", "content": "压缩后的插话", "display_kind": "steer"}
+        rows = self.collect([summary, steer], 1)
+        self.assertEqual(rows[1]["content"], "压缩后的插话")
+        self.assertIsNone(rows[1]["api_content"])
+
+    def test_natural_text_override_is_unchanged(self) -> None:
+        natural = {"role": "user", "content": "带上下文的 API 原文"}
+        row = self.collect([natural], 0)[0]
+        self.assertEqual(row["content"], self.ORIGINAL)
+        self.assertEqual(row["api_content"], "带上下文的 API 原文")
+        self.assertEqual(row["timestamp"], self.OLD_TS)
+
+    def test_natural_multimodal_parts_are_unchanged(self) -> None:
+        natural = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "看这张图"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+            ],
+        }
+        row = self.collect([natural], 0)[0]
+        self.assertEqual(row["content"], "看这张图\n[screenshot]")
+        self.assertEqual(row["timestamp"], self.OLD_TS)
+
+
 class ChannelNoteTests(unittest.TestCase):
     def test_note_keeps_the_marker_contract_and_adds_plain_row_shape(self) -> None:
         note = patches.make_channel_note(pb.STEER_CHANNEL_NOTE)
@@ -381,9 +541,9 @@ class ChannelNoteTests(unittest.TestCase):
             second = patches.install(runs_module=runs, prompt_builder=pb,
                                      helpers=helpers, system_prompt=system_prompt)
             self.assertEqual(first.describe(), "handler=installed row_builder=installed "
-                                                "channel_note=installed")
+                                                "channel_note=installed persistence=installed")
             self.assertEqual(second.describe(), "handler=already row_builder=already "
-                                                "channel_note=already")
+                                                "channel_note=already persistence=already")
             self.assertEqual(system_prompt.STEER_CHANNEL_NOTE.count("## Plain steer rows"), 1,
                              "重复安装不得把说明叠加两遍")
 
@@ -409,7 +569,7 @@ class SchemaParityTests(unittest.TestCase):
 
 @contextlib.contextmanager
 def _upstream_untouched():
-    """快照/还原四个被包装的上游对象，避免用例之间互相污染。"""
+    """快照/还原被包装的上游对象，避免用例之间互相污染。"""
     from gateway.platforms import api_server_runs as runs
 
     saved = [
@@ -417,6 +577,13 @@ def _upstream_untouched():
         (pb, "steer_user_row", pb.steer_user_row),
         (helpers, "steer_user_row", helpers.steer_user_row),
         (system_prompt, "STEER_CHANNEL_NOTE", system_prompt.STEER_CHANNEL_NOTE),
+        (session_persistence, "_db_flush_row", session_persistence._db_flush_row),
+        (turn_context, "reanchor_current_turn_user_idx", turn_context.reanchor_current_turn_user_idx),
+        (
+            session_persistence.SessionPersistenceMixin,
+            "_apply_persist_user_message_override",
+            session_persistence.SessionPersistenceMixin._apply_persist_user_message_override,
+        ),
     ]
     try:
         yield runs

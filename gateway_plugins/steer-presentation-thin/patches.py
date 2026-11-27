@@ -25,8 +25,13 @@ master 批准的口径：**steer 只发原始正文，去掉上游外壳；身�
 批按上游的 ``"\\n"`` 拼接而成）；判据里没有任何对 ``[OUT-OF-BAND`` 形状的识别，也就
 不会把正文里出现同样字样的消息误剥。
 
-明确不做：不改 ``_pending_steer`` 队列、不加恢复/身份/第二套状态机、不新增表或持久化；
-登记表只活在本进程、只保最近若干批（``_REGISTRY_LIMIT``），一次投递即消费。
+明确不做：不改 ``_pending_steer`` 队列、不加恢复/身份/第二套状态机、不新增表；登记表只活在本进程、只保最近若干批（``_REGISTRY_LIMIT``），一次投递即消费。
+
+2026-11-27 持久化根治：多模态自然轮压缩成文本投影后，精确重锚可能失败，上游
+``reanchor_current_turn_user_idx`` 的“最后一条 user-originated”fallback 会误选 steer。
+本插件在重锚候选中排除 steer，并在 DB flush 与回合收尾原地覆盖两处复核身份；正文、
+原始提交时间、平台消息号和 sidecar 不得跨自然轮写进插话。压缩产生的归档旧行＋现役
+同 UID 行属于正常留史，不做数据清洗或界面遮罩。
 安装/卸载幂等：``install()`` 在包装函数上打标，重复调用只回报状态。
 
 提示面（同一处收口的一部分）：系统提示里 ``STEER_CHANNEL_NOTE`` 说「只信这个标记」，
@@ -277,6 +282,83 @@ def make_row_builder(original: Callable, registry: PresentedBatches, display_kin
     return steer_user_row
 
 
+def make_persistence_guard(original: Callable, display_kind: str) -> Callable:
+    """自然轮的干净正文／提交时间覆盖，永远不能落到独立 steer 行。
+
+    上游用 ``ov_idx == msg_idx or msg is pending_cli_message`` 识别自然轮；这个
+    位置／对象判断没有语义类型约束。一旦长任务、压缩或多模态行让它命中 steer，
+    ``durable_user_row_content`` 就会把原自然轮正文与旧时间写到插话上。这里在
+    同一入库边界补上身份不变量，而不是修改界面或事后清洗数据库。
+    """
+
+    def _db_flush_row(agent, msg, is_current_turn_user):
+        if (
+            isinstance(msg, dict)
+            and msg.get("role") == "user"
+            and msg.get("display_kind") == display_kind
+        ):
+            is_current_turn_user = False
+        return original(agent, msg, is_current_turn_user)
+
+    setattr(_db_flush_row, _MARK, PATCH_ID)
+    return _db_flush_row
+
+
+def make_reanchor_guard(original: Callable, display_kind: str) -> Callable:
+    """压缩重锚不得把 steer 当作当前自然轮的 fallback。
+
+    非 steer 结果完全沿用上游。只有上游误选 steer 时，才在剔除 steer 的原列表
+    投影上重算，并把索引映射回原列表；不重写上游的精确匹配合并摘要规则。
+    """
+
+    def reanchor_current_turn_user_idx(messages, user_message):
+        idx = original(messages, user_message)
+        if not isinstance(idx, int) or not (0 <= idx < len(messages)):
+            return idx
+        selected = messages[idx]
+        if not (
+            isinstance(selected, dict)
+            and selected.get("role") == "user"
+            and selected.get("display_kind") == display_kind
+        ):
+            return idx
+        kept = [
+            msg for msg in messages
+            if not (
+                isinstance(msg, dict)
+                and msg.get("role") == "user"
+                and msg.get("display_kind") == display_kind
+            )
+        ]
+        filtered_idx = original(kept, user_message)
+        if not isinstance(filtered_idx, int) or not (0 <= filtered_idx < len(kept)):
+            return -1
+        selected = kept[filtered_idx]
+        return next(i for i, msg in enumerate(messages) if msg is selected)
+
+    setattr(reanchor_current_turn_user_idx, _MARK, PATCH_ID)
+    return reanchor_current_turn_user_idx
+
+
+def make_final_override_guard(original: Callable, display_kind: str) -> Callable:
+    """回合收尾的原地覆盖与入库 flush 遵守同一条 steer 身份边界。"""
+
+    def _apply_persist_user_message_override(agent, messages):
+        idx = getattr(agent, "_persist_user_message_idx", None)
+        if isinstance(idx, int) and 0 <= idx < len(messages):
+            msg = messages[idx]
+            if (
+                isinstance(msg, dict)
+                and msg.get("role") == "user"
+                and msg.get("display_kind") == display_kind
+            ):
+                return None
+        return original(agent, messages)
+
+    setattr(_apply_persist_user_message_override, _MARK, PATCH_ID)
+    return _apply_persist_user_message_override
+
+
 PLAIN_STEER_NOTE = (
     "\n\n## Plain steer rows (this deployment)\n"
     "A steer from the linked chat relay can also arrive as a plain user row with no "
@@ -298,15 +380,16 @@ _REGISTRY = PresentedBatches()
 
 
 class InstallState:
-    def __init__(self, handler: str, row_builder: str, channel_note: str) -> None:
+    def __init__(self, handler: str, row_builder: str, channel_note: str, persistence: str) -> None:
         self.handler = handler
         self.row_builder = row_builder
         self.channel_note = channel_note
+        self.persistence = persistence
 
     def describe(self) -> str:
         return (
             f"handler={self.handler} row_builder={self.row_builder} "
-            f"channel_note={self.channel_note}"
+            f"channel_note={self.channel_note} persistence={self.persistence}"
         )
 
 
@@ -340,6 +423,30 @@ def _install_row_builder(prompt_builder: Any, helpers: Any, registry: PresentedB
     return "installed"
 
 
+def _install_persistence_guard(session_persistence: Any, turn_context: Any, display_kind: str) -> str:
+    if not isinstance(display_kind, str) or not display_kind:
+        raise RuntimeError("steer-presentation-thin: STEER_DISPLAY_KIND is invalid")
+    flush_row = getattr(session_persistence, "_db_flush_row", None)
+    reanchor = getattr(turn_context, "reanchor_current_turn_user_idx", None)
+    mixin = getattr(session_persistence, "SessionPersistenceMixin", None)
+    final_override = getattr(mixin, "_apply_persist_user_message_override", None)
+    if not all(callable(fn) for fn in (flush_row, reanchor, final_override)):
+        raise RuntimeError("steer-presentation-thin: natural-turn persistence seam not found")
+    changed = False
+    if not getattr(flush_row, _MARK, None):
+        session_persistence._db_flush_row = make_persistence_guard(flush_row, display_kind)
+        changed = True
+    if not getattr(reanchor, _MARK, None):
+        turn_context.reanchor_current_turn_user_idx = make_reanchor_guard(reanchor, display_kind)
+        changed = True
+    if not getattr(final_override, _MARK, None):
+        mixin._apply_persist_user_message_override = make_final_override_guard(
+            final_override, display_kind
+        )
+        changed = True
+    return "installed" if changed else "already"
+
+
 def _install_channel_note(system_prompt: Any) -> str:
     current = getattr(system_prompt, "STEER_CHANNEL_NOTE", None)
     if not isinstance(current, str) or not current:
@@ -355,8 +462,10 @@ def install(
     prompt_builder: Any = None,
     helpers: Any = None,
     system_prompt: Any = None,
+    session_persistence: Any = None,
+    turn_context: Any = None,
 ) -> InstallState:
-    """幂等安装三处窄补丁；上游形状认不出就抛（绝不静默 no-op）。"""
+    """幂等安装呈递与持久化身份保护；上游形状认不出就抛。"""
     if runs_module is None:
         from gateway.platforms import api_server_runs as runs_module
     if prompt_builder is None:
@@ -365,11 +474,19 @@ def install(
         from agent import agent_runtime_helpers as helpers
     if system_prompt is None:
         from agent import system_prompt as system_prompt
+    if session_persistence is None:
+        from agent import session_persistence as session_persistence
+    if turn_context is None:
+        from agent import turn_context as turn_context
     registry = _REGISTRY
     return InstallState(
         handler=_install_handler(runs_module, registry),
         row_builder=_install_row_builder(prompt_builder, helpers, registry),
         channel_note=_install_channel_note(system_prompt),
+        persistence=_install_persistence_guard(
+            session_persistence, turn_context,
+            getattr(prompt_builder, "STEER_DISPLAY_KIND", "steer")
+        ),
     )
 
 
